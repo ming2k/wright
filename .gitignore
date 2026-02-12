@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+Cargo.lock
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Wright specific
+.wright/
+*.wright.tar.zst
+dev.toml
+wright.toml
+
+# AI assistants
+.gemini/

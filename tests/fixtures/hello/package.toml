@@ -1,0 +1,39 @@
+[package]
+name = "hello"
+version = "1.0.0"
+release = 1
+description = "Hello World test package"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+runtime = []
+build = ["gcc"]
+
+[sources]
+urls = []
+sha256 = []
+
+[lifecycle.prepare]
+executor = "shell"
+sandbox = "none"
+script = """
+cat > hello.c << 'EOF'
+#include <stdio.h>
+int main() { printf("Hello, wright!\\n"); return 0; }
+EOF
+"""
+
+[lifecycle.build]
+executor = "shell"
+sandbox = "none"
+script = """
+gcc -o hello hello.c
+"""
+
+[lifecycle.package]
+executor = "shell"
+sandbox = "none"
+script = """
+install -Dm755 hello ${PKG_DIR}/usr/bin/hello
+"""

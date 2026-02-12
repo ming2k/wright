@@ -1,0 +1,42 @@
+[package]
+name = "wright"
+version = "0.1.0"
+edition = "2021"
+description = "Declarative, extensible, sandboxed Linux package manager"
+license = "MIT"
+
+[[bin]]
+name = "wright"
+path = "src/bin/wright.rs"
+
+[[bin]]
+name = "wright-build"
+path = "src/bin/wright_build.rs"
+
+[[bin]]
+name = "wright-repo"
+path = "src/bin/wright_repo.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+tar = "0.4"
+zstd = "0.13"
+flate2 = "1.0"
+bzip2 = "0.5"
+xz2 = "0.1"
+walkdir = "2"
+tempfile = "3"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+libc = "0.2"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+tokio = { version = "1", features = ["full"] }
+indicatif = "0.17"

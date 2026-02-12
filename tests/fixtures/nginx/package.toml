@@ -1,0 +1,109 @@
+[package]
+name = "nginx"
+version = "1.25.3"
+release = 1
+description = "High performance HTTP and reverse proxy server"
+license = "BSD-2-Clause"
+arch = "x86_64"
+url = "https://nginx.org"
+maintainer = "Test Maintainer <test@example.com>"
+group = "extra"
+
+[dependencies]
+runtime = [
+    "openssl",
+    "pcre2 >= 10.42",
+    "zlib >= 1.2",
+]
+build = ["perl", "gcc", "make"]
+optional = [
+    { name = "geoip", description = "GeoIP module support" },
+]
+conflicts = ["apache"]
+provides = ["http-server"]
+
+[sources]
+urls = [
+    "https://nginx.org/download/nginx-1.25.3.tar.gz",
+]
+sha256 = [
+    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
+]
+patches = [
+    "patches/fix-headers.patch",
+    "patches/add-feature.patch",
+]
+
+[options]
+strip = true
+static = false
+debug = false
+ccache = true
+
+[lifecycle.prepare]
+executor = "shell"
+sandbox = "strict"
+script = """
+cd nginx-${PKG_VERSION}
+for p in ${PATCHES_DIR}/*.patch; do
+    [ -f "$p" ] && patch -p1 < "$p"
+done
+"""
+
+[lifecycle.configure]
+executor = "shell"
+sandbox = "strict"
+env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
+script = """
+cd nginx-${PKG_VERSION}
+./configure \
+    --prefix=/usr \
+    --sysconfdir=/etc/nginx \
+    --with-http_ssl_module \
+    --with-http_v2_module \
+    --with-pcre-jit
+"""
+
+[lifecycle.build]
+executor = "shell"
+sandbox = "strict"
+env = { MAKEFLAGS = "-j${NPROC}" }
+script = """
+cd nginx-${PKG_VERSION}
+make
+"""
+
+[lifecycle.check]
+executor = "shell"
+sandbox = "strict"
+optional = true
+script = """
+cd nginx-${PKG_VERSION}
+make test
+"""
+
+[lifecycle.package]
+executor = "shell"
+sandbox = "strict"
+script = """
+cd nginx-${PKG_VERSION}
+make DESTDIR=${PKG_DIR} install
+install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
+"""
+
+[install_scripts]
+post_install = """
+useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
+"""
+post_upgrade = """
+systemctl reload nginx 2>/dev/null || true
+"""
+pre_remove = """
+systemctl stop nginx 2>/dev/null || true
+"""
+
+[backup]
+files = [
+    "/etc/nginx/nginx.conf",
+    "/etc/nginx/mime.types",
+]
