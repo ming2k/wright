@@ -59,22 +59,22 @@ mkdir -p /var/log/wright
 mkdir -p /etc/wright
 ```
 
-| Directory | Purpose |
-|-----------|---------|
-| `/var/lib/wright/plans` | Plan directories (each containing a `package.toml`) |
-| `/var/lib/wright/components` | Built `.wright.tar.zst` archives |
-| `/var/lib/wright/cache` | Downloaded source tarballs |
-| `/var/lib/wright/db` | Package database (`packages.db`) |
-| `/var/log/wright` | Build stage logs |
-| `/etc/wright` | System config, executor definitions, assemblies |
-| `/tmp/wright-build` | Temporary build workspaces |
+| Directory                    | Purpose                                             |
+|------------------------------|-----------------------------------------------------|
+| `/var/lib/wright/plans`      | Plan directories (each containing a `package.toml`) |
+| `/var/lib/wright/components` | Built `.wright.tar.zst` archives                    |
+| `/var/lib/wright/cache`      | Downloaded source tarballs                          |
+| `/var/lib/wright/db`         | Package database (`packages.db`)                    |
+| `/var/log/wright`            | Build stage logs                                    |
+| `/etc/wright`                | System config, executor definitions, assemblies     |
+| `/tmp/wright-build`          | Temporary build workspaces                          |
 
 When running as a non-root user, Wright uses XDG directories instead:
 
-| XDG path | Default |
-|----------|---------|
-| `$XDG_CACHE_HOME/wright` | `~/.cache/wright` |
-| `$XDG_DATA_HOME/wright` | `~/.local/share/wright` |
+| XDG path                 | Default                 |
+|--------------------------|-------------------------|
+| `$XDG_CACHE_HOME/wright` | `~/.cache/wright`       |
+| `$XDG_DATA_HOME/wright`  | `~/.local/share/wright` |
 | `$XDG_STATE_HOME/wright` | `~/.local/state/wright` |
 
 ## 4. Optional: Create a Configuration File

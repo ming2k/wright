@@ -237,19 +237,28 @@ impl Builder {
     pub fn update_hashes(&self, manifest: &PackageManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
 
-        let temp_dir = tempfile::tempdir().map_err(|e| WrightError::IoError(e))?;
+        let cache_dir = self.config.general.cache_dir.join("sources");
+        if !cache_dir.exists() {
+            std::fs::create_dir_all(&cache_dir).map_err(|e| WrightError::IoError(e))?;
+        }
 
-        for (i, url) in manifest.sources.urls.iter().enumerate() {
+        for url in manifest.sources.urls.iter() {
             let processed_url = self.process_url(url, manifest);
-            info!("Downloading {}...", processed_url);
+            let cache_filename = sanitize_cache_filename(
+                processed_url.split('/').last().unwrap_or("source")
+            );
+            let cache_path = cache_dir.join(&cache_filename);
 
-            let filename = processed_url.split('/').last().unwrap_or("source");
-            let dest = temp_dir.path().join(format!("{}.{}", i, filename));
+            if cache_path.exists() {
+                info!("Using cached source: {}", cache_filename);
+            } else {
+                info!("Downloading {}...", processed_url);
+                download::download_file(&processed_url, &cache_path, self.config.network.download_timeout).map_err(|e| {
+                    WrightError::BuildError(format!("Failed to download {}: {}", processed_url, e))
+                })?;
+            }
 
-            download::download_file(&processed_url, &dest, self.config.network.download_timeout).map_err(|e| {
-                WrightError::BuildError(format!("Failed to download {}: {}", processed_url, e))
-            })?;
-            let hash = checksum::sha256_file(&dest)?;
+            let hash = checksum::sha256_file(&cache_path)?;
             info!("Computed hash: {}", hash);
             new_hashes.push(hash);
         }
