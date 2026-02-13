@@ -33,6 +33,24 @@ enum Commands {
         /// Package archive files to install
         #[arg(required = true)]
         packages: Vec<PathBuf>,
+
+        /// Force reinstall even if already installed
+        #[arg(long)]
+        force: bool,
+
+        /// Skip dependency resolution
+        #[arg(long)]
+        nodeps: bool,
+    },
+    /// Upgrade installed packages from local .wright.tar.zst files
+    Upgrade {
+        /// Package archive files to upgrade
+        #[arg(required = true)]
+        packages: Vec<PathBuf>,
+
+        /// Force upgrade even if version is not newer
+        #[arg(long)]
+        force: bool,
     },
     /// Remove installed packages
     Remove {
@@ -98,7 +116,7 @@ fn main() -> Result<()> {
     resolver.add_plans_dir(config.general.plans_dir.clone());
 
     match cli.command {
-        Commands::Install { packages } => {
+        Commands::Install { packages, force, nodeps } => {
             let pkg_paths: Vec<PathBuf> = packages.iter().map(|p| {
                 if p.exists() {
                     p.clone()
@@ -114,11 +132,37 @@ fn main() -> Result<()> {
                 }
             }
 
-            match transaction::install_packages(&db, &pkg_paths, &root_dir, &resolver) {
+            match transaction::install_packages(&db, &pkg_paths, &root_dir, &resolver, force, nodeps) {
                 Ok(()) => println!("installation completed successfully"),
                 Err(e) => {
                     eprintln!("error: {}", e);
                     std::process::exit(1);
+                }
+            }
+        }
+        Commands::Upgrade { packages, force } => {
+            let pkg_paths: Vec<PathBuf> = packages.iter().map(|p| {
+                if p.exists() {
+                    p.clone()
+                } else {
+                    std::env::current_dir().unwrap().join(p)
+                }
+            }).collect();
+
+            for path in &pkg_paths {
+                if !path.exists() {
+                    eprintln!("error: file not found: {}", path.display());
+                    std::process::exit(1);
+                }
+            }
+
+            for path in &pkg_paths {
+                match transaction::upgrade_package(&db, path, &root_dir, force) {
+                    Ok(()) => println!("upgraded: {}", path.display()),
+                    Err(e) => {
+                        eprintln!("error upgrading {}: {}", path.display(), e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }

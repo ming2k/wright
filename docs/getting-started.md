@@ -116,7 +116,15 @@ This runs the lifecycle pipeline (prepare, build, package) and produces a `.wrig
 wright install hello-1.0.0-1-x86_64.wright.tar.zst
 ```
 
-### 4. Verify the installation
+### 4. Upgrade the package
+
+If you rebuild the package with a higher version or release, you can upgrade it:
+
+```
+wright upgrade hello-1.0.1-1-x86_64.wright.tar.zst
+```
+
+### 5. Verify the installation
 
 ```
 wright query hello
@@ -124,7 +132,7 @@ wright files hello
 wright verify hello
 ```
 
-### 5. Remove the package
+### 6. Remove the package
 
 ```
 wright remove hello

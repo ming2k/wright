@@ -33,6 +33,18 @@ impl Builder {
         Self { config, executors }
     }
 
+    /// Process a URL by substituting variables like ${version}, ${PKG_NAME}, etc.
+    fn process_url(&self, url: &str, manifest: &PackageManifest) -> String {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("version".to_string(), manifest.package.version.clone());
+        vars.insert("PKG_NAME".to_string(), manifest.package.name.clone());
+        vars.insert("PKG_VERSION".to_string(), manifest.package.version.clone());
+        vars.insert("PKG_RELEASE".to_string(), manifest.package.release.to_string());
+        vars.insert("PKG_ARCH".to_string(), manifest.package.arch.clone());
+        
+        variables::substitute(url, &vars)
+    }
+
     /// Get absolute build root for a package (tools like libtool require absolute paths).
     fn build_root(&self, manifest: &PackageManifest) -> Result<PathBuf> {
         let build_dir = if self.config.build.build_dir.is_absolute() {
@@ -154,7 +166,7 @@ impl Builder {
         let cache_dir = &self.config.general.cache_dir.join("sources");
         
         for (i, url) in manifest.sources.urls.iter().enumerate() {
-            let processed_url = url.replace("${version}", &manifest.package.version);
+            let processed_url = self.process_url(url, manifest);
             let filename = sanitize_cache_filename(
                 processed_url.split('/').last().unwrap_or("source")
             );
@@ -185,7 +197,7 @@ impl Builder {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
         for url in &manifest.sources.urls {
-            let processed_url = url.replace("${version}", &manifest.package.version);
+            let processed_url = self.process_url(url, manifest);
             let filename = sanitize_cache_filename(
                 processed_url.split('/').last().unwrap_or("source")
             );
@@ -228,7 +240,7 @@ impl Builder {
         let temp_dir = tempfile::tempdir().map_err(|e| WrightError::IoError(e))?;
 
         for (i, url) in manifest.sources.urls.iter().enumerate() {
-            let processed_url = url.replace("${version}", &manifest.package.version);
+            let processed_url = self.process_url(url, manifest);
             info!("Downloading {}...", processed_url);
 
             let filename = processed_url.split('/').last().unwrap_or("source");
@@ -285,7 +297,7 @@ impl Builder {
         }
 
         for (i, url) in manifest.sources.urls.iter().enumerate() {
-            let processed_url = url.replace("${version}", &manifest.package.version);
+            let processed_url = self.process_url(url, manifest);
             let filename = sanitize_cache_filename(
                 processed_url.split('/').last().unwrap_or("source")
             );

@@ -37,7 +37,9 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     }
 
     let client = Client::builder()
+        .user_agent("wright/0.1.0 (Linux; x86_64)")
         .connect_timeout(std::time::Duration::from_secs(timeout))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()
         .map_err(|e| WrightError::NetworkError(format!("failed to create client: {}", e)))?;
 

@@ -12,11 +12,11 @@ wright [OPTIONS] <COMMAND>
 
 ### Global Options
 
-| Flag | Description |
-|------|-------------|
-| `--root <PATH>` | Alternate root directory for file operations (default: `/`) |
-| `--config <PATH>` | Path to config file (default: `/etc/wright/wright.toml`) |
-| `--db <PATH>` | Path to database file (default: from config) |
+| Flag              | Description                                                 |
+|-------------------|-------------------------------------------------------------|
+| `--root <PATH>`   | Alternate root directory for file operations (default: `/`) |
+| `--config <PATH>` | Path to config file (default: `/etc/wright/wright.toml`)    |
+| `--db <PATH>`     | Path to database file (default: from config)                |
 
 ### Commands
 
@@ -25,11 +25,32 @@ wright [OPTIONS] <COMMAND>
 Install packages from local `.wright.tar.zst` archive files.
 
 ```
-wright install hello-1.0.0-1-x86_64.wright.tar.zst
-wright install pkg1.wright.tar.zst pkg2.wright.tar.zst
+wright install hello-1.0.0-1-x86_64.wright.tar.zst --force
+wright install pkg1.wright.tar.zst pkg2.wright.tar.zst --nodeps
 ```
 
+**Options:**
+
+| Flag       | Description                                               |
+|------------|-----------------------------------------------------------|
+| `--force`  | Force reinstall even if the package is already installed. |
+| `--nodeps` | Skip dependency resolution checks.                        |
+
 The install operation is transactional — if any package fails to install, all changes from that package are rolled back.
+
+#### `wright upgrade <PACKAGES...>`
+
+Upgrade installed packages from local `.wright.tar.zst` archive files.
+
+```
+wright upgrade hello-1.0.1-1-x86_64.wright.tar.zst
+```
+
+**Options:**
+
+| Flag      | Description                                     |
+|-----------|-------------------------------------------------|
+| `--force` | Force upgrade even if the version is not newer. |
 
 #### `wright remove <PACKAGES...>`
 
@@ -101,17 +122,17 @@ Reports missing files, hash mismatches, and other integrity issues.
 
 ## wright-build
 
-Build tool that parses `package.toml` files, executes the lifecycle pipeline, and produces binary package archives.
+Build tool that parses `package.toml` files, executes the lifecycle pipeline, and produces binary package archives. It supports building individual plans, directories, or entire assemblies.
 
 ```
-wright-build [OPTIONS] <HOLD_PATH>
+wright-build [OPTIONS] [TARGETS]...
 ```
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<HOLD_PATH>` | Path to hold directory (containing `package.toml`) or directly to a `package.toml` file |
+| `[TARGETS]...` | Paths to plan directories, part names (looked up in configured plan directories), or `@assembly` names. |
 
 ### Options
 
@@ -121,44 +142,52 @@ wright-build [OPTIONS] <HOLD_PATH>
 | `--clean` | Clean build directory before building |
 | `--lint` | Validate `package.toml` syntax only (no build) |
 | `--rebuild` | Force rebuild (cleans first, then builds) |
+| `--force` (`-f`) | Force overwrite existing archive (skip check disabled) |
 | `--update` | Update `sha256` checksums in `package.toml` |
 | `--config <PATH>` | Path to config file |
+| `--jobs <N>` (`-j`) | Max number of parallel builds (default: 1) |
 
 ### Examples
 
-Build a package:
+Build a package by path:
 
 ```
 wright-build /var/hold/extra/nginx
 ```
 
+Build a package by name (resolved from plan directories):
+
+```
+wright-build nginx
+```
+
+Build an assembly (group of packages):
+
+```
+wright-build @base-system
+```
+
 Update checksums for a package:
 
 ```
-wright-build --update /var/hold/extra/nginx
+wright-build --update nginx
 ```
 
 Validate a package description without building:
 
 ```
-wright-build --lint /var/hold/extra/nginx
+wright-build --lint nginx
 ```
 
-Build only up to the configure stage:
+Build in parallel:
 
 ```
-wright-build --stage configure /var/hold/extra/nginx
-```
-
-Clean and rebuild:
-
-```
-wright-build --rebuild /var/hold/extra/nginx
+wright-build -j 4 @desktop
 ```
 
 ### Build Output
 
-On success, prints the path to the created `.wright.tar.zst` archive. The archive is placed in the current working directory.
+On success, prints the path to the created `.wright.tar.zst` archive. The archive is placed in the components directory (default: `components/` or current directory).
 
 Build logs are stored in the build directory (default: `/tmp/wright-build/<name>-<version>/log/`).
 
@@ -169,26 +198,24 @@ Build logs are stored in the build directory (default: `/tmp/wright-build/<name>
 Repository management tool for generating package indexes from built packages.
 
 ```
-wright-repo
+wright-repo <COMMAND>
 ```
 
-> **Note:** `wright-repo` is a placeholder in the current implementation. Repository index generation is planned for Phase 4 of development. See [design-spec.md](design-spec.md) for the full design.
+### Commands
 
-### Planned Commands
+#### `wright-repo generate [PATH]`
 
-```
-wright-repo generate <PACKAGES_DIR> --output <REPO_DIR>
-```
-
-Will scan a directory of `.wright.tar.zst` files, extract metadata, compute checksums, and generate an `index.toml` repository index.
-
----
-
-## Environment Variables
-
-wright respects the `RUST_LOG` environment variable for controlling log output via the `tracing` framework:
+Generate repository index from a hold tree.
 
 ```
-RUST_LOG=info wright-build /var/hold/extra/hello
-RUST_LOG=debug wright install hello-1.0.0-1-x86_64.wright.tar.zst
+wright-repo generate /var/hold --output /var/www/repo
 ```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `[PATH]` | Path to the hold tree (root containing core/base/extra). Defaults to `.`. |
+| `--output <DIR>` | Output directory for the index (default: `<PATH>/packages`). |
+
+Scans the hold tree for `package.toml` files and checks for corresponding binary packages in the output directory. It verifies the existence and integrity of packages before adding them to the index.

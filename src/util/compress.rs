@@ -47,7 +47,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         WrightError::ArchiveError(format!("failed to create {}: {}", output_path.display(), e))
     })?;
 
-    let encoder = zstd::Encoder::new(file, 19).map_err(|e| {
+    let encoder = zstd::Encoder::new(file, 3).map_err(|e| {
         WrightError::ArchiveError(format!("zstd encoder init failed: {}", e))
     })?;
 

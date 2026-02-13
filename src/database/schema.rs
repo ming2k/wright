@@ -58,6 +58,20 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
 
+    // Migrate: add install_scripts column if missing
+    let has_install_scripts = conn
+        .prepare("SELECT install_scripts FROM packages LIMIT 0")
+        .is_ok();
+    if !has_install_scripts {
+        conn.execute_batch("ALTER TABLE packages ADD COLUMN install_scripts TEXT")
+            .map_err(|e| {
+                WrightError::DatabaseError(format!(
+                    "failed to add install_scripts column: {}",
+                    e
+                ))
+            })?;
+    }
+
     // Enable foreign keys
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|e| WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e)))?;

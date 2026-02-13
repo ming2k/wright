@@ -13,7 +13,7 @@ use wright::package::archive;
 use wright::builder::Builder;
 
 #[derive(Parser)]
-#[command(name = "wright-build", about = "wright maritime construction tool")]
+#[command(name = "wright-build", about = "wright construction tool")]
 struct Cli {
     /// Paths to plan directories, part names, or @assemblies
     targets: Vec<String>,
@@ -33,6 +33,10 @@ struct Cli {
     /// Force rebuild even if part exists
     #[arg(long)]
     rebuild: bool,
+
+    /// Force overwrite existing archive (skip check disabled)
+    #[arg(long, short)]
+    force: bool,
 
     /// Update sha256 checksums in plan
     #[arg(long)]
@@ -263,15 +267,25 @@ fn build_one(builder: &Builder, manifest: &PackageManifest, manifest_path: &Path
         builder.clean(manifest).context("failed to clean workspace")?;
     }
 
-    info!("Manufacturing part {}...", manifest.package.name);
-    let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, cli.stage.clone())?;
-
     let output_dir = if config.general.components_dir.exists() || std::fs::create_dir_all(&config.general.components_dir).is_ok() {
         config.general.components_dir.clone()
     } else {
         std::env::current_dir()?
     };
+
+    // Skip if archive already exists (unless --force or --rebuild)
+    if !cli.force && !cli.rebuild {
+        let archive_name = manifest.archive_filename();
+        let existing = output_dir.join(&archive_name);
+        if existing.exists() {
+            info!("Skipping {} (archive already exists, use --force to rebuild)", manifest.package.name);
+            return Ok(());
+        }
+    }
+
+    info!("Manufacturing part {}...", manifest.package.name);
+    let plan_dir = manifest_path.parent().unwrap().to_path_buf();
+    let result = builder.build(manifest, &plan_dir, cli.stage.clone())?;
 
     let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
     info!("Part stored in the Components Hold: {}", archive_path.display());

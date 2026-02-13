@@ -1,6 +1,10 @@
 pub mod bwrap;
+pub mod native;
 
 use std::path::PathBuf;
+use std::process::ExitStatus;
+
+use crate::error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxLevel {
@@ -39,4 +43,9 @@ impl SandboxConfig {
             env: Vec::new(),
         }
     }
+}
+
+/// Run a command inside a sandbox using the native Linux namespace implementation.
+pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<ExitStatus> {
+    native::run_in_sandbox(config, command, args)
 }

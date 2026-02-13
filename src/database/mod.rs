@@ -1,6 +1,8 @@
 pub mod schema;
 
-use std::path::Path;
+use std::fs::File;
+use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
 
@@ -19,6 +21,7 @@ pub struct PackageInfo {
     pub installed_at: String,
     pub install_size: u64,
     pub pkg_hash: Option<String>,
+    pub install_scripts: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +36,28 @@ pub struct FileEntry {
 
 pub struct Database {
     conn: Connection,
+    _lock_file: Option<File>,
+    db_path: Option<PathBuf>,
+}
+
+fn acquire_lock(db_path: &Path) -> Result<File> {
+    let lock_path = db_path.with_extension("lock");
+    let file = File::create(&lock_path).map_err(|e| {
+        WrightError::DatabaseError(format!(
+            "failed to create lock file {}: {}",
+            lock_path.display(),
+            e
+        ))
+    })?;
+
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        return Err(WrightError::DatabaseError(
+            "database is locked by another process".to_string(),
+        ));
+    }
+
+    Ok(file)
 }
 
 impl Database {
@@ -46,19 +71,49 @@ impl Database {
                 ))
             })?;
         }
+
+        let lock_file = acquire_lock(path)?;
         let conn = Connection::open(path)?;
+
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(|e| WrightError::DatabaseError(format!("failed to enable WAL: {}", e)))?;
+
         schema::init_db(&conn)?;
-        Ok(Database { conn })
+
+        Ok(Database {
+            conn,
+            _lock_file: Some(lock_file),
+            db_path: Some(path.to_path_buf()),
+        })
     }
 
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         schema::init_db(&conn)?;
-        Ok(Database { conn })
+        Ok(Database {
+            conn,
+            _lock_file: None,
+            db_path: None,
+        })
     }
 
+}
+
+impl Drop for Database {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.db_path {
+            let _ = std::fs::remove_file(path.with_extension("lock"));
+        }
+    }
+}
+
+impl Database {
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
     }
 
     pub fn insert_package(
@@ -72,12 +127,13 @@ impl Database {
         url: Option<&str>,
         install_size: u64,
         pkg_hash: Option<&str>,
+        install_scripts: Option<&str>,
     ) -> Result<i64> {
         self.conn
             .execute(
-                "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![name, version, release, description, arch, license, url, install_size, pkg_hash],
+                "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts],
             )
             .map_err(|e| {
                 if let rusqlite::Error::SqliteFailure(ref err, _) = e {
@@ -88,6 +144,31 @@ impl Database {
                 WrightError::DatabaseError(format!("failed to insert package: {}", e))
             })?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_package(
+        &self,
+        name: &str,
+        version: &str,
+        release: u32,
+        description: &str,
+        arch: &str,
+        license: &str,
+        url: Option<&str>,
+        install_size: u64,
+        pkg_hash: Option<&str>,
+        install_scripts: Option<&str>,
+    ) -> Result<()> {
+        let rows = self.conn.execute(
+            "UPDATE packages SET version = ?1, release = ?2, description = ?3, arch = ?4, license = ?5, url = ?6, install_size = ?7, pkg_hash = ?8, install_scripts = ?9
+             WHERE name = ?10",
+            params![version, release, description, arch, license, url, install_size, pkg_hash, install_scripts, name],
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to update package: {}", e)))?;
+
+        if rows == 0 {
+            return Err(WrightError::PackageNotFound(name.to_string()));
+        }
+        Ok(())
     }
 
     pub fn remove_package(&self, name: &str) -> Result<()> {
@@ -103,7 +184,7 @@ impl Database {
 
     pub fn get_package(&self, name: &str) -> Result<Option<PackageInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash
+            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
              FROM packages WHERE name = ?1",
         )?;
 
@@ -120,6 +201,7 @@ impl Database {
                 installed_at: row.get::<_, String>(8)?,
                 install_size: row.get::<_, u64>(9)?,
                 pkg_hash: row.get(10)?,
+                install_scripts: row.get(11)?,
             })
         });
 
@@ -135,7 +217,7 @@ impl Database {
 
     pub fn list_packages(&self) -> Result<Vec<PackageInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash
+            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
              FROM packages ORDER BY name",
         )?;
 
@@ -153,6 +235,7 @@ impl Database {
                     installed_at: row.get::<_, String>(8)?,
                     install_size: row.get::<_, u64>(9)?,
                     pkg_hash: row.get(10)?,
+                    install_scripts: row.get(11)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -164,7 +247,7 @@ impl Database {
     pub fn search_packages(&self, keyword: &str) -> Result<Vec<PackageInfo>> {
         let pattern = format!("%{}%", keyword);
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash
+            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
              FROM packages WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY name",
         )?;
 
@@ -182,6 +265,7 @@ impl Database {
                     installed_at: row.get::<_, String>(8)?,
                     install_size: row.get::<_, u64>(9)?,
                     pkg_hash: row.get(10)?,
+                    install_scripts: row.get(11)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -216,6 +300,13 @@ impl Database {
         tx.commit()
             .map_err(|e| WrightError::DatabaseError(format!("failed to commit files: {}", e)))?;
         Ok(())
+    }
+
+    pub fn replace_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM files WHERE package_id = ?1", params![package_id])
+            .map_err(|e| WrightError::DatabaseError(format!("failed to delete old files: {}", e)))?;
+        self.insert_files(package_id, files)
     }
 
     pub fn get_files(&self, package_id: i64) -> Result<Vec<FileEntry>> {
@@ -271,6 +362,22 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    pub fn replace_dependencies(
+        &self,
+        package_id: i64,
+        deps: &[(String, Option<String>)],
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM dependencies WHERE package_id = ?1",
+                params![package_id],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old dependencies: {}", e))
+            })?;
+        self.insert_dependencies(package_id, deps)
     }
 
     pub fn check_dependency(&self, name: &str) -> Result<bool> {
@@ -351,7 +458,7 @@ mod tests {
     fn test_insert_and_get_package() {
         let db = test_db();
         let id = db
-            .insert_package("hello", "1.0.0", 1, "test pkg", "x86_64", "MIT", None, 1024, None)
+            .insert_package("hello", "1.0.0", 1, "test pkg", "x86_64", "MIT", None, 1024, None, None)
             .unwrap();
         assert!(id > 0);
 
@@ -360,14 +467,15 @@ mod tests {
         assert_eq!(pkg.version, "1.0.0");
         assert_eq!(pkg.release, 1);
         assert_eq!(pkg.install_size, 1024);
+        assert!(pkg.install_scripts.is_none());
     }
 
     #[test]
     fn test_list_packages() {
         let db = test_db();
-        db.insert_package("alpha", "1.0.0", 1, "a", "x86_64", "MIT", None, 0, None)
+        db.insert_package("alpha", "1.0.0", 1, "a", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
-        db.insert_package("beta", "2.0.0", 1, "b", "x86_64", "MIT", None, 0, None)
+        db.insert_package("beta", "2.0.0", 1, "b", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
         let pkgs = db.list_packages().unwrap();
         assert_eq!(pkgs.len(), 2);
@@ -378,7 +486,7 @@ mod tests {
     #[test]
     fn test_remove_package() {
         let db = test_db();
-        db.insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None)
+        db.insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
         db.remove_package("hello").unwrap();
         assert!(db.get_package("hello").unwrap().is_none());
@@ -388,7 +496,7 @@ mod tests {
     fn test_remove_cascades_files() {
         let db = test_db();
         let id = db
-            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None)
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
         db.insert_files(
             id,
@@ -411,7 +519,7 @@ mod tests {
     fn test_insert_and_get_files() {
         let db = test_db();
         let id = db
-            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None)
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
 
         let files = vec![
@@ -443,7 +551,7 @@ mod tests {
     fn test_find_owner() {
         let db = test_db();
         let id = db
-            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None)
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
         db.insert_files(
             id,
@@ -468,9 +576,9 @@ mod tests {
     #[test]
     fn test_search_packages() {
         let db = test_db();
-        db.insert_package("hello", "1.0.0", 1, "Hello World", "x86_64", "MIT", None, 0, None)
+        db.insert_package("hello", "1.0.0", 1, "Hello World", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
-        db.insert_package("nginx", "1.25.3", 1, "HTTP server", "x86_64", "BSD", None, 0, None)
+        db.insert_package("nginx", "1.25.3", 1, "HTTP server", "x86_64", "BSD", None, 0, None, None)
             .unwrap();
 
         let results = db.search_packages("hello").unwrap();
@@ -485,17 +593,17 @@ mod tests {
     #[test]
     fn test_duplicate_package() {
         let db = test_db();
-        db.insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None)
+        db.insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
             .unwrap();
         let result =
-            db.insert_package("hello", "2.0.0", 1, "test", "x86_64", "MIT", None, 0, None);
+            db.insert_package("hello", "2.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_check_dependency() {
         let db = test_db();
-        db.insert_package("openssl", "3.0.0", 1, "SSL lib", "x86_64", "Apache", None, 0, None)
+        db.insert_package("openssl", "3.0.0", 1, "SSL lib", "x86_64", "Apache", None, 0, None, None)
             .unwrap();
         assert!(db.check_dependency("openssl").unwrap());
         assert!(!db.check_dependency("nonexistent").unwrap());
@@ -509,5 +617,95 @@ mod tests {
             .unwrap();
         assert!(id > 0);
         db.update_transaction_status(id, "rolled_back").unwrap();
+    }
+
+    #[test]
+    fn test_update_package() {
+        let db = test_db();
+        db.insert_package("hello", "1.0.0", 1, "test pkg", "x86_64", "MIT", None, 1024, None, None)
+            .unwrap();
+
+        db.update_package("hello", "2.0.0", 1, "updated pkg", "x86_64", "MIT", None, 2048, None, Some("post_install() { echo hi; }"))
+            .unwrap();
+
+        let pkg = db.get_package("hello").unwrap().unwrap();
+        assert_eq!(pkg.version, "2.0.0");
+        assert_eq!(pkg.description, "updated pkg");
+        assert_eq!(pkg.install_size, 2048);
+        assert_eq!(pkg.install_scripts.as_deref(), Some("post_install() { echo hi; }"));
+    }
+
+    #[test]
+    fn test_replace_files() {
+        let db = test_db();
+        let id = db
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
+            .unwrap();
+
+        db.insert_files(id, &[FileEntry {
+            path: "/usr/bin/hello".to_string(),
+            file_hash: Some("abc".to_string()),
+            file_type: "file".to_string(),
+            file_mode: Some(0o755),
+            file_size: Some(1024),
+            is_config: false,
+        }]).unwrap();
+
+        db.replace_files(id, &[FileEntry {
+            path: "/usr/bin/hello2".to_string(),
+            file_hash: Some("def".to_string()),
+            file_type: "file".to_string(),
+            file_mode: Some(0o755),
+            file_size: Some(2048),
+            is_config: false,
+        }]).unwrap();
+
+        let files = db.get_files(id).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "/usr/bin/hello2");
+    }
+
+    #[test]
+    fn test_replace_dependencies() {
+        let db = test_db();
+        let id = db
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, None)
+            .unwrap();
+
+        db.insert_dependencies(id, &[("openssl".to_string(), Some(">= 3.0".to_string()))]).unwrap();
+        db.replace_dependencies(id, &[("zlib".to_string(), None)]).unwrap();
+
+        let deps = db.get_dependencies(id).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].0, "zlib");
+    }
+
+    #[test]
+    fn test_install_scripts_field() {
+        let db = test_db();
+        let id = db
+            .insert_package("hello", "1.0.0", 1, "test", "x86_64", "MIT", None, 0, None, Some("post_install() { echo done; }"))
+            .unwrap();
+
+        let pkg = db.get_package("hello").unwrap().unwrap();
+        assert_eq!(pkg.install_scripts.as_deref(), Some("post_install() { echo done; }"));
+
+        let _ = id;
+    }
+
+    #[test]
+    fn test_database_lock_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let _db1 = Database::open(&db_path).unwrap();
+        let result = Database::open(&db_path);
+        match result {
+            Err(ref e) => {
+                let err_msg = format!("{}", e);
+                assert!(err_msg.contains("locked"), "Expected lock error, got: {}", err_msg);
+            }
+            Ok(_) => panic!("Expected lock error, but open succeeded"),
+        }
     }
 }

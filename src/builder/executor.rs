@@ -151,6 +151,24 @@ pub fn execute_script(
         config.env.push((key.clone(), value.clone()));
     }
 
+    // Pass through standard build environment variables from the host.
+    // This is important for bootstrap/stage1 environments where paths
+    // like C_INCLUDE_PATH or LIBRARY_PATH are set to non-standard locations.
+    for key in [
+        "CC", "CXX", "AR", "AS", "LD", "NM", "RANLIB", "STRIP", "OBJCOPY", "OBJDUMP",
+        "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
+        "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH",
+        "PKG_CONFIG_PATH", "PKG_CONFIG_SYSROOT_DIR",
+        "MAKEFLAGS", "JOBS",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            // Don't override if already set by the package manifest.
+            if !config.env.iter().any(|(k, _)| k == key) {
+                config.env.push((key.to_string(), value));
+            }
+        }
+    }
+
     // Build arguments for the command
     let mut args = executor.args.clone();
     if executor.delivery == "tempfile" {
@@ -164,7 +182,7 @@ pub fn execute_script(
     }
 
     // Execute in sandbox
-    let status = sandbox::bwrap::run_in_sandbox(&config, &executor.command, &args)?;
+    let status = sandbox::run_in_sandbox(&config, &executor.command, &args)?;
 
     let exit_code = status.code().unwrap_or(-1);
 

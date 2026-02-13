@@ -41,8 +41,17 @@ pub enum WrightError {
     #[error("package already installed: {0}")]
     PackageAlreadyInstalled(String),
 
+    #[error("upgrade error: {0}")]
+    UpgradeError(String),
+
+    #[error("script error: {0}")]
+    ScriptError(String),
+
     #[error("validation error: {0}")]
     ValidationError(String),
+
+    #[error("sandbox error: {0}")]
+    SandboxError(String),
 
     #[error("network error: {0}")]
     NetworkError(String),
