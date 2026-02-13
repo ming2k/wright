@@ -62,6 +62,8 @@ wright remove hello
 See the [docs/](docs/) directory for detailed documentation:
 
 - [Getting Started](docs/getting-started.md) — prerequisites, building, first package
+- [Usage Guide](docs/usage.md) — full workflow: install Rust, compile Wright, write plans, build & install packages
+- [Writing Plans](docs/writing-plans.md) — complete `package.toml` reference for plan authors
 - [CLI Reference](docs/cli-reference.md) — complete command reference for all binaries
 - [Configuration](docs/configuration.md) — wright.toml, repos.toml, executor definitions
 - [Package Format](docs/package-format.md) — writing package.toml files

@@ -7,6 +7,7 @@ Cargo.lock
 .vscode/
 *.swp
 *.swo
+.#*
 
 # Wright specific
 .wright/
