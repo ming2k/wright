@@ -97,7 +97,7 @@ impl Builder {
         self.verify(manifest)?;
 
         // Extract sources
-        self.extract(manifest, &src_dir)?;
+        let build_src_dir = self.extract(manifest, &src_dir)?;
 
         // Determine patches directory (must be canonical absolute path for scripts running in src_dir)
         let hold_dir_abs = std::fs::canonicalize(hold_dir)
@@ -111,7 +111,7 @@ impl Builder {
 
         let nproc = self.config.effective_jobs();
 
-        let vars = variables::standard_variables(
+        let mut vars = variables::standard_variables(
             &manifest.package.name,
             &manifest.package.version,
             manifest.package.release,
@@ -123,6 +123,7 @@ impl Builder {
             &self.config.build.cflags,
             &self.config.build.cxxflags,
         );
+        vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
 
         let pipeline = lifecycle::LifecyclePipeline::new(
             manifest,
@@ -192,8 +193,9 @@ impl Builder {
         Ok(())
     }
 
-    /// Extract downloaded sources to the build directory
-    pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path) -> Result<()> {
+    /// Extract downloaded sources to the build directory.
+    /// Returns the path to the top-level source directory (for BUILD_DIR).
+    pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
         for url in &manifest.sources.urls {
@@ -207,30 +209,23 @@ impl Builder {
             compress::extract_archive(&path, dest_dir)?;
         }
 
-        // Post-extraction: Repeatedly flatten single-directory nesting.
-        // Handles tarballs like runit that extract as admin/runit-2.1.2/src/...
-        loop {
-            let entries: Vec<_> = std::fs::read_dir(dest_dir).map_err(|e| WrightError::IoError(e))?
-                .filter_map(|e| e.ok())
-                .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-                .collect();
+        // Detect the top-level source directory for BUILD_DIR.
+        // If the archive extracted a single directory, point BUILD_DIR there.
+        // Otherwise, BUILD_DIR is the extraction root itself.
+        let entries: Vec<_> = std::fs::read_dir(dest_dir).map_err(|e| WrightError::IoError(e))?
+            .filter_map(|e| e.ok())
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .collect();
 
-            if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                let sub_dir = entries[0].path();
-                info!("Flattening source directory: {}", sub_dir.display());
+        let build_dir = if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let dir = entries[0].path();
+            info!("Source directory: {}", dir.display());
+            dir
+        } else {
+            dest_dir.to_path_buf()
+        };
 
-                for sub_entry in std::fs::read_dir(&sub_dir).map_err(|e| WrightError::IoError(e))? {
-                    let sub_entry = sub_entry.map_err(|e| WrightError::IoError(e))?;
-                    let target = dest_dir.join(sub_entry.file_name());
-                    std::fs::rename(sub_entry.path(), target).map_err(|e| WrightError::IoError(e))?;
-                }
-                let _ = std::fs::remove_dir(sub_dir);
-            } else {
-                break;
-            }
-        }
-
-        Ok(())
+        Ok(build_dir)
     }
 
     /// Update sha256 checksums in package.toml

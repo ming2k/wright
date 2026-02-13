@@ -168,19 +168,19 @@ sha256 = ["9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"]
 
 [lifecycle.configure]
 script = """
-cd zlib-${PKG_VERSION}
+cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
 [lifecycle.build]
 script = """
-cd zlib-${PKG_VERSION}
+cd ${BUILD_DIR}
 make -j${NPROC}
 """
 
 [lifecycle.package]
 script = """
-cd zlib-${PKG_VERSION}
+cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 ```

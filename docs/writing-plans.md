@@ -103,6 +103,7 @@ Each lifecycle stage is a TOML table under `lifecycle`:
 executor = "shell"
 sandbox = "strict"
 script = """
+cd ${BUILD_DIR}
 make -j${NPROC}
 """
 ```
@@ -213,7 +214,8 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URLs. 
 | `${PKG_VERSION}`| Package version from `[package].version`   |
 | `${PKG_RELEASE}`| Release number as a string                 |
 | `${PKG_ARCH}`   | Target architecture                        |
-| `${SRC_DIR}`    | Source/working directory                   |
+| `${SRC_DIR}`    | Extraction root directory                  |
+| `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
 | `${PKG_DIR}`    | Package output directory (install files here) |
 | `${PATCHES_DIR}`| Directory containing patch files           |
 | `${NPROC}`      | Number of available CPUs                   |
@@ -223,11 +225,14 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URLs. 
 
 When running inside a sandbox, path variables are remapped to sandbox mount points:
 
-| Variable        | Host value             | Sandbox value |
-|-----------------|------------------------|---------------|
-| `${SRC_DIR}`    | actual host path       | `/build`      |
-| `${PKG_DIR}`    | actual host path       | `/output`     |
-| `${PATCHES_DIR}`| actual host path       | `/patches`    |
+| Variable        | Host value             | Sandbox value          |
+|-----------------|------------------------|------------------------|
+| `${SRC_DIR}`    | actual host path       | `/build`               |
+| `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
+| `${PKG_DIR}`    | actual host path       | `/output`              |
+| `${PATCHES_DIR}`| actual host path       | `/patches`             |
+
+`${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
@@ -384,7 +389,7 @@ ccache = true
 
 [lifecycle.prepare]
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 for p in ${PATCHES_DIR}/*.patch; do
     [ -f "$p" ] && patch -p1 < "$p"
 done
@@ -393,26 +398,26 @@ done
 [lifecycle.configure]
 env = { CFLAGS = "-O2 -pipe" }
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
 [lifecycle.build]
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make -j${NPROC}
 """
 
 [lifecycle.check]
 optional = true
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make test
 """
 
 [lifecycle.package]
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 

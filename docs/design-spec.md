@@ -328,7 +328,7 @@ ccache = true           # Enable ccache if available (default: true)
 executor = "shell"
 sandbox = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 for p in ${PATCHES_DIR}/*.patch; do
     [ -f "$p" ] && patch -p1 < "$p"
 done
@@ -339,7 +339,7 @@ executor = "shell"
 sandbox = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 ./configure \
     --prefix=/usr \
     --sysconfdir=/etc/nginx \
@@ -353,7 +353,7 @@ executor = "shell"
 sandbox = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make
 """
 
@@ -362,7 +362,7 @@ executor = "shell"
 sandbox = "strict"
 optional = true
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make test
 """
 
@@ -370,7 +370,7 @@ make test
 executor = "shell"
 sandbox = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 # Install configuration files
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf

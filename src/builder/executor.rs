@@ -117,6 +117,14 @@ pub fn execute_script(
     // When running in a sandbox, remap path variables to sandbox mount points
     let effective_vars = if options.level != SandboxLevel::None {
         let mut v = vars.clone();
+        // Remap BUILD_DIR: replace the host SRC_DIR prefix with /build
+        if let (Some(host_build_dir), Some(host_src_dir)) = (vars.get("BUILD_DIR"), vars.get("SRC_DIR")) {
+            if let Some(suffix) = host_build_dir.strip_prefix(host_src_dir.as_str()) {
+                v.insert("BUILD_DIR".to_string(), format!("/build{}", suffix));
+            } else {
+                v.insert("BUILD_DIR".to_string(), "/build".to_string());
+            }
+        }
         v.insert("SRC_DIR".to_string(), "/build".to_string());
         v.insert("PKG_DIR".to_string(), "/output".to_string());
         if options.patches_dir.is_some() {

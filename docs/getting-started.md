@@ -141,5 +141,7 @@ wright remove hello
 ## Next Steps
 
 - [CLI Reference](cli-reference.md) — all commands and flags
-- [Package Format](package-format.md) — full package.toml specification
+- [Writing Plans](writing-plans.md) — complete package.toml reference
+- [Usage Guide](usage.md) — full workflow from install to package management
+- [Package Format](package-format.md) — package archive format
 - [Configuration](configuration.md) — customize wright's behavior

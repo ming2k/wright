@@ -98,7 +98,7 @@ sandbox = "strict"              # Sandbox level (default: "strict")
 optional = false                # Whether failure is non-fatal (default: false)
 env = { MAKEFLAGS = "-j${NPROC}" }  # Extra environment variables
 script = """
-cd nginx-${PKG_VERSION}
+cd ${BUILD_DIR}
 make
 """
 ```
