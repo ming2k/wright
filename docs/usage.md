@@ -233,6 +233,25 @@ This runs the full lifecycle pipeline:
 
 The output is a `.wright.tar.zst` archive placed in the components directory.
 
+### Build logs
+
+Each lifecycle stage writes a log file capturing the full stdout and stderr of the stage command. Logs are stored under the per-package build directory:
+
+```
+<build_dir>/<name>-<version>/log/<stage>.log
+```
+
+With the default `build_dir` of `/tmp/wright-build`, building `hello-1.0.0` produces:
+
+```
+/tmp/wright-build/hello-1.0.0/log/prepare.log
+/tmp/wright-build/hello-1.0.0/log/build.log
+/tmp/wright-build/hello-1.0.0/log/package.log
+...
+```
+
+Output is printed to the terminal in real time and simultaneously captured to these files, so you can review a failed stage without scrolling through terminal history.
+
 ### Build options
 
 ```

@@ -154,9 +154,12 @@ pub fn execute_script(
         config.env.push((key.clone(), expanded_value));
     }
 
-    // Expose build variables (use sandbox paths when sandboxed)
+    // Expose build variables (use sandbox paths when sandboxed).
+    // Don't override variables already set by the stage env above.
     for (key, value) in &effective_vars {
-        config.env.push((key.clone(), value.clone()));
+        if !config.env.iter().any(|(k, _)| k == key) {
+            config.env.push((key.clone(), value.clone()));
+        }
     }
 
     // Pass through standard build environment variables from the host.
@@ -190,13 +193,13 @@ pub fn execute_script(
     }
 
     // Execute in sandbox
-    let status = sandbox::run_in_sandbox(&config, &executor.command, &args)?;
+    let output = sandbox::run_in_sandbox(&config, &executor.command, &args)?;
 
-    let exit_code = status.code().unwrap_or(-1);
+    let exit_code = output.status.code().unwrap_or(-1);
 
     Ok(ExecutionResult {
-        stdout: "(stdout captured in build log)".to_string(),
-        stderr: "(stderr captured in build log)".to_string(),
+        stdout: output.stdout,
+        stderr: output.stderr,
         exit_code,
     })
 }

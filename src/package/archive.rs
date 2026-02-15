@@ -22,12 +22,31 @@ pub struct PkgInfo {
     pub backup_files: Vec<String>,
 }
 
+/// Files that should never be included in a package.
+/// These are shared/generated files that cause conflicts between packages.
+const PACKAGE_EXCLUDE_FILES: &[&str] = &[
+    "usr/share/info/dir",
+];
+
+/// Remove well-known files that should never be packaged.
+fn purge_excluded_files(pkg_dir: &Path) {
+    for rel in PACKAGE_EXCLUDE_FILES {
+        let path = pkg_dir.join(rel);
+        if path.exists() {
+            tracing::debug!("Removing excluded file from package: {}", rel);
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Create a .wright.tar.zst binary package archive.
 pub fn create_archive(
     pkg_dir: &Path,
     manifest: &PackageManifest,
     output_path: &Path,
 ) -> Result<PathBuf> {
+    purge_excluded_files(pkg_dir);
+
     // Calculate install size
     let install_size = calculate_dir_size(pkg_dir)?;
 

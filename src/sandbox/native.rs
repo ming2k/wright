@@ -1,7 +1,7 @@
 use std::ffi::CString;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
+use std::process::{ExitStatus, Stdio};
 
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
@@ -9,7 +9,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
 use tracing::{debug, info};
 
-use super::{SandboxConfig, SandboxLevel};
+use super::{SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
 use crate::error::{Result, WrightError};
 
 /// Run a command inside a native Linux namespace sandbox.
@@ -36,18 +36,31 @@ pub fn run_in_sandbox(
     config: &SandboxConfig,
     command: &str,
     args: &[String],
-) -> Result<ExitStatus> {
+) -> Result<SandboxOutput> {
     if config.level == SandboxLevel::None {
         info!("Sandbox disabled, running command directly");
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
-        return cmd
-            .status()
-            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")));
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+        let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
+        let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+        let status = child.wait()
+            .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+        return Ok(SandboxOutput {
+            status,
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        });
     }
 
     let real_uid = nix::unistd::getuid();
@@ -89,12 +102,25 @@ pub fn run_in_sandbox(
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
-        return cmd
-            .status()
-            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")));
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+        let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
+        let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+        let status = child.wait()
+            .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+        return Ok(SandboxOutput {
+            status,
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        });
     }
 
     // Error pipe: child/grandchild write error messages, parent reads.
@@ -102,9 +128,19 @@ pub fn run_in_sandbox(
         nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
     let err_write_fd = err_write.as_raw_fd();
 
+    // Stdout/stderr pipes: grandchild writes, parent reads + tees.
+    let (out_read, out_write) =
+        nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
+    let out_write_fd = out_write.as_raw_fd();
+    let (eout_read, eout_write) =
+        nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
+    let eout_write_fd = eout_write.as_raw_fd();
+
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
             drop(err_read);
+            drop(out_read);
+            drop(eout_read);
 
             let die = |msg: String| -> ! {
                 let bytes = msg.as_bytes();
@@ -416,6 +452,17 @@ pub fn run_in_sandbox(
                         }
                     }
 
+                    // Redirect stdout/stderr to pipes for capture.
+                    unsafe {
+                        libc::dup2(out_write_fd, 1);
+                        libc::dup2(eout_write_fd, 2);
+                    }
+                    // Close all pipe fds (originals no longer needed after dup2).
+                    std::mem::forget(out_write);
+                    let _ = nix::unistd::close(out_write_fd);
+                    std::mem::forget(eout_write);
+                    let _ = nix::unistd::close(eout_write_fd);
+
                     // Close error pipe before exec.
                     std::mem::forget(err_write);
                     let _ = nix::unistd::close(err_write_fd);
@@ -430,6 +477,11 @@ pub fn run_in_sandbox(
                 }
                 Ok(ForkResult::Parent { child: grandchild }) => {
                     // Intermediate child: wait for grandchild, propagate exit.
+                    // Close all pipe fds — we don't use them here.
+                    std::mem::forget(out_write);
+                    let _ = nix::unistd::close(out_write_fd);
+                    std::mem::forget(eout_write);
+                    let _ = nix::unistd::close(eout_write_fd);
                     std::mem::forget(err_write);
                     let _ = nix::unistd::close(err_write_fd);
 
@@ -445,6 +497,8 @@ pub fn run_in_sandbox(
         }
         Ok(ForkResult::Parent { child }) => {
             drop(err_write);
+            drop(out_write);
+            drop(eout_write);
 
             let mut err_buf = vec![0u8; 4096];
             let n = nix::unistd::read(err_read.as_raw_fd(), &mut err_buf).unwrap_or(0);
@@ -458,9 +512,26 @@ pub fn run_in_sandbox(
                 )));
             }
 
+            // Spawn tee readers to capture + echo stdout/stderr in real time.
+            let out_file = unsafe { std::fs::File::from_raw_fd(out_read.as_raw_fd()) };
+            std::mem::forget(out_read); // Ownership transferred to File
+            let err_file = unsafe { std::fs::File::from_raw_fd(eout_read.as_raw_fd()) };
+            std::mem::forget(eout_read);
+
+            let stdout_handle = spawn_tee_reader(out_file, std::io::stdout());
+            let stderr_handle = spawn_tee_reader(err_file, std::io::stderr());
+
             let status = wait_for_child(child)?;
+
+            let stdout_bytes = stdout_handle.join().unwrap_or_default();
+            let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
             debug!("Sandbox child exited with: {:?}", status);
-            Ok(status)
+            Ok(SandboxOutput {
+                status,
+                stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+                stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+            })
         }
         Err(e) => Err(WrightError::SandboxError(format!("fork: {e}"))),
     }

@@ -1,10 +1,45 @@
 pub mod bwrap;
 pub mod native;
 
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use crate::error::Result;
+
+/// Captured output from a sandboxed command execution.
+pub struct SandboxOutput {
+    pub status: ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Spawn a thread that reads from `source` in 8 KB chunks, echoes each chunk
+/// to `echo_to` (for real-time terminal output), and accumulates the bytes.
+/// Returns the accumulated output when EOF is reached.
+pub fn spawn_tee_reader<R: Read + Send + 'static>(
+    source: R,
+    mut echo_to: impl Write + Send + 'static,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut accumulated = Vec::new();
+        let mut source = source;
+        loop {
+            match source.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = echo_to.write_all(&buf[..n]);
+                    let _ = echo_to.flush();
+                    accumulated.extend_from_slice(&buf[..n]);
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        accumulated
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxLevel {
@@ -46,6 +81,6 @@ impl SandboxConfig {
 }
 
 /// Run a command inside a sandbox using the native Linux namespace implementation.
-pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<ExitStatus> {
+pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<SandboxOutput> {
     native::run_in_sandbox(config, command, args)
 }

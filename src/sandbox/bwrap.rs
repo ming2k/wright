@@ -1,19 +1,31 @@
-use std::process::{Command, ExitStatus};
+use std::process::{Command, Stdio};
 use tracing::{debug, info};
 
 use crate::error::{WrightError, Result};
-use super::{SandboxConfig, SandboxLevel};
+use super::{SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
 
-pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<ExitStatus> {
+pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<SandboxOutput> {
     if config.level == SandboxLevel::None {
         info!("Sandbox disabled, running command directly");
         let mut cmd = Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
-        return cmd.status().map_err(|e| WrightError::BuildError(format!("failed to execute command: {}", e)));
+        let mut child = cmd.spawn().map_err(|e| WrightError::BuildError(format!("failed to execute command: {}", e)))?;
+        let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
+        let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+        let status = child.wait().map_err(|e| WrightError::BuildError(format!("failed to wait for command: {}", e)))?;
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+        return Ok(SandboxOutput {
+            status,
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+        });
     }
 
     let mut bwrap = Command::new("bwrap");
@@ -91,11 +103,28 @@ pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) ->
     bwrap.arg("--").arg(command);
     bwrap.args(args);
 
+    bwrap.stdout(Stdio::piped());
+    bwrap.stderr(Stdio::piped());
+
     debug!("Bwrap command: {:?}", bwrap);
 
-    let status = bwrap.status().map_err(|e| {
+    let mut child = bwrap.spawn().map_err(|e| {
         WrightError::BuildError(format!("failed to launch bubblewrap: {}", e))
     })?;
 
-    Ok(status)
+    let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
+    let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+
+    let status = child.wait().map_err(|e| {
+        WrightError::BuildError(format!("failed to wait for bubblewrap: {}", e))
+    })?;
+
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
+    Ok(SandboxOutput {
+        status,
+        stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
+    })
 }
