@@ -75,7 +75,11 @@ patches = [
 |-------|------|-------------|
 | `urls` | string[] | Source archive URLs (supports `${PKG_VERSION}` substitution) |
 | `sha256` | string[] | SHA-256 checksums, one per URL (must match count; use `"SKIP"` to skip verification) |
-| `patches` | string[] | Patch files relative to the hold directory |
+| `patches` | string[] | Patch files (local paths relative to the hold directory, or `http://`/`https://` URLs). Auto-applied with `patch -Np1` after extraction, in listed order. Supports `${PKG_VERSION}` substitution. |
+
+Patches listed in `patches` are automatically downloaded (if URLs) and applied with `patch -Np1` to the source directory after extraction. This happens before any lifecycle stages run, so there is no need to manually apply them in `prepare`.
+
+For patches that need special handling (e.g. `-p0` strip level, conditional application), do **not** list them in `patches`. Instead, download and apply them manually in a lifecycle stage. The `${PATCHES_DIR}` variable still points to the consolidated patches directory for reference.
 
 ### `[options]` — build options
 
@@ -114,10 +118,10 @@ make
 ### Default pipeline order
 
 ```
-fetch → verify → extract → prepare → configure → build → check → package → post_package
+fetch → verify → extract → patch → prepare → configure → build → check → package → post_package
 ```
 
-- **fetch**, **verify**, **extract** are handled automatically by the build tool
+- **fetch**, **verify**, **extract**, **patch** are handled automatically by the build tool
 - Stages without a defined script are skipped
 - Each stage supports **pre/post hooks** (e.g., `pre_build`, `post_build`)
 

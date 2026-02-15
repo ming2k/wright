@@ -296,7 +296,8 @@ sha256 = [
     "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
 ]
 
-# Local patch files (relative to the package.toml directory)
+# Patch files — local paths (relative to package.toml directory) or http(s) URLs.
+# Patches are auto-applied with `patch -Np1` after extraction, in listed order.
 patches = [
     "patches/fix-headers.patch",
     "patches/add-feature.patch",
@@ -321,18 +322,9 @@ ccache = true           # Enable ccache if available (default: true)
 #   env = { KEY = "VALUE" }      # Additional environment variables
 #   script = """..."""           # Execution content
 #
-# Note: fetch / verify / extract stages are handled automatically by the build tool.
+# Note: fetch / verify / extract / patch stages are handled automatically by the build tool.
+# Patches listed in [sources].patches are auto-applied after extraction with `patch -Np1`.
 # They typically do not need manual definition unless special behavior is required.
-
-[lifecycle.prepare]
-executor = "shell"
-sandbox = "strict"
-script = """
-cd ${BUILD_DIR}
-for p in ${PATCHES_DIR}/*.patch; do
-    [ -f "$p" ] && patch -p1 < "$p"
-done
-"""
 
 [lifecycle.configure]
 executor = "shell"
@@ -607,7 +599,7 @@ bwrap \
 ### 7.1 Default Pipeline
 
 ```
-fetch → verify → extract → prepare → configure → build → check → package → post_package
+fetch → verify → extract → patch → prepare → configure → build → check → package → post_package
 ```
 
 ### 7.2 Stage Descriptions
@@ -617,7 +609,8 @@ fetch → verify → extract → prepare → configure → build → check → p
 | `fetch` | Build tool | No | Download source code and patches |
 | `verify` | Build tool | No | SHA-256 checksum verification |
 | `extract` | Build tool | No | Extract source archive to SRC_DIR |
-| `prepare` | User script | Yes | Apply patches, preprocessing |
+| `patch` | Build tool | No | Auto-apply patches from `[sources].patches` with `patch -Np1` |
+| `prepare` | User script | Yes | Pre-build setup |
 | `configure` | User script | Yes | ./configure and similar configuration steps |
 | `build` | User script | Yes | Compilation (make, etc.) |
 | `check` | User script | Yes | Run tests (optional stage) |

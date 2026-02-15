@@ -40,16 +40,6 @@ static = false
 debug = false
 ccache = true
 
-[lifecycle.prepare]
-executor = "shell"
-sandbox = "strict"
-script = """
-cd nginx-${PKG_VERSION}
-for p in ${PATCHES_DIR}/*.patch; do
-    [ -f "$p" ] && patch -p1 < "$p"
-done
-"""
-
 [lifecycle.configure]
 executor = "shell"
 sandbox = "strict"

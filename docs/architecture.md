@@ -93,6 +93,18 @@ PackageManifest::from_file()       Parse and validate TOML
 Builder::build()                   Create build directories (src/, pkg/, log/)
     │
     ▼
+Builder::fetch() + verify()        Download and verify source archives
+    │
+    ▼
+Builder::extract()                 Extract archives, detect BUILD_DIR
+    │
+    ▼
+Builder::fetch_patches()           Download/copy patches into patches_dir
+    │
+    ▼
+Builder::apply_patches()           Apply all patches with patch -Np1
+    │
+    ▼
 variables::standard_variables()    Prepare ${PKG_NAME}, ${SRC_DIR}, etc.
     │
     ▼

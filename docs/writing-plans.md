@@ -77,9 +77,9 @@ optional = [
 |-----------|-----------------|---------|------------------------------------------|
 | `urls`    | list of strings | `[]`    | Source archive URLs                      |
 | `sha256`  | list of strings | `[]`    | SHA-256 checksums (one per URL, in order) |
-| `patches` | list of strings | `[]`    | Patch files relative to the plan directory |
+| `patches` | list of strings | `[]`    | Patch files — local paths relative to the plan directory, or `http://`/`https://` URLs |
 
-URLs support variable substitution (see [Variable Substitution](#variable-substitution)):
+URLs and patches support variable substitution (see [Variable Substitution](#variable-substitution)):
 
 ```toml
 urls = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
@@ -90,6 +90,36 @@ Use `"SKIP"` as a sha256 entry to skip verification for a specific source:
 ```toml
 urls = ["https://example.com/snapshot.tar.gz"]
 sha256 = ["SKIP"]
+```
+
+Patches are automatically downloaded (if URLs) and applied with `patch -Np1` after source extraction, in the order listed. Both local files and remote URLs can be mixed:
+
+```toml
+patches = [
+    "patches/fix-headers.patch",
+    "https://example.com/upstream-fix-${PKG_VERSION}.patch",
+]
+```
+
+Since patches are auto-applied, you do **not** need to apply them manually in `prepare`. The old pattern of looping over `${PATCHES_DIR}/*.patch` in a `prepare` script is no longer necessary.
+
+#### Manual patching
+
+For patches that require special handling (e.g. a different strip level like `-p0`, conditional application, or non-standard format), do **not** list them in `patches`. Instead, handle them in a lifecycle stage:
+
+```toml
+[sources]
+urls = ["https://example.com/foo-${PKG_VERSION}.tar.gz"]
+sha256 = ["abc123..."]
+# Only standard -p1 patches go here:
+patches = ["patches/normal-fix.patch"]
+
+[lifecycle.prepare]
+script = """
+cd ${BUILD_DIR}
+# This patch needs -p0, so it is applied manually instead of via [sources].patches:
+patch -Np0 -i ${PATCHES_DIR}/../special-fix.patch
+"""
 ```
 
 ### `[options]`
@@ -177,14 +207,15 @@ The default pipeline runs these stages in order:
 | `fetch`        | built-in | Download source archives                 |
 | `verify`       | built-in | Verify SHA-256 checksums                 |
 | `extract`      | built-in | Extract source archives                  |
-| `prepare`      | user     | Apply patches, pre-build setup           |
+| `patch`        | built-in | Download/copy and apply patches from `[sources].patches` |
+| `prepare`      | user     | Pre-build setup                          |
 | `configure`    | user     | Run configure scripts                    |
 | `build`        | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
 | `package`      | user     | Install files into `${PKG_DIR}`          |
 | `post_package` | user     | Post-packaging steps                     |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `package.toml` — undefined stages are silently skipped.
+Built-in stages (`fetch`, `verify`, `extract`, `patch`) are handled by the build tool automatically. User stages are only run if defined in `package.toml` — undefined stages are silently skipped.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -392,14 +423,6 @@ strip = true
 static = false
 debug = false
 ccache = true
-
-[lifecycle.prepare]
-script = """
-cd ${BUILD_DIR}
-for p in ${PATCHES_DIR}/*.patch; do
-    [ -f "$p" ] && patch -p1 < "$p"
-done
-"""
 
 [lifecycle.configure]
 env = { CFLAGS = "-O2 -pipe" }

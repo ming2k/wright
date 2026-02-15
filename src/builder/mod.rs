@@ -3,6 +3,7 @@ pub mod executor;
 pub mod variables;
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use tracing::{info, warn};
 
@@ -98,15 +99,12 @@ impl Builder {
         // Extract sources
         let build_src_dir = self.extract(manifest, &src_dir)?;
 
-        // Determine patches directory (must be canonical absolute path for scripts running in src_dir)
-        let hold_dir_abs = std::fs::canonicalize(hold_dir)
-            .map_err(|e| WrightError::BuildError(format!("failed to resolve plan dir {}: {}", hold_dir.display(), e)))?;
-        let patches_dir = hold_dir_abs.join("patches");
-        let patches_dir_str = if patches_dir.exists() {
-            patches_dir.to_string_lossy().to_string()
-        } else {
-            src_dir.join("patches").to_string_lossy().to_string()
-        };
+        // Fetch and apply patches
+        let patches_dir = build_root.join("patches");
+        self.fetch_patches(manifest, hold_dir, &patches_dir)?;
+        self.apply_patches(&patches_dir, &build_src_dir)?;
+
+        let patches_dir_str = patches_dir.to_string_lossy().to_string();
 
         let nproc = self.config.effective_jobs();
 
@@ -131,7 +129,7 @@ impl Builder {
             &log_dir,
             src_dir.clone(),
             pkg_dir.clone(),
-            if patches_dir.exists() { Some(patches_dir) } else { None },
+            if patches_dir.exists() { Some(patches_dir.clone()) } else { None },
             stop_after,
             &self.executors,
         );
@@ -293,6 +291,181 @@ impl Builder {
         };
 
         std::fs::write(manifest_path, new_content).map_err(|e| WrightError::IoError(e))?;
+
+        Ok(())
+    }
+
+    /// Fetch patches listed in the manifest into a consolidated patches directory.
+    ///
+    /// URL patches (http/https) are downloaded to the source cache and then copied.
+    /// Local patches (relative paths) are resolved against `hold_dir`.
+    /// All patches are placed in `patches_dir` with numeric prefixes to preserve
+    /// manifest ordering.
+    fn fetch_patches(
+        &self,
+        manifest: &PackageManifest,
+        hold_dir: &Path,
+        patches_dir: &Path,
+    ) -> Result<()> {
+        if manifest.sources.patches.is_empty() {
+            return Ok(());
+        }
+
+        std::fs::create_dir_all(patches_dir).map_err(|e| {
+            WrightError::BuildError(format!(
+                "failed to create patches directory {}: {}",
+                patches_dir.display(),
+                e
+            ))
+        })?;
+
+        let hold_dir_abs = std::fs::canonicalize(hold_dir).map_err(|e| {
+            WrightError::BuildError(format!(
+                "failed to resolve hold dir {}: {}",
+                hold_dir.display(),
+                e
+            ))
+        })?;
+
+        let cache_dir = self.config.general.cache_dir.join("sources");
+        std::fs::create_dir_all(&cache_dir).map_err(|e| WrightError::IoError(e))?;
+
+        for (i, raw_patch) in manifest.sources.patches.iter().enumerate() {
+            let patch_url = self.process_url(raw_patch, manifest);
+
+            let source_path = if patch_url.starts_with("http://") || patch_url.starts_with("https://") {
+                // Download URL patch to cache
+                let filename = sanitize_cache_filename(
+                    patch_url.split('/').last().unwrap_or("patch"),
+                );
+                let cached = cache_dir.join(&filename);
+
+                if !cached.exists() {
+                    info!("Fetching patch {}...", patch_url);
+                    download::download_file(
+                        &patch_url,
+                        &cached,
+                        self.config.network.download_timeout,
+                    )?;
+                } else {
+                    info!("Patch {} already cached", filename);
+                }
+                cached
+            } else {
+                // Local patch – resolve relative to hold_dir
+                let local = hold_dir_abs.join(&patch_url);
+                if !local.exists() {
+                    return Err(WrightError::BuildError(format!(
+                        "local patch not found: {} (resolved to {})",
+                        patch_url,
+                        local.display()
+                    )));
+                }
+                local
+            };
+
+            // Copy into consolidated patches dir with ordering prefix
+            let original_name = source_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let dest_name = format!("{:04}-{}", i, original_name);
+            let dest = patches_dir.join(&dest_name);
+            std::fs::copy(&source_path, &dest).map_err(|e| {
+                WrightError::BuildError(format!(
+                    "failed to copy patch {} to {}: {}",
+                    source_path.display(),
+                    dest.display(),
+                    e
+                ))
+            })?;
+
+            // Create a symlink with the original filename so scripts can
+            // reference patches by their unprefixed name via ${PATCHES_DIR}.
+            let original_link = patches_dir.join(&original_name);
+            if !original_link.exists() {
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(&dest_name, &original_link).map_err(|e| {
+                        WrightError::BuildError(format!(
+                            "failed to symlink {} -> {}: {}",
+                            original_link.display(),
+                            dest_name,
+                            e
+                        ))
+                    })?;
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::copy(&dest, &original_link).map_err(|e| {
+                        WrightError::BuildError(format!(
+                            "failed to copy patch {} to {}: {}",
+                            dest.display(),
+                            original_link.display(),
+                            e
+                        ))
+                    })?;
+                }
+            }
+
+            info!("Staged patch: {}", dest_name);
+        }
+
+        Ok(())
+    }
+
+    /// Apply all patches from `patches_dir` to `build_src_dir` using `patch -Np1`.
+    ///
+    /// Patches are applied in sorted filename order (the numeric prefix from
+    /// `fetch_patches` ensures manifest ordering is respected).
+    fn apply_patches(&self, patches_dir: &Path, build_src_dir: &Path) -> Result<()> {
+        if !patches_dir.exists() {
+            return Ok(());
+        }
+
+        let mut entries: Vec<_> = std::fs::read_dir(patches_dir)
+            .map_err(|e| WrightError::IoError(e))?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                // Only apply prefixed files (0000-*), skip original-name symlinks
+                // to avoid double-application.
+                (name.ends_with(".patch") || name.ends_with(".diff"))
+                    && name.as_bytes().first().map_or(false, |b| b.is_ascii_digit())
+            })
+            .collect();
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in &entries {
+            let patch_path = entry.path();
+            info!("Applying patch: {}...", patch_path.file_name().unwrap_or_default().to_string_lossy());
+
+            let output = Command::new("patch")
+                .args(["-Np1", "-i"])
+                .arg(&patch_path)
+                .current_dir(build_src_dir)
+                .output()
+                .map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to run patch command: {}",
+                        e
+                    ))
+                })?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                return Err(WrightError::BuildError(format!(
+                    "patch {} failed (exit {}):\n{}\n{}",
+                    patch_path.display(),
+                    output.status,
+                    stdout,
+                    stderr
+                )));
+            }
+        }
 
         Ok(())
     }
