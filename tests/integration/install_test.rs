@@ -45,7 +45,7 @@ fn test_end_to_end_install_query_remove() {
     let archive = build_hello_archive();
 
     // Install
-    transaction::install_package(&db, &archive, root.path()).unwrap();
+    transaction::install_package(&db, &archive, root.path(), false).unwrap();
 
     // Verify file exists on disk
     let hello_bin = root.path().join("usr/bin/hello");
@@ -95,10 +95,10 @@ fn test_file_conflict_detection() {
     let archive = build_hello_archive();
 
     // Install first copy
-    transaction::install_package(&db, &archive, root.path()).unwrap();
+    transaction::install_package(&db, &archive, root.path(), false).unwrap();
 
     // Try to install again — should fail because package is already installed
-    let result = transaction::install_package(&db, &archive, root.path());
+    let result = transaction::install_package(&db, &archive, root.path(), false);
     assert!(result.is_err());
 
     let _ = std::fs::remove_file(&archive);
@@ -110,7 +110,7 @@ fn test_verify_detects_modification() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path()).unwrap();
+    transaction::install_package(&db, &archive, root.path(), false).unwrap();
 
     // Tamper with installed file
     std::fs::write(root.path().join("usr/bin/hello"), b"tampered content").unwrap();
@@ -128,7 +128,7 @@ fn test_verify_detects_missing_file() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path()).unwrap();
+    transaction::install_package(&db, &archive, root.path(), false).unwrap();
 
     // Delete installed file
     std::fs::remove_file(root.path().join("usr/bin/hello")).unwrap();
@@ -146,7 +146,7 @@ fn test_search_installed_packages() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path()).unwrap();
+    transaction::install_package(&db, &archive, root.path(), false).unwrap();
 
     // Search by name
     let results = db.search_packages("hello").unwrap();

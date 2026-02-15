@@ -177,7 +177,7 @@ pub fn install_packages(
 
         let pkg = resolved_map.get(&name).unwrap();
         info!("Installing {} from {}", name, pkg.path.display());
-        install_package(db, &pkg.path, root_dir)?;
+        install_package(db, &pkg.path, root_dir, force)?;
     }
 
     Ok(())
@@ -219,6 +219,7 @@ pub fn install_package(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,
+    force: bool,
 ) -> Result<()> {
     // Extract to temp dir
     let temp_dir = tempfile::tempdir().map_err(|e| {
@@ -241,10 +242,14 @@ pub fn install_package(
     for entry in &file_entries {
         if entry.file_type == "file" {
             if let Some(owner) = db.find_owner(&entry.path)? {
-                return Err(WrightError::FileConflict {
-                    path: PathBuf::from(&entry.path),
-                    owner,
-                });
+                if force {
+                    warn!("overwriting {} (owned by {})", entry.path, owner);
+                } else {
+                    return Err(WrightError::FileConflict {
+                        path: PathBuf::from(&entry.path),
+                        owner,
+                    });
+                }
             }
         }
     }
@@ -457,10 +462,14 @@ pub fn upgrade_package(
         if entry.file_type == "file" {
             if let Some(owner) = db.find_owner(&entry.path)? {
                 if owner != pkginfo.name {
-                    return Err(WrightError::FileConflict {
-                        path: PathBuf::from(&entry.path),
-                        owner,
-                    });
+                    if force {
+                        warn!("overwriting {} (owned by {})", entry.path, owner);
+                    } else {
+                        return Err(WrightError::FileConflict {
+                            path: PathBuf::from(&entry.path),
+                            owner,
+                        });
+                    }
                 }
             }
         }
@@ -903,7 +912,7 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
+        install_package(&db, &archive, root.path(), false).unwrap();
 
         let pkg = db.get_package("hello").unwrap().unwrap();
         assert_eq!(pkg.name, "hello");
@@ -924,7 +933,7 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
+        install_package(&db, &archive, root.path(), false).unwrap();
         assert!(root.path().join("usr/bin/hello").exists());
 
         remove_package(&db, "hello", root.path()).unwrap();
@@ -940,8 +949,8 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
-        let result = install_package(&db, &archive, root.path());
+        install_package(&db, &archive, root.path(), false).unwrap();
+        let result = install_package(&db, &archive, root.path(), false);
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&archive);
@@ -959,7 +968,7 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
+        install_package(&db, &archive, root.path(), false).unwrap();
 
         let issues = verify_package(&db, "hello", root.path()).unwrap();
         assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
@@ -1009,7 +1018,7 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
+        install_package(&db, &archive, root.path(), false).unwrap();
         let result = upgrade_package(&db, &archive, root.path(), false);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
@@ -1023,7 +1032,7 @@ mod tests {
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path()).unwrap();
+        install_package(&db, &archive, root.path(), false).unwrap();
         // Force upgrade to same version should succeed
         let result = upgrade_package(&db, &archive, root.path(), true);
         assert!(result.is_ok(), "Force upgrade should succeed, got: {:?}", result);
