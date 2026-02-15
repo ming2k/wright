@@ -33,15 +33,14 @@ impl Builder {
         Self { config, executors }
     }
 
-    /// Process a URL by substituting variables like ${version}, ${PKG_NAME}, etc.
+    /// Process a URL by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
     fn process_url(&self, url: &str, manifest: &PackageManifest) -> String {
         let mut vars = std::collections::HashMap::new();
-        vars.insert("version".to_string(), manifest.package.version.clone());
         vars.insert("PKG_NAME".to_string(), manifest.package.name.clone());
         vars.insert("PKG_VERSION".to_string(), manifest.package.version.clone());
         vars.insert("PKG_RELEASE".to_string(), manifest.package.release.to_string());
         vars.insert("PKG_ARCH".to_string(), manifest.package.arch.clone());
-        
+
         variables::substitute(url, &vars)
     }
 
@@ -165,8 +164,16 @@ impl Builder {
     /// Verify integrity of downloaded sources
     pub fn verify(&self, manifest: &PackageManifest) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
-        
+
         for (i, url) in manifest.sources.urls.iter().enumerate() {
+            let expected_hash = manifest.sources.sha256.get(i)
+                .ok_or_else(|| WrightError::ValidationError(format!("no sha256 hash provided for source {}", i)))?;
+
+            if expected_hash == "SKIP" {
+                info!("Skipping verification for source {}", i);
+                continue;
+            }
+
             let processed_url = self.process_url(url, manifest);
             let filename = sanitize_cache_filename(
                 processed_url.split('/').last().unwrap_or("source")
@@ -178,9 +185,6 @@ impl Builder {
             }
 
             let actual_hash = checksum::sha256_file(&path)?;
-            let expected_hash = manifest.sources.sha256.get(i)
-                .ok_or_else(|| WrightError::ValidationError(format!("no sha256 hash provided for source {}", i)))?;
-
             if &actual_hash != expected_hash {
                 return Err(WrightError::ValidationError(format!(
                     "SHA256 mismatch for {}:\n  expected: {}\n  actual:   {}",
@@ -307,20 +311,23 @@ impl Builder {
             );
             let dest = cache_dir.join(&filename);
 
+            let expected_hash = manifest.sources.sha256.get(i).map(|s| s.as_str());
+            let skip_verify = expected_hash == Some("SKIP");
+
             let mut needs_download = true;
 
             if dest.exists() {
-                // If we have a hash in the manifest, verify the cached file
-                if let Some(expected_hash) = manifest.sources.sha256.get(i) {
-                    if expected_hash != "TODO_UPDATE_HASH" {
-                        if let Ok(actual_hash) = checksum::sha256_file(&dest) {
-                            if &actual_hash == expected_hash {
-                                info!("Source {} already cached and verified", filename);
-                                needs_download = false;
-                            } else {
-                                warn!("Cached source {} is corrupted (hash mismatch), re-downloading...", filename);
-                                let _ = std::fs::remove_file(&dest);
-                            }
+                if skip_verify {
+                    info!("Source {} already cached (SKIP verification)", filename);
+                    needs_download = false;
+                } else if let Some(hash) = expected_hash {
+                    if let Ok(actual_hash) = checksum::sha256_file(&dest) {
+                        if actual_hash == hash {
+                            info!("Source {} already cached and verified", filename);
+                            needs_download = false;
+                        } else {
+                            warn!("Cached source {} hash mismatch, re-downloading...", filename);
+                            let _ = std::fs::remove_file(&dest);
                         }
                     }
                 } else {
@@ -332,15 +339,15 @@ impl Builder {
             if needs_download {
                 info!("Fetching {} to {}", processed_url, dest.display());
                 download::download_file(&processed_url, &dest, self.config.network.download_timeout)?;
-                
-                // Verify immediately after download if hash is available
-                if let Some(expected_hash) = manifest.sources.sha256.get(i) {
-                    if expected_hash != "TODO_UPDATE_HASH" {
+
+                // Verify immediately after download
+                if !skip_verify {
+                    if let Some(hash) = expected_hash {
                         let actual_hash = checksum::sha256_file(&dest)?;
-                        if &actual_hash != expected_hash {
+                        if actual_hash != hash {
                             return Err(WrightError::ValidationError(format!(
                                 "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
-                                filename, expected_hash, actual_hash
+                                filename, hash, actual_hash
                             )));
                         }
                     }

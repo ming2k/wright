@@ -35,11 +35,11 @@ cargo build --release
 
 This produces three binaries in `target/release/`:
 
-| Binary | Purpose |
-|--------|---------|
-| `wright` | Package manager (install, remove, query, verify) |
+| Binary         | Purpose                                                   |
+|----------------|-----------------------------------------------------------|
+| `wright`       | Package manager (install, remove, query, verify)          |
 | `wright-build` | Build tool (parse plans, execute builds, create archives) |
-| `wright-repo` | Repository tool (generate package index) |
+| `wright-repo`  | Repository tool (generate package index)                  |
 
 Install them somewhere on your PATH:
 
@@ -163,7 +163,7 @@ arch = "x86_64"
 build = ["gcc", "make"]
 
 [sources]
-urls = ["https://zlib.net/zlib-${version}.tar.gz"]
+urls = ["https://zlib.net/zlib-${PKG_VERSION}.tar.gz"]
 sha256 = ["9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"]
 
 [lifecycle.configure]
@@ -192,7 +192,7 @@ See [writing-plans.md](writing-plans.md) for the complete `package.toml` referen
 Check that a plan parses correctly without building anything:
 
 ```
-wright-build --lint plans/hello
+wright-build --lint hello
 ```
 
 This validates all fields, checks the name regex, version format, and sha256 count.
@@ -202,16 +202,23 @@ This validates all fields, checks the name regex, version format, and sha256 cou
 When adding or changing source URLs, use `--update` to automatically download the files and fill in the sha256 checksums:
 
 ```
-wright-build --update plans/zlib
+wright-build --update zlib
 ```
 
 ## 8. Build a Package
 
-Build a single plan by pointing `wright-build` at the plan directory:
+Build a package by name:
 
 ```
-wright-build plans/hello
+wright-build hello
 ```
+
+`wright-build` searches for plans in these directories (in order):
+- `/var/lib/wright/plans`
+- `./plans`
+- `../plans`
+
+You can also pass a path directly: `wright-build /path/to/hello` or `wright-build /path/to/hello/package.toml`.
 
 This runs the full lifecycle pipeline:
 1. **fetch** — download source archives (built-in)
@@ -229,21 +236,25 @@ The output is a `.wright.tar.zst` archive placed in the components directory.
 ### Build options
 
 ```
-wright-build plans/hello                # standard build
-wright-build --clean plans/hello        # clean build directory first
-wright-build --rebuild plans/hello      # clean + force rebuild
-wright-build --force plans/hello        # overwrite existing archive
-wright-build --stage configure plans/hello  # stop after configure
-wright-build -j4 plans/hello plans/zlib     # build multiple plans, 4 parallel jobs
+wright-build hello                      # standard build
+wright-build --clean hello              # clean build directory first
+wright-build --rebuild hello            # clean + force rebuild
+wright-build --force hello              # overwrite existing archive
+wright-build --stage configure hello    # stop after configure
+wright-build -j4 hello zlib            # build multiple plans, 4 parallel jobs
 ```
 
-### Building by name
+#### Flag comparison
 
-If plans are in a search path (`/var/lib/wright/plans`, `./plans`, etc.), you can build by package name instead of path:
+|               | Clean build directory | Overwrite existing archive |
+|---------------|:---------------------:|:--------------------------:|
+| `--clean`     | yes                   | no                         |
+| `--force`     | no                    | yes                        |
+| `--rebuild`   | yes                   | yes                        |
 
-```
-wright-build hello
-```
+- `--clean` — useful when the build directory has stale state from a previous attempt
+- `--force` — useful when the archive already exists but you want to overwrite it without rebuilding from scratch
+- `--rebuild` — equivalent to `--clean --force`, full clean rebuild
 
 ### Assemblies
 
@@ -281,6 +292,24 @@ To install into an alternate root (useful for building target system images):
 ```
 wright --root /mnt/target install hello-1.0.0-1-x86_64.wright.tar.zst
 ```
+
+### Installing a different version of the same package
+
+Wright does not support parallel installation of multiple versions. If a package with the same name is already installed:
+
+- `wright install` — **rejects** with "package already installed"
+- `wright install --force` — atomically replaces the old version via the upgrade path (see below)
+- `wright upgrade` — the intended way to move to a newer version; rejects downgrades unless `--force` is used
+
+The upgrade/force-install process is atomic — it is not a delete-then-install:
+
+1. Backup existing files to a temporary directory
+2. Copy new files into the system root
+3. Remove files that only existed in the old version
+4. Update the package database
+5. If any step fails, rollback restores all backed-up files
+
+Downgrading (`wright upgrade old-version.wright.tar.zst`) is rejected by default. Use `wright upgrade --force` to allow it.
 
 ## 10. Manage Installed Packages
 
@@ -396,10 +425,10 @@ script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
 PLAN
 
 # 4. Validate
-wright-build --lint plans/hello
+wright-build --lint hello
 
 # 5. Build
-wright-build plans/hello
+wright-build hello
 
 # 6. Install
 wright install hello-1.0.0-1-x86_64.wright.tar.zst
@@ -412,6 +441,77 @@ hello              # run it
 # 8. Clean up
 wright remove hello
 ```
+
+## Deploying into an LFS Chroot
+
+Wright is designed to serve as the package manager for a Linux From Scratch (LFS) system. This section covers how to build Wright on the host, deploy it into the chroot, and ensure it works correctly inside the isolated environment.
+
+### When to deploy
+
+Deploy Wright into the chroot **after** the chroot environment is fully prepared — i.e., after you have:
+
+1. Built the temporary cross-toolchain (binutils, gcc, glibc pass 1 & 2)
+2. Created the basic LFS directory layout (`/usr`, `/etc`, `/var`, etc.)
+3. Mounted the virtual kernel filesystems (`/dev`, `/proc`, `/sys`, `/run`)
+4. Entered the chroot with `chroot "$LFS" /usr/bin/env -i ...`
+
+At this point the chroot has a working shell and basic utilities, and is ready for Wright to take over package management for the remaining system packages.
+
+### Build a static binary
+
+Wright must be statically linked so it has no runtime dependency on the host's shared libraries (which may differ from what is available inside the chroot):
+
+```bash
+# On the host, in the wright source directory
+RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target x86_64-unknown-linux-gnu
+```
+
+This produces a fully static binary at `target/x86_64-unknown-linux-gnu/release/wright-build` (and `wright`, `wright-repo`).
+
+### Install into the chroot
+
+Copy the binaries and set up DNS resolution so that `wright-build --update` can download sources:
+
+```bash
+# Copy binaries into the chroot
+install -m755 target/x86_64-unknown-linux-gnu/release/wright      "$LFS/usr/bin/"
+install -m755 target/x86_64-unknown-linux-gnu/release/wright-build "$LFS/usr/bin/"
+install -m755 target/x86_64-unknown-linux-gnu/release/wright-repo  "$LFS/usr/bin/"
+
+# Enable DNS resolution inside the chroot
+cp /etc/resolv.conf "$LFS/etc/resolv.conf"
+```
+
+### Create the wright directory layout inside the chroot
+
+After entering the chroot:
+
+```bash
+mkdir -p /var/lib/wright/{plans,components,cache,db}
+mkdir -p /var/log/wright
+mkdir -p /etc/wright
+```
+
+### Verify
+
+Inside the chroot, confirm everything works:
+
+```bash
+wright-build --version
+wright-build --lint <plan-name>
+wright-build --update <plan-name>   # tests network access
+```
+
+If `--update` fails with a network error, check that:
+
+- `/etc/resolv.conf` exists and contains valid nameserver entries
+- The virtual filesystems (`/proc`, `/sys`, `/dev`) are mounted
+- The host network is accessible from the chroot (no network namespace isolation)
+
+### Notes
+
+- Wright uses `rustls` with bundled root certificates, so no system CA certificate bundle is needed inside the chroot for HTTPS downloads.
+- Once glibc and the core toolchain are built as Wright packages inside the chroot, you can rebuild Wright itself as a dynamically linked Wright package for the final system.
 
 ## Further Reading
 

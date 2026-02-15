@@ -111,7 +111,27 @@ fn main() -> Result<()> {
             if manifest_path.exists() {
                 plans_to_build.insert(manifest_path);
             } else {
-                return Err(anyhow::anyhow!("Target not found: {}", clean_target));
+                // The plan name wasn't in get_all_plans() — it may exist
+                // but have a syntax error (get_all_plans silently skips
+                // invalid manifests). Search plan directories for a
+                // matching directory and try to parse it, surfacing the
+                // real error.
+                let mut found = false;
+                for plans_dir in &resolver.plans_dirs {
+                    let candidate = plans_dir.join(clean_target).join("package.toml");
+                    if candidate.exists() {
+                        // Try to parse — this will produce the real error
+                        PackageManifest::from_file(&candidate)
+                            .context(format!("failed to parse plan '{}'", clean_target))?;
+                        // If parsing succeeds (shouldn't normally reach here), use it
+                        plans_to_build.insert(candidate);
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return Err(anyhow::anyhow!("Target not found: {}", clean_target));
+                }
             }
         }
     }
@@ -202,7 +222,7 @@ fn main() -> Result<()> {
                 match res {
                     Ok(_) => tx_clone.send(Ok(name_clone)).unwrap(),
                     Err(e) => {
-                        error!("Failed to process {}: {}", name_clone, e);
+                        error!("Failed to process {}: {:#}", name_clone, e);
                         tx_clone.send(Err((name_clone, e))).unwrap();
                     }
                 }

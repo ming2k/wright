@@ -82,7 +82,14 @@ optional = [
 URLs support variable substitution (see [Variable Substitution](#variable-substitution)):
 
 ```toml
-urls = ["https://nginx.org/download/nginx-${version}.tar.gz"]
+urls = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
+```
+
+Use `"SKIP"` as a sha256 entry to skip verification for a specific source:
+
+```toml
+urls = ["https://example.com/snapshot.tar.gz"]
+sha256 = ["SKIP"]
 ```
 
 ### `[options]`
@@ -221,7 +228,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URLs. 
 | `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
-| `${version}`    | Alias for `${PKG_VERSION}` (for use in URLs) |
 
 When running inside a sandbox, path variables are remapped to sandbox mount points:
 
@@ -377,7 +383,7 @@ conflicts = ["apache"]
 provides = ["http-server"]
 
 [sources]
-urls = ["https://nginx.org/download/nginx-${version}.tar.gz"]
+urls = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
 sha256 = ["a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"]
 patches = ["patches/fix-headers.patch"]
 
@@ -442,6 +448,6 @@ Wright validates `package.toml` on parse. A plan that fails validation cannot be
 | **description** | Must not be empty |
 | **license** | Must not be empty |
 | **arch** | Must not be empty |
-| **sha256 count** | Must exactly match the number of `urls` entries |
+| **sha256 count** | Must exactly match the number of `urls` entries (use `"SKIP"` to skip verification for individual sources) |
 
 The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`.

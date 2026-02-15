@@ -34,8 +34,6 @@ pub fn standard_variables(
     vars.insert("NPROC".to_string(), nproc.to_string());
     vars.insert("CFLAGS".to_string(), cflags.to_string());
     vars.insert("CXXFLAGS".to_string(), cxxflags.to_string());
-    // Also expose lowercase version variable used in source URLs
-    vars.insert("version".to_string(), pkg_version.to_string());
     vars
 }
 
@@ -83,6 +81,6 @@ mod tests {
         assert_eq!(vars["PKG_VERSION"], "1.0.0");
         assert_eq!(vars["PKG_RELEASE"], "1");
         assert_eq!(vars["NPROC"], "4");
-        assert_eq!(vars["version"], "1.0.0");
+        assert!(!vars.contains_key("version"));
     }
 }

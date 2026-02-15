@@ -61,7 +61,7 @@ provides = ["http-server"]
 ```toml
 [sources]
 urls = [
-    "https://nginx.org/download/nginx-${version}.tar.gz",
+    "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
 ]
 sha256 = [
     "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
@@ -73,8 +73,8 @@ patches = [
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `urls` | string[] | Source archive URLs (supports `${version}` substitution) |
-| `sha256` | string[] | SHA-256 checksums, one per URL (must match count) |
+| `urls` | string[] | Source archive URLs (supports `${PKG_VERSION}` substitution) |
+| `sha256` | string[] | SHA-256 checksums, one per URL (must match count; use `"SKIP"` to skip verification) |
 | `patches` | string[] | Patch files relative to the hold directory |
 
 ### `[options]` — build options

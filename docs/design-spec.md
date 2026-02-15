@@ -288,7 +288,7 @@ provides = ["http-server"]
 [sources]
 # Primary source archive
 urls = [
-    "https://nginx.org/download/nginx-${version}.tar.gz",
+    "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
 ]
 
 # SHA-256 checksum for each URL (order corresponds to urls)
