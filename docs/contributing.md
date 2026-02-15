@@ -91,7 +91,7 @@ See [architecture.md](architecture.md) for detailed module descriptions.
 Unit tests live alongside the code they test, in `#[cfg(test)] mod tests` blocks. Focus areas:
 
 - **Manifest parsing** (`src/package/manifest.rs`) — valid/invalid TOML inputs
-- **Version comparison** (`src/package/version.rs`) — semver edge cases
+- **Version comparison** (`src/package/version.rs`) — segment-based ordering edge cases
 - **Variable substitution** (`src/builder/variables.rs`) — all variables expand correctly
 - **Dependency resolution** (`src/resolver/`) — cycle detection, topological sort
 

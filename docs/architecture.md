@@ -22,7 +22,7 @@ src/
 ├── package/
 │   ├── mod.rs
 │   ├── manifest.rs             # PackageManifest — package.toml deserialization + validation
-│   ├── version.rs              # Version parsing and comparison (semver)
+│   ├── version.rs              # Version parsing and comparison (segment-based)
 │   └── archive.rs              # Binary package creation (tar.zst with .PKGINFO/.FILELIST)
 ├── builder/
 │   ├── mod.rs                  # Builder — orchestrates the build pipeline

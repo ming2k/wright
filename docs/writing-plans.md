@@ -30,7 +30,7 @@ The directory name should match the `name` field in `package.toml`. Patch files 
 | Field         | Type     | Required | Default | Description                        |
 |---------------|----------|----------|---------|------------------------------------|
 | `name`        | string   | yes      | —       | Package name                       |
-| `version`     | string   | yes      | —       | Upstream version (semver)          |
+| `version`     | string   | yes      | —       | Upstream version (free-form)       |
 | `release`     | integer  | yes      | —       | Build revision (must be >= 1)      |
 | `description` | string   | yes      | —       | Short description (must not be empty) |
 | `license`     | string   | yes      | —       | SPDX license identifier           |
@@ -466,7 +466,7 @@ Wright validates `package.toml` on parse. A plan that fails validation cannot be
 | Rule | Detail |
 |------|--------|
 | **name** | Must match `[a-z0-9][a-z0-9_-]*`, max 64 characters |
-| **version** | Must be valid semver: `MAJOR`, `MAJOR.MINOR`, or `MAJOR.MINOR.PATCH` (each component is a non-negative integer) |
+| **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **description** | Must not be empty |
 | **license** | Must not be empty |

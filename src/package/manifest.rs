@@ -413,7 +413,7 @@ arch = "x86_64"
         let toml = r#"
 [package]
 name = "test"
-version = "abc"
+version = "..."
 release = 1
 description = "test"
 license = "MIT"

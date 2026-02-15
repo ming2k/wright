@@ -9,7 +9,7 @@ Packages are described by `package.toml` files in the hold tree. Each hold is a 
 ```toml
 [package]
 name = "nginx"                          # [a-z0-9][a-z0-9_-]*, max 64 chars
-version = "1.25.3"                      # Semantic version
+version = "1.25.3"                      # Upstream version (free-form)
 release = 1                             # Integer >= 1, increment on build script changes
 description = "High performance HTTP and reverse proxy server"
 license = "BSD-2-Clause"                # SPDX identifier
@@ -22,7 +22,7 @@ group = "extra"                         # Tier: core / base / extra / community 
 | Field | Required | Validation |
 |-------|----------|------------|
 | `name` | yes | Must match `[a-z0-9][a-z0-9_-]*`, max 64 chars |
-| `version` | yes | Semantic version (e.g., `1.0.0`, `2.1.3`) |
+| `version` | yes | Any non-empty version string (e.g. `1.0.0`, `6.5-20250809`, `2024a`) |
 | `release` | yes | Integer >= 1 |
 | `description` | yes | Non-empty string |
 | `license` | yes | Non-empty string (SPDX identifier recommended) |

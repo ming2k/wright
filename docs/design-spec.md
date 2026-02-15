@@ -252,7 +252,7 @@ wright-repo      # Repository tool (generate index, sign, verify)
 # ---- Package metadata (required) ----
 [package]
 name = "nginx"                          # Package name, [a-z0-9][a-z0-9_-]*, max 64 chars
-version = "1.25.3"                      # Semantic version (semver format)
+version = "1.25.3"                      # Upstream version (free-form string)
 release = 1                             # Release number (integer, increment when build script changes)
 description = "High performance HTTP and reverse proxy server"
 license = "BSD-2-Clause"                # SPDX license identifier
@@ -778,7 +778,7 @@ Process:
 Output: Ordered installation list
 ```
 
-Version comparison follows semantic versioning (semver) conventions.
+Version comparison uses segment-based ordering: versions are split on `.` and `-` delimiters into numeric and alphabetic segments, then compared segment-by-segment (numeric segments sort after alphabetic, matching rpm/pacman conventions).
 
 ---
 
@@ -911,7 +911,7 @@ wright/
 │   ├── package/
 │   │   ├── mod.rs
 │   │   ├── manifest.rs             # package.toml parsing (serde deserialization)
-│   │   ├── version.rs              # Version comparison (semver)
+│   │   ├── version.rs              # Version comparison (segment-based)
 │   │   └── archive.rs              # Binary package packing/unpacking
 │   ├── resolver/
 │   │   ├── mod.rs
@@ -1227,7 +1227,7 @@ Recommended hosting options:
 ### 15.1 Unit Tests
 
 - TOML parsing: Various valid/invalid package.toml inputs
-- Version comparison: semver edge cases
+- Version comparison: segment-based ordering edge cases
 - Dependency graph: Cycle detection, topological sort correctness
 - Variable substitution: All variables expand correctly
 
