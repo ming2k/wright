@@ -280,6 +280,9 @@ fn build_one(builder: &Builder, manifest: &PackageManifest, manifest_path: &Path
 
     if cli.lint {
         println!("valid plan: {} {}-{}", manifest.package.name, manifest.package.version, manifest.package.release);
+        for split_name in manifest.split.keys() {
+            println!("  split: {}", split_name);
+        }
         return Ok(());
     }
 
@@ -297,8 +300,12 @@ fn build_one(builder: &Builder, manifest: &PackageManifest, manifest_path: &Path
     if !cli.force && !cli.rebuild {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
-        if existing.exists() {
-            info!("Skipping {} (archive already exists, use --force to rebuild)", manifest.package.name);
+        let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
+            let split_manifest = split_pkg.to_manifest(split_name, manifest);
+            output_dir.join(split_manifest.archive_filename()).exists()
+        });
+        if all_exist && existing.exists() {
+            info!("Skipping {} (all archives already exist, use --force to rebuild)", manifest.package.name);
             return Ok(());
         }
     }
@@ -309,5 +316,15 @@ fn build_one(builder: &Builder, manifest: &PackageManifest, manifest_path: &Path
 
     let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
     info!("Part stored in the Components Hold: {}", archive_path.display());
+
+    // Create split package archives
+    for (split_name, split_pkg) in &manifest.split {
+        let split_pkg_dir = result.split_pkg_dirs.get(split_name)
+            .ok_or_else(|| anyhow::anyhow!("missing split pkg_dir for '{}'", split_name))?;
+        let split_manifest = split_pkg.to_manifest(split_name, manifest);
+        let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
+        info!("Split part stored: {}", split_archive.display());
+    }
+
     Ok(())
 }

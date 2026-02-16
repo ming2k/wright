@@ -171,6 +171,46 @@ files = [
 ]
 ```
 
+### `[split.<name>]` — split packages
+
+A single plan can produce multiple output packages from one build. This is useful for packages like `gcc` (which produces `gcc`, `libgcc`, `libstdc++`) or `python` (which produces `python`, `python-docs`).
+
+Each split package shares the build pipeline (fetch, build, etc.) but gets its own `package` stage, `${PKG_DIR}`, metadata, and archive.
+
+```toml
+[split.libstdcpp]
+description = "GNU C++ standard library"   # Required, must differ from parent
+
+[split.libstdcpp.dependencies]
+runtime = ["libgcc"]
+
+[split.libstdcpp.lifecycle.package]         # Required
+script = """
+cd ${BUILD_DIR}
+install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
+"""
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `description` | yes | — | Must not be empty |
+| `version` | no | parent's version | Override version |
+| `release` | no | parent's release | Override release |
+| `arch` | no | parent's arch | Override architecture |
+| `license` | no | parent's license | Override license |
+| `dependencies` | no | empty | Split's own dependencies |
+| `lifecycle.package` | yes | — | Packaging script (the whole point of a split) |
+| `install_scripts` | no | none | Split's own install scripts |
+| `backup` | no | none | Split's own backup files |
+
+Split package rules:
+- The name (key in `[split.<name>]`) must match `[a-z0-9][a-z0-9_-]*`
+- The name must not collide with the main package name
+- `version`, `release`, `arch`, and `license` are inherited from `[package]` unless overridden
+- `${SRC_DIR}`, `${BUILD_DIR}`, and `${FILES_DIR}` are shared with the main build
+- Each split gets its own `${PKG_DIR}` pointing to a separate output directory
+- The output archive is named `{split_name}-{version}-{release}-{arch}.wright.tar.zst`
+
 ## Variable Substitution
 
 Script fields support these variables, expanded before execution:

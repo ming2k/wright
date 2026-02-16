@@ -22,6 +22,51 @@ pub struct PackageManifest {
     pub install_scripts: Option<InstallScripts>,
     #[serde(default)]
     pub backup: Option<BackupConfig>,
+    #[serde(default)]
+    pub split: HashMap<String, SplitPackage>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SplitPackage {
+    pub description: String,
+    pub version: Option<String>,
+    pub release: Option<u32>,
+    pub arch: Option<String>,
+    pub license: Option<String>,
+    #[serde(default)]
+    pub dependencies: Dependencies,
+    pub lifecycle: HashMap<String, LifecycleStage>,
+    #[serde(default)]
+    pub install_scripts: Option<InstallScripts>,
+    #[serde(default)]
+    pub backup: Option<BackupConfig>,
+}
+
+impl SplitPackage {
+    /// Produce a full PackageManifest for archive creation, inheriting from the parent.
+    pub fn to_manifest(&self, name: &str, parent: &PackageManifest) -> PackageManifest {
+        PackageManifest {
+            package: PackageMetadata {
+                name: name.to_string(),
+                version: self.version.clone().unwrap_or_else(|| parent.package.version.clone()),
+                release: self.release.unwrap_or(parent.package.release),
+                description: self.description.clone(),
+                license: self.license.clone().unwrap_or_else(|| parent.package.license.clone()),
+                arch: self.arch.clone().unwrap_or_else(|| parent.package.arch.clone()),
+                url: parent.package.url.clone(),
+                maintainer: parent.package.maintainer.clone(),
+                group: parent.package.group.clone(),
+            },
+            dependencies: self.dependencies.clone(),
+            sources: Sources::default(),
+            options: BuildOptions::default(),
+            lifecycle: HashMap::new(),
+            lifecycle_order: None,
+            install_scripts: self.install_scripts.clone(),
+            backup: self.backup.clone(),
+            split: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -200,6 +245,45 @@ impl PackageManifest {
                 self.sources.sha256.len(),
                 self.sources.uris.len()
             )));
+        }
+
+        // Validate split packages
+        for (split_name, split_pkg) in &self.split {
+            if !name_re.is_match(split_name) {
+                return Err(WrightError::ValidationError(format!(
+                    "invalid split package name '{}': must match [a-z0-9][a-z0-9_-]*",
+                    split_name
+                )));
+            }
+            if split_name == &self.package.name {
+                return Err(WrightError::ValidationError(format!(
+                    "split package name '{}' must not collide with the main package name",
+                    split_name
+                )));
+            }
+            if split_pkg.description.is_empty() {
+                return Err(WrightError::ValidationError(format!(
+                    "split package '{}': description must not be empty",
+                    split_name
+                )));
+            }
+            if !split_pkg.lifecycle.contains_key("package") {
+                return Err(WrightError::ValidationError(format!(
+                    "split package '{}': lifecycle.package stage is required",
+                    split_name
+                )));
+            }
+            if let Some(ref ver) = split_pkg.version {
+                crate::package::version::Version::parse(ver)?;
+            }
+            if let Some(ref rel) = split_pkg.release {
+                if *rel == 0 {
+                    return Err(WrightError::ValidationError(format!(
+                        "split package '{}': release must be >= 1",
+                        split_name
+                    )));
+                }
+            }
         }
 
         Ok(())
@@ -456,6 +540,149 @@ arch = "x86_64"
             manifest.archive_filename(),
             "hello-1.0.0-1-x86_64.wright.tar.zst"
         );
+    }
+
+    #[test]
+    fn test_parse_split_packages() {
+        let toml = r#"
+[package]
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+[lifecycle.build]
+script = "make -j4"
+
+[lifecycle.package]
+script = "make DESTDIR=${PKG_DIR} install"
+
+[split.libstdcpp]
+description = "GNU C++ standard library"
+
+[split.libstdcpp.dependencies]
+runtime = ["libgcc"]
+
+[split.libstdcpp.lifecycle.package]
+script = """
+install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
+"""
+"#;
+        let manifest = PackageManifest::from_str(toml).unwrap();
+        assert_eq!(manifest.split.len(), 1);
+        let split = manifest.split.get("libstdcpp").unwrap();
+        assert_eq!(split.description, "GNU C++ standard library");
+        assert_eq!(split.dependencies.runtime, vec!["libgcc"]);
+        assert!(split.lifecycle.contains_key("package"));
+
+        // Test to_manifest
+        let split_manifest = split.to_manifest("libstdcpp", &manifest);
+        assert_eq!(split_manifest.package.name, "libstdcpp");
+        assert_eq!(split_manifest.package.version, "14.2.0");
+        assert_eq!(split_manifest.package.release, 1);
+        assert_eq!(split_manifest.package.arch, "x86_64");
+        assert_eq!(split_manifest.package.license, "GPL-3.0-or-later");
+        assert_eq!(split_manifest.package.description, "GNU C++ standard library");
+        assert_eq!(split_manifest.dependencies.runtime, vec!["libgcc"]);
+        assert_eq!(
+            split_manifest.archive_filename(),
+            "libstdcpp-14.2.0-1-x86_64.wright.tar.zst"
+        );
+    }
+
+    #[test]
+    fn test_split_inherits_overrides() {
+        let toml = r#"
+[package]
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.package]
+script = "true"
+
+[split.test-doc]
+description = "Documentation for test"
+version = "1.0.0-doc"
+arch = "any"
+
+[split.test-doc.lifecycle.package]
+script = "true"
+"#;
+        let manifest = PackageManifest::from_str(toml).unwrap();
+        let split = manifest.split.get("test-doc").unwrap();
+        let split_manifest = split.to_manifest("test-doc", &manifest);
+        assert_eq!(split_manifest.package.version, "1.0.0-doc");
+        assert_eq!(split_manifest.package.arch, "any");
+        assert_eq!(split_manifest.package.license, "MIT"); // inherited
+    }
+
+    #[test]
+    fn test_split_missing_package_stage() {
+        let toml = r#"
+[package]
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[split.test-lib]
+description = "A library"
+
+[split.test-lib.lifecycle.build]
+script = "make"
+"#;
+        let err = PackageManifest::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("lifecycle.package stage is required"));
+    }
+
+    #[test]
+    fn test_split_invalid_name() {
+        let toml = r#"
+[package]
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[split.BadName]
+description = "bad"
+
+[split.BadName.lifecycle.package]
+script = "true"
+"#;
+        let err = PackageManifest::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("invalid split package name"));
+    }
+
+    #[test]
+    fn test_split_name_collides_with_main() {
+        let toml = r#"
+[package]
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[split.test]
+description = "same name"
+
+[split.test.lifecycle.package]
+script = "true"
+"#;
+        let err = PackageManifest::from_str(toml).unwrap_err();
+        assert!(err.to_string().contains("must not collide with the main package name"));
     }
 
     #[test]

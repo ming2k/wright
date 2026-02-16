@@ -17,6 +17,7 @@ pub struct BuildResult {
     pub src_dir: PathBuf,
     pub log_dir: PathBuf,
     pub build_dir: PathBuf,
+    pub split_pkg_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
 pub struct Builder {
@@ -153,6 +154,8 @@ impl Builder {
         );
         vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
 
+        let vars_for_splits = vars.clone();
+
         let pipeline = lifecycle::LifecyclePipeline::new(
             manifest,
             vars,
@@ -167,11 +170,73 @@ impl Builder {
 
         pipeline.run()?;
 
+        // Run split package stages
+        let mut split_pkg_dirs = std::collections::HashMap::new();
+        for (split_name, split_pkg) in &manifest.split {
+            let split_pkg_dir = build_root.join(format!("pkg-{}", split_name));
+            std::fs::create_dir_all(&split_pkg_dir).map_err(|e| {
+                WrightError::BuildError(format!(
+                    "failed to create split package directory {}: {}",
+                    split_pkg_dir.display(), e
+                ))
+            })?;
+
+            let package_stage = split_pkg.lifecycle.get("package")
+                .ok_or_else(|| WrightError::ValidationError(format!(
+                    "split package '{}': lifecycle.package stage is required", split_name
+                )))?;
+
+            let mut split_vars = vars_for_splits.clone();
+            split_vars.insert("PKG_DIR".to_string(), split_pkg_dir.to_string_lossy().to_string());
+            split_vars.insert("PKG_NAME".to_string(), split_name.clone());
+
+            info!("Running package stage for split: {}", split_name);
+
+            let split_options = executor::ExecutorOptions {
+                level: crate::sandbox::SandboxLevel::from_str(&package_stage.sandbox),
+                src_dir: src_dir.clone(),
+                pkg_dir: split_pkg_dir.clone(),
+                files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+            };
+
+            let split_executor = self.executors.get(&package_stage.executor)
+                .ok_or_else(|| WrightError::BuildError(format!(
+                    "executor not found: {}", package_stage.executor
+                )))?;
+
+            let result = executor::execute_script(
+                split_executor,
+                &package_stage.script,
+                &src_dir,
+                &package_stage.env,
+                &split_vars,
+                &split_options,
+            )?;
+
+            // Write log
+            let log_path = log_dir.join(format!("package-{}.log", split_name));
+            let log_content = format!(
+                "=== Split package: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+                split_name, result.exit_code, result.stdout, result.stderr
+            );
+            let _ = std::fs::write(&log_path, &log_content);
+
+            if result.exit_code != 0 {
+                return Err(WrightError::BuildError(format!(
+                    "split package '{}' packaging stage failed with exit code {}\nstderr: {}",
+                    split_name, result.exit_code, result.stderr
+                )));
+            }
+
+            split_pkg_dirs.insert(split_name.clone(), split_pkg_dir);
+        }
+
         Ok(BuildResult {
             pkg_dir,
             src_dir,
             log_dir,
             build_dir: build_root,
+            split_pkg_dirs,
         })
     }
 

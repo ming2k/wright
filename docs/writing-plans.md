@@ -491,6 +491,61 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
+### Split Packages
+
+A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
+
+```toml
+[package]
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+[lifecycle.build]
+script = "make -j${NPROC}"
+
+[lifecycle.package]
+script = """
+cd ${BUILD_DIR}
+make DESTDIR=${PKG_DIR} install
+rm -rf ${PKG_DIR}/usr/lib/libstdc++*
+"""
+
+[split.libstdcpp]
+description = "GNU C++ standard library"
+
+[split.libstdcpp.dependencies]
+runtime = ["libgcc"]
+
+[split.libstdcpp.lifecycle.package]
+script = """
+cd ${BUILD_DIR}
+install -Dm755 libstdc++.so.6.0.33 ${PKG_DIR}/usr/lib/libstdc++.so.6.0.33
+ln -sf libstdc++.so.6.0.33 ${PKG_DIR}/usr/lib/libstdc++.so.6
+ln -sf libstdc++.so.6 ${PKG_DIR}/usr/lib/libstdc++.so
+"""
+```
+
+Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[package]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `build`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
+
+For a `-doc` split that overrides the architecture:
+
+```toml
+[split.mypackage-doc]
+description = "Documentation for mypackage"
+arch = "any"
+
+[split.mypackage-doc.lifecycle.package]
+script = """
+cd ${BUILD_DIR}
+install -d ${PKG_DIR}/usr/share/doc/mypackage
+cp -r docs/* ${PKG_DIR}/usr/share/doc/mypackage/
+"""
+```
+
 ## Validation Rules
 
 Wright validates `package.toml` on parse. A plan that fails validation cannot be built.

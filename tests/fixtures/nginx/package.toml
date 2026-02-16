@@ -106,3 +106,16 @@ files = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
 ]
+
+[split.nginx-doc]
+description = "Nginx documentation files"
+
+[split.nginx-doc.lifecycle.package]
+executor = "shell"
+sandbox = "strict"
+script = """
+cd nginx-${PKG_VERSION}
+install -d ${PKG_DIR}/usr/share/doc/nginx
+install -Dm644 README ${PKG_DIR}/usr/share/doc/nginx/README
+install -Dm644 LICENSE ${PKG_DIR}/usr/share/doc/nginx/LICENSE
+"""
