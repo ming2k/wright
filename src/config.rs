@@ -107,11 +107,7 @@ fn default_general() -> GeneralConfig {
         } else {
             default_cache_dir()
         },
-        db_path: if use_xdg {
-            get_xdg_data().map(|p| p.join("packages.db")).unwrap_or_else(default_db_path)
-        } else {
-            default_db_path()
-        },
+        db_path: default_db_path(),
         log_dir: if use_xdg {
             get_xdg_state().unwrap_or_else(default_log_dir)
         } else {
@@ -134,17 +130,6 @@ fn get_xdg_cache() -> Option<PathBuf> {
         .map(|p| p.join("wright"))
 }
 
-fn get_xdg_data() -> Option<PathBuf> {
-    std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .map(|h| PathBuf::from(h).join(".local/share"))
-                .ok()
-        })
-        .map(|p| p.join("wright"))
-}
 
 fn get_xdg_state() -> Option<PathBuf> {
     std::env::var("XDG_STATE_HOME")
