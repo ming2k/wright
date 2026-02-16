@@ -3,7 +3,6 @@ pub mod executor;
 pub mod variables;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use tracing::{info, warn};
 
@@ -25,6 +24,42 @@ pub struct Builder {
     executors: executor::ExecutorRegistry,
 }
 
+/// Check whether a URI is remote (http/https).
+fn is_remote_uri(uri: &str) -> bool {
+    uri.starts_with("http://") || uri.starts_with("https://")
+}
+
+/// Check whether a filename looks like a supported archive format.
+fn is_archive(filename: &str) -> bool {
+    filename.ends_with(".tar.gz")
+        || filename.ends_with(".tgz")
+        || filename.ends_with(".tar.xz")
+        || filename.ends_with(".tar.bz2")
+        || filename.ends_with(".tar.zst")
+}
+
+/// Validate that a local URI resolves within the plan directory.
+fn validate_local_path(hold_dir: &Path, relative_path: &str) -> Result<PathBuf> {
+    let resolved = hold_dir.join(relative_path).canonicalize().map_err(|e| {
+        WrightError::ValidationError(format!(
+            "local path not found: {} ({})",
+            relative_path, e
+        ))
+    })?;
+    let hold_abs = hold_dir.canonicalize().map_err(|e| {
+        WrightError::ValidationError(format!(
+            "failed to resolve plan directory {}: {}",
+            hold_dir.display(), e
+        ))
+    })?;
+    if !resolved.starts_with(&hold_abs) {
+        return Err(WrightError::ValidationError(
+            format!("local path escapes plan directory: {}", relative_path)
+        ));
+    }
+    Ok(resolved)
+}
+
 impl Builder {
     pub fn new(config: GlobalConfig) -> Self {
         let mut executors = executor::ExecutorRegistry::new();
@@ -34,15 +69,15 @@ impl Builder {
         Self { config, executors }
     }
 
-    /// Process a URL by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
-    fn process_url(&self, url: &str, manifest: &PackageManifest) -> String {
+    /// Process a URI by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
+    fn process_uri(&self, uri: &str, manifest: &PackageManifest) -> String {
         let mut vars = std::collections::HashMap::new();
         vars.insert("PKG_NAME".to_string(), manifest.package.name.clone());
         vars.insert("PKG_VERSION".to_string(), manifest.package.version.clone());
         vars.insert("PKG_RELEASE".to_string(), manifest.package.release.to_string());
         vars.insert("PKG_ARCH".to_string(), manifest.package.arch.clone());
 
-        variables::substitute(url, &vars)
+        variables::substitute(uri, &vars)
     }
 
     /// Get absolute build root for a package (tools like libtool require absolute paths).
@@ -90,21 +125,17 @@ impl Builder {
 
         info!("Build directory: {}", build_root.display());
 
-        // Fetch sources
-        self.fetch(manifest)?;
+        // Fetch sources (remote downloads + local file copies to cache)
+        self.fetch(manifest, hold_dir)?;
 
         // Verify sources
         self.verify(manifest)?;
 
-        // Extract sources
-        let build_src_dir = self.extract(manifest, &src_dir)?;
+        // Extract archives and copy non-archive files to files_dir
+        let files_dir = build_root.join("files");
+        let build_src_dir = self.extract(manifest, &src_dir, &files_dir)?;
 
-        // Fetch and apply patches
-        let patches_dir = build_root.join("patches");
-        self.fetch_patches(manifest, hold_dir, &patches_dir)?;
-        self.apply_patches(&patches_dir, &build_src_dir)?;
-
-        let patches_dir_str = patches_dir.to_string_lossy().to_string();
+        let files_dir_str = files_dir.to_string_lossy().to_string();
 
         let nproc = self.config.effective_jobs();
 
@@ -115,7 +146,7 @@ impl Builder {
             &manifest.package.arch,
             &src_dir.to_string_lossy(),
             &pkg_dir.to_string_lossy(),
-            &patches_dir_str,
+            &files_dir_str,
             nproc,
             &self.config.build.cflags,
             &self.config.build.cxxflags,
@@ -129,7 +160,7 @@ impl Builder {
             &log_dir,
             src_dir.clone(),
             pkg_dir.clone(),
-            if patches_dir.exists() { Some(patches_dir.clone()) } else { None },
+            if files_dir.exists() { Some(files_dir.clone()) } else { None },
             stop_after,
             &self.executors,
         );
@@ -159,11 +190,12 @@ impl Builder {
         Ok(())
     }
 
-    /// Verify integrity of downloaded sources
+    /// Verify integrity of downloaded sources.
+    /// Only verifies remote URIs (local paths use "SKIP").
     pub fn verify(&self, manifest: &PackageManifest) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
-        for (i, url) in manifest.sources.urls.iter().enumerate() {
+        for (i, uri) in manifest.sources.uris.iter().enumerate() {
             let expected_hash = manifest.sources.sha256.get(i)
                 .ok_or_else(|| WrightError::ValidationError(format!("no sha256 hash provided for source {}", i)))?;
 
@@ -172,9 +204,9 @@ impl Builder {
                 continue;
             }
 
-            let processed_url = self.process_url(url, manifest);
+            let processed_uri = self.process_uri(uri, manifest);
             let filename = sanitize_cache_filename(
-                processed_url.split('/').last().unwrap_or("source")
+                processed_uri.split('/').last().unwrap_or("source")
             );
             let path = cache_dir.join(&filename);
 
@@ -195,20 +227,38 @@ impl Builder {
         Ok(())
     }
 
-    /// Extract downloaded sources to the build directory.
+    /// Extract archives to the build directory and copy non-archive files to files_dir.
     /// Returns the path to the top-level source directory (for BUILD_DIR).
-    pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path) -> Result<PathBuf> {
+    pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path, files_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
-        for url in &manifest.sources.urls {
-            let processed_url = self.process_url(url, manifest);
+        for uri in &manifest.sources.uris {
+            let processed_uri = self.process_uri(uri, manifest);
             let filename = sanitize_cache_filename(
-                processed_url.split('/').last().unwrap_or("source")
+                processed_uri.split('/').last().unwrap_or("source")
             );
             let path = cache_dir.join(&filename);
 
-            info!("Extracting {}...", filename);
-            compress::extract_archive(&path, dest_dir)?;
+            if is_archive(&filename) {
+                info!("Extracting {}...", filename);
+                compress::extract_archive(&path, dest_dir)?;
+            } else {
+                // Non-archive file: copy to files_dir
+                std::fs::create_dir_all(files_dir).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to create files directory {}: {}",
+                        files_dir.display(), e
+                    ))
+                })?;
+                let dest = files_dir.join(&filename);
+                std::fs::copy(&path, &dest).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to copy {} to {}: {}",
+                        path.display(), dest.display(), e
+                    ))
+                })?;
+                info!("Copied {} to files directory", filename);
+            }
         }
 
         // Detect the top-level source directory for BUILD_DIR.
@@ -230,7 +280,8 @@ impl Builder {
         Ok(build_dir)
     }
 
-    /// Update sha256 checksums in package.toml
+    /// Update sha256 checksums in package.toml.
+    /// Only computes hashes for remote URIs; local paths get "SKIP".
     pub fn update_hashes(&self, manifest: &PackageManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
 
@@ -239,19 +290,26 @@ impl Builder {
             std::fs::create_dir_all(&cache_dir).map_err(|e| WrightError::IoError(e))?;
         }
 
-        for url in manifest.sources.urls.iter() {
-            let processed_url = self.process_url(url, manifest);
+        for uri in manifest.sources.uris.iter() {
+            let processed_uri = self.process_uri(uri, manifest);
+
+            if !is_remote_uri(&processed_uri) {
+                // Local path — use SKIP
+                new_hashes.push("SKIP".to_string());
+                continue;
+            }
+
             let cache_filename = sanitize_cache_filename(
-                processed_url.split('/').last().unwrap_or("source")
+                processed_uri.split('/').last().unwrap_or("source")
             );
             let cache_path = cache_dir.join(&cache_filename);
 
             if cache_path.exists() {
                 info!("Using cached source: {}", cache_filename);
             } else {
-                info!("Downloading {}...", processed_url);
-                download::download_file(&processed_url, &cache_path, self.config.network.download_timeout).map_err(|e| {
-                    WrightError::BuildError(format!("Failed to download {}: {}", processed_url, e))
+                info!("Downloading {}...", processed_uri);
+                download::download_file(&processed_uri, &cache_path, self.config.network.download_timeout).map_err(|e| {
+                    WrightError::BuildError(format!("Failed to download {}: {}", processed_uri, e))
                 })?;
             }
 
@@ -267,7 +325,7 @@ impl Builder {
 
         // Surgical update of package.toml using regex to preserve comments/formatting
         let content = std::fs::read_to_string(manifest_path).map_err(|e| WrightError::IoError(e))?;
-        
+
         let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
         let hashes_str = new_hashes.iter()
             .map(|h| format!("    \"{}\"", h))
@@ -278,15 +336,15 @@ impl Builder {
         let new_content = if re.is_match(&content) {
             re.replace(&content, &replacement).to_string()
         } else {
-            // If sha256 field is missing, try to insert it after urls
-            let urls_re = regex::Regex::new(r"(?m)^urls\s*=\s*\[[\s\S]*?\]").unwrap();
-            if urls_re.is_match(&content) {
-                let urls_match = urls_re.find(&content).unwrap();
+            // If sha256 field is missing, try to insert it after uris
+            let uris_re = regex::Regex::new(r"(?m)^uris\s*=\s*\[[\s\S]*?\]").unwrap();
+            if uris_re.is_match(&content) {
+                let uris_match = uris_re.find(&content).unwrap();
                 let mut c = content.clone();
-                c.insert_str(urls_match.end(), &format!("\n{}", replacement));
+                c.insert_str(uris_match.end(), &format!("\n{}", replacement));
                 c
             } else {
-                return Err(WrightError::BuildError("could not find urls or sha256 field in package.toml".to_string()));
+                return Err(WrightError::BuildError("could not find uris or sha256 field in package.toml".to_string()));
             }
         };
 
@@ -295,235 +353,86 @@ impl Builder {
         Ok(())
     }
 
-    /// Fetch patches listed in the manifest into a consolidated patches directory.
-    ///
-    /// URL patches (http/https) are downloaded to the source cache and then copied.
-    /// Local patches (relative paths) are resolved against `hold_dir`.
-    /// All patches are placed in `patches_dir` with numeric prefixes to preserve
-    /// manifest ordering.
-    fn fetch_patches(
-        &self,
-        manifest: &PackageManifest,
-        hold_dir: &Path,
-        patches_dir: &Path,
-    ) -> Result<()> {
-        if manifest.sources.patches.is_empty() {
-            return Ok(());
-        }
-
-        std::fs::create_dir_all(patches_dir).map_err(|e| {
-            WrightError::BuildError(format!(
-                "failed to create patches directory {}: {}",
-                patches_dir.display(),
-                e
-            ))
-        })?;
-
-        let hold_dir_abs = std::fs::canonicalize(hold_dir).map_err(|e| {
-            WrightError::BuildError(format!(
-                "failed to resolve hold dir {}: {}",
-                hold_dir.display(),
-                e
-            ))
-        })?;
-
-        let cache_dir = self.config.general.cache_dir.join("sources");
-        std::fs::create_dir_all(&cache_dir).map_err(|e| WrightError::IoError(e))?;
-
-        for (i, raw_patch) in manifest.sources.patches.iter().enumerate() {
-            let patch_url = self.process_url(raw_patch, manifest);
-
-            let source_path = if patch_url.starts_with("http://") || patch_url.starts_with("https://") {
-                // Download URL patch to cache
-                let filename = sanitize_cache_filename(
-                    patch_url.split('/').last().unwrap_or("patch"),
-                );
-                let cached = cache_dir.join(&filename);
-
-                if !cached.exists() {
-                    info!("Fetching patch {}...", patch_url);
-                    download::download_file(
-                        &patch_url,
-                        &cached,
-                        self.config.network.download_timeout,
-                    )?;
-                } else {
-                    info!("Patch {} already cached", filename);
-                }
-                cached
-            } else {
-                // Local patch – resolve relative to hold_dir
-                let local = hold_dir_abs.join(&patch_url);
-                if !local.exists() {
-                    return Err(WrightError::BuildError(format!(
-                        "local patch not found: {} (resolved to {})",
-                        patch_url,
-                        local.display()
-                    )));
-                }
-                local
-            };
-
-            // Copy into consolidated patches dir with ordering prefix
-            let original_name = source_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let dest_name = format!("{:04}-{}", i, original_name);
-            let dest = patches_dir.join(&dest_name);
-            std::fs::copy(&source_path, &dest).map_err(|e| {
-                WrightError::BuildError(format!(
-                    "failed to copy patch {} to {}: {}",
-                    source_path.display(),
-                    dest.display(),
-                    e
-                ))
-            })?;
-
-            // Create a symlink with the original filename so scripts can
-            // reference patches by their unprefixed name via ${PATCHES_DIR}.
-            let original_link = patches_dir.join(&original_name);
-            if !original_link.exists() {
-                #[cfg(unix)]
-                {
-                    std::os::unix::fs::symlink(&dest_name, &original_link).map_err(|e| {
-                        WrightError::BuildError(format!(
-                            "failed to symlink {} -> {}: {}",
-                            original_link.display(),
-                            dest_name,
-                            e
-                        ))
-                    })?;
-                }
-                #[cfg(not(unix))]
-                {
-                    std::fs::copy(&dest, &original_link).map_err(|e| {
-                        WrightError::BuildError(format!(
-                            "failed to copy patch {} to {}: {}",
-                            dest.display(),
-                            original_link.display(),
-                            e
-                        ))
-                    })?;
-                }
-            }
-
-            info!("Staged patch: {}", dest_name);
-        }
-
-        Ok(())
-    }
-
-    /// Apply all patches from `patches_dir` to `build_src_dir` using `patch -Np1`.
-    ///
-    /// Patches are applied in sorted filename order (the numeric prefix from
-    /// `fetch_patches` ensures manifest ordering is respected).
-    fn apply_patches(&self, patches_dir: &Path, build_src_dir: &Path) -> Result<()> {
-        if !patches_dir.exists() {
-            return Ok(());
-        }
-
-        let mut entries: Vec<_> = std::fs::read_dir(patches_dir)
-            .map_err(|e| WrightError::IoError(e))?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                // Only apply prefixed files (0000-*), skip original-name symlinks
-                // to avoid double-application.
-                (name.ends_with(".patch") || name.ends_with(".diff"))
-                    && name.as_bytes().first().map_or(false, |b| b.is_ascii_digit())
-            })
-            .collect();
-
-        if entries.is_empty() {
-            return Ok(());
-        }
-
-        entries.sort_by_key(|e| e.file_name());
-
-        for entry in &entries {
-            let patch_path = entry.path();
-            info!("Applying patch: {}...", patch_path.file_name().unwrap_or_default().to_string_lossy());
-
-            let output = Command::new("patch")
-                .args(["-Np1", "-i"])
-                .arg(&patch_path)
-                .current_dir(build_src_dir)
-                .output()
-                .map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to run patch command: {}",
-                        e
-                    ))
-                })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(WrightError::BuildError(format!(
-                    "patch {} failed (exit {}):\n{}\n{}",
-                    patch_path.display(),
-                    output.status,
-                    stdout,
-                    stderr
-                )));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Fetch sources for a package to the cache directory
-    pub fn fetch(&self, manifest: &PackageManifest) -> Result<()> {
+    /// Fetch sources for a package to the cache directory.
+    /// Remote URIs are downloaded; local URIs are validated and copied to cache.
+    pub fn fetch(&self, manifest: &PackageManifest, hold_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
         if !cache_dir.exists() {
             std::fs::create_dir_all(cache_dir).map_err(|e| WrightError::IoError(e))?;
         }
 
-        for (i, url) in manifest.sources.urls.iter().enumerate() {
-            let processed_url = self.process_url(url, manifest);
-            let filename = sanitize_cache_filename(
-                processed_url.split('/').last().unwrap_or("source")
-            );
-            let dest = cache_dir.join(&filename);
+        for (i, uri) in manifest.sources.uris.iter().enumerate() {
+            let processed_uri = self.process_uri(uri, manifest);
 
-            let expected_hash = manifest.sources.sha256.get(i).map(|s| s.as_str());
-            let skip_verify = expected_hash == Some("SKIP");
+            if is_remote_uri(&processed_uri) {
+                // Remote URI: download to cache
+                let filename = sanitize_cache_filename(
+                    processed_uri.split('/').last().unwrap_or("source")
+                );
+                let dest = cache_dir.join(&filename);
 
-            let mut needs_download = true;
+                let expected_hash = manifest.sources.sha256.get(i).map(|s| s.as_str());
+                let skip_verify = expected_hash == Some("SKIP");
 
-            if dest.exists() {
-                if skip_verify {
-                    info!("Source {} already cached (SKIP verification)", filename);
-                    needs_download = false;
-                } else if let Some(hash) = expected_hash {
-                    if let Ok(actual_hash) = checksum::sha256_file(&dest) {
-                        if actual_hash == hash {
-                            info!("Source {} already cached and verified", filename);
-                            needs_download = false;
-                        } else {
-                            warn!("Cached source {} hash mismatch, re-downloading...", filename);
-                            let _ = std::fs::remove_file(&dest);
+                let mut needs_download = true;
+
+                if dest.exists() {
+                    if skip_verify {
+                        info!("Source {} already cached (SKIP verification)", filename);
+                        needs_download = false;
+                    } else if let Some(hash) = expected_hash {
+                        if let Ok(actual_hash) = checksum::sha256_file(&dest) {
+                            if actual_hash == hash {
+                                info!("Source {} already cached and verified", filename);
+                                needs_download = false;
+                            } else {
+                                warn!("Cached source {} hash mismatch, re-downloading...", filename);
+                                let _ = std::fs::remove_file(&dest);
+                            }
                         }
+                    } else {
+                        info!("Source {} already cached (no hash to verify)", filename);
+                        needs_download = false;
                     }
-                } else {
-                    info!("Source {} already cached (no hash to verify)", filename);
-                    needs_download = false;
                 }
-            }
 
-            if needs_download {
-                info!("Fetching {} to {}", processed_url, dest.display());
-                download::download_file(&processed_url, &dest, self.config.network.download_timeout)?;
+                if needs_download {
+                    info!("Fetching {} to {}", processed_uri, dest.display());
+                    download::download_file(&processed_uri, &dest, self.config.network.download_timeout)?;
 
-                // Verify immediately after download
-                if !skip_verify {
-                    if let Some(hash) = expected_hash {
-                        let actual_hash = checksum::sha256_file(&dest)?;
-                        if actual_hash != hash {
-                            return Err(WrightError::ValidationError(format!(
-                                "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
-                                filename, hash, actual_hash
-                            )));
+                    // Verify immediately after download
+                    if !skip_verify {
+                        if let Some(hash) = expected_hash {
+                            let actual_hash = checksum::sha256_file(&dest)?;
+                            if actual_hash != hash {
+                                return Err(WrightError::ValidationError(format!(
+                                    "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
+                                    filename, hash, actual_hash
+                                )));
+                            }
                         }
                     }
+                }
+            } else {
+                // Local URI: validate path is within plan dir and copy to cache
+                let local_path = validate_local_path(hold_dir, &processed_uri)?;
+                let filename = sanitize_cache_filename(
+                    local_path.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("source")
+                );
+                let dest = cache_dir.join(&filename);
+
+                if !dest.exists() {
+                    std::fs::copy(&local_path, &dest).map_err(|e| {
+                        WrightError::BuildError(format!(
+                            "failed to copy local file {} to cache: {}",
+                            local_path.display(), e
+                        ))
+                    })?;
+                    info!("Copied local file {} to cache", processed_uri);
+                } else {
+                    info!("Local file {} already in cache", filename);
                 }
             }
         }

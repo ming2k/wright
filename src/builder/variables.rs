@@ -18,7 +18,7 @@ pub fn standard_variables(
     pkg_arch: &str,
     src_dir: &str,
     pkg_dir: &str,
-    patches_dir: &str,
+    files_dir: &str,
     nproc: u32,
     cflags: &str,
     cxxflags: &str,
@@ -30,7 +30,7 @@ pub fn standard_variables(
     vars.insert("PKG_ARCH".to_string(), pkg_arch.to_string());
     vars.insert("SRC_DIR".to_string(), src_dir.to_string());
     vars.insert("PKG_DIR".to_string(), pkg_dir.to_string());
-    vars.insert("PATCHES_DIR".to_string(), patches_dir.to_string());
+    vars.insert("FILES_DIR".to_string(), files_dir.to_string());
     vars.insert("NPROC".to_string(), nproc.to_string());
     vars.insert("CFLAGS".to_string(), cflags.to_string());
     vars.insert("CXXFLAGS".to_string(), cxxflags.to_string());

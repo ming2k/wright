@@ -21,7 +21,7 @@ plans/
         └── 002-no-rpath.patch
 ```
 
-The directory name should match the `name` field in `package.toml`. Patch files referenced in `[sources].patches` are relative to the plan directory.
+The directory name should match the `name` field in `package.toml`. Local files referenced in `[sources].uris` are relative to the plan directory and must not escape it.
 
 ## `package.toml` Reference
 
@@ -75,50 +75,71 @@ optional = [
 
 | Field     | Type            | Default | Description                              |
 |-----------|-----------------|---------|------------------------------------------|
-| `urls`    | list of strings | `[]`    | Source archive URLs                      |
-| `sha256`  | list of strings | `[]`    | SHA-256 checksums (one per URL, in order) |
-| `patches` | list of strings | `[]`    | Patch files — local paths relative to the plan directory, or `http://`/`https://` URLs |
+| `uris`    | list of strings | `[]`    | Source URIs — remote URLs (`http://`/`https://`) or local paths relative to the plan directory |
+| `sha256`  | list of strings | `[]`    | SHA-256 checksums (one per URI, in order). Use `"SKIP"` for local files. |
 
-URLs and patches support variable substitution (see [Variable Substitution](#variable-substitution)):
+URIs support variable substitution (see [Variable Substitution](#variable-substitution)):
 
 ```toml
-urls = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
+uris = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
 ```
 
-Use `"SKIP"` as a sha256 entry to skip verification for a specific source:
+Use `"SKIP"` as a sha256 entry to skip verification for a specific source (required for local paths):
 
 ```toml
-urls = ["https://example.com/snapshot.tar.gz"]
-sha256 = ["SKIP"]
-```
-
-Patches are automatically downloaded (if URLs) and applied with `patch -Np1` after source extraction, in the order listed. Both local files and remote URLs can be mixed:
-
-```toml
-patches = [
+uris = [
+    "https://example.com/foo-${PKG_VERSION}.tar.gz",
     "patches/fix-headers.patch",
-    "https://example.com/upstream-fix-${PKG_VERSION}.patch",
+]
+sha256 = [
+    "abc123...",
+    "SKIP",
 ]
 ```
 
-Since patches are auto-applied, you do **not** need to apply them manually in `prepare`. The old pattern of looping over `${PATCHES_DIR}/*.patch` in a `prepare` script is no longer necessary.
+#### URI classification
 
-#### Manual patching
+- **Remote URIs** (starting with `http://` or `https://`) are downloaded to the source cache.
+- **Local URIs** (everything else) are resolved relative to the plan directory. They must not escape the plan directory (path traversal is blocked).
 
-For patches that require special handling (e.g. a different strip level like `-p0`, conditional application, or non-standard format), do **not** list them in `patches`. Instead, handle them in a lifecycle stage:
+#### Archive vs non-archive URIs
+
+- URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`) are extracted to the source directory during the `extract` stage.
+- Non-archive URIs (patches, config files, scripts, etc.) are copied to `${FILES_DIR}` where lifecycle scripts can access them.
+
+#### Applying patches
+
+Patches are **not** auto-applied. Include them in `uris` and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
 
 ```toml
 [sources]
-urls = ["https://example.com/foo-${PKG_VERSION}.tar.gz"]
-sha256 = ["abc123..."]
-# Only standard -p1 patches go here:
-patches = ["patches/normal-fix.patch"]
+uris = [
+    "https://example.com/foo-${PKG_VERSION}.tar.gz",
+    "patches/fix-headers.patch",
+    "patches/add-feature.patch",
+]
+sha256 = [
+    "abc123...",
+    "SKIP",
+    "SKIP",
+]
 
 [lifecycle.prepare]
 script = """
 cd ${BUILD_DIR}
-# This patch needs -p0, so it is applied manually instead of via [sources].patches:
-patch -Np0 -i ${PATCHES_DIR}/../special-fix.patch
+patch -Np1 < ${FILES_DIR}/fix-headers.patch
+patch -Np1 < ${FILES_DIR}/add-feature.patch
+"""
+```
+
+For patches that need a different strip level:
+
+```toml
+[lifecycle.prepare]
+script = """
+cd ${BUILD_DIR}
+patch -Np0 < ${FILES_DIR}/special-fix.patch
+patch -Np1 < ${FILES_DIR}/normal-fix.patch
 """
 ```
 
@@ -204,18 +225,17 @@ The default pipeline runs these stages in order:
 
 | Stage          | Type     | Description                              |
 |----------------|----------|------------------------------------------|
-| `fetch`        | built-in | Download source archives                 |
+| `fetch`        | built-in | Download sources and copy local files    |
 | `verify`       | built-in | Verify SHA-256 checksums                 |
-| `extract`      | built-in | Extract source archives                  |
-| `patch`        | built-in | Download/copy and apply patches from `[sources].patches` |
-| `prepare`      | user     | Pre-build setup                          |
+| `extract`      | built-in | Extract archives, copy non-archives to `${FILES_DIR}` |
+| `prepare`      | user     | Pre-build setup (e.g. apply patches)     |
 | `configure`    | user     | Run configure scripts                    |
 | `build`        | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
 | `package`      | user     | Install files into `${PKG_DIR}`          |
 | `post_package` | user     | Post-packaging steps                     |
 
-Built-in stages (`fetch`, `verify`, `extract`, `patch`) are handled by the build tool automatically. User stages are only run if defined in `package.toml` — undefined stages are silently skipped.
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `package.toml` — undefined stages are silently skipped.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -244,7 +264,7 @@ Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. 
 
 ## Variable Substitution
 
-Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URLs. Unrecognized variables are left as-is.
+Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. Unrecognized variables are left as-is.
 
 | Variable        | Description                                |
 |-----------------|--------------------------------------------|
@@ -255,7 +275,7 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URLs. 
 | `${SRC_DIR}`    | Extraction root directory                  |
 | `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
 | `${PKG_DIR}`    | Package output directory (install files here) |
-| `${PATCHES_DIR}`| Directory containing patch files           |
+| `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
 | `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
@@ -267,7 +287,7 @@ When running inside a sandbox, path variables are remapped to sandbox mount poin
 | `${SRC_DIR}`    | actual host path       | `/build`               |
 | `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
 | `${PKG_DIR}`    | actual host path       | `/output`              |
-| `${PATCHES_DIR}`| actual host path       | `/patches`             |
+| `${FILES_DIR}`  | actual host path       | `/files`               |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
@@ -302,7 +322,7 @@ In both `relaxed` and `strict` modes, the sandbox:
 - Bind-mounts essential `/etc` files (`resolv.conf`, `hosts`, `passwd`, `group`, `ld.so.conf`, `ld.so.cache`) read-only
 - Mounts the source directory at `/build` (read-write)
 - Mounts the package output directory at `/output` (read-write)
-- Mounts the patches directory at `/patches` (read-only, if present)
+- Mounts the files directory at `/files` (read-only, if present)
 - Provides `/dev` with basic devices (`null`, `zero`, `urandom`, `random`, `full`)
 - Mounts a fresh `/proc` and `/tmp`
 - Sets hostname to `wright-sandbox`
@@ -414,15 +434,27 @@ conflicts = ["apache"]
 provides = ["http-server"]
 
 [sources]
-urls = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
-sha256 = ["a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"]
-patches = ["patches/fix-headers.patch"]
+uris = [
+    "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
+    "patches/fix-headers.patch",
+]
+sha256 = [
+    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
+    "SKIP",
+]
 
 [options]
 strip = true
 static = false
 debug = false
 ccache = true
+
+[lifecycle.prepare]
+script = """
+cd ${BUILD_DIR}
+patch -Np1 < ${FILES_DIR}/fix-headers.patch
+patch -Np1 < ${FILES_DIR}/add-feature.patch
+"""
 
 [lifecycle.configure]
 env = { CFLAGS = "-O2 -pipe" }
@@ -471,6 +503,6 @@ Wright validates `package.toml` on parse. A plan that fails validation cannot be
 | **description** | Must not be empty |
 | **license** | Must not be empty |
 | **arch** | Must not be empty |
-| **sha256 count** | Must exactly match the number of `urls` entries (use `"SKIP"` to skip verification for individual sources) |
+| **sha256 count** | Must exactly match the number of `uris` entries (use `"SKIP"` for local paths) |
 
 The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`.

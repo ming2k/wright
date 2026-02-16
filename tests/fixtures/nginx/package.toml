@@ -23,15 +23,15 @@ conflicts = ["apache"]
 provides = ["http-server"]
 
 [sources]
-urls = [
+uris = [
     "https://nginx.org/download/nginx-1.25.3.tar.gz",
+    "patches/fix-headers.patch",
+    "patches/add-feature.patch",
 ]
 sha256 = [
     "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-]
-patches = [
-    "patches/fix-headers.patch",
-    "patches/add-feature.patch",
+    "SKIP",
+    "SKIP",
 ]
 
 [options]
@@ -39,6 +39,15 @@ strip = true
 static = false
 debug = false
 ccache = true
+
+[lifecycle.prepare]
+executor = "shell"
+sandbox = "strict"
+script = """
+cd nginx-${PKG_VERSION}
+patch -Np1 < ${FILES_DIR}/fix-headers.patch
+patch -Np1 < ${FILES_DIR}/add-feature.patch
+"""
 
 [lifecycle.configure]
 executor = "shell"

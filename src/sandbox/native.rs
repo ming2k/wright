@@ -326,10 +326,10 @@ pub fn run_in_sandbox(
                         die(e);
                     }
 
-                    // Patches directory (read-only, optional).
-                    if let Some(ref patches) = config.patches_dir {
-                        if patches.exists() {
-                            if let Err(e) = bind(patches, "/patches", true) {
+                    // Files directory (read-only, optional).
+                    if let Some(ref files) = config.files_dir {
+                        if files.exists() {
+                            if let Err(e) = bind(files, "/files", true) {
                                 die(e);
                             }
                         }

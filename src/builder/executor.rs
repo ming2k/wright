@@ -96,7 +96,7 @@ pub struct ExecutorOptions {
     pub level: SandboxLevel,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
-    pub patches_dir: Option<PathBuf>,
+    pub files_dir: Option<PathBuf>,
 }
 
 pub struct ExecutionResult {
@@ -127,8 +127,8 @@ pub fn execute_script(
         }
         v.insert("SRC_DIR".to_string(), "/build".to_string());
         v.insert("PKG_DIR".to_string(), "/output".to_string());
-        if options.patches_dir.is_some() {
-            v.insert("PATCHES_DIR".to_string(), "/patches".to_string());
+        if options.files_dir.is_some() {
+            v.insert("FILES_DIR".to_string(), "/files".to_string());
         }
         v
     } else {
@@ -146,7 +146,7 @@ pub fn execute_script(
 
     // Create sandbox config
     let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone());
-    config.patches_dir = options.patches_dir.clone();
+    config.files_dir = options.files_dir.clone();
 
     // Set environment variables
     for (key, value) in env_vars {

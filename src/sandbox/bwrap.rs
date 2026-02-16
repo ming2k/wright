@@ -48,9 +48,9 @@ pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) ->
     bwrap.arg("--bind").arg(&config.src_dir).arg("/build");
     bwrap.arg("--bind").arg(&config.pkg_dir).arg("/output");
 
-    if let Some(ref patches) = config.patches_dir {
-        if patches.exists() {
-            bwrap.arg("--ro-bind").arg(patches).arg("/patches");
+    if let Some(ref files) = config.files_dir {
+        if files.exists() {
+            bwrap.arg("--ro-bind").arg(files).arg("/files");
         }
     }
 

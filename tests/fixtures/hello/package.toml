@@ -11,7 +11,7 @@ runtime = []
 build = ["gcc"]
 
 [sources]
-urls = []
+uris = []
 sha256 = []
 
 [lifecycle.prepare]

@@ -63,11 +63,9 @@ pub struct OptionalDependency {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct Sources {
     #[serde(default)]
-    pub urls: Vec<String>,
+    pub uris: Vec<String>,
     #[serde(default)]
     pub sha256: Vec<String>,
-    #[serde(default)]
-    pub patches: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -195,12 +193,12 @@ impl PackageManifest {
             ));
         }
 
-        // sha256 count must match urls count
-        if self.sources.sha256.len() != self.sources.urls.len() {
+        // sha256 count must match uris count
+        if self.sources.sha256.len() != self.sources.uris.len() {
             return Err(WrightError::ValidationError(format!(
-                "sha256 count ({}) must match urls count ({})",
+                "sha256 count ({}) must match uris count ({})",
                 self.sources.sha256.len(),
-                self.sources.urls.len()
+                self.sources.uris.len()
             )));
         }
 
@@ -236,7 +234,7 @@ runtime = []
 build = ["gcc"]
 
 [sources]
-urls = []
+uris = []
 sha256 = []
 
 [lifecycle.prepare]
@@ -298,9 +296,14 @@ conflicts = ["apache"]
 provides = ["http-server"]
 
 [sources]
-urls = ["https://nginx.org/download/nginx-1.25.3.tar.gz"]
-sha256 = ["a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"]
-patches = ["patches/fix-headers.patch"]
+uris = [
+    "https://nginx.org/download/nginx-1.25.3.tar.gz",
+    "patches/fix-headers.patch",
+]
+sha256 = [
+    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
+    "SKIP",
+]
 
 [options]
 strip = true
@@ -313,9 +316,7 @@ executor = "shell"
 sandbox = "strict"
 script = """
 cd nginx-${PKG_VERSION}
-for p in ${PATCHES_DIR}/*.patch; do
-    [ -f "$p" ] && patch -p1 < "$p"
-done
+patch -Np1 < ${FILES_DIR}/fix-headers.patch
 """
 
 [lifecycle.configure]
@@ -367,8 +368,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         assert_eq!(manifest.dependencies.runtime.len(), 3);
         assert_eq!(manifest.dependencies.conflicts, vec!["apache"]);
         assert_eq!(manifest.dependencies.provides, vec!["http-server"]);
-        assert_eq!(manifest.sources.urls.len(), 1);
-        assert_eq!(manifest.sources.patches.len(), 1);
+        assert_eq!(manifest.sources.uris.len(), 2);
         assert!(manifest.options.strip);
         assert!(!manifest.options.static_);
         assert!(manifest.lifecycle.get("check").unwrap().optional);
@@ -434,7 +434,7 @@ license = "MIT"
 arch = "x86_64"
 
 [sources]
-urls = ["http://example.com/foo.tar.gz"]
+uris = ["http://example.com/foo.tar.gz"]
 sha256 = []
 "#;
         assert!(PackageManifest::from_str(toml).is_err());
@@ -472,7 +472,7 @@ arch = "x86_64"
         let manifest = PackageManifest::from_str(toml).unwrap();
         assert!(manifest.dependencies.runtime.is_empty());
         assert!(manifest.dependencies.build.is_empty());
-        assert!(manifest.sources.urls.is_empty());
+        assert!(manifest.sources.uris.is_empty());
         assert!(manifest.options.strip);
         assert!(manifest.lifecycle.is_empty());
         assert!(manifest.install_scripts.is_none());

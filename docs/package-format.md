@@ -1,6 +1,6 @@
 # Package Format
 
-Packages are described by `package.toml` files in the hold tree. Each hold is a directory containing at minimum a `package.toml` and optionally a `patches/` subdirectory.
+Packages are described by `package.toml` files in the hold tree. Each hold is a directory containing at minimum a `package.toml` and optionally local files (patches, configs, etc.) referenced in `[sources].uris`.
 
 ## Complete package.toml Specification
 
@@ -60,26 +60,34 @@ provides = ["http-server"]
 
 ```toml
 [sources]
-urls = [
+uris = [
     "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
+    "patches/fix-headers.patch",
 ]
 sha256 = [
     "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-]
-patches = [
-    "patches/fix-headers.patch",
+    "SKIP",
 ]
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `urls` | string[] | Source archive URLs (supports `${PKG_VERSION}` substitution) |
-| `sha256` | string[] | SHA-256 checksums, one per URL (must match count; use `"SKIP"` to skip verification) |
-| `patches` | string[] | Patch files (local paths relative to the hold directory, or `http://`/`https://` URLs). Auto-applied with `patch -Np1` after extraction, in listed order. Supports `${PKG_VERSION}` substitution. |
+| `uris` | string[] | Source URIs: remote URLs (`http://`/`https://`) or local paths relative to the hold directory. Supports `${PKG_VERSION}` substitution. |
+| `sha256` | string[] | SHA-256 checksums, one per URI (must match count; use `"SKIP"` for local files). |
 
-Patches listed in `patches` are automatically downloaded (if URLs) and applied with `patch -Np1` to the source directory after extraction. This happens before any lifecycle stages run, so there is no need to manually apply them in `prepare`.
+Remote URIs are downloaded to the source cache. Local URIs are resolved relative to the plan directory and must not escape it (path traversal is blocked).
 
-For patches that need special handling (e.g. `-p0` strip level, conditional application), do **not** list them in `patches`. Instead, download and apply them manually in a lifecycle stage. The `${PATCHES_DIR}` variable still points to the consolidated patches directory for reference.
+Archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`) are extracted to the source directory during the `extract` stage. Non-archive files (patches, config files, etc.) are copied to `${FILES_DIR}` where lifecycle scripts can access them.
+
+Patches are **not** auto-applied. Plan authors apply them manually in lifecycle stages for full control over strip level, ordering, and conditions:
+
+```toml
+[lifecycle.prepare]
+script = """
+cd ${BUILD_DIR}
+patch -Np1 < ${FILES_DIR}/fix-headers.patch
+"""
+```
 
 ### `[options]` — build options
 
@@ -118,10 +126,10 @@ make
 ### Default pipeline order
 
 ```
-fetch → verify → extract → patch → prepare → configure → build → check → package → post_package
+fetch → verify → extract → prepare → configure → build → check → package → post_package
 ```
 
-- **fetch**, **verify**, **extract**, **patch** are handled automatically by the build tool
+- **fetch**, **verify**, **extract** are handled automatically by the build tool
 - Stages without a defined script are skipped
 - Each stage supports **pre/post hooks** (e.g., `pre_build`, `post_build`)
 
@@ -175,7 +183,7 @@ Script fields support these variables, expanded before execution:
 | `${PKG_ARCH}` | Target architecture |
 | `${SRC_DIR}` | Source directory (build working directory) |
 | `${PKG_DIR}` | Package output directory (simulated install root) |
-| `${PATCHES_DIR}` | Patch files directory |
+| `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
 | `${NPROC}` | Number of CPU cores |
 | `${CFLAGS}` | Global C compiler flags |
 | `${CXXFLAGS}` | Global C++ compiler flags |

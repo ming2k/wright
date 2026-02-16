@@ -62,7 +62,7 @@ pub struct SandboxConfig {
     pub level: SandboxLevel,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
-    pub patches_dir: Option<PathBuf>,
+    pub files_dir: Option<PathBuf>,
     pub extra_binds: Vec<(PathBuf, PathBuf, bool)>, // (host_path, dest_path, read_only)
     pub env: Vec<(String, String)>,
 }
@@ -73,7 +73,7 @@ impl SandboxConfig {
             level,
             src_dir,
             pkg_dir,
-            patches_dir: None,
+            files_dir: None,
             extra_binds: Vec::new(),
             env: Vec::new(),
         }

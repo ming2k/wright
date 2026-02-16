@@ -24,7 +24,7 @@ pub struct LifecyclePipeline<'a> {
     log_dir: &'a Path,
     src_dir: PathBuf,
     pkg_dir: PathBuf,
-    patches_dir: Option<PathBuf>,
+    files_dir: Option<PathBuf>,
     stop_after: Option<String>,
     executors: &'a ExecutorRegistry,
 }
@@ -37,7 +37,7 @@ impl<'a> LifecyclePipeline<'a> {
         log_dir: &'a Path,
         src_dir: PathBuf,
         pkg_dir: PathBuf,
-        patches_dir: Option<PathBuf>,
+        files_dir: Option<PathBuf>,
         stop_after: Option<String>,
         executors: &'a ExecutorRegistry,
     ) -> Self {
@@ -48,7 +48,7 @@ impl<'a> LifecyclePipeline<'a> {
             log_dir,
             src_dir,
             pkg_dir,
-            patches_dir,
+            files_dir,
             stop_after,
             executors,
         }
@@ -125,7 +125,7 @@ impl<'a> LifecyclePipeline<'a> {
             level: SandboxLevel::from_str(&stage.sandbox),
             src_dir: self.src_dir.clone(),
             pkg_dir: self.pkg_dir.clone(),
-            patches_dir: self.patches_dir.clone(),
+            files_dir: self.files_dir.clone(),
         };
 
         let result = executor::execute_script(

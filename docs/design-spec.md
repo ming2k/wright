@@ -286,21 +286,20 @@ provides = ["http-server"]
 
 # ---- Source definitions ----
 [sources]
-# Primary source archive
-urls = [
+# Source URIs — remote URLs or local paths relative to the plan directory.
+# Archives are extracted; non-archive files are copied to ${FILES_DIR}.
+uris = [
     "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
-]
-
-# SHA-256 checksum for each URL (order corresponds to urls)
-sha256 = [
-    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-]
-
-# Patch files — local paths (relative to package.toml directory) or http(s) URLs.
-# Patches are auto-applied with `patch -Np1` after extraction, in listed order.
-patches = [
     "patches/fix-headers.patch",
     "patches/add-feature.patch",
+]
+
+# SHA-256 checksum for each URI (order corresponds to uris).
+# Use "SKIP" for local files.
+sha256 = [
+    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
+    "SKIP",
+    "SKIP",
 ]
 
 # ---- Build options ----
@@ -322,9 +321,9 @@ ccache = true           # Enable ccache if available (default: true)
 #   env = { KEY = "VALUE" }      # Additional environment variables
 #   script = """..."""           # Execution content
 #
-# Note: fetch / verify / extract / patch stages are handled automatically by the build tool.
-# Patches listed in [sources].patches are auto-applied after extraction with `patch -Np1`.
-# They typically do not need manual definition unless special behavior is required.
+# Note: fetch / verify / extract stages are handled automatically by the build tool.
+# Non-archive files (patches, configs) from uris are placed in ${FILES_DIR}.
+# Patches must be applied manually in lifecycle stages (e.g. prepare).
 
 [lifecycle.configure]
 executor = "shell"
@@ -432,7 +431,7 @@ The `script` fields in package description files support the following variables
 | `${PKG_ARCH}` | Target architecture |
 | `${SRC_DIR}` | Source directory after extraction (build working directory) |
 | `${PKG_DIR}` | Package output directory (simulated install root) |
-| `${PATCHES_DIR}` | Patch files directory |
+| `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
 | `${NPROC}` | Number of CPU cores (for parallel compilation) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |
@@ -541,7 +540,7 @@ For each lifecycle stage execution, the filesystem view inside the sandbox is:
 ├── tmp/            ← tmpfs (build temporary files)
 ├── build/          ← Read-write, source directory (SRC_DIR)
 ├── output/         ← Read-write, package output directory (PKG_DIR)
-├── patches/        ← Read-only bind mount of patches directory
+├── files/          ← Read-only bind mount of non-archive files directory
 └── deps/           ← Read-only bind mount of build dependencies
     ├── openssl/    ← Dependency package installed files
     └── pcre2/
@@ -563,7 +562,7 @@ bwrap \
     --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
     --bind "${SRC_DIR}" /build \
     --bind "${PKG_DIR}" /output \
-    --ro-bind "${PATCHES_DIR}" /patches \
+    --ro-bind "${FILES_DIR}" /files \
     --dev /dev \
     --proc /proc \
     --tmpfs /tmp \
@@ -580,16 +579,16 @@ bwrap \
     --setenv PKG_VERSION "${PKG_VERSION}" \
     --setenv PKG_DIR "/output" \
     --setenv SRC_DIR "/build" \
-    --setenv PATCHES_DIR "/patches" \
+    --setenv FILES_DIR "/files" \
     --setenv NPROC "$(nproc)" \
     -- /bin/bash -e -o pipefail /tmp/_build_script.sh
 ```
 
 ### 6.4 Sandbox Exceptions for Special Stages
 
-- `fetch` stage: **Does not enter sandbox** — handled directly by the build tool using reqwest
+- `fetch` stage: **Does not enter sandbox** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter sandbox** — SHA-256 verification handled directly by the build tool
-- `extract` stage: **Does not enter sandbox** — extraction handled directly by the build tool
+- `extract` stage: **Does not enter sandbox** — extraction and file copying handled directly by the build tool
 - `install_scripts` (post_install, etc.): **Does not run in sandbox** — needs to modify the real system
 
 ---
@@ -599,18 +598,17 @@ bwrap \
 ### 7.1 Default Pipeline
 
 ```
-fetch → verify → extract → patch → prepare → configure → build → check → package → post_package
+fetch → verify → extract → prepare → configure → build → check → package → post_package
 ```
 
 ### 7.2 Stage Descriptions
 
 | Stage | Executed By | Sandboxed | Description |
 |-------|------------|-----------|-------------|
-| `fetch` | Build tool | No | Download source code and patches |
+| `fetch` | Build tool | No | Download remote sources and copy local files to cache |
 | `verify` | Build tool | No | SHA-256 checksum verification |
-| `extract` | Build tool | No | Extract source archive to SRC_DIR |
-| `patch` | Build tool | No | Auto-apply patches from `[sources].patches` with `patch -Np1` |
-| `prepare` | User script | Yes | Pre-build setup |
+| `extract` | Build tool | No | Extract archives to SRC_DIR, copy non-archives to FILES_DIR |
+| `prepare` | User script | Yes | Pre-build setup (e.g. apply patches from FILES_DIR) |
 | `configure` | User script | Yes | ./configure and similar configuration steps |
 | `build` | User script | Yes | Compilation (make, etc.) |
 | `check` | User script | Yes | Run tests (optional stage) |
@@ -1257,7 +1255,7 @@ runtime = []
 build = ["gcc"]
 
 [sources]
-urls = []
+uris = []
 sha256 = []
 
 [lifecycle.prepare]
