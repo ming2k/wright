@@ -1,6 +1,6 @@
 # Writing Plans
 
-A **plan** is a directory containing a `package.toml` file that describes how to fetch, build, and package a piece of software. This guide is the complete reference for plan authors.
+A **plan** is a directory containing a `plan.toml` file that describes how to fetch, build, and package a piece of software. This guide is the complete reference for plan authors.
 
 ## Directory Structure
 
@@ -9,23 +9,23 @@ Plans live in a flat directory tree. Each plan is a directory named after the pa
 ```
 plans/
 ├── hello/
-│   └── package.toml
+│   └── plan.toml
 ├── nginx/
-│   ├── package.toml
+│   ├── plan.toml
 │   └── patches/
 │       └── fix-headers.patch
 └── python/
-    ├── package.toml
+    ├── plan.toml
     └── patches/
         ├── 001-fix-paths.patch
         └── 002-no-rpath.patch
 ```
 
-The directory name should match the `name` field in `package.toml`. Local files referenced in `[sources].uris` are relative to the plan directory and must not escape it.
+The directory name should match the `name` field in `plan.toml`. Local files referenced in `[sources].uris` are relative to the plan directory and must not escape it.
 
-## `package.toml` Reference
+## `plan.toml` Reference
 
-### `[package]` — Metadata
+### `[plan]` — Metadata
 
 | Field         | Type     | Required | Default | Description                        |
 |---------------|----------|----------|---------|------------------------------------|
@@ -37,7 +37,6 @@ The directory name should match the `name` field in `package.toml`. Local files 
 | `arch`        | string   | yes      | —       | Target architecture (e.g. `x86_64`) |
 | `url`         | string   | no       | —       | Upstream project URL               |
 | `maintainer`  | string   | no       | —       | Maintainer name and email          |
-| `group`       | string   | no       | —       | Package group (e.g. `core`, `extra`) |
 
 ### `[dependencies]`
 
@@ -45,7 +44,7 @@ All fields default to empty lists if omitted.
 
 | Field       | Type                            | Description                          |
 |-------------|---------------------------------|--------------------------------------|
-| `runtime`   | list of strings                 | Required at runtime                  |
+| `runtime`   | list of strings                 | Must be installed when this package is installed |
 | `build`     | list of strings                 | Required only during build           |
 | `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
 | `conflicts` | list of strings                 | Packages that conflict with this one |
@@ -235,7 +234,7 @@ The default pipeline runs these stages in order:
 | `package`      | user     | Install files into `${PKG_DIR}`          |
 | `post_package` | user     | Post-packaging steps                     |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `package.toml` — undefined stages are silently skipped.
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -268,8 +267,8 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 
 | Variable        | Description                                |
 |-----------------|--------------------------------------------|
-| `${PKG_NAME}`   | Package name from `[package].name`         |
-| `${PKG_VERSION}`| Package version from `[package].version`   |
+| `${PKG_NAME}`   | Package name from `[plan].name`         |
+| `${PKG_VERSION}`| Package version from `[plan].version`   |
 | `${PKG_RELEASE}`| Release number as a string                 |
 | `${PKG_ARCH}`   | Target architecture                        |
 | `${SRC_DIR}`    | Extraction root directory                  |
@@ -380,7 +379,7 @@ os.makedirs(f"{os.environ['PKG_DIR']}/usr/lib", exist_ok=True)
 ### Minimal Plan
 
 ```toml
-[package]
+[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -413,7 +412,7 @@ install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 ### Real-World Plan (nginx)
 
 ```toml
-[package]
+[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -422,7 +421,6 @@ license = "BSD-2-Clause"
 arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Example Maintainer <maintainer@example.com>"
-group = "extra"
 
 [dependencies]
 runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
@@ -496,7 +494,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
 ```toml
-[package]
+[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -529,7 +527,24 @@ ln -sf libstdc++.so.6 ${PKG_DIR}/usr/lib/libstdc++.so
 """
 ```
 
-Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[package]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `build`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
+Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `build`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
+
+Split packages are independent archives — installing the parent does **not** automatically install its splits. To create a meta-package that pulls in all splits, list them as `runtime` dependencies on the parent:
+
+```toml
+[plan]
+name = "linux-firmware"
+# ...
+
+[dependencies]
+runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
+
+[split.linux-firmware-amd]
+description = "AMD GPU/CPU firmware"
+# ...
+```
+
+In this pattern the parent package itself may contain no files — it exists only to group the splits.
 
 For a `-doc` split that overrides the architecture:
 
@@ -548,7 +563,7 @@ cp -r docs/* ${PKG_DIR}/usr/share/doc/mypackage/
 
 ## Validation Rules
 
-Wright validates `package.toml` on parse. A plan that fails validation cannot be built.
+Wright validates `plan.toml` on parse. A plan that fails validation cannot be built.
 
 | Rule | Detail |
 |------|--------|

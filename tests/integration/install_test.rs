@@ -14,7 +14,7 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 fn build_hello_archive() -> PathBuf {
-    let manifest_path = fixture_path("hello").join("package.toml");
+    let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     let hold_dir = manifest_path.parent().unwrap();
 

@@ -215,7 +215,7 @@ default_sandbox = "strict"
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Executor identifier (referenced in `package.toml` lifecycle stages) |
+| `name` | string | Executor identifier (referenced in `plan.toml` lifecycle stages) |
 | `description` | string | Human-readable description |
 | `command` | path | Absolute path to the interpreter binary |
 | `args` | string[] | Arguments passed to the interpreter |
@@ -226,32 +226,4 @@ default_sandbox = "strict"
 
 ### Custom executors
 
-Add new executors by placing TOML files in `/etc/wright/executors/`. Constraints:
-- `command` must be an absolute path to an existing, executable binary
-- No shell metacharacters or pipes in the `command` field
-
-## Directory Layout
-
-```
-/etc/wright/
-├── wright.toml                   # Global configuration
-├── repos.toml                  # Repository sources
-└── executors/                  # Executor definitions
-    ├── shell.toml
-    ├── python.toml
-    └── lua.toml
-
-/var/lib/wright/
-├── db/
-│   └── packages.db             # SQLite database
-├── cache/
-│   ├── sources/                # Downloaded source tarballs
-│   └── packages/               # Downloaded/built binary packages
-└── lock/                       # Lock file (prevent concurrent operations)
-
-/var/ports/                     # Ports tree
-├── core/                       # Core system packages
-├── base/                       # Base system packages
-├── extra/                      # Extra packages
-└── community/                  # Community-contributed packages
-```
+Add new executors by placing TOML files in `/etc/wright/executors/`. The `command` must be an absolute path to an existing executable. No shell metacharacters or pipes.

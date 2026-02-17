@@ -875,7 +875,7 @@ mod tests {
         use crate::package::manifest::PackageManifest;
 
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/hello/package.toml");
+            .join("tests/fixtures/hello/plan.toml");
         let manifest = PackageManifest::from_file(&manifest_path).unwrap();
         let hold_dir = manifest_path.parent().unwrap();
 

@@ -138,23 +138,6 @@ impl SimpleResolver {
         
         if self.assemblies.assemblies.contains_key(assembly_name) {
             self.collect_assembly_members(assembly_name, &mut plan_names);
-        } else {
-            // Fallback: search plans for group field
-            for root in &self.plans_dirs {
-                if !root.exists() { continue; }
-                for entry in walkdir::WalkDir::new(root) {
-                    let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-                    if entry.file_name() == "package.toml" {
-                        if let Ok(manifest) = crate::package::manifest::PackageManifest::from_file(entry.path()) {
-                            if let Some(ref g) = manifest.package.group {
-                                if g == assembly_name {
-                                    plan_names.insert(manifest.package.name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         let mut paths = Vec::new();
@@ -185,9 +168,9 @@ impl SimpleResolver {
             if !root.exists() { continue; }
             for entry in walkdir::WalkDir::new(root) {
                 let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-                if entry.file_name() == "package.toml" {
+                if entry.file_name() == "plan.toml" {
                     if let Ok(manifest) = crate::package::manifest::PackageManifest::from_file(entry.path()) {
-                        map.insert(manifest.package.name, entry.path().to_path_buf());
+                        map.insert(manifest.plan.name, entry.path().to_path_buf());
                     }
                 }
             }

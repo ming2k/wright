@@ -118,18 +118,7 @@ Services are **not** enabled by default. The user explicitly enables services by
 
 ## 2. Technology Stack
 
-### 2.1 Core Development Language
-
-**Rust (latest stable)**
-
-Rationale:
-- Performance comparable to C, suitable for system tools
-- Memory safety without garbage collection
-- Strong type system ideal for modeling complex package management state
-- First-class TOML parsing support via `serde` ecosystem
-- Excellent CLI tooling ecosystem (`clap`, `indicatif`, etc.)
-
-### 2.2 Key Dependencies
+### 2.1 Key Dependencies
 
 | Purpose | Crate | Notes |
 |---------|-------|-------|
@@ -146,7 +135,7 @@ Rationale:
 | Logging | `tracing` | Structured logging |
 | Error handling | `anyhow` / `thiserror` | Application-level and library-level error handling |
 
-### 2.3 External Tool Dependencies
+### 2.2 External Tool Dependencies
 
 | Tool | Purpose | Required |
 |------|---------|----------|
@@ -156,7 +145,7 @@ Rationale:
 | `curl` / `wget` | Fallback download tools | Optional |
 | `gpg` | Package signature verification | Optional (later phase) |
 
-### 2.4 Package Format
+### 2.3 Package Format
 
 - Binary package format: **tar.zst** (zstd-compressed tar archive)
 - Package file extension: `.wright.tar.zst`
@@ -169,12 +158,13 @@ Rationale:
 
 ### 3.1 Binary Components
 
-The system consists of three main binaries:
+The system consists of a single binary with subcommands:
 
 ```
-wright           # Package manager (install, remove, query, upgrade)
-wright-build     # Build tool (parse build descriptions, execute builds, create packages)
-wright-repo      # Repository tool (generate index, sign, verify)
+wright install   # Install packages
+wright remove    # Remove packages
+wright build     # Build tool (parse build descriptions, execute builds, create packages)
+wright ...       # Other subcommands: upgrade, query, list, search, files, owner, verify
 ```
 
 ### 3.2 Directory Layout
@@ -199,17 +189,17 @@ wright-repo      # Repository tool (generate index, sign, verify)
 /var/hold/                      # Hold tree (collection of build description files)
 ├── core/                       # Core system packages
 │   ├── glibc/
-│   │   └── package.toml
+│   │   └── plan.toml
 │   ├── gcc/
-│   │   ├── package.toml
+│   │   ├── plan.toml
 │   │   └── patches/
 │   └── openssl/
-│       └── package.toml
+│       └── plan.toml
 ├── extra/                      # Additional packages
 │   ├── nginx/
-│   │   └── package.toml
+│   │   └── plan.toml
 │   └── python/
-│       └── package.toml
+│       └── plan.toml
 └── custom/                     # User-defined packages
 ```
 
@@ -218,7 +208,7 @@ wright-repo      # Repository tool (generate index, sign, verify)
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    CLI Interface                      │
-│                (wright / wright-build)                    │
+│                      (wright)                          │
 ├─────────────────────────────────────────────────────┤
 │                   Core Logic Layer                    │
 │  ┌──────────────┬──────────────┬──────────────────┐ │
@@ -240,17 +230,17 @@ wright-repo      # Repository tool (generate index, sign, verify)
 
 ---
 
-## 4. Package Description Format (package.toml)
+## 4. Package Description Format (plan.toml)
 
 ### 4.1 Complete Field Specification
 
 ```toml
 # ==============================================================
-# package.toml — wright package description file full specification
+# plan.toml — wright package description file full specification
 # ==============================================================
 
 # ---- Package metadata (required) ----
-[package]
+[plan]
 name = "nginx"                          # Package name, [a-z0-9][a-z0-9_-]*, max 64 chars
 version = "1.25.3"                      # Upstream version (free-form string)
 release = 1                             # Release number (integer, increment when build script changes)
@@ -259,7 +249,6 @@ license = "BSD-2-Clause"                # SPDX license identifier
 arch = "x86_64"                         # Target architecture, or "any" for arch-independent
 url = "https://nginx.org"               # Upstream project homepage (optional)
 maintainer = "Your Name <you@email>"    # Maintainer (optional)
-group = "extra"                         # Group: core / extra / custom (optional)
 
 # ---- Dependency declarations ----
 [dependencies]
@@ -780,22 +769,22 @@ Version comparison uses segment-based ordering: versions are split on `.` and `-
 
 ---
 
-## 9. Build Tool (wright-build)
+## 9. Build Tool (wright build)
 
 ### 9.1 Command-Line Interface
 
 ```
-wright-build <port_path>              # Build the specified port
-wright-build <port_path> --stage <s>  # Execute only up to a specific stage
-wright-build --clean <port_path>      # Clean build directory
-wright-build --lint <port_path>       # Validate package.toml syntax
-wright-build --rebuild <port_path>    # Force rebuild
+wright build <port_path>              # Build the specified port
+wright build <port_path> --stage <s>  # Execute only up to a specific stage
+wright build --clean <port_path>      # Clean build directory
+wright build --lint <port_path>       # Validate plan.toml syntax
+wright build --rebuild <port_path>    # Force rebuild
 ```
 
 ### 9.2 Complete Build Flow
 
 ```
-1.  Parse package.toml
+1.  Parse plan.toml
 2.  Validate all required fields
 3.  Check that build dependencies are installed
 4.  Create build working directory: /tmp/wright-build/{name}-{version}/
@@ -845,7 +834,7 @@ arch = "x86_64"
 license = "BSD-2-Clause"
 install_size = 2847563
 build_date = "2025-01-15T10:30:00Z"
-packager = "wright-build 0.1.0"
+packager = "wright 0.1.0"
 
 [dependencies]
 runtime = ["openssl >= 3.0", "pcre2 >= 10.42", "zlib >= 1.2"]
@@ -893,75 +882,14 @@ retry_count = 3                     # Download retry attempts
 
 ---
 
-## 11. Rust Project Structure
-
-```
-wright/
-├── Cargo.toml
-├── Cargo.lock
-├── src/
-│   ├── bin/
-│   │   ├── wright.rs                 # Package manager entry point
-│   │   ├── wright_build.rs           # Build tool entry point
-│   │   └── wright_repo.rs            # Repository tool entry point
-│   ├── lib.rs                      # Library root
-│   ├── config.rs                   # Global configuration loading
-│   ├── package/
-│   │   ├── mod.rs
-│   │   ├── manifest.rs             # package.toml parsing (serde deserialization)
-│   │   ├── version.rs              # Version comparison (segment-based)
-│   │   └── archive.rs              # Binary package packing/unpacking
-│   ├── resolver/
-│   │   ├── mod.rs
-│   │   ├── graph.rs                # Dependency graph construction
-│   │   └── topo.rs                 # Topological sort
-│   ├── database/
-│   │   ├── mod.rs
-│   │   └── schema.rs               # SQLite table schema and operations
-│   ├── transaction/
-│   │   ├── mod.rs
-│   │   └── rollback.rs             # Transaction management and rollback
-│   ├── builder/
-│   │   ├── mod.rs
-│   │   ├── lifecycle.rs            # Lifecycle pipeline scheduling
-│   │   ├── executor.rs             # Executor loading and invocation
-│   │   └── variables.rs            # Variable substitution engine
-│   ├── sandbox/
-│   │   ├── mod.rs
-│   │   └── bwrap.rs                # bubblewrap command generation and invocation
-│   ├── repo/
-│   │   ├── mod.rs
-│   │   ├── index.rs                # Repository index generation and parsing
-│   │   ├── sync.rs                 # Remote repository synchronization
-│   │   └── source.rs               # Source resolution (priority-based)
-│   └── util/
-│       ├── mod.rs
-│       ├── download.rs             # HTTP downloads
-│       ├── checksum.rs             # SHA-256 verification
-│       └── compress.rs             # tar.zst compression/decompression
-└── tests/
-    ├── integration/
-    │   ├── build_test.rs           # Build flow integration tests
-    │   ├── install_test.rs         # Install/uninstall integration tests
-    │   └── sandbox_test.rs         # Sandbox isolation tests
-    └── fixtures/
-        ├── simple-pkg/             # Simple test package
-        │   └── package.toml
-        └── dep-chain/              # Dependency chain test packages
-            ├── liba/
-            └── libb/
-```
-
----
-
-## 12. Development Roadmap
+## 11. Development Roadmap
 
 ### Phase 1: Minimum Viable Product (MVP)
 
 Goal: Ability to build, install, and uninstall packages.
 
 Tasks:
-- [ ] package.toml parser (manifest.rs)
+- [ ] plan.toml parser (manifest.rs)
 - [ ] Shell executor
 - [ ] Basic lifecycle pipeline (prepare → build → package)
 - [ ] Unsandboxed builds (sandbox = none)
@@ -994,7 +922,7 @@ Tasks:
 - [ ] Custom lifecycle pipelines
 - [ ] Build log auditing
 - [ ] ccache integration
-- [ ] `wright-build --lint` package description validation
+- [ ] `wright build --lint` package description validation
 
 ### Phase 4: Repository + Distribution
 
@@ -1002,7 +930,7 @@ Goal: Remote repository support and self-hosting capability.
 
 Tasks:
 - [ ] Repository index format (`index.toml`) generation
-- [ ] `wright-repo generate` tool for creating repository from built packages
+- [ ] Repository generation tool for creating repository from built packages
 - [ ] `wright sync` remote repository synchronization with caching
 - [ ] Priority-based source resolution (local > remote)
 - [ ] Remote package download with SHA-256 verification
@@ -1027,7 +955,7 @@ Tasks:
 
 ---
 
-## 13. Repository System
+## 12. Repository System
 
 ### 13.1 Overview
 
@@ -1055,7 +983,7 @@ name = "official"
 description = "Wright Official Repository"
 arch = "x86_64"
 generated_at = "2025-06-15T10:30:00Z"
-generator = "wright-build 0.1.0"
+generator = "wright 0.1.0"
 
 # Each package is an entry in the packages array
 [[packages]]
@@ -1073,7 +1001,6 @@ depends = ["openssl >= 3.0", "pcre2 >= 10.42", "zlib >= 1.2"]
 conflicts = ["apache"]
 provides = ["http-server"]
 build_date = "2025-06-14T08:00:00Z"
-group = "extra"
 
 [[packages]]
 name = "openssl"
@@ -1138,11 +1065,7 @@ Resolution order: When multiple sources provide the same package, the source wit
 
 ### 13.5 Repository Generation
 
-The `wright-repo` tool (or `wright-build --repo`) generates a repository from a directory of built packages:
-
-```
-wright-repo generate /path/to/packages/ --output /path/to/repo/
-```
+Repository generation creates a repository from a directory of built packages. This functionality is planned for a future phase.
 
 Process:
 1. Scan directory for `*.wright.tar.zst` files
@@ -1170,7 +1093,7 @@ The repository system must support fully offline operation:
 - `wright install <path/to/file.wright.tar.zst>` installs directly from a local file
 - The hold tree (`/var/hold/`) works entirely offline once source tarballs are cached
 - A USB-based repository is just a directory with `index.toml` + packages — mount and point a `[[source]]` at it
-- `wright-build` caches all downloaded sources in `/var/lib/wright/cache/sources/` for future offline rebuilds
+- `wright build` caches all downloaded sources in `/var/lib/wright/cache/sources/` for future offline rebuilds
 
 ### 13.8 Repository Hosting
 
@@ -1183,7 +1106,7 @@ Recommended hosting options:
 
 ---
 
-## 14. Design Constraints and Considerations
+## 13. Design Constraints and Considerations
 
 ### 14.1 Security Constraints
 
@@ -1220,16 +1143,16 @@ Recommended hosting options:
 
 ---
 
-## 15. Testing Strategy
+## 14. Testing Strategy
 
-### 15.1 Unit Tests
+### 14.1 Unit Tests
 
-- TOML parsing: Various valid/invalid package.toml inputs
+- TOML parsing: Various valid/invalid plan.toml inputs
 - Version comparison: segment-based ordering edge cases
 - Dependency graph: Cycle detection, topological sort correctness
 - Variable substitution: All variables expand correctly
 
-### 15.2 Integration Tests
+### 14.2 Integration Tests
 
 - End-to-end build of a simple C program package
 - Install → verify files exist → uninstall → verify files removed
@@ -1238,47 +1161,4 @@ Recommended hosting options:
 - Rollback: Verify system is clean after a mid-install failure
 - Sandbox: Verify build scripts cannot access files or network outside the sandbox
 
-### 15.3 Simple Test Package
-
-```toml
-# tests/fixtures/hello/package.toml
-[package]
-name = "hello"
-version = "1.0.0"
-release = 1
-description = "Hello World test package"
-license = "MIT"
-arch = "x86_64"
-
-[dependencies]
-runtime = []
-build = ["gcc"]
-
-[sources]
-uris = []
-sha256 = []
-
-[lifecycle.prepare]
-executor = "shell"
-sandbox = "none"
-script = """
-cat > hello.c << 'EOF'
-#include <stdio.h>
-int main() { printf("Hello, wright!\\n"); return 0; }
-EOF
-"""
-
-[lifecycle.build]
-executor = "shell"
-sandbox = "none"
-script = """
-gcc -o hello hello.c
-"""
-
-[lifecycle.package]
-executor = "shell"
-sandbox = "none"
-script = """
-install -Dm755 hello ${PKG_DIR}/usr/bin/hello
-"""
-```
+Test fixtures live in `tests/fixtures/`.

@@ -1,4 +1,4 @@
-[package]
+[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -7,7 +7,6 @@ license = "BSD-2-Clause"
 arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test Maintainer <test@example.com>"
-group = "extra"
 
 [dependencies]
 runtime = [

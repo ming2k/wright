@@ -7,7 +7,7 @@ use crate::error::{WrightError, Result};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct PackageManifest {
-    pub package: PackageMetadata,
+    pub plan: PackageMetadata,
     #[serde(default)]
     pub dependencies: Dependencies,
     #[serde(default)]
@@ -46,16 +46,15 @@ impl SplitPackage {
     /// Produce a full PackageManifest for archive creation, inheriting from the parent.
     pub fn to_manifest(&self, name: &str, parent: &PackageManifest) -> PackageManifest {
         PackageManifest {
-            package: PackageMetadata {
+            plan: PackageMetadata {
                 name: name.to_string(),
-                version: self.version.clone().unwrap_or_else(|| parent.package.version.clone()),
-                release: self.release.unwrap_or(parent.package.release),
+                version: self.version.clone().unwrap_or_else(|| parent.plan.version.clone()),
+                release: self.release.unwrap_or(parent.plan.release),
                 description: self.description.clone(),
-                license: self.license.clone().unwrap_or_else(|| parent.package.license.clone()),
-                arch: self.arch.clone().unwrap_or_else(|| parent.package.arch.clone()),
-                url: parent.package.url.clone(),
-                maintainer: parent.package.maintainer.clone(),
-                group: parent.package.group.clone(),
+                license: self.license.clone().unwrap_or_else(|| parent.plan.license.clone()),
+                arch: self.arch.clone().unwrap_or_else(|| parent.plan.arch.clone()),
+                url: parent.plan.url.clone(),
+                maintainer: parent.plan.maintainer.clone(),
             },
             dependencies: self.dependencies.clone(),
             sources: Sources::default(),
@@ -81,8 +80,6 @@ pub struct PackageMetadata {
     pub url: Option<String>,
     #[serde(default)]
     pub maintainer: Option<String>,
-    #[serde(default)]
-    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -199,40 +196,40 @@ impl PackageManifest {
 
     pub fn validate(&self) -> Result<()> {
         let name_re = regex::Regex::new(r"^[a-z0-9][a-z0-9_-]*$").unwrap();
-        if !name_re.is_match(&self.package.name) {
+        if !name_re.is_match(&self.plan.name) {
             return Err(WrightError::ValidationError(format!(
                 "invalid package name '{}': must match [a-z0-9][a-z0-9_-]*",
-                self.package.name
+                self.plan.name
             )));
         }
-        if self.package.name.len() > 64 {
+        if self.plan.name.len() > 64 {
             return Err(WrightError::ValidationError(
                 "package name must be at most 64 characters".to_string(),
             ));
         }
 
         // Validate version parses
-        crate::package::version::Version::parse(&self.package.version)?;
+        crate::package::version::Version::parse(&self.plan.version)?;
 
-        if self.package.release == 0 {
+        if self.plan.release == 0 {
             return Err(WrightError::ValidationError(
                 "release must be >= 1".to_string(),
             ));
         }
 
-        if self.package.description.is_empty() {
+        if self.plan.description.is_empty() {
             return Err(WrightError::ValidationError(
                 "description must not be empty".to_string(),
             ));
         }
 
-        if self.package.license.is_empty() {
+        if self.plan.license.is_empty() {
             return Err(WrightError::ValidationError(
                 "license must not be empty".to_string(),
             ));
         }
 
-        if self.package.arch.is_empty() {
+        if self.plan.arch.is_empty() {
             return Err(WrightError::ValidationError(
                 "arch must not be empty".to_string(),
             ));
@@ -255,7 +252,7 @@ impl PackageManifest {
                     split_name
                 )));
             }
-            if split_name == &self.package.name {
+            if split_name == &self.plan.name {
                 return Err(WrightError::ValidationError(format!(
                     "split package name '{}' must not collide with the main package name",
                     split_name
@@ -293,7 +290,7 @@ impl PackageManifest {
     pub fn archive_filename(&self) -> String {
         format!(
             "{}-{}-{}-{}.wright.tar.zst",
-            self.package.name, self.package.version, self.package.release, self.package.arch
+            self.plan.name, self.plan.version, self.plan.release, self.plan.arch
         )
     }
 }
@@ -305,7 +302,7 @@ mod tests {
     #[test]
     fn test_parse_hello_fixture() {
         let toml = r#"
-[package]
+[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -346,10 +343,10 @@ install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 """
 "#;
         let manifest = PackageManifest::from_str(toml).unwrap();
-        assert_eq!(manifest.package.name, "hello");
-        assert_eq!(manifest.package.version, "1.0.0");
-        assert_eq!(manifest.package.release, 1);
-        assert_eq!(manifest.package.arch, "x86_64");
+        assert_eq!(manifest.plan.name, "hello");
+        assert_eq!(manifest.plan.version, "1.0.0");
+        assert_eq!(manifest.plan.release, 1);
+        assert_eq!(manifest.plan.arch, "x86_64");
         assert_eq!(manifest.dependencies.build, vec!["gcc"]);
         assert!(manifest.lifecycle.contains_key("prepare"));
         assert!(manifest.lifecycle.contains_key("build"));
@@ -359,7 +356,7 @@ install -Dm755 hello ${PKG_DIR}/usr/bin/hello
     #[test]
     fn test_parse_full_featured() {
         let toml = r#"
-[package]
+[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -368,7 +365,6 @@ license = "BSD-2-Clause"
 arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test <test@test.com>"
-group = "extra"
 
 [dependencies]
 runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
@@ -446,9 +442,8 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
         let manifest = PackageManifest::from_str(toml).unwrap();
-        assert_eq!(manifest.package.name, "nginx");
-        assert_eq!(manifest.package.url.as_deref(), Some("https://nginx.org"));
-        assert_eq!(manifest.package.group.as_deref(), Some("extra"));
+        assert_eq!(manifest.plan.name, "nginx");
+        assert_eq!(manifest.plan.url.as_deref(), Some("https://nginx.org"));
         assert_eq!(manifest.dependencies.runtime.len(), 3);
         assert_eq!(manifest.dependencies.conflicts, vec!["apache"]);
         assert_eq!(manifest.dependencies.provides, vec!["http-server"]);
@@ -468,7 +463,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
     #[test]
     fn test_invalid_name() {
         let toml = r#"
-[package]
+[plan]
 name = "Hello"
 version = "1.0.0"
 release = 1
@@ -482,7 +477,7 @@ arch = "x86_64"
     #[test]
     fn test_missing_name() {
         let toml = r#"
-[package]
+[plan]
 version = "1.0.0"
 release = 1
 description = "test"
@@ -495,7 +490,7 @@ arch = "x86_64"
     #[test]
     fn test_bad_version() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "..."
 release = 1
@@ -509,7 +504,7 @@ arch = "x86_64"
     #[test]
     fn test_sha256_url_mismatch() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -527,7 +522,7 @@ sha256 = []
     #[test]
     fn test_archive_filename() {
         let toml = r#"
-[package]
+[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -545,7 +540,7 @@ arch = "x86_64"
     #[test]
     fn test_parse_split_packages() {
         let toml = r#"
-[package]
+[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -579,12 +574,12 @@ install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
 
         // Test to_manifest
         let split_manifest = split.to_manifest("libstdcpp", &manifest);
-        assert_eq!(split_manifest.package.name, "libstdcpp");
-        assert_eq!(split_manifest.package.version, "14.2.0");
-        assert_eq!(split_manifest.package.release, 1);
-        assert_eq!(split_manifest.package.arch, "x86_64");
-        assert_eq!(split_manifest.package.license, "GPL-3.0-or-later");
-        assert_eq!(split_manifest.package.description, "GNU C++ standard library");
+        assert_eq!(split_manifest.plan.name, "libstdcpp");
+        assert_eq!(split_manifest.plan.version, "14.2.0");
+        assert_eq!(split_manifest.plan.release, 1);
+        assert_eq!(split_manifest.plan.arch, "x86_64");
+        assert_eq!(split_manifest.plan.license, "GPL-3.0-or-later");
+        assert_eq!(split_manifest.plan.description, "GNU C++ standard library");
         assert_eq!(split_manifest.dependencies.runtime, vec!["libgcc"]);
         assert_eq!(
             split_manifest.archive_filename(),
@@ -595,7 +590,7 @@ install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
     #[test]
     fn test_split_inherits_overrides() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -617,15 +612,15 @@ script = "true"
         let manifest = PackageManifest::from_str(toml).unwrap();
         let split = manifest.split.get("test-doc").unwrap();
         let split_manifest = split.to_manifest("test-doc", &manifest);
-        assert_eq!(split_manifest.package.version, "1.0.0-doc");
-        assert_eq!(split_manifest.package.arch, "any");
-        assert_eq!(split_manifest.package.license, "MIT"); // inherited
+        assert_eq!(split_manifest.plan.version, "1.0.0-doc");
+        assert_eq!(split_manifest.plan.arch, "any");
+        assert_eq!(split_manifest.plan.license, "MIT"); // inherited
     }
 
     #[test]
     fn test_split_missing_package_stage() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -646,7 +641,7 @@ script = "make"
     #[test]
     fn test_split_invalid_name() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -667,7 +662,7 @@ script = "true"
     #[test]
     fn test_split_name_collides_with_main() {
         let toml = r#"
-[package]
+[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -688,7 +683,7 @@ script = "true"
     #[test]
     fn test_defaults() {
         let toml = r#"
-[package]
+[plan]
 name = "minimal"
 version = "1.0.0"
 release = 1

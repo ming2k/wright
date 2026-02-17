@@ -73,10 +73,10 @@ impl Builder {
     /// Process a URI by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
     fn process_uri(&self, uri: &str, manifest: &PackageManifest) -> String {
         let mut vars = std::collections::HashMap::new();
-        vars.insert("PKG_NAME".to_string(), manifest.package.name.clone());
-        vars.insert("PKG_VERSION".to_string(), manifest.package.version.clone());
-        vars.insert("PKG_RELEASE".to_string(), manifest.package.release.to_string());
-        vars.insert("PKG_ARCH".to_string(), manifest.package.arch.clone());
+        vars.insert("PKG_NAME".to_string(), manifest.plan.name.clone());
+        vars.insert("PKG_VERSION".to_string(), manifest.plan.version.clone());
+        vars.insert("PKG_RELEASE".to_string(), manifest.plan.release.to_string());
+        vars.insert("PKG_ARCH".to_string(), manifest.plan.arch.clone());
 
         variables::substitute(uri, &vars)
     }
@@ -92,7 +92,7 @@ impl Builder {
         };
         Ok(build_dir.join(format!(
             "{}-{}",
-            manifest.package.name, manifest.package.version
+            manifest.plan.name, manifest.plan.version
         )))
     }
 
@@ -141,10 +141,10 @@ impl Builder {
         let nproc = self.config.effective_jobs();
 
         let mut vars = variables::standard_variables(
-            &manifest.package.name,
-            &manifest.package.version,
-            manifest.package.release,
-            &manifest.package.arch,
+            &manifest.plan.name,
+            &manifest.plan.version,
+            manifest.plan.release,
+            &manifest.plan.arch,
             &src_dir.to_string_lossy(),
             &pkg_dir.to_string_lossy(),
             &files_dir_str,
@@ -345,7 +345,7 @@ impl Builder {
         Ok(build_dir)
     }
 
-    /// Update sha256 checksums in package.toml.
+    /// Update sha256 checksums in plan.toml.
     /// Only computes hashes for remote URIs; local paths get "SKIP".
     pub fn update_hashes(&self, manifest: &PackageManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
@@ -388,7 +388,7 @@ impl Builder {
             return Ok(());
         }
 
-        // Surgical update of package.toml using regex to preserve comments/formatting
+        // Surgical update of plan.toml using regex to preserve comments/formatting
         let content = std::fs::read_to_string(manifest_path).map_err(|e| WrightError::IoError(e))?;
 
         let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
@@ -409,7 +409,7 @@ impl Builder {
                 c.insert_str(uris_match.end(), &format!("\n{}", replacement));
                 c
             } else {
-                return Err(WrightError::BuildError("could not find uris or sha256 field in package.toml".to_string()));
+                return Err(WrightError::BuildError("could not find uris or sha256 field in plan.toml".to_string()));
             }
         };
 

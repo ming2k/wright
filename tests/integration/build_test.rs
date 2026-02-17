@@ -13,7 +13,7 @@ fn fixture_path(name: &str) -> PathBuf {
 
 #[test]
 fn test_build_hello_fixture() {
-    let manifest_path = fixture_path("hello").join("package.toml");
+    let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     let hold_dir = manifest_path.parent().unwrap();
 
@@ -30,7 +30,7 @@ fn test_build_hello_fixture() {
 
 #[test]
 fn test_build_and_archive_hello() {
-    let manifest_path = fixture_path("hello").join("package.toml");
+    let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     let hold_dir = manifest_path.parent().unwrap();
 
@@ -67,17 +67,17 @@ fn test_build_and_archive_hello() {
 
 #[test]
 fn test_lint_hello_fixture() {
-    let manifest_path = fixture_path("hello").join("package.toml");
+    let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
-    assert_eq!(manifest.package.name, "hello");
-    assert_eq!(manifest.package.version, "1.0.0");
+    assert_eq!(manifest.plan.name, "hello");
+    assert_eq!(manifest.plan.version, "1.0.0");
 }
 
 #[test]
 fn test_lint_nginx_fixture() {
-    let manifest_path = fixture_path("nginx").join("package.toml");
+    let manifest_path = fixture_path("nginx").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
-    assert_eq!(manifest.package.name, "nginx");
+    assert_eq!(manifest.plan.name, "nginx");
     assert_eq!(manifest.dependencies.runtime.len(), 3);
     assert!(manifest.install_scripts.is_some());
     assert!(manifest.backup.is_some());
@@ -85,7 +85,7 @@ fn test_lint_nginx_fixture() {
 
 #[test]
 fn test_build_stop_after_stage() {
-    let manifest_path = fixture_path("hello").join("package.toml");
+    let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     let hold_dir = manifest_path.parent().unwrap();
 

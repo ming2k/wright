@@ -26,7 +26,5 @@ RUN apk add --no-cache \
     bubblewrap
 
 COPY --from=builder /src/target/release/wright /usr/bin/
-COPY --from=builder /src/target/release/wright-build /usr/bin/
-COPY --from=builder /src/target/release/wright-repo /usr/bin/
 
 ENTRYPOINT ["wright"]

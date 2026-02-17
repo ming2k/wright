@@ -172,15 +172,15 @@ arch = "{arch}"
 license = "{license}"
 install_size = {install_size}
 build_date = "{build_date}"
-packager = "wright-build {wright_version}"
+packager = "wright {wright_version}"
 {deps}{backup}
 "#,
-        name = manifest.package.name,
-        version = manifest.package.version,
-        release = manifest.package.release,
-        description = manifest.package.description,
-        arch = manifest.package.arch,
-        license = manifest.package.license,
+        name = manifest.plan.name,
+        version = manifest.plan.version,
+        release = manifest.plan.release,
+        description = manifest.plan.description,
+        arch = manifest.plan.arch,
+        license = manifest.plan.license,
         install_size = install_size,
         build_date = build_date,
         wright_version = env!("CARGO_PKG_VERSION"),

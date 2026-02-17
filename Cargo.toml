@@ -9,14 +9,6 @@ license = "MIT"
 name = "wright"
 path = "src/bin/wright.rs"
 
-[[bin]]
-name = "wright-build"
-path = "src/bin/wright_build.rs"
-
-[[bin]]
-name = "wright-repo"
-path = "src/bin/wright_repo.rs"
-
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
