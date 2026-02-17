@@ -144,12 +144,20 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 ### `[options]`
 
-| Field    | Type | Default | Description                              |
-|----------|------|---------|------------------------------------------|
-| `strip`  | bool | `true`  | Strip debug symbols from binaries        |
-| `static` | bool | `false` | Build statically linked binaries         |
-| `debug`  | bool | `false` | Build with debug info                    |
-| `ccache` | bool | `true`  | Use ccache for compilation if available  |
+| Field            | Type    | Default | Description                              |
+|------------------|---------|---------|------------------------------------------|
+| `strip`          | bool    | `true`  | Strip debug symbols from binaries        |
+| `static`         | bool    | `false` | Build statically linked binaries         |
+| `debug`          | bool    | `false` | Build with debug info                    |
+| `ccache`         | bool    | `true`  | Use ccache for compilation if available  |
+| `jobs`           | integer | —       | Override global parallel jobs for this package |
+| `memory_limit`   | integer | —       | Max virtual address space per build process (MB), overrides global |
+| `cpu_time_limit` | integer | —       | Max CPU time per build process (seconds), overrides global |
+| `timeout`        | integer | —       | Wall-clock timeout per build stage (seconds), overrides global |
+
+Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
+
+**Practical guidance:** `jobs` is the most effective way to control memory usage — fewer parallel compiler processes means less total memory consumption. `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
 ### `[lifecycle.<stage>]`
 

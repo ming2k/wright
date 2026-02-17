@@ -84,6 +84,9 @@ cflags = "-O2 -pipe -march=x86-64"     # Default C compiler flags
 cxxflags = "-O2 -pipe -march=x86-64"   # Default C++ compiler flags
 strip = true                            # Strip binaries after build
 ccache = false                          # Enable ccache
+# memory_limit = 8192                   # Max virtual address space per build process (MB)
+# cpu_time_limit = 7200                 # Max CPU time per build process (seconds)
+# timeout = 14400                       # Wall-clock timeout per build stage (seconds)
 
 [network]
 download_timeout = 300                  # Download timeout in seconds
@@ -111,6 +114,9 @@ retry_count = 3                         # Download retry attempts
 | `cxxflags` | string | `"-O2 -pipe -march=x86-64"` | Global C++ compiler flags |
 | `strip` | boolean | `true` | Strip debug symbols from binaries |
 | `ccache` | boolean | `false` | Use ccache if available |
+| `memory_limit` | integer | — | Max virtual address space per build process (MB). Uses `RLIMIT_AS`. Set generously — see note below. |
+| `cpu_time_limit` | integer | — | Max CPU time per build process (seconds). Uses `RLIMIT_CPU`. |
+| `timeout` | integer | — | Wall-clock timeout per build stage (seconds). Kills the process on expiry. |
 
 ### `[network]` section
 

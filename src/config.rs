@@ -49,6 +49,12 @@ pub struct BuildConfig {
     pub strip: bool,
     #[serde(default)]
     pub ccache: bool,
+    #[serde(default)]
+    pub memory_limit: Option<u64>,
+    #[serde(default)]
+    pub cpu_time_limit: Option<u64>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -224,6 +230,9 @@ impl Default for BuildConfig {
             cxxflags: default_cxxflags(),
             strip: true,
             ccache: false,
+            memory_limit: None,
+            cpu_time_limit: None,
+            timeout: None,
         }
     }
 }

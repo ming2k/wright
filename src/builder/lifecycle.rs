@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::error::{WrightError, Result};
 use crate::package::manifest::{LifecycleStage, PackageManifest};
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
-use crate::sandbox::SandboxLevel;
+use crate::sandbox::{ResourceLimits, SandboxLevel};
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
@@ -27,6 +27,7 @@ pub struct LifecyclePipeline<'a> {
     files_dir: Option<PathBuf>,
     stop_after: Option<String>,
     executors: &'a ExecutorRegistry,
+    rlimits: ResourceLimits,
 }
 
 impl<'a> LifecyclePipeline<'a> {
@@ -40,6 +41,7 @@ impl<'a> LifecyclePipeline<'a> {
         files_dir: Option<PathBuf>,
         stop_after: Option<String>,
         executors: &'a ExecutorRegistry,
+        rlimits: ResourceLimits,
     ) -> Self {
         Self {
             manifest,
@@ -51,6 +53,7 @@ impl<'a> LifecyclePipeline<'a> {
             files_dir,
             stop_after,
             executors,
+            rlimits,
         }
     }
 
@@ -126,6 +129,7 @@ impl<'a> LifecyclePipeline<'a> {
             src_dir: self.src_dir.clone(),
             pkg_dir: self.pkg_dir.clone(),
             files_dir: self.files_dir.clone(),
+            rlimits: self.rlimits.clone(),
         };
 
         let result = executor::execute_script(

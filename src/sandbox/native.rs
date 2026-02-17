@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 
@@ -9,8 +10,64 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
 use tracing::{debug, info};
 
-use super::{SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
+use super::{ResourceLimits, SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
 use crate::error::{Result, WrightError};
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Spawn a watchdog thread that kills a process after `timeout` seconds.
+///
+/// If `kill_pgroup` is true, kills the entire process group (`kill(-pid)`).
+/// Use this for unsandboxed Command-based paths where the child is a process
+/// group leader (via `setpgid(0,0)` in pre_exec) — otherwise `make`/`gcc`
+/// children survive the kill and become orphans.
+///
+/// For the fork-based sandboxed path, use `kill_pgroup = false` because the
+/// PID namespace already ensures all descendants are killed when the
+/// intermediate child exits.
+///
+/// Returns a flag that should be set to `true` when the child exits normally
+/// to prevent the watchdog from firing on a recycled PID.
+fn spawn_timeout_watchdog(pid: u32, timeout: u64, kill_pgroup: bool) -> Arc<AtomicBool> {
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = done.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(timeout));
+        if !done_clone.load(Ordering::Acquire) {
+            let target = if kill_pgroup {
+                tracing::error!(
+                    "Wall-clock timeout ({timeout}s) exceeded, killing process group {pid}"
+                );
+                -(pid as i32)
+            } else {
+                tracing::error!(
+                    "Wall-clock timeout ({timeout}s) exceeded, killing process {pid}"
+                );
+                pid as i32
+            };
+            unsafe { libc::kill(target, libc::SIGKILL); }
+        }
+    });
+    done
+}
+
+/// Apply resource limits via `setrlimit`.
+fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
+    use nix::sys::resource::{setrlimit, Resource};
+
+    if let Some(mb) = rlimits.memory_mb {
+        let bytes = mb * 1024 * 1024;
+        setrlimit(Resource::RLIMIT_AS, bytes, bytes)
+            .map_err(|e| format!("setrlimit RLIMIT_AS: {e}"))?;
+    }
+    if let Some(secs) = rlimits.cpu_time_secs {
+        setrlimit(Resource::RLIMIT_CPU, secs, secs)
+            .map_err(|e| format!("setrlimit RLIMIT_CPU: {e}"))?;
+    }
+    Ok(())
+}
 
 /// Run a command inside a native Linux namespace sandbox.
 ///
@@ -47,13 +104,23 @@ pub fn run_in_sandbox(
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
+        let rlimits = config.rlimits.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                // New process group so timeout can kill all descendants.
+                libc::setpgid(0, 0);
+                apply_rlimits(&rlimits).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            });
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+        let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
         let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
         let status = child.wait()
             .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+        if let Some(done) = watchdog { done.store(true, Ordering::Release); }
         let stdout_bytes = stdout_handle.join().unwrap_or_default();
         let stderr_bytes = stderr_handle.join().unwrap_or_default();
         return Ok(SandboxOutput {
@@ -107,13 +174,22 @@ pub fn run_in_sandbox(
         for (key, value) in &config.env {
             cmd.env(key, value);
         }
+        let rlimits = config.rlimits.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::setpgid(0, 0);
+                apply_rlimits(&rlimits).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            });
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+        let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
         let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
         let status = child.wait()
             .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+        if let Some(done) = watchdog { done.store(true, Ordering::Release); }
         let stdout_bytes = stdout_handle.join().unwrap_or_default();
         let stderr_bytes = stderr_handle.join().unwrap_or_default();
         return Ok(SandboxOutput {
@@ -467,6 +543,12 @@ pub fn run_in_sandbox(
                     std::mem::forget(err_write);
                     let _ = nix::unistd::close(err_write_fd);
 
+                    // Apply resource limits before exec.
+                    if let Err(e) = apply_rlimits(&config.rlimits) {
+                        eprintln!("rlimits: {e}");
+                        unsafe { libc::_exit(1) }
+                    }
+
                     match execvp(&c_command, &c_args) {
                         Ok(infallible) => match infallible {},
                         Err(e) => {
@@ -518,10 +600,15 @@ pub fn run_in_sandbox(
             let err_file = unsafe { std::fs::File::from_raw_fd(eout_read.as_raw_fd()) };
             std::mem::forget(eout_read);
 
+            let watchdog = config.rlimits.timeout_secs.map(|t| {
+                spawn_timeout_watchdog(child.as_raw() as u32, t, false)
+            });
+
             let stdout_handle = spawn_tee_reader(out_file, std::io::stdout());
             let stderr_handle = spawn_tee_reader(err_file, std::io::stderr());
 
             let status = wait_for_child(child)?;
+            if let Some(done) = watchdog { done.store(true, Ordering::Release); }
 
             let stdout_bytes = stdout_handle.join().unwrap_or_default();
             let stderr_bytes = stderr_handle.join().unwrap_or_default();

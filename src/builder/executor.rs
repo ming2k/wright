@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::error::{WrightError, Result};
 use crate::builder::variables;
-use crate::sandbox::{self, SandboxConfig, SandboxLevel};
+use crate::sandbox::{self, ResourceLimits, SandboxConfig, SandboxLevel};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ExecutorConfig {
@@ -97,6 +97,7 @@ pub struct ExecutorOptions {
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
+    pub rlimits: ResourceLimits,
 }
 
 pub struct ExecutionResult {
@@ -147,6 +148,7 @@ pub fn execute_script(
     // Create sandbox config
     let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone());
     config.files_dir = options.files_dir.clone();
+    config.rlimits = options.rlimits.clone();
 
     // Set environment variables
     for (key, value) in env_vars {

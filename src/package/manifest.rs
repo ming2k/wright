@@ -120,6 +120,14 @@ pub struct BuildOptions {
     pub debug: bool,
     #[serde(default = "default_true")]
     pub ccache: bool,
+    #[serde(default)]
+    pub jobs: Option<u32>,
+    #[serde(default)]
+    pub memory_limit: Option<u64>,
+    #[serde(default)]
+    pub cpu_time_limit: Option<u64>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 impl Default for BuildOptions {
@@ -129,6 +137,10 @@ impl Default for BuildOptions {
             static_: false,
             debug: false,
             ccache: true,
+            jobs: None,
+            memory_limit: None,
+            cpu_time_limit: None,
+            timeout: None,
         }
     }
 }

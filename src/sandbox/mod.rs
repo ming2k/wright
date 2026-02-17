@@ -41,6 +41,19 @@ pub fn spawn_tee_reader<R: Read + Send + 'static>(
     })
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ResourceLimits {
+    /// RLIMIT_AS: max virtual address space in megabytes.
+    /// Note: this limits virtual address space, not physical RSS.
+    /// Set generously — programs like rustc/JVM/Go reserve large
+    /// virtual mappings without touching them.
+    pub memory_mb: Option<u64>,
+    /// RLIMIT_CPU: max CPU time (user + system) in seconds.
+    pub cpu_time_secs: Option<u64>,
+    /// Wall-clock timeout in seconds (enforced by parent, not rlimit).
+    pub timeout_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxLevel {
     None,
@@ -65,6 +78,7 @@ pub struct SandboxConfig {
     pub files_dir: Option<PathBuf>,
     pub extra_binds: Vec<(PathBuf, PathBuf, bool)>, // (host_path, dest_path, read_only)
     pub env: Vec<(String, String)>,
+    pub rlimits: ResourceLimits,
 }
 
 impl SandboxConfig {
@@ -76,6 +90,7 @@ impl SandboxConfig {
             files_dir: None,
             extra_binds: Vec::new(),
             env: Vec::new(),
+            rlimits: ResourceLimits::default(),
         }
     }
 }

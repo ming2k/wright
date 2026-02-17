@@ -10,6 +10,7 @@ use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
 use crate::package::manifest::PackageManifest;
 use crate::repo::source::sanitize_cache_filename;
+use crate::sandbox::ResourceLimits;
 use crate::util::{checksum, download, compress};
 
 pub struct BuildResult {
@@ -138,7 +139,23 @@ impl Builder {
 
         let files_dir_str = files_dir.to_string_lossy().to_string();
 
-        let nproc = self.config.effective_jobs();
+        // Resolve resource limits: per-plan overrides global config
+        let rlimits = ResourceLimits {
+            memory_mb: manifest.options.memory_limit.or(self.config.build.memory_limit),
+            cpu_time_secs: manifest.options.cpu_time_limit.or(self.config.build.cpu_time_limit),
+            timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
+        };
+
+        // Per-plan jobs override global setting
+        let nproc = if let Some(plan_jobs) = manifest.options.jobs {
+            if plan_jobs == 0 {
+                self.config.effective_jobs()
+            } else {
+                plan_jobs
+            }
+        } else {
+            self.config.effective_jobs()
+        };
 
         let mut vars = variables::standard_variables(
             &manifest.plan.name,
@@ -166,6 +183,7 @@ impl Builder {
             if files_dir.exists() { Some(files_dir.clone()) } else { None },
             stop_after,
             &self.executors,
+            rlimits.clone(),
         );
 
         pipeline.run()?;
@@ -197,6 +215,7 @@ impl Builder {
                 src_dir: src_dir.clone(),
                 pkg_dir: split_pkg_dir.clone(),
                 files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+                rlimits: rlimits.clone(),
             };
 
             let split_executor = self.executors.get(&package_stage.executor)
