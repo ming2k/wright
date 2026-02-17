@@ -194,40 +194,9 @@ pub struct BackupConfig {
 
 impl PackageManifest {
     pub fn from_str(content: &str) -> Result<Self> {
-        let mut manifest: Self = toml::from_str(content)?;
-        manifest.migrate_legacy_stages();
+        let manifest: Self = toml::from_str(content)?;
         manifest.validate()?;
         Ok(manifest)
-    }
-
-    /// Migrate deprecated stage names for backward compatibility.
-    /// `lifecycle.build` is renamed to `lifecycle.compile`.
-    fn migrate_legacy_stages(&mut self) {
-        if self.lifecycle.contains_key("build") && !self.lifecycle.contains_key("compile") {
-            tracing::warn!("[lifecycle.build] is deprecated, use [lifecycle.compile] instead");
-            if let Some(stage) = self.lifecycle.remove("build") {
-                self.lifecycle.insert("compile".to_string(), stage);
-            }
-        }
-        // Also migrate pre_build/post_build hooks
-        if self.lifecycle.contains_key("pre_build") && !self.lifecycle.contains_key("pre_compile") {
-            if let Some(stage) = self.lifecycle.remove("pre_build") {
-                self.lifecycle.insert("pre_compile".to_string(), stage);
-            }
-        }
-        if self.lifecycle.contains_key("post_build") && !self.lifecycle.contains_key("post_compile") {
-            if let Some(stage) = self.lifecycle.remove("post_build") {
-                self.lifecycle.insert("post_compile".to_string(), stage);
-            }
-        }
-        // Migrate lifecycle_order
-        if let Some(ref mut order) = self.lifecycle_order {
-            for stage in &mut order.stages {
-                if stage == "build" {
-                    *stage = "compile".to_string();
-                }
-            }
-        }
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -276,6 +245,32 @@ impl PackageManifest {
             return Err(WrightError::ValidationError(
                 "arch must not be empty".to_string(),
             ));
+        }
+
+        // Validate lifecycle stage names
+        let stages: Vec<&str> = if let Some(ref order) = self.lifecycle_order {
+            order.stages.iter().map(|s| s.as_str()).collect()
+        } else {
+            crate::builder::lifecycle::DEFAULT_STAGES.to_vec()
+        };
+        let mut valid_names = std::collections::HashSet::new();
+        for stage in &stages {
+            valid_names.insert(stage.to_string());
+            valid_names.insert(format!("pre_{}", stage));
+            valid_names.insert(format!("post_{}", stage));
+        }
+        for key in self.lifecycle.keys() {
+            if !valid_names.contains(key) {
+                return Err(WrightError::ValidationError(format!(
+                    "unknown lifecycle stage '{}'. Valid stages: {}",
+                    key,
+                    stages.iter()
+                        .filter(|s| !["fetch", "verify", "extract"].contains(s))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
         }
 
         // sha256 count must match uris count
@@ -371,7 +366,7 @@ int main() { printf("Hello, wright!\\n"); return 0; }
 EOF
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "none"
 script = """
@@ -451,7 +446,7 @@ cd nginx-${PKG_VERSION}
 ./configure --prefix=/usr
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "strict"
 script = """
@@ -591,7 +586,7 @@ description = "The GNU Compiler Collection"
 license = "GPL-3.0-or-later"
 arch = "x86_64"
 
-[lifecycle.build]
+[lifecycle.compile]
 script = "make -j4"
 
 [lifecycle.package]
@@ -674,7 +669,7 @@ arch = "x86_64"
 [split.test-lib]
 description = "A library"
 
-[split.test-lib.lifecycle.build]
+[split.test-lib.lifecycle.compile]
 script = "make"
 "#;
         let err = PackageManifest::from_str(toml).unwrap_err();
