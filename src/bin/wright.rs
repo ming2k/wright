@@ -105,6 +105,10 @@ enum Commands {
         #[arg(long)]
         stage: Option<String>,
 
+        /// Run only a single lifecycle stage (preserve build dir from previous build)
+        #[arg(long)]
+        only: Option<String>,
+
         /// Clean build directory before building
         #[arg(long)]
         clean: bool,
@@ -140,8 +144,8 @@ fn main() -> Result<()> {
         .context("failed to load config")?;
 
     // Build subcommand has its own setup path — handle it separately
-    if let Commands::Build { targets, stage, clean, lint, rebuild, force, update, jobs } = cli.command {
-        return run_build(&config, targets, stage, clean, lint, rebuild, force, update, jobs);
+    if let Commands::Build { targets, stage, only, clean, lint, rebuild, force, update, jobs } = cli.command {
+        return run_build(&config, targets, stage, only, clean, lint, rebuild, force, update, jobs);
     }
 
     let repo_config = wright::config::RepoConfig::load(None)
@@ -338,6 +342,7 @@ fn run_build(
     config: &GlobalConfig,
     targets: Vec<String>,
     stage: Option<String>,
+    only: Option<String>,
     clean: bool,
     lint: bool,
     rebuild: bool,
@@ -493,6 +498,7 @@ fn run_build(
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
             let stage_clone = stage.clone();
+            let only_clone = only.clone();
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -503,7 +509,7 @@ fn run_build(
                     }
                 };
                 let res = build_one(&builder_clone, &manifest, &path, &config_clone,
-                    stage_clone.as_deref(), clean, lint, rebuild, force, update);
+                    stage_clone.as_deref(), only_clone.as_deref(), clean, lint, rebuild, force, update);
 
                 match res {
                     Ok(_) => tx_clone.send(Ok(name_clone)).unwrap(),
@@ -563,6 +569,7 @@ fn build_one(
     manifest_path: &Path,
     config: &GlobalConfig,
     stage: Option<&str>,
+    only: Option<&str>,
     clean: bool,
     lint: bool,
     rebuild: bool,
@@ -609,7 +616,7 @@ fn build_one(
 
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, stage.map(String::from))?;
+    let result = builder.build(manifest, &plan_dir, stage.map(String::from), only.map(String::from))?;
 
     let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
     info!("Part stored in the Components Hold: {}", archive_path.display());

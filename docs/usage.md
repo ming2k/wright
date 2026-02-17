@@ -146,6 +146,42 @@ Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can al
 
 Lifecycle pipeline: fetch, verify, extract, prepare, configure, build, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
 
+### Clean Build Model
+
+Wright uses a **clean build model**: each `wright build` invocation recreates `src/`, `pkg/`, and `log/` directories from scratch. This ensures build reproducibility and prevents stale artifacts from affecting the result, consistent with other source-based package managers (makepkg, rpmbuild, ebuild).
+
+However, Wright does **not** re-download sources unnecessarily. The fetch stage caches downloaded tarballs in `cache/sources/` and verifies their SHA-256 checksums before reuse. Repeated builds of the same package skip the download entirely.
+
+### Staged Builds
+
+Use `--stage` to stop the pipeline after a specific stage, and `--only` to run a single stage in isolation:
+
+```
+wright build --stage configure hello    # stop after configure
+wright build --stage build hello        # stop after build (skip check/package)
+wright build --only build hello         # run only the build stage
+wright build --only package hello       # run only the package stage
+```
+
+The build directory (`<build_dir>/<name>-<version>/`) is preserved after a staged build, so you can inspect intermediate results such as build logs, configured source trees, or compiled objects.
+
+When `--only` is used, Wright preserves the existing `src/` directory (including configured/compiled source trees) and skips the fetch/verify/extract phases. This requires a previous build to exist — Wright will error if `src/` is not found.
+
+**Typical workflow for iterating on a build:**
+
+1. `wright build --stage configure hello` — run up to configure, then stop
+2. Inspect logs, tweak the plan's build script
+3. `wright build --only build hello` — rerun just the build stage, reusing the configured source tree
+4. Once everything works, `wright build hello` for a clean full build
+
+**Typical workflow for debugging a build failure:**
+
+1. `wright build --stage configure hello` — verify configure succeeds
+2. Inspect `<build_dir>/hello-1.0.0/log/configure.log` for errors
+3. Fix the plan, then `wright build hello` to run the full pipeline
+
+For production use, always run a full clean build (no `--only`) to guarantee reproducible results.
+
 ### Build Flags
 
 ```
@@ -154,6 +190,7 @@ wright build --clean hello              # clean build directory first
 wright build --rebuild hello            # clean + force rebuild
 wright build --force hello              # overwrite existing archive
 wright build --stage configure hello    # stop after configure
+wright build --only build hello         # run only the build stage
 wright build -j4 hello zlib            # parallel builds
 ```
 

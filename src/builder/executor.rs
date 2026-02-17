@@ -164,6 +164,20 @@ pub fn execute_script(
         }
     }
 
+    // Auto-inject parallel job limits so build tools respect `jobs` without
+    // the user having to manually pass `-j${NPROC}` in every script.
+    if let Some(nproc) = effective_vars.get("NPROC") {
+        let nproc_val = nproc.clone();
+        // cmake --build (controls Ninja/Make spawned by cmake)
+        if !config.env.iter().any(|(k, _)| k == "CMAKE_BUILD_PARALLEL_LEVEL") {
+            config.env.push(("CMAKE_BUILD_PARALLEL_LEVEL".to_string(), nproc_val.clone()));
+        }
+        // make
+        if !config.env.iter().any(|(k, _)| k == "MAKEFLAGS") {
+            config.env.push(("MAKEFLAGS".to_string(), format!("-j{}", nproc_val)));
+        }
+    }
+
     // Pass through standard build environment variables from the host.
     // This is important for bootstrap/stage1 environments where paths
     // like C_INCLUDE_PATH or LIBRARY_PATH are set to non-standard locations.

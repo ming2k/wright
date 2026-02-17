@@ -104,6 +104,7 @@ impl Builder {
         manifest: &PackageManifest,
         hold_dir: &Path,
         stop_after: Option<String>,
+        only_stage: Option<String>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -111,31 +112,61 @@ impl Builder {
         let pkg_dir = build_root.join("pkg");
         let log_dir = build_root.join("log");
 
-        // Ensure clean build directories
-        for dir in [&src_dir, &pkg_dir, &log_dir] {
-            if dir.exists() {
-                std::fs::remove_dir_all(dir).ok();
+        let single_stage = only_stage.is_some();
+
+        if single_stage {
+            // When running a single stage, validate that a previous build exists
+            if !src_dir.exists() {
+                return Err(WrightError::BuildError(
+                    "cannot use --only: no previous build found (src/ does not exist). Run a full build first.".to_string()
+                ));
             }
-            std::fs::create_dir_all(dir).map_err(|e| {
-                WrightError::BuildError(format!(
-                    "failed to create build directory {}: {}",
-                    dir.display(),
-                    e
-                ))
-            })?;
+            // Only recreate pkg_dir and log_dir for fresh output
+            for dir in [&pkg_dir, &log_dir] {
+                if dir.exists() {
+                    std::fs::remove_dir_all(dir).ok();
+                }
+                std::fs::create_dir_all(dir).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to create build directory {}: {}",
+                        dir.display(), e
+                    ))
+                })?;
+            }
+            info!("Running only stage: {}", only_stage.as_deref().unwrap());
+        } else {
+            // Ensure clean build directories
+            for dir in [&src_dir, &pkg_dir, &log_dir] {
+                if dir.exists() {
+                    std::fs::remove_dir_all(dir).ok();
+                }
+                std::fs::create_dir_all(dir).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to create build directory {}: {}",
+                        dir.display(),
+                        e
+                    ))
+                })?;
+            }
         }
 
         info!("Build directory: {}", build_root.display());
 
-        // Fetch sources (remote downloads + local file copies to cache)
-        self.fetch(manifest, hold_dir)?;
-
-        // Verify sources
-        self.verify(manifest)?;
-
-        // Extract archives and copy non-archive files to files_dir
         let files_dir = build_root.join("files");
-        let build_src_dir = self.extract(manifest, &src_dir, &files_dir)?;
+
+        if !single_stage {
+            // Fetch sources (remote downloads + local file copies to cache)
+            self.fetch(manifest, hold_dir)?;
+
+            // Verify sources
+            self.verify(manifest)?;
+
+            // Extract archives and copy non-archive files to files_dir
+            self.extract(manifest, &src_dir, &files_dir)?;
+        }
+
+        // Detect BUILD_DIR from extracted sources
+        let build_src_dir = Self::detect_build_dir(&src_dir)?;
 
         let files_dir_str = files_dir.to_string_lossy().to_string();
 
@@ -182,6 +213,7 @@ impl Builder {
             pkg_dir.clone(),
             if files_dir.exists() { Some(files_dir.clone()) } else { None },
             stop_after,
+            only_stage,
             &self.executors,
             rlimits.clone(),
         );
@@ -345,10 +377,14 @@ impl Builder {
             }
         }
 
-        // Detect the top-level source directory for BUILD_DIR.
-        // If the archive extracted a single directory, point BUILD_DIR there.
-        // Otherwise, BUILD_DIR is the extraction root itself.
-        let entries: Vec<_> = std::fs::read_dir(dest_dir).map_err(|e| WrightError::IoError(e))?
+        Self::detect_build_dir(dest_dir)
+    }
+
+    /// Detect the top-level source directory for BUILD_DIR.
+    /// If the directory contains a single subdirectory, point BUILD_DIR there.
+    /// Otherwise, BUILD_DIR is the directory itself.
+    fn detect_build_dir(src_dir: &Path) -> Result<PathBuf> {
+        let entries: Vec<_> = std::fs::read_dir(src_dir).map_err(|e| WrightError::IoError(e))?
             .filter_map(|e| e.ok())
             .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect();
@@ -358,7 +394,7 @@ impl Builder {
             info!("Source directory: {}", dir.display());
             dir
         } else {
-            dest_dir.to_path_buf()
+            src_dir.to_path_buf()
         };
 
         Ok(build_dir)

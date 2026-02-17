@@ -26,6 +26,7 @@ pub struct LifecyclePipeline<'a> {
     pkg_dir: PathBuf,
     files_dir: Option<PathBuf>,
     stop_after: Option<String>,
+    only_stage: Option<String>,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
 }
@@ -40,6 +41,7 @@ impl<'a> LifecyclePipeline<'a> {
         pkg_dir: PathBuf,
         files_dir: Option<PathBuf>,
         stop_after: Option<String>,
+        only_stage: Option<String>,
         executors: &'a ExecutorRegistry,
         rlimits: ResourceLimits,
     ) -> Self {
@@ -52,6 +54,7 @@ impl<'a> LifecyclePipeline<'a> {
             pkg_dir,
             files_dir,
             stop_after,
+            only_stage,
             executors,
             rlimits,
         }
@@ -59,6 +62,23 @@ impl<'a> LifecyclePipeline<'a> {
 
     pub fn run(&self) -> Result<()> {
         let stages = self.get_stage_order();
+
+        // --only: run exactly one stage
+        if let Some(ref only) = self.only_stage {
+            let found = stages.iter().any(|s| s == only);
+            if !found {
+                return Err(WrightError::BuildError(format!(
+                    "stage '{}' not found in lifecycle pipeline", only
+                )));
+            }
+            if BUILTIN_STAGES.contains(&only.as_str()) {
+                return Err(WrightError::BuildError(format!(
+                    "cannot use --only with built-in stage '{}' (handled internally)", only
+                )));
+            }
+            self.run_stage_with_hooks(only)?;
+            return Ok(());
+        }
 
         for stage_name in &stages {
             // Skip built-in stages (handled by Builder)
