@@ -2,6 +2,69 @@
 
 See [getting-started.md](getting-started.md) for prerequisites and installation.
 
+## Directory Layout
+
+Wright uses the following directory structure. All paths are configurable in `wright.toml` (see [configuration.md](configuration.md)).
+
+### System layout (root)
+
+```
+/var/lib/wright/
+├── plans/                  # Plan definitions (plan.toml per package)
+│   ├── hello/
+│   │   └── plan.toml
+│   ├── nginx/
+│   │   ├── plan.toml
+│   │   └── patches/
+│   └── ...
+├── components/             # Built package archives (.wright.tar.zst)
+├── cache/
+│   └── sources/            # Downloaded source tarballs
+└── db/
+    └── packages.db         # Installed package database (SQLite)
+
+/etc/wright/
+├── wright.toml             # Global configuration
+├── repos.toml              # Repository sources
+├── executors/              # Executor definitions (*.toml)
+│   └── shell.toml
+└── assemblies/             # Assembly definitions (*.toml)
+    └── core.toml
+
+/var/log/wright/              # Operation logs
+
+/tmp/wright-build/            # Build working directory (default)
+```
+
+### User layout (non-root, XDG)
+
+```
+~/.config/wright/wright.toml        # Per-user configuration
+~/.cache/wright/sources/            # Source cache
+~/.local/state/wright/              # Logs
+```
+
+### Build directory structure
+
+During a build, wright creates the following layout under `build_dir` (default: `/tmp/wright-build`):
+
+```
+<build_dir>/<name>-<version>/
+├── src/                    # Extracted source archives
+│   └── <name>-<version>/   # Top-level source directory (= BUILD_DIR)
+├── pkg/                    # Package output (install files here via PKG_DIR)
+├── pkg-<split>/            # Split package output directories (one per split)
+├── files/                  # Non-archive source files (patches, configs)
+└── log/                    # Per-stage build logs
+    ├── prepare.log
+    ├── configure.log
+    ├── build.log
+    ├── check.log
+    └── package.log
+```
+
+Build directories are created fresh for each build. Use `wright build --clean <name>` to remove a previous build directory before rebuilding.
+
 ## Writing Plans
 
 A plan is a directory containing a `plan.toml`. See [writing-plans.md](writing-plans.md) for the full reference.
@@ -79,9 +142,9 @@ wright build --update zlib             # download sources, fill in sha256
 wright build hello
 ```
 
-Plan search directories (in order): `/var/lib/wright/plans`, `./plans`, `../plans`. You can also pass a path directly.
+Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can also pass a path directly.
 
-Lifecycle pipeline: fetch, verify, extract, prepare, configure, build, check, package, post_package. Undefined stages are skipped.
+Lifecycle pipeline: fetch, verify, extract, prepare, configure, build, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
 
 ### Build Flags
 
@@ -99,10 +162,6 @@ wright build -j4 hello zlib            # parallel builds
 | `--clean`     | yes             | no                |
 | `--force`     | no              | yes               |
 | `--rebuild`   | yes             | yes               |
-
-### Build Logs
-
-Each stage writes to `<build_dir>/<name>-<version>/log/<stage>.log`. Output is also printed to the terminal in real time.
 
 ### Assemblies
 

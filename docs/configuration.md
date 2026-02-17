@@ -71,10 +71,13 @@ CLI flag (--config)          ← highest priority, explicit override
 ```toml
 [general]
 arch = "x86_64"                         # System architecture
-hold_dir = "/var/hold"                  # Hold tree path
-cache_dir = "/var/lib/wright/cache"       # Cache directory
-db_path = "/var/lib/wright/db/packages.db" # SQLite database path
-log_dir = "/var/log/wright"               # Log directory
+plans_dir = "/var/lib/wright/plans"      # Plan definitions
+components_dir = "/var/lib/wright/components" # Built package archives
+cache_dir = "/var/lib/wright/cache"       # Downloaded sources cache
+db_path = "/var/lib/wright/db/packages.db" # Installed package database
+log_dir = "/var/log/wright"               # Build and operation logs
+executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
+assemblies_dir = "/etc/wright/assemblies" # Assembly definitions (*.toml)
 
 [build]
 build_dir = "/tmp/wright-build"           # Build working directory
@@ -98,10 +101,13 @@ retry_count = 3                         # Download retry attempts
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `arch` | string | `"x86_64"` | Target architecture |
-| `hold_dir` | path | `/var/hold` | Root of the hold tree |
-| `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources and packages |
-| `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database |
+| `plans_dir` | path | `/var/lib/wright/plans` | Root directory for plan definitions |
+| `components_dir` | path | `/var/lib/wright/components` | Built package archives (`.wright.tar.zst`) |
+| `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
+| `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database (SQLite) |
 | `log_dir` | path | `/var/log/wright` | Build and operation logs |
+| `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
+| `assemblies_dir` | path | `/etc/wright/assemblies` | Assembly definition files (`*.toml`) |
 
 ### `[build]` section
 
