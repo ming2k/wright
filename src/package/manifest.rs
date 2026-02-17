@@ -207,10 +207,10 @@ impl PackageManifest {
     }
 
     pub fn validate(&self) -> Result<()> {
-        let name_re = regex::Regex::new(r"^[a-z0-9][a-z0-9_-]*$").unwrap();
+        let name_re = regex::Regex::new(r"^[a-z0-9][a-z0-9_+.-]*$").unwrap();
         if !name_re.is_match(&self.plan.name) {
             return Err(WrightError::ValidationError(format!(
-                "invalid package name '{}': must match [a-z0-9][a-z0-9_-]*",
+                "invalid package name '{}': must match [a-z0-9][a-z0-9_+.-]*",
                 self.plan.name
             )));
         }
@@ -286,7 +286,7 @@ impl PackageManifest {
         for (split_name, split_pkg) in &self.split {
             if !name_re.is_match(split_name) {
                 return Err(WrightError::ValidationError(format!(
-                    "invalid split package name '{}': must match [a-z0-9][a-z0-9_-]*",
+                    "invalid split package name '{}': must match [a-z0-9][a-z0-9_+.-]*",
                     split_name
                 )));
             }
@@ -592,27 +592,27 @@ script = "make -j4"
 [lifecycle.package]
 script = "make DESTDIR=${PKG_DIR} install"
 
-[split.libstdcpp]
+[split."libstdc++"]
 description = "GNU C++ standard library"
 
-[split.libstdcpp.dependencies]
+[split."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[split.libstdcpp.lifecycle.package]
+[split."libstdc++".lifecycle.package]
 script = """
 install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
 """
 "#;
         let manifest = PackageManifest::from_str(toml).unwrap();
         assert_eq!(manifest.split.len(), 1);
-        let split = manifest.split.get("libstdcpp").unwrap();
+        let split = manifest.split.get("libstdc++").unwrap();
         assert_eq!(split.description, "GNU C++ standard library");
         assert_eq!(split.dependencies.runtime, vec!["libgcc"]);
         assert!(split.lifecycle.contains_key("package"));
 
         // Test to_manifest
-        let split_manifest = split.to_manifest("libstdcpp", &manifest);
-        assert_eq!(split_manifest.plan.name, "libstdcpp");
+        let split_manifest = split.to_manifest("libstdc++", &manifest);
+        assert_eq!(split_manifest.plan.name, "libstdc++");
         assert_eq!(split_manifest.plan.version, "14.2.0");
         assert_eq!(split_manifest.plan.release, 1);
         assert_eq!(split_manifest.plan.arch, "x86_64");
@@ -621,7 +621,7 @@ install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
         assert_eq!(split_manifest.dependencies.runtime, vec!["libgcc"]);
         assert_eq!(
             split_manifest.archive_filename(),
-            "libstdcpp-14.2.0-1-x86_64.wright.tar.zst"
+            "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
         );
     }
 
