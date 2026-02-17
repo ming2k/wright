@@ -328,7 +328,7 @@ cd ${BUILD_DIR}
     --with-pcre-jit
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
@@ -405,7 +405,7 @@ files = [
 
 # ---- Custom lifecycle order (optional, overrides default) ----
 # [lifecycle_order]
-# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "build", "check", "package", "post_package"]
+# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "check", "package", "post_package"]
 ```
 
 ### 4.2 Variable Substitution Rules
@@ -609,7 +609,7 @@ fetch → verify → extract → prepare → configure → build → check → p
 Each stage supports pre/post hooks, defined as:
 
 ```toml
-[lifecycle.pre_build]
+[lifecycle.pre_compile]
 executor = "shell"
 sandbox = "strict"
 script = """
@@ -617,14 +617,14 @@ echo "About to start building..."
 # Pre-checks or preparation work
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "strict"
 script = """
 make
 """
 
-[lifecycle.post_build]
+[lifecycle.post_compile]
 executor = "python"
 sandbox = "strict"
 script = """
@@ -643,7 +643,7 @@ Packages can override the default pipeline via `[lifecycle_order]`:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "build", "package"]
+stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "package"]
 ```
 
 Stages without a defined script are automatically skipped (except fetch/verify/extract, which are handled internally by the build tool).

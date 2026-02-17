@@ -194,9 +194,40 @@ pub struct BackupConfig {
 
 impl PackageManifest {
     pub fn from_str(content: &str) -> Result<Self> {
-        let manifest: Self = toml::from_str(content)?;
+        let mut manifest: Self = toml::from_str(content)?;
+        manifest.migrate_legacy_stages();
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// Migrate deprecated stage names for backward compatibility.
+    /// `lifecycle.build` is renamed to `lifecycle.compile`.
+    fn migrate_legacy_stages(&mut self) {
+        if self.lifecycle.contains_key("build") && !self.lifecycle.contains_key("compile") {
+            tracing::warn!("[lifecycle.build] is deprecated, use [lifecycle.compile] instead");
+            if let Some(stage) = self.lifecycle.remove("build") {
+                self.lifecycle.insert("compile".to_string(), stage);
+            }
+        }
+        // Also migrate pre_build/post_build hooks
+        if self.lifecycle.contains_key("pre_build") && !self.lifecycle.contains_key("pre_compile") {
+            if let Some(stage) = self.lifecycle.remove("pre_build") {
+                self.lifecycle.insert("pre_compile".to_string(), stage);
+            }
+        }
+        if self.lifecycle.contains_key("post_build") && !self.lifecycle.contains_key("post_compile") {
+            if let Some(stage) = self.lifecycle.remove("post_build") {
+                self.lifecycle.insert("post_compile".to_string(), stage);
+            }
+        }
+        // Migrate lifecycle_order
+        if let Some(ref mut order) = self.lifecycle_order {
+            for stage in &mut order.stages {
+                if stage == "build" {
+                    *stage = "compile".to_string();
+                }
+            }
+        }
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -361,7 +392,7 @@ install -Dm755 hello ${PKG_DIR}/usr/bin/hello
         assert_eq!(manifest.plan.arch, "x86_64");
         assert_eq!(manifest.dependencies.build, vec!["gcc"]);
         assert!(manifest.lifecycle.contains_key("prepare"));
-        assert!(manifest.lifecycle.contains_key("build"));
+        assert!(manifest.lifecycle.contains_key("compile"));
         assert!(manifest.lifecycle.contains_key("package"));
     }
 

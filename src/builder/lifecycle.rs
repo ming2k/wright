@@ -10,7 +10,7 @@ use crate::sandbox::{ResourceLimits, SandboxLevel};
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
-    "fetch", "verify", "extract", "prepare", "configure", "build", "check", "package",
+    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "package",
     "post_package",
 ];
 

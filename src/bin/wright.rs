@@ -600,8 +600,8 @@ fn build_one(
         std::env::current_dir()?
     };
 
-    // Skip if archive already exists (unless --force or --rebuild)
-    if !force && !rebuild {
+    // Skip if archive already exists (unless --force, --rebuild, or --only)
+    if !force && !rebuild && only.is_none() {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
@@ -618,16 +618,19 @@ fn build_one(
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
     let result = builder.build(manifest, &plan_dir, stage.map(String::from), only.map(String::from))?;
 
-    let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
-    info!("Part stored in the Components Hold: {}", archive_path.display());
+    // Skip archive creation when --only is used for non-package stages
+    if only.is_none() || only == Some("package") || only == Some("post_package") {
+        let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
+        info!("Part stored in the Components Hold: {}", archive_path.display());
 
-    // Create split package archives
-    for (split_name, split_pkg) in &manifest.split {
-        let split_pkg_dir = result.split_pkg_dirs.get(split_name)
-            .ok_or_else(|| anyhow::anyhow!("missing split pkg_dir for '{}'", split_name))?;
-        let split_manifest = split_pkg.to_manifest(split_name, manifest);
-        let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
-        info!("Split part stored: {}", split_archive.display());
+        // Create split package archives
+        for (split_name, split_pkg) in &manifest.split {
+            let split_pkg_dir = result.split_pkg_dirs.get(split_name)
+                .ok_or_else(|| anyhow::anyhow!("missing split pkg_dir for '{}'", split_name))?;
+            let split_manifest = split_pkg.to_manifest(split_name, manifest);
+            let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
+            info!("Split part stored: {}", split_archive.display());
+        }
     }
 
     Ok(())

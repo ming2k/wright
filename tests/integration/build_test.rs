@@ -22,7 +22,7 @@ fn test_build_hello_fixture() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, None).unwrap();
+    let result = builder.build(&manifest, hold_dir, None, None).unwrap();
 
     // Verify the binary was built
     assert!(result.pkg_dir.join("usr/bin/hello").exists());
@@ -39,7 +39,7 @@ fn test_build_and_archive_hello() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, None).unwrap();
+    let result = builder.build(&manifest, hold_dir, None, None).unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
@@ -95,7 +95,7 @@ fn test_build_stop_after_stage() {
 
     let builder = Builder::new(config);
     let result = builder
-        .build(&manifest, hold_dir, Some("prepare".to_string()))
+        .build(&manifest, hold_dir, Some("prepare".to_string()), None)
         .unwrap();
 
     // After prepare, hello.c should exist but hello binary should not

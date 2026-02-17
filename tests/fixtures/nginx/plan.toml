@@ -62,7 +62,7 @@ cd nginx-${PKG_VERSION}
     --with-pcre-jit
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }

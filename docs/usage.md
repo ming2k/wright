@@ -58,7 +58,7 @@ During a build, wright creates the following layout under `build_dir` (default: 
 └── log/                    # Per-stage build logs
     ├── prepare.log
     ├── configure.log
-    ├── build.log
+    ├── compile.log
     ├── check.log
     └── package.log
 ```
@@ -92,7 +92,7 @@ int main() { printf("Hello, wright!\n"); return 0; }
 EOF
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 sandbox = "none"
 script = "gcc -o hello hello.c"
 
@@ -122,7 +122,7 @@ sha256 = ["9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"]
 [lifecycle.configure]
 script = "cd ${BUILD_DIR} && ./configure --prefix=/usr"
 
-[lifecycle.build]
+[lifecycle.compile]
 script = "cd ${BUILD_DIR} && make -j${NPROC}"
 
 [lifecycle.package]
@@ -144,7 +144,7 @@ wright build hello
 
 Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can also pass a path directly.
 
-Lifecycle pipeline: fetch, verify, extract, prepare, configure, build, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
+Lifecycle pipeline: fetch, verify, extract, prepare, configure, compile, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
 
 ### Clean Build Model
 
@@ -157,10 +157,10 @@ However, Wright does **not** re-download sources unnecessarily. The fetch stage 
 Use `--stage` to stop the pipeline after a specific stage, and `--only` to run a single stage in isolation:
 
 ```
-wright build --stage configure hello    # stop after configure
-wright build --stage build hello        # stop after build (skip check/package)
-wright build --only build hello         # run only the build stage
-wright build --only package hello       # run only the package stage
+wright build --stage configure hello      # stop after configure
+wright build --stage compile hello        # stop after compile (skip check/package)
+wright build --only compile hello         # run only the compile stage
+wright build --only package hello         # run only the package stage
 ```
 
 The build directory (`<build_dir>/<name>-<version>/`) is preserved after a staged build, so you can inspect intermediate results such as build logs, configured source trees, or compiled objects.
@@ -170,8 +170,8 @@ When `--only` is used, Wright preserves the existing `src/` directory (including
 **Typical workflow for iterating on a build:**
 
 1. `wright build --stage configure hello` — run up to configure, then stop
-2. Inspect logs, tweak the plan's build script
-3. `wright build --only build hello` — rerun just the build stage, reusing the configured source tree
+2. Inspect logs, tweak the plan's compile script
+3. `wright build --only compile hello` — rerun just the compile stage, reusing the configured source tree
 4. Once everything works, `wright build hello` for a clean full build
 
 **Typical workflow for debugging a build failure:**
@@ -185,13 +185,13 @@ For production use, always run a full clean build (no `--only`) to guarantee rep
 ### Build Flags
 
 ```
-wright build hello                      # standard build
-wright build --clean hello              # clean build directory first
-wright build --rebuild hello            # clean + force rebuild
-wright build --force hello              # overwrite existing archive
-wright build --stage configure hello    # stop after configure
-wright build --only build hello         # run only the build stage
-wright build -j4 hello zlib            # parallel builds
+wright build hello                        # standard build
+wright build --clean hello                # clean build directory first
+wright build --rebuild hello              # clean + force rebuild
+wright build --force hello                # overwrite existing archive
+wright build --stage configure hello      # stop after configure
+wright build --only compile hello         # run only the compile stage
+wright build -j4 hello zlib              # parallel builds
 ```
 
 |               | Clean build dir | Overwrite archive |

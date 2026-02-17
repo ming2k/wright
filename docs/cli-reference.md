@@ -89,7 +89,7 @@ wright build @base-system              # assembly
 wright build --update nginx            # update checksums
 wright build --lint nginx              # validate only
 wright build --stage configure nginx   # stop after configure for debugging
-wright build --only build nginx        # rerun just the build stage
+wright build --only compile nginx      # rerun just the compile stage
 wright build -j4 @desktop             # parallel
 ```
 

@@ -45,7 +45,7 @@ int main() { printf("Hello, wright!\\n"); return 0; }
 EOF
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 sandbox = "none"
 script = "gcc -o hello hello.c"
 

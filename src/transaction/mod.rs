@@ -884,7 +884,7 @@ mod tests {
         config.build.build_dir = build_tmp.path().to_path_buf();
 
         let builder = Builder::new(config);
-        let result = builder.build(&manifest, hold_dir, None).unwrap();
+        let result = builder.build(&manifest, hold_dir, None, None).unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
         let archive = crate::package::archive::create_archive(

@@ -164,7 +164,7 @@ Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cp
 Each lifecycle stage is a TOML table under `lifecycle`:
 
 ```toml
-[lifecycle.build]
+[lifecycle.compile]
 executor = "shell"
 sandbox = "strict"
 script = """
@@ -197,7 +197,7 @@ Override the default pipeline order:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "configure", "build", "package"]
+stages = ["fetch", "verify", "extract", "configure", "compile", "package"]
 ```
 
 ### `[install_scripts]`
@@ -237,7 +237,7 @@ The default pipeline runs these stages in order:
 | `extract`      | built-in | Extract archives, copy non-archives to `${FILES_DIR}` |
 | `prepare`      | user     | Pre-build setup (e.g. apply patches)     |
 | `configure`    | user     | Run configure scripts                    |
-| `build`        | user     | Compile the software                     |
+| `compile`      | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
 | `package`      | user     | Install files into `${PKG_DIR}`          |
 | `post_package` | user     | Post-packaging steps                     |
@@ -251,19 +251,19 @@ Override this order with `[lifecycle_order]` if your build needs a different pip
 Any stage can have a pre- or post-hook. Name them `pre_<stage>` or `post_<stage>`:
 
 ```toml
-[lifecycle.pre_build]
+[lifecycle.pre_compile]
 script = """
-echo "About to build..."
+echo "About to compile..."
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 script = """
 make -j${NPROC}
 """
 
-[lifecycle.post_build]
+[lifecycle.post_compile]
 script = """
-echo "Build complete."
+echo "Compilation complete."
 """
 ```
 
@@ -406,7 +406,7 @@ int main() { printf("Hello, wright!\n"); return 0; }
 EOF
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 script = """
 gcc -o hello hello.c
 """
@@ -469,7 +469,7 @@ cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
-[lifecycle.build]
+[lifecycle.compile]
 script = """
 cd ${BUILD_DIR}
 make -j${NPROC}
@@ -510,7 +510,7 @@ description = "The GNU Compiler Collection"
 license = "GPL-3.0-or-later"
 arch = "x86_64"
 
-[lifecycle.build]
+[lifecycle.compile]
 script = "make -j${NPROC}"
 
 [lifecycle.package]
@@ -535,7 +535,7 @@ ln -sf libstdc++.so.6 ${PKG_DIR}/usr/lib/libstdc++.so
 """
 ```
 
-Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `build`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
+Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `compile`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
 
 Split packages are independent archives — installing the parent does **not** automatically install its splits. To create a meta-package that pulls in all splits, list them as `runtime` dependencies on the parent:
 
