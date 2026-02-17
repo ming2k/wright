@@ -24,11 +24,10 @@ src/
 ├── transaction/
 │   ├── mod.rs                  # install, remove, upgrade, verify
 │   └── rollback.rs             # Rollback on failure
-├── resolver/
-│   ├── graph.rs                # Dependency graph
-│   └── topo.rs                 # Topological sort
 ├── sandbox/
-│   └── bwrap.rs                # Bubblewrap command generation
+│   ├── mod.rs                  # Sandbox trait and dispatch
+│   ├── bwrap.rs                # Bubblewrap sandbox (namespace isolation)
+│   └── native.rs               # Native sandbox (direct execution)
 ├── repo/
 │   ├── index.rs                # Repository index parsing
 │   ├── sync.rs                 # Remote sync
@@ -45,7 +44,7 @@ src/
 ┌───────────────────────────────────────────┐
 │              CLI (wright)                  │
 ├───────────────────────────────────────────┤
-│   Resolver  │  Transaction  │  Builder    │
+│        Transaction       │    Builder     │
 ├───────────────────────────────────────────┤
 │  Database │ Sandbox │ Executor │ Utilities │
 ├───────────────────────────────────────────┤

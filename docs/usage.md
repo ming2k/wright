@@ -187,7 +187,6 @@ For production use, always run a full clean build (no `--only`) to guarantee rep
 ```
 wright build hello                        # standard build
 wright build --clean hello                # clean build directory first
-wright build --rebuild hello              # clean + force rebuild
 wright build --force hello                # overwrite existing archive
 wright build --stage configure hello      # stop after configure
 wright build --only compile hello         # run only the compile stage
@@ -198,7 +197,7 @@ wright build -j4 hello zlib              # parallel builds
 |---------------|:---------------:|:-----------------:|
 | `--clean`     | yes             | no                |
 | `--force`     | no              | yes               |
-| `--rebuild`   | yes             | yes               |
+| `--clean --force` | yes        | yes               |
 
 ### Assemblies
 

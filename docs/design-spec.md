@@ -778,7 +778,7 @@ wright build <port_path>              # Build the specified port
 wright build <port_path> --stage <s>  # Execute only up to a specific stage
 wright build --clean <port_path>      # Clean build directory
 wright build --lint <port_path>       # Validate plan.toml syntax
-wright build --rebuild <port_path>    # Force rebuild
+wright build --clean --force <port_path>  # Clean + force rebuild
 ```
 
 ### 9.2 Complete Build Flow

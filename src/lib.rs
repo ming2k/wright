@@ -1,7 +1,6 @@
 pub mod config;
 pub mod error;
 pub mod package;
-pub mod resolver;
 pub mod database;
 pub mod transaction;
 pub mod builder;

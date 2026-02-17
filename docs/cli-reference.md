@@ -73,7 +73,6 @@ Build packages from `plan.toml` files. Targets can be plan directories, plan nam
 | `--only <STAGE>` | Run only a single stage, preserving `src/` from a previous build |
 | `--clean` | Clean build directory before building |
 | `--lint` | Validate plan syntax only |
-| `--rebuild` | Clean + force (full rebuild) |
 | `--force` (`-f`) | Overwrite existing archives |
 | `--update` | Download sources and update sha256 checksums |
 | `-j`/`--jobs <N>` | Parallel builds (default: 1) |

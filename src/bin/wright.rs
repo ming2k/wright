@@ -117,11 +117,7 @@ enum Commands {
         #[arg(long)]
         lint: bool,
 
-        /// Force rebuild even if part exists
-        #[arg(long)]
-        rebuild: bool,
-
-        /// Force overwrite existing archive (skip check disabled)
+        /// Force overwrite existing archive
         #[arg(long, short)]
         force: bool,
 
@@ -144,8 +140,8 @@ fn main() -> Result<()> {
         .context("failed to load config")?;
 
     // Build subcommand has its own setup path — handle it separately
-    if let Commands::Build { targets, stage, only, clean, lint, rebuild, force, update, jobs } = cli.command {
-        return run_build(&config, targets, stage, only, clean, lint, rebuild, force, update, jobs);
+    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs } = cli.command {
+        return run_build(&config, targets, stage, only, clean, lint, force, update, jobs);
     }
 
     let repo_config = wright::config::RepoConfig::load(None)
@@ -345,7 +341,6 @@ fn run_build(
     only: Option<String>,
     clean: bool,
     lint: bool,
-    rebuild: bool,
     force: bool,
     update: bool,
     jobs: usize,
@@ -509,7 +504,7 @@ fn run_build(
                     }
                 };
                 let res = build_one(&builder_clone, &manifest, &path, &config_clone,
-                    stage_clone.as_deref(), only_clone.as_deref(), clean, lint, rebuild, force, update);
+                    stage_clone.as_deref(), only_clone.as_deref(), clean, lint, force, update);
 
                 match res {
                     Ok(_) => tx_clone.send(Ok(name_clone)).unwrap(),
@@ -572,7 +567,6 @@ fn build_one(
     only: Option<&str>,
     clean: bool,
     lint: bool,
-    rebuild: bool,
     force: bool,
     update: bool,
 ) -> Result<()> {
@@ -590,7 +584,7 @@ fn build_one(
         return Ok(());
     }
 
-    if clean || rebuild {
+    if clean {
         builder.clean(manifest).context("failed to clean workspace")?;
     }
 
@@ -600,8 +594,8 @@ fn build_one(
         std::env::current_dir()?
     };
 
-    // Skip if archive already exists (unless --force, --rebuild, or --only)
-    if !force && !rebuild && only.is_none() {
+    // Skip if archive already exists (unless --force or --only)
+    if !force && only.is_none() {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {

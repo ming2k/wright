@@ -20,8 +20,7 @@ src/
 ├── builder/        # Build pipeline, executors, variables
 ├── database/       # SQLite layer
 ├── transaction/    # Install/remove with rollback
-├── resolver/       # Dependency graph, topological sort
-├── sandbox/        # Bubblewrap sandbox
+├── sandbox/        # Sandbox isolation (bubblewrap + native)
 ├── repo/           # Repository index, sync, source resolution
 └── util/           # Download, checksum, compression
 tests/
