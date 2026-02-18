@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::error::{WrightError, Result};
 
@@ -114,10 +114,8 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         WrightError::ArchiveError(format!("zstd decoder init failed: {}", e))
     })?;
 
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(dest_dir).map_err(|e| {
-        WrightError::ArchiveError(format!("tar extract failed: {}", e))
-    })?;
+    let archive = tar::Archive::new(decoder);
+    unpack_tar_safely(archive, dest_dir)?;
 
     Ok(())
 }
@@ -143,10 +141,8 @@ pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(dest_dir).map_err(|e| {
-        WrightError::ArchiveError(format!("tar.gz extract failed: {}", e))
-    })?;
+    let archive = tar::Archive::new(decoder);
+    unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
@@ -154,10 +150,8 @@ pub fn extract_tar_bz2(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use bzip2::read::BzDecoder;
     let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = BzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(dest_dir).map_err(|e| {
-        WrightError::ArchiveError(format!("tar.bz2 extract failed: {}", e))
-    })?;
+    let archive = tar::Archive::new(decoder);
+    unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
@@ -165,9 +159,176 @@ pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use xz2::read::XzDecoder;
     let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = XzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(dest_dir).map_err(|e| {
-        WrightError::ArchiveError(format!("tar.xz extract failed: {}", e))
-    })?;
+    let archive = tar::Archive::new(decoder);
+    unpack_tar_safely(archive, dest_dir)?;
     Ok(())
+}
+
+fn is_path_safe(path: &Path) -> bool {
+    if path.is_absolute() {
+        return false;
+    }
+    for comp in path.components() {
+        if matches!(comp, Component::ParentDir) {
+            return false;
+        }
+    }
+    true
+}
+
+fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> Result<()> {
+    for entry in archive.entries().map_err(|e| {
+        WrightError::ArchiveError(format!("failed to read archive entries: {}", e))
+    })? {
+        let mut entry = entry.map_err(|e| {
+            WrightError::ArchiveError(format!("failed to read tar entry: {}", e))
+        })?;
+
+        let path = entry.path().map_err(|e| {
+            WrightError::ArchiveError(format!("failed to read entry path: {}", e))
+        })?;
+
+        if !is_path_safe(&path) {
+            return Err(WrightError::ArchiveError(format!(
+                "unsafe path in archive: {}",
+                path.to_string_lossy()
+            )));
+        }
+
+        entry.unpack_in(dest_dir).map_err(|e| {
+            WrightError::ArchiveError(format!("tar extract failed: {}", e))
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn create_tar_zst_with_path(path: &str) -> tempfile::NamedTempFile {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        let mut encoder = zstd::Encoder::new(file, 3).unwrap();
+        let tar = build_raw_tar(path, b"evil");
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap();
+        tmp
+    }
+
+    fn create_tar_gz_with_path(path: &str) -> tempfile::NamedTempFile {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let tar = build_raw_tar(path, b"evil");
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap();
+        tmp
+    }
+
+    fn create_tar_xz_with_path(path: &str) -> tempfile::NamedTempFile {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        let mut encoder = xz2::write::XzEncoder::new(file, 6);
+        let tar = build_raw_tar(path, b"evil");
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap();
+        tmp
+    }
+
+    fn create_tar_bz2_with_path(path: &str) -> tempfile::NamedTempFile {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        let mut encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
+        let tar = build_raw_tar(path, b"evil");
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap();
+        tmp
+    }
+
+    fn build_raw_tar(path: &str, data: &[u8]) -> Vec<u8> {
+        fn write_octal(dst: &mut [u8], value: u64) {
+            let s = format!("{:o}", value);
+            let start = dst.len().saturating_sub(s.len() + 1);
+            for b in dst.iter_mut() {
+                *b = b'0';
+            }
+            dst[dst.len() - 1] = 0;
+            dst[start..start + s.len()].copy_from_slice(s.as_bytes());
+        }
+
+        let mut header = [0u8; 512];
+        let name_bytes = path.as_bytes();
+        let name_len = name_bytes.len().min(100);
+        header[0..name_len].copy_from_slice(&name_bytes[..name_len]);
+        write_octal(&mut header[100..108], 0o644);
+        write_octal(&mut header[108..116], 0);
+        write_octal(&mut header[116..124], 0);
+        write_octal(&mut header[124..136], data.len() as u64);
+        write_octal(&mut header[136..148], 0);
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+
+        for b in header[148..156].iter_mut() {
+            *b = b' ';
+        }
+        let checksum: u32 = header.iter().map(|b| *b as u32).sum();
+        let checksum_str = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(checksum_str.as_bytes());
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&header);
+        out.extend_from_slice(data);
+        let pad = (512 - (data.len() % 512)) % 512;
+        out.extend(std::iter::repeat(0u8).take(pad));
+        out.extend_from_slice(&[0u8; 1024]);
+        out
+    }
+
+    #[test]
+    fn test_extract_rejects_parent_dir_paths() {
+        let archive = create_tar_zst_with_path("../evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_zst(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_rejects_absolute_paths() {
+        let archive = create_tar_zst_with_path("/evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_zst(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_gz_rejects_parent_dir_paths() {
+        let archive = create_tar_gz_with_path("../evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_gz(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_xz_rejects_parent_dir_paths() {
+        let archive = create_tar_xz_with_path("../evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_xz(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_bz2_rejects_parent_dir_paths() {
+        let archive = create_tar_bz2_with_path("../evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_bz2(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
 }

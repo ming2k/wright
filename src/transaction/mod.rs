@@ -300,8 +300,18 @@ pub fn install_package(
         None => RollbackState::new(),
     };
 
+    // Backup existing files so install rollback can restore overwrites.
+    let backup_dir = tempfile::tempdir().map_err(|e| {
+        WrightError::InstallError(format!("failed to create backup dir: {}", e))
+    })?;
+
     // Copy files to root_dir
-    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state) {
+    match copy_files_to_root(
+        temp_dir.path(),
+        root_dir,
+        &mut rollback_state,
+        Some(backup_dir.path()),
+    ) {
         Ok(()) => {}
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
@@ -581,35 +591,48 @@ pub fn upgrade_package(
     })?;
 
     for old_file in &old_files {
-        if old_file.file_type == "file" && new_paths.contains(old_file.path.as_str()) {
-            let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-            if full_path.exists() {
-                let backup_path = backup_dir.path().join(
-                    old_file.path.trim_start_matches('/'),
-                );
-                if let Some(parent) = backup_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        WrightError::UpgradeError(format!(
-                            "failed to create backup directory {}: {}",
-                            parent.display(),
-                            e
-                        ))
-                    })?;
-                }
-                std::fs::copy(&full_path, &backup_path).map_err(|e| {
+        if !new_paths.contains(old_file.path.as_str()) {
+            continue;
+        }
+
+        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
+        if !full_path.exists() && full_path.symlink_metadata().is_err() {
+            continue;
+        }
+
+        if old_file.file_type == "file" {
+            let backup_path = backup_dir.path().join(
+                old_file.path.trim_start_matches('/'),
+            );
+            if let Some(parent) = backup_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
                     WrightError::UpgradeError(format!(
-                        "failed to backup {}: {}",
-                        full_path.display(),
+                        "failed to create backup directory {}: {}",
+                        parent.display(),
                         e
                     ))
                 })?;
-                rollback_state.record_backup(full_path, backup_path);
+            }
+            std::fs::copy(&full_path, &backup_path).map_err(|e| {
+                WrightError::UpgradeError(format!(
+                    "failed to backup {}: {}",
+                    full_path.display(),
+                    e
+                ))
+            })?;
+            rollback_state.record_backup(full_path, backup_path);
+        } else if old_file.file_type == "symlink" {
+            if let Ok(target) = std::fs::read_link(&full_path) {
+                rollback_state.record_symlink_backup(
+                    full_path,
+                    target.to_string_lossy().to_string(),
+                );
             }
         }
     }
 
     // 7. Copy new files to root
-    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state) {
+    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state, None) {
         Ok(()) => {}
         Err(e) => {
             warn!("Upgrade failed, rolling back: {}", e);
@@ -621,19 +644,36 @@ pub fn upgrade_package(
 
     // 8. Remove old-only files (files in old but not in new)
     for old_file in old_files.iter().rev() {
-        if !new_paths.contains(old_file.path.as_str()) {
-            let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-            match old_file.file_type.as_str() {
-                "file" | "symlink" => {
-                    if full_path.exists() || full_path.symlink_metadata().is_ok() {
-                        let _ = std::fs::remove_file(&full_path);
-                    }
+        if new_paths.contains(old_file.path.as_str()) {
+            continue;
+        }
+
+        if old_file.is_config {
+            info!("Preserving config file: {}", old_file.path);
+            continue;
+        }
+
+        let other_owners = db.get_other_owners(old_pkg.id, &old_file.path)?;
+        if !other_owners.is_empty() {
+            info!(
+                "Path {} is also owned by: {}. Skipping deletion.",
+                old_file.path,
+                other_owners.join(", ")
+            );
+            continue;
+        }
+
+        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
+        match old_file.file_type.as_str() {
+            "file" | "symlink" => {
+                if full_path.exists() || full_path.symlink_metadata().is_ok() {
+                    let _ = std::fs::remove_file(&full_path);
                 }
-                "dir" => {
-                    let _ = std::fs::remove_dir(&full_path);
-                }
-                _ => {}
             }
+            "dir" => {
+                let _ = std::fs::remove_dir(&full_path);
+            }
+            _ => {}
         }
     }
 
@@ -724,6 +764,20 @@ pub fn verify_package(
                 match checksum::sha256_file(&full_path) {
                     Ok(actual_hash) => {
                         if &actual_hash != expected_hash {
+                            issues.push(format!("MODIFIED: {}", file.path));
+                        }
+                    }
+                    Err(_) => {
+                        issues.push(format!("UNREADABLE: {}", file.path));
+                    }
+                }
+            }
+        } else if file.file_type == "symlink" {
+            if let Some(ref expected_target) = file.file_hash {
+                match std::fs::read_link(&full_path) {
+                    Ok(actual_target) => {
+                        let actual_str = actual_target.to_string_lossy();
+                        if &actual_str != expected_target {
                             issues.push(format!("MODIFIED: {}", file.path));
                         }
                     }
@@ -823,6 +877,7 @@ fn copy_files_to_root(
     extract_dir: &Path,
     root_dir: &Path,
     rollback: &mut RollbackState,
+    backup_dir: Option<&Path>,
 ) -> Result<()> {
     for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
         let entry = entry.map_err(|e| {
@@ -872,6 +927,38 @@ fn copy_files_to_root(
                 ))
             })?;
 
+            if let Some(backup_root) = backup_dir {
+                if let Ok(existing) = dest_path.symlink_metadata() {
+                    if existing.file_type().is_symlink() {
+                        if let Ok(target) = std::fs::read_link(&dest_path) {
+                            rollback.record_symlink_backup(
+                                dest_path.clone(),
+                                target.to_string_lossy().to_string(),
+                            );
+                        }
+                    } else if existing.is_file() {
+                        let backup_path = backup_root.join(&relative_str);
+                        if let Some(parent) = backup_path.parent() {
+                            std::fs::create_dir_all(parent).map_err(|e| {
+                                WrightError::InstallError(format!(
+                                    "failed to create backup directory {}: {}",
+                                    parent.display(),
+                                    e
+                                ))
+                            })?;
+                        }
+                        std::fs::copy(&dest_path, &backup_path).map_err(|e| {
+                            WrightError::InstallError(format!(
+                                "failed to backup {}: {}",
+                                dest_path.display(),
+                                e
+                            ))
+                        })?;
+                        rollback.record_backup(dest_path.clone(), backup_path);
+                    }
+                }
+            }
+
             // Ensure parent directory exists
             if let Some(parent) = dest_path.parent() {
                 if !parent.exists() {
@@ -920,6 +1007,38 @@ fn copy_files_to_root(
                 }
             }
 
+            if let Some(backup_root) = backup_dir {
+                if let Ok(existing) = dest_path.symlink_metadata() {
+                    if existing.file_type().is_symlink() {
+                        if let Ok(target) = std::fs::read_link(&dest_path) {
+                            rollback.record_symlink_backup(
+                                dest_path.clone(),
+                                target.to_string_lossy().to_string(),
+                            );
+                        }
+                    } else if existing.is_file() {
+                        let backup_path = backup_root.join(&relative_str);
+                        if let Some(parent) = backup_path.parent() {
+                            std::fs::create_dir_all(parent).map_err(|e| {
+                                WrightError::InstallError(format!(
+                                    "failed to create backup directory {}: {}",
+                                    parent.display(),
+                                    e
+                                ))
+                            })?;
+                        }
+                        std::fs::copy(&dest_path, &backup_path).map_err(|e| {
+                            WrightError::InstallError(format!(
+                                "failed to backup {}: {}",
+                                dest_path.display(),
+                                e
+                            ))
+                        })?;
+                        rollback.record_backup(dest_path.clone(), backup_path);
+                    }
+                }
+            }
+
             std::fs::copy(entry.path(), &dest_path).map_err(|e| {
                 WrightError::InstallError(format!(
                     "failed to copy {} to {}: {}",
@@ -946,6 +1065,8 @@ mod tests {
     use super::*;
     use crate::package::version::VersionConstraint;
     use tempfile::TempDir;
+    use crate::util::compress;
+    use crate::database::FileEntry as DbFileEntry;
 
     fn setup_test() -> (Database, TempDir) {
         let db = Database::open_in_memory().unwrap();
@@ -960,15 +1081,22 @@ mod tests {
 
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/hello/plan.toml");
-        let manifest = PackageManifest::from_file(&manifest_path).unwrap();
+        let mut manifest = PackageManifest::from_file(&manifest_path).unwrap();
+        for stage in manifest.lifecycle.values_mut() {
+            stage.sandbox = "none".to_string();
+        }
         let hold_dir = manifest_path.parent().unwrap();
 
         let mut config = GlobalConfig::default();
         let build_tmp = tempfile::tempdir().unwrap();
         config.build.build_dir = build_tmp.path().to_path_buf();
+        config.build.default_sandbox = "none".to_string();
 
         let builder = Builder::new(config);
-        let result = builder.build(&manifest, hold_dir, None, None).unwrap();
+        let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let result = builder
+            .build(&manifest, hold_dir, None, None, &extra_env)
+            .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
         let archive = crate::package::archive::create_archive(
@@ -989,6 +1117,41 @@ mod tests {
         ));
         std::fs::copy(&archive, &persistent).unwrap();
         persistent
+    }
+
+    fn build_minimal_archive(
+        name: &str,
+        version: &str,
+        release: u32,
+        files: &[(&str, &[u8])],
+        out_dir: &Path,
+    ) -> PathBuf {
+        let pkg_dir = tempfile::tempdir().unwrap();
+        for (rel, data) in files {
+            let path = pkg_dir.path().join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, data).unwrap();
+        }
+
+        let pkginfo = format!(
+            r#"[package]
+name = "{name}"
+version = "{version}"
+release = {release}
+description = "test"
+arch = "x86_64"
+license = "MIT"
+install_size = 0
+build_date = "1970-01-01T00:00:00Z"
+"#
+        );
+        std::fs::write(pkg_dir.path().join(".PKGINFO"), pkginfo).unwrap();
+
+        let archive_path = out_dir.join(format!("{name}-{version}-{release}.wright.tar.zst"));
+        compress::create_tar_zst(pkg_dir.path(), &archive_path).unwrap();
+        archive_path
     }
 
     #[test]
@@ -1177,5 +1340,229 @@ mod tests {
         let rejected3 = new_ver3 < old_ver
             || (new_ver3 == old_ver && new_release3 <= old_release);
         assert!(!rejected3, "Upgrade 2.0.0-1 -> 3.0.0-1 should be accepted");
+    }
+
+    #[test]
+    fn test_upgrade_preserves_shared_files() {
+        let (db, root) = setup_test();
+
+        // Package A (to be upgraded)
+        let a_id = db.insert_package(NewPackage {
+            name: "pkgA",
+            version: "1.0.0",
+            release: 1,
+            description: "A",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        }).unwrap();
+
+        // Package B (shares a file with A)
+        let b_id = db.insert_package(NewPackage {
+            name: "pkgB",
+            version: "1.0.0",
+            release: 1,
+            description: "B",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        }).unwrap();
+
+        // Create shared file on disk
+        let shared_path = root.path().join("usr/share/shared.conf");
+        std::fs::create_dir_all(shared_path.parent().unwrap()).unwrap();
+        std::fs::write(&shared_path, b"shared").unwrap();
+
+        let old_path = root.path().join("usr/bin/oldtool");
+        std::fs::create_dir_all(old_path.parent().unwrap()).unwrap();
+        std::fs::write(&old_path, b"old").unwrap();
+
+        db.insert_files(a_id, &[
+            DbFileEntry {
+                path: "/usr/share/shared.conf".to_string(),
+                file_hash: None,
+                file_type: "file".to_string(),
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            },
+            DbFileEntry {
+                path: "/usr/bin/oldtool".to_string(),
+                file_hash: None,
+                file_type: "file".to_string(),
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            },
+        ]).unwrap();
+
+        db.insert_files(b_id, &[
+            DbFileEntry {
+                path: "/usr/share/shared.conf".to_string(),
+                file_hash: None,
+                file_type: "file".to_string(),
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            },
+        ]).unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let archive = build_minimal_archive(
+            "pkgA",
+            "2.0.0",
+            1,
+            &[("usr/bin/newtool", b"new")],
+            out_dir.path(),
+        );
+
+        upgrade_package(&db, &archive, root.path(), false).unwrap();
+
+        assert!(shared_path.exists(), "shared file should not be deleted");
+        assert!(!old_path.exists(), "old-only file should be removed");
+        assert!(root.path().join("usr/bin/newtool").exists());
+    }
+
+    #[test]
+    fn test_install_rollback_restores_overwritten_file() {
+        let (db, root) = setup_test();
+
+        // Existing file that will be overwritten by install
+        let ok_path = root.path().join("usr/bin/ok");
+        std::fs::create_dir_all(ok_path.parent().unwrap()).unwrap();
+        std::fs::write(&ok_path, b"old").unwrap();
+
+        // Create a file that will cause a later failure (parent is a file)
+        let bad_parent = root.path().join("usr/share");
+        std::fs::write(&bad_parent, b"not a dir").unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let archive = build_minimal_archive(
+            "broken",
+            "1.0.0",
+            1,
+            &[
+                ("usr/bin/ok", b"new"),
+                ("usr/share/conf", b"oops"),
+            ],
+            out_dir.path(),
+        );
+
+        let result = install_package(&db, &archive, root.path(), false);
+        assert!(result.is_err());
+
+        // Rollback should restore original content
+        let restored = std::fs::read_to_string(&ok_path).unwrap();
+        assert_eq!(restored, "old");
+    }
+
+    #[test]
+    fn test_upgrade_rollback_restores_symlink() {
+        let (db, root) = setup_test();
+
+        let pkg_id = db.insert_package(NewPackage {
+            name: "linkpkg",
+            version: "1.0.0",
+            release: 1,
+            description: "symlink test",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        }).unwrap();
+
+        let link_path = root.path().join("usr/bin/a_link");
+        std::fs::create_dir_all(link_path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("target1", &link_path).unwrap();
+
+        db.insert_files(pkg_id, &[
+            DbFileEntry {
+                path: "/usr/bin/a_link".to_string(),
+                file_hash: Some("target1".to_string()),
+                file_type: "symlink".to_string(),
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            },
+        ]).unwrap();
+
+        // Create a path that will cause failure on second file
+        let bad_parent = root.path().join("usr/z");
+        std::fs::write(&bad_parent, b"not a dir").unwrap();
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let archive = build_minimal_archive(
+            "linkpkg",
+            "2.0.0",
+            1,
+            &[
+                ("usr/bin/a_link", b""),
+                ("usr/z/conf", b"oops"),
+            ],
+            out_dir.path(),
+        );
+
+        // Replace symlink in the archive to point to target2
+        let temp_unpack = tempfile::tempdir().unwrap();
+        crate::util::compress::extract_tar_zst(&archive, temp_unpack.path()).unwrap();
+        let archive_link = temp_unpack.path().join("usr/bin/a_link");
+        if archive_link.exists() || archive_link.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_file(&archive_link);
+        }
+        std::os::unix::fs::symlink("target2", &archive_link).unwrap();
+        let rebuilt = out_dir.path().join("linkpkg-2.0.0-1.wright.tar.zst");
+        crate::util::compress::create_tar_zst(temp_unpack.path(), &rebuilt).unwrap();
+
+        let result = upgrade_package(&db, &rebuilt, root.path(), false);
+        assert!(result.is_err());
+
+        let target = std::fs::read_link(&link_path).unwrap();
+        assert_eq!(target.to_string_lossy(), "target1");
+    }
+
+    #[test]
+    fn test_verify_symlink_detects_change() {
+        let (db, root) = setup_test();
+
+        let pkg_id = db.insert_package(NewPackage {
+            name: "linkpkg",
+            version: "1.0.0",
+            release: 1,
+            description: "symlink test",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        }).unwrap();
+
+        // Create symlink target and symlink itself
+        let target1 = root.path().join("usr/bin/target1");
+        std::fs::create_dir_all(target1.parent().unwrap()).unwrap();
+        std::fs::write(&target1, b"data").unwrap();
+
+        let link_path = root.path().join("usr/bin/mytool");
+        std::os::unix::fs::symlink("target1", &link_path).unwrap();
+
+        db.insert_files(
+            pkg_id,
+            &[FileEntry {
+                path: "/usr/bin/mytool".to_string(),
+                file_hash: Some("target1".to_string()),
+                file_type: "symlink".to_string(),
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            }],
+        ).unwrap();
+
+        let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
+        assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
+
+        // Change symlink target
+        let target2 = root.path().join("usr/bin/target1-renamed");
+        std::fs::write(&target2, b"data").unwrap();
+        std::fs::remove_file(&link_path).unwrap();
+        std::os::unix::fs::symlink("target1-renamed", &link_path).unwrap();
+
+        let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
+        assert!(issues.iter().any(|i| i.contains("MODIFIED")));
     }
 }
