@@ -291,15 +291,14 @@ pub fn run_in_sandbox(
 
                     // --- Set up new root filesystem ---
 
-                    let newroot = PathBuf::from("/tmp/.wright-sandbox-root");
+                    let newroot = PathBuf::from(format!("/tmp/.wright-sandbox-root-{}", config.task_id));
                     if let Err(e) = std::fs::create_dir_all(&newroot) {
                         die(format!("mkdir newroot: {e}"));
                     }
 
                     // Try OverlayFS first (much faster and cleaner)
                     let mut overlay_success = false;
-                    let task_id = std::process::id();
-                    let overlay_base = PathBuf::from(format!("/tmp/wright-overlay-{}", task_id));
+                    let overlay_base = PathBuf::from(format!("/tmp/wright-overlay-{}", config.task_id));
                     let upper = overlay_base.join("upper");
                     let work = overlay_base.join("work");
 
@@ -317,7 +316,7 @@ pub fn run_in_sandbox(
                             Some(opts.as_str()),
                         ).is_ok() {
                             overlay_success = true;
-                            debug!("Using OverlayFS for sandbox root");
+                            debug!("Using OverlayFS for sandbox root: {}", newroot.display());
                         }
                     }
 
@@ -341,26 +340,25 @@ pub fn run_in_sandbox(
                      -> std::result::Result<(), String> {
                         let dest = newroot.join(dest_rel.trim_start_matches('/'));
                         
-                        // If using overlay, the destination might already exist from lowerdir
-                        if !overlay_success {
-                            if src.is_dir() {
-                                std::fs::create_dir_all(&dest)
-                                    .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
-                            } else {
-                                if let Some(parent) = dest.parent() {
-                                    std::fs::create_dir_all(parent)
-                                        .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-                                }
-                                std::fs::write(&dest, b"")
-                                    .map_err(|e| format!("touch {}: {e}", dest.display()))?;
+                        // Fix: ALWAYS ensure the destination mount point exists.
+                        // Even with overlay, we need to create the directory/file in the upperdir.
+                        if src.is_dir() {
+                            std::fs::create_dir_all(&dest)
+                                .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+                        } else {
+                            if let Some(parent) = dest.parent() {
+                                std::fs::create_dir_all(parent)
+                                    .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
                             }
+                            std::fs::write(&dest, b"")
+                                .map_err(|e| format!("touch {}: {e}", dest.display()))?;
                         }
 
                         mount(
                             Some(src),
                             &dest,
                             None::<&str>,
-                            MsFlags::MS_BIND | MsFlags::MS_REC, // Added REC for completeness
+                            MsFlags::MS_BIND | MsFlags::MS_REC,
                             None::<&str>,
                         )
                         .map_err(|e| {
@@ -569,11 +567,22 @@ pub fn run_in_sandbox(
                         unsafe { libc::_exit(1) }
                     }
 
-                    match execvp(&c_command, &c_args) {
-                        Ok(infallible) => match infallible {},
-                        Err(e) => {
-                            eprintln!("exec {command}: {e}");
-                            unsafe { libc::_exit(127) }
+                    // Retry loop for ETXTBSY (Text file busy).
+                    // This happens if an interpreter (like /bin/sh) is being overwritten 
+                    // by the host while we try to exec it in the sandbox.
+                    let mut retries = 0;
+                    loop {
+                        match execvp(&c_command, &c_args) {
+                            Ok(infallible) => match infallible {},
+                            Err(e) if e == nix::errno::Errno::ETXTBSY && retries < 10 => {
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                retries += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                eprintln!("exec {command}: {e}");
+                                unsafe { libc::_exit(127) }
+                            }
                         }
                     }
                 }

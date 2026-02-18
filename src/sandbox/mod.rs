@@ -76,6 +76,7 @@ pub struct SandboxConfig {
     pub level: SandboxLevel,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
+    pub task_id: String, // Unique identifier for this build task
     pub files_dir: Option<PathBuf>,
     pub extra_binds: Vec<(PathBuf, PathBuf, bool)>, // (host_path, dest_path, read_only)
     pub env: Vec<(String, String)>,
@@ -83,11 +84,12 @@ pub struct SandboxConfig {
 }
 
 impl SandboxConfig {
-    pub fn new(level: SandboxLevel, src_dir: PathBuf, pkg_dir: PathBuf) -> Self {
+    pub fn new(level: SandboxLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
         Self {
             level,
             src_dir,
             pkg_dir,
+            task_id,
             files_dir: None,
             extra_binds: Vec::new(),
             env: Vec::new(),

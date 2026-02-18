@@ -29,7 +29,12 @@ pub struct Builder {
 
 /// Check whether a URI is remote (http/https).
 fn is_remote_uri(uri: &str) -> bool {
-    uri.starts_with("http://") || uri.starts_with("https://")
+    uri.starts_with("http://") || uri.starts_with("https://") || uri.starts_with("git+")
+}
+
+/// Check whether a URI is a Git repository.
+fn is_git_uri(uri: &str) -> bool {
+    uri.starts_with("git+")
 }
 
 /// Check whether a filename looks like a supported archive format.
@@ -458,6 +463,44 @@ impl Builder {
 
         for uri in &manifest.sources.uris {
             let processed_uri = self.process_uri(uri, manifest);
+
+            if is_git_uri(&processed_uri) {
+                let git_dir_name = sanitize_cache_filename(
+                    processed_uri.split('#').next().unwrap()
+                        .split('/').next_back().unwrap()
+                        .strip_suffix(".git").unwrap_or(processed_uri.split('/').next_back().unwrap())
+                );
+                let cache_path = cache_dir.join("git").join(&git_dir_name);
+                
+                // Parse the ref
+                let git_ref = if let Some(pos) = processed_uri.find('#') {
+                    let r = processed_uri[pos+1..].to_string();
+                    let parts: Vec<&str> = r.split('=').collect();
+                    if parts.len() == 2 { parts[1].to_string() } else { r }
+                } else {
+                    "HEAD".to_string()
+                };
+
+                info!("Checking out Git ref '{}' to src/...", git_ref);
+                // We use git clone from the local cache to the src_dir
+                std::process::Command::new("git")
+                    .arg("clone")
+                    .arg(&cache_path)
+                    .arg(dest_dir.join(&git_dir_name))
+                    .status()
+                    .map_err(|e| WrightError::BuildError(format!("local git clone failed: {}", e)))?;
+                
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(dest_dir.join(&git_dir_name))
+                    .arg("checkout")
+                    .arg(&git_ref)
+                    .status()
+                    .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
+                
+                continue;
+            }
+
             let filename = sanitize_cache_filename(
                 processed_uri.split('/').next_back().unwrap_or("source")
             );
@@ -581,6 +624,56 @@ impl Builder {
         Ok(())
     }
 
+    /// Fetch a Git repository into the cache.
+    fn fetch_git_repo(&self, uri: &str, dest: &Path) -> Result<String> {
+        let (git_url, git_ref) = if let Some(pos) = uri.find('#') {
+            (uri[4..pos].to_string(), uri[pos+1..].to_string())
+        } else {
+            (uri[4..].to_string(), "HEAD".to_string())
+        };
+
+        let ref_parts: Vec<&str> = git_ref.split('=').collect();
+        let actual_ref = if ref_parts.len() == 2 { ref_parts[1] } else { &git_ref };
+
+        if !dest.exists() {
+            info!("Cloning Git repository: {}", git_url);
+            std::process::Command::new("git")
+                .arg("clone")
+                .arg("--mirror") // Use mirror for cache to save space and allow switching refs
+                .arg(&git_url)
+                .arg(dest)
+                .status()
+                .map_err(|e| WrightError::BuildError(format!("git clone failed: {}", e)))?;
+        } else {
+            info!("Updating Git repository: {}", git_url);
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dest)
+                .arg("remote")
+                .arg("update")
+                .arg("--prune")
+                .status()
+                .map_err(|e| WrightError::BuildError(format!("git remote update failed: {}", e)))?;
+        }
+
+        // Get the actual commit hash for the requested ref
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dest)
+            .arg("rev-parse")
+            .arg(actual_ref)
+            .output()
+            .map_err(|e| WrightError::BuildError(format!("git rev-parse failed: {}", e)))?;
+
+        if !output.status.success() {
+            return Err(WrightError::BuildError(format!(
+                "failed to resolve git ref '{}' for {}", actual_ref, git_url
+            )));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     /// Fetch sources for a package to the cache directory.
     /// Remote URIs are downloaded; local URIs are validated and copied to cache.
     pub fn fetch(&self, manifest: &PackageManifest, hold_dir: &Path) -> Result<()> {
@@ -591,6 +684,22 @@ impl Builder {
 
         for (i, uri) in manifest.sources.uris.iter().enumerate() {
             let processed_uri = self.process_uri(uri, manifest);
+
+            if is_git_uri(&processed_uri) {
+                // Git repository handling
+                let git_dir_name = sanitize_cache_filename(
+                    processed_uri.split('#').next().unwrap()
+                        .split('/').next_back().unwrap()
+                        .strip_suffix(".git").unwrap_or(processed_uri.split('/').next_back().unwrap())
+                );
+                let git_cache_dir = cache_dir.join("git");
+                if !git_cache_dir.exists() { std::fs::create_dir_all(&git_cache_dir).ok(); }
+                let dest = git_cache_dir.join(&git_dir_name);
+
+                let commit_id = self.fetch_git_repo(&processed_uri, &dest)?;
+                info!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
+                continue;
+            }
 
             if is_remote_uri(&processed_uri) {
                 // Remote URI: download to cache

@@ -328,6 +328,13 @@ fn expand_rebuild_deps(
             });
 
             if link_changed || other_changed {
+                // PROTECTION: Do not automatically add system toolchain parts to the rebuild set 
+                // via transitive link expansion unless rebuild_all (-R) is explicitly set.
+                // This prevents "compiler-waiting-for-libc" deadlocks.
+                if !rebuild_all && SYSTEM_TOOLCHAIN.contains(&name.as_str()) {
+                    continue;
+                }
+
                 rebuild_set.insert(name.clone());
                 plans_to_build.insert(path.clone());
                 reasons.insert(

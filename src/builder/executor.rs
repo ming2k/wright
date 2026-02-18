@@ -157,7 +157,11 @@ pub fn execute_script(
     })?;
 
     // Create sandbox config
-    let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone());
+    let task_id = format!("{}-{}", 
+        vars.get("PKG_NAME").cloned().unwrap_or_else(|| "unknown".to_string()),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone(), task_id);
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
 
