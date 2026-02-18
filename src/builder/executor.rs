@@ -53,6 +53,12 @@ pub struct ExecutorRegistry {
     executors: HashMap<String, ExecutorConfig>,
 }
 
+impl Default for ExecutorRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutorRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
@@ -68,11 +74,11 @@ impl ExecutorRegistry {
             return Ok(());
         }
 
-        for entry in std::fs::read_dir(dir).map_err(|e| WrightError::IoError(e))? {
-            let entry = entry.map_err(|e| WrightError::IoError(e))?;
+        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
+            let entry = entry.map_err(WrightError::IoError)?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                let content = std::fs::read_to_string(&path).map_err(|e| WrightError::IoError(e))?;
+                let content = std::fs::read_to_string(&path).map_err(WrightError::IoError)?;
                 let config: ExecutorWrapper = toml::from_str(&content)?;
                 info!("Loaded executor: {} from {}", config.executor.name, path.display());
                 self.executors.insert(config.executor.name.clone(), config.executor);

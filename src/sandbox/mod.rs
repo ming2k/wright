@@ -61,13 +61,15 @@ pub enum SandboxLevel {
     Strict,
 }
 
-impl SandboxLevel {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for SandboxLevel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "none" => Self::None,
             "relaxed" => Self::Relaxed,
-            "strict" | _ => Self::Strict,
-        }
+            _ => Self::Strict,
+        })
     }
 }
 

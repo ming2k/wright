@@ -1,6 +1,7 @@
 pub mod lifecycle;
 pub mod executor;
 pub mod variables;
+pub mod orchestrator;
 
 use std::path::{Path, PathBuf};
 
@@ -244,7 +245,7 @@ impl Builder {
             info!("Running package stage for split: {}", split_name);
 
             let split_options = executor::ExecutorOptions {
-                level: crate::sandbox::SandboxLevel::from_str(&package_stage.sandbox),
+                level: package_stage.sandbox.parse().unwrap(),
                 src_dir: src_dir.clone(),
                 pkg_dir: split_pkg_dir.clone(),
                 files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
@@ -324,7 +325,7 @@ impl Builder {
 
             let processed_uri = self.process_uri(uri, manifest);
             let filename = sanitize_cache_filename(
-                processed_uri.split('/').last().unwrap_or("source")
+                processed_uri.split('/').next_back().unwrap_or("source")
             );
             let path = cache_dir.join(&filename);
 
@@ -353,7 +354,7 @@ impl Builder {
         for uri in &manifest.sources.uris {
             let processed_uri = self.process_uri(uri, manifest);
             let filename = sanitize_cache_filename(
-                processed_uri.split('/').last().unwrap_or("source")
+                processed_uri.split('/').next_back().unwrap_or("source")
             );
             let path = cache_dir.join(&filename);
 
@@ -386,7 +387,7 @@ impl Builder {
     /// If the directory contains a single subdirectory, point BUILD_DIR there.
     /// Otherwise, BUILD_DIR is the directory itself.
     fn detect_build_dir(src_dir: &Path) -> Result<PathBuf> {
-        let entries: Vec<_> = std::fs::read_dir(src_dir).map_err(|e| WrightError::IoError(e))?
+        let entries: Vec<_> = std::fs::read_dir(src_dir).map_err(WrightError::IoError)?
             .filter_map(|e| e.ok())
             .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect();
@@ -409,7 +410,7 @@ impl Builder {
 
         let cache_dir = self.config.general.cache_dir.join("sources");
         if !cache_dir.exists() {
-            std::fs::create_dir_all(&cache_dir).map_err(|e| WrightError::IoError(e))?;
+            std::fs::create_dir_all(&cache_dir).map_err(WrightError::IoError)?;
         }
 
         for uri in manifest.sources.uris.iter() {
@@ -422,7 +423,7 @@ impl Builder {
             }
 
             let cache_filename = sanitize_cache_filename(
-                processed_uri.split('/').last().unwrap_or("source")
+                processed_uri.split('/').next_back().unwrap_or("source")
             );
             let cache_path = cache_dir.join(&cache_filename);
 
@@ -446,7 +447,7 @@ impl Builder {
         }
 
         // Surgical update of plan.toml using regex to preserve comments/formatting
-        let content = std::fs::read_to_string(manifest_path).map_err(|e| WrightError::IoError(e))?;
+        let content = std::fs::read_to_string(manifest_path).map_err(WrightError::IoError)?;
 
         let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
         let hashes_str = new_hashes.iter()
@@ -470,7 +471,7 @@ impl Builder {
             }
         };
 
-        std::fs::write(manifest_path, new_content).map_err(|e| WrightError::IoError(e))?;
+        std::fs::write(manifest_path, new_content).map_err(WrightError::IoError)?;
 
         Ok(())
     }
@@ -480,7 +481,7 @@ impl Builder {
     pub fn fetch(&self, manifest: &PackageManifest, hold_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
         if !cache_dir.exists() {
-            std::fs::create_dir_all(cache_dir).map_err(|e| WrightError::IoError(e))?;
+            std::fs::create_dir_all(cache_dir).map_err(WrightError::IoError)?;
         }
 
         for (i, uri) in manifest.sources.uris.iter().enumerate() {
@@ -489,7 +490,7 @@ impl Builder {
             if is_remote_uri(&processed_uri) {
                 // Remote URI: download to cache
                 let filename = sanitize_cache_filename(
-                    processed_uri.split('/').last().unwrap_or("source")
+                    processed_uri.split('/').next_back().unwrap_or("source")
                 );
                 let dest = cache_dir.join(&filename);
 

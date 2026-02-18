@@ -109,7 +109,7 @@ pub fn run_in_sandbox(
             cmd.pre_exec(move || {
                 // New process group so timeout can kill all descendants.
                 libc::setpgid(0, 0);
-                apply_rlimits(&rlimits).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                apply_rlimits(&rlimits).map_err(|e| std::io::Error::other(e))
             });
         }
         let mut child = cmd
@@ -178,7 +178,7 @@ pub fn run_in_sandbox(
         unsafe {
             cmd.pre_exec(move || {
                 libc::setpgid(0, 0);
-                apply_rlimits(&rlimits).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                apply_rlimits(&rlimits).map_err(|e| std::io::Error::other(e))
             });
         }
         let mut child = cmd

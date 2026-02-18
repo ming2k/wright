@@ -193,7 +193,7 @@ pub struct BackupConfig {
 }
 
 impl PackageManifest {
-    pub fn from_str(content: &str) -> Result<Self> {
+    pub fn parse(content: &str) -> Result<Self> {
         let manifest: Self = toml::from_str(content)?;
         manifest.validate()?;
         Ok(manifest)
@@ -203,7 +203,7 @@ impl PackageManifest {
         let content = std::fs::read_to_string(path).map_err(|e| {
             WrightError::ParseError(format!("failed to read {}: {}", path.display(), e))
         })?;
-        Self::from_str(&content)
+        Self::parse(&content)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -380,7 +380,7 @@ script = """
 install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 """
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         assert_eq!(manifest.plan.name, "hello");
         assert_eq!(manifest.plan.version, "1.0.0");
         assert_eq!(manifest.plan.release, 1);
@@ -479,7 +479,7 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 [backup]
 files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         assert_eq!(manifest.plan.name, "nginx");
         assert_eq!(manifest.plan.url.as_deref(), Some("https://nginx.org"));
         assert_eq!(manifest.dependencies.runtime.len(), 3);
@@ -509,7 +509,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::from_str(toml).is_err());
+        assert!(PackageManifest::parse(toml).is_err());
     }
 
     #[test]
@@ -522,7 +522,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::from_str(toml).is_err());
+        assert!(PackageManifest::parse(toml).is_err());
     }
 
     #[test]
@@ -536,7 +536,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::from_str(toml).is_err());
+        assert!(PackageManifest::parse(toml).is_err());
     }
 
     #[test]
@@ -554,7 +554,7 @@ arch = "x86_64"
 uris = ["http://example.com/foo.tar.gz"]
 sha256 = []
 "#;
-        assert!(PackageManifest::from_str(toml).is_err());
+        assert!(PackageManifest::parse(toml).is_err());
     }
 
     #[test]
@@ -568,7 +568,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         assert_eq!(
             manifest.archive_filename(),
             "hello-1.0.0-1-x86_64.wright.tar.zst"
@@ -603,7 +603,7 @@ script = """
 install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
 """
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         assert_eq!(manifest.split.len(), 1);
         let split = manifest.split.get("libstdc++").unwrap();
         assert_eq!(split.description, "GNU C++ standard library");
@@ -647,7 +647,7 @@ arch = "any"
 [split.test-doc.lifecycle.package]
 script = "true"
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         let split = manifest.split.get("test-doc").unwrap();
         let split_manifest = split.to_manifest("test-doc", &manifest);
         assert_eq!(split_manifest.plan.version, "1.0.0-doc");
@@ -672,7 +672,7 @@ description = "A library"
 [split.test-lib.lifecycle.compile]
 script = "make"
 "#;
-        let err = PackageManifest::from_str(toml).unwrap_err();
+        let err = PackageManifest::parse(toml).unwrap_err();
         assert!(err.to_string().contains("lifecycle.package stage is required"));
     }
 
@@ -693,7 +693,7 @@ description = "bad"
 [split.BadName.lifecycle.package]
 script = "true"
 "#;
-        let err = PackageManifest::from_str(toml).unwrap_err();
+        let err = PackageManifest::parse(toml).unwrap_err();
         assert!(err.to_string().contains("invalid split package name"));
     }
 
@@ -714,7 +714,7 @@ description = "same name"
 [split.test.lifecycle.package]
 script = "true"
 "#;
-        let err = PackageManifest::from_str(toml).unwrap_err();
+        let err = PackageManifest::parse(toml).unwrap_err();
         assert!(err.to_string().contains("must not collide with the main package name"));
     }
 
@@ -729,7 +729,7 @@ description = "minimal package"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::from_str(toml).unwrap();
+        let manifest = PackageManifest::parse(toml).unwrap();
         assert!(manifest.dependencies.runtime.is_empty());
         assert!(manifest.dependencies.build.is_empty());
         assert!(manifest.sources.uris.is_empty());

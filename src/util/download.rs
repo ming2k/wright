@@ -26,14 +26,14 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
             info!("Packing local directory {}...", path_str);
             compress::create_tar_zst(src_path, dest)?;
         } else {
-            std::fs::copy(src_path, dest).map_err(|e| WrightError::IoError(e))?;
+            std::fs::copy(src_path, dest).map_err(WrightError::IoError)?;
         }
         return Ok(());
     }
 
     // Ensure the parent directory exists
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| WrightError::IoError(e))?;
+        std::fs::create_dir_all(parent).map_err(WrightError::IoError)?;
     }
 
     let client = Client::builder()
@@ -81,8 +81,8 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
 
     // Write to a temporary file in the same directory, then rename on success.
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
-    let tmp_file = tempfile::NamedTempFile::new_in(dest_dir).map_err(|e| WrightError::IoError(e))?;
-    let mut file = tmp_file.as_file().try_clone().map_err(|e| WrightError::IoError(e))?;
+    let tmp_file = tempfile::NamedTempFile::new_in(dest_dir).map_err(WrightError::IoError)?;
+    let mut file = tmp_file.as_file().try_clone().map_err(WrightError::IoError)?;
 
     let mut downloaded: u64 = 0;
     let mut buffer = [0; 8192];

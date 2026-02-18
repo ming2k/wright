@@ -1,18 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use tracing::{info, warn, error};
 
-use wright::config::{GlobalConfig, AssembliesConfig};
+use wright::config::GlobalConfig;
 use wright::database::Database;
-use wright::package::manifest::PackageManifest;
-use wright::package::archive;
-use wright::builder::Builder;
+use wright::builder::orchestrator::{self, BuildOptions};
 use wright::transaction;
+use wright::query;
 
 #[derive(Parser)]
 #[command(name = "wright", about = "wright package manager")]
@@ -68,6 +63,27 @@ enum Commands {
         /// Force removal even if other packages depend on this one
         #[arg(long)]
         force: bool,
+
+        /// Recursively remove all packages that depend on the target
+        #[arg(long, short)]
+        recursive: bool,
+    },
+    /// Analyze package dependency relationships
+    Deps {
+        /// Package name
+        package: String,
+
+        /// Show reverse dependencies (what depends on this package)
+        #[arg(long, short)]
+        reverse: bool,
+
+        /// Maximum depth to display (0 = unlimited)
+        #[arg(long, short, default_value = "0")]
+        depth: usize,
+
+        /// Filter output to only show matching package names
+        #[arg(long, short)]
+        filter: Option<String>,
     },
     /// List installed packages
     List {
@@ -132,6 +148,10 @@ enum Commands {
         /// Max number of parallel builds
         #[arg(short = 'j', long, default_value = "1")]
         jobs: usize,
+
+        /// Rebuild all packages that depend on the target (for ABI breakage)
+        #[arg(long)]
+        rebuild_deps: bool,
     },
 }
 
@@ -143,9 +163,11 @@ fn main() -> Result<()> {
     let config = GlobalConfig::load(cli.config.as_deref())
         .context("failed to load config")?;
 
-    // Build subcommand has its own setup path — handle it separately
-    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs } = cli.command {
-        return run_build(&config, targets, stage, only, clean, lint, force, update, jobs);
+    // Build subcommand has its own setup path
+    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_deps } = cli.command {
+        return orchestrator::run_build(&config, targets, BuildOptions {
+            stage, only, clean, lint, force, update, jobs, rebuild_deps,
+        });
     }
 
     let repo_config = wright::config::RepoConfig::load(None)
@@ -215,15 +237,51 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Remove { packages, force } => {
+        Commands::Remove { packages, force, recursive } => {
             for name in &packages {
-                match transaction::remove_package(&db, name, &root_dir, force) {
+                if recursive {
+                    let dependents = db.get_recursive_dependents(name)
+                        .context(format!("failed to resolve dependents of {}", name))?;
+
+                    if !dependents.is_empty() {
+                        println!("will also remove (depends on {}): {}", name, dependents.join(", "));
+                    }
+
+                    for dep in &dependents {
+                        match transaction::remove_package(&db, dep, &root_dir, true) {
+                            Ok(()) => println!("removed: {}", dep),
+                            Err(e) => {
+                                eprintln!("error removing {}: {}", dep, e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+
+                match transaction::remove_package(&db, name, &root_dir, force || recursive) {
                     Ok(()) => println!("removed: {}", name),
                     Err(e) => {
                         eprintln!("error removing {}: {}", name, e);
                         std::process::exit(1);
                     }
                 }
+            }
+        }
+        Commands::Deps { package, reverse, depth, filter } => {
+            let pkg = db.get_package(&package)
+                .context("failed to query package")?;
+            if pkg.is_none() {
+                eprintln!("package '{}' is not installed", package);
+                std::process::exit(1);
+            }
+
+            let max_depth = if depth == 0 { usize::MAX } else { depth };
+
+            println!("{}", package);
+            if reverse {
+                query::print_reverse_dep_tree(&db, &package, "", 1, max_depth, filter.as_deref())?;
+            } else {
+                query::print_dep_tree(&db, &package, "", 1, max_depth, filter.as_deref())?;
             }
         }
         Commands::List { .. } => {
@@ -333,302 +391,6 @@ fn main() -> Result<()> {
             }
         }
         Commands::Build { .. } => unreachable!(),
-    }
-
-    Ok(())
-}
-
-fn run_build(
-    config: &GlobalConfig,
-    targets: Vec<String>,
-    stage: Option<String>,
-    only: Option<String>,
-    clean: bool,
-    lint: bool,
-    force: bool,
-    update: bool,
-    jobs: usize,
-) -> Result<()> {
-    // Load all assemblies from multiple locations
-    let mut all_assemblies = AssembliesConfig { assemblies: HashMap::new() };
-
-    if let Ok(f) = AssembliesConfig::load_all(&config.general.assemblies_dir) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    if let Ok(f) = AssembliesConfig::load_all(&config.general.plans_dir.join("assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    if let Ok(f) = AssembliesConfig::load_all(Path::new("./assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    if let Ok(f) = AssembliesConfig::load_all(Path::new("../wright-dockyard/assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-
-    let mut resolver = wright::repo::source::SimpleResolver::new(config.general.cache_dir.clone());
-    resolver.download_timeout = config.network.download_timeout;
-    resolver.load_assemblies(all_assemblies);
-    resolver.add_plans_dir(config.general.plans_dir.clone());
-    resolver.add_plans_dir(PathBuf::from("../wright-dockyard/plans"));
-    resolver.add_plans_dir(PathBuf::from("../plans"));
-    resolver.add_plans_dir(PathBuf::from("./plans"));
-
-    // 1. Resolve all targets into manifest paths
-    let mut plans_to_build = HashSet::new();
-    let all_plans = resolver.get_all_plans()?;
-
-    for target in &targets {
-        let clean_target = target.trim();
-        if clean_target.is_empty() { continue; }
-
-        if clean_target.starts_with('@') {
-            let assembly_name = &clean_target[1..];
-            let paths = resolver.resolve_assembly(assembly_name)?;
-            if paths.is_empty() {
-                warn!("Assembly not found: {}", assembly_name);
-            }
-            for p in paths { plans_to_build.insert(p); }
-        } else if let Some(path) = all_plans.get(clean_target) {
-            plans_to_build.insert(path.clone());
-        } else {
-            let plan_path = PathBuf::from(clean_target);
-            let manifest_path = if plan_path.is_file() {
-                plan_path
-            } else {
-                plan_path.join("plan.toml")
-            };
-
-            if manifest_path.exists() {
-                plans_to_build.insert(manifest_path);
-            } else {
-                // The plan name wasn't in get_all_plans() — it may exist
-                // but have a syntax error (get_all_plans silently skips
-                // invalid manifests). Search plan directories for a
-                // matching directory and try to parse it, surfacing the
-                // real error.
-                let mut found = false;
-                for plans_dir in &resolver.plans_dirs {
-                    let candidate = plans_dir.join(clean_target).join("plan.toml");
-                    if candidate.exists() {
-                        // Try to parse — this will produce the real error
-                        PackageManifest::from_file(&candidate)
-                            .context(format!("failed to parse plan '{}'", clean_target))?;
-                        // If parsing succeeds (shouldn't normally reach here), use it
-                        plans_to_build.insert(candidate);
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    return Err(anyhow::anyhow!("Target not found: {}", clean_target));
-                }
-            }
-        }
-    }
-
-    if plans_to_build.is_empty() {
-        return Err(anyhow::anyhow!("No targets specified to build."));
-    }
-
-    // 2. Build Dependency Map
-    let mut name_to_path = HashMap::new();
-    let mut deps_map = HashMap::new();
-    let mut build_set = HashSet::new();
-
-    for path in &plans_to_build {
-        let manifest = PackageManifest::from_file(path)?;
-        let name = manifest.plan.name.clone();
-        name_to_path.insert(name.clone(), path.clone());
-        build_set.insert(name.clone());
-
-        let mut deps = Vec::new();
-        if !update {
-            for dep in &manifest.dependencies.build {
-                 deps.push(wright::package::version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None)).0);
-            }
-            for dep in &manifest.dependencies.runtime {
-                 deps.push(wright::package::version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None)).0);
-            }
-        }
-        deps_map.insert(name, deps);
-    }
-
-    // 3. Build Orchestrator
-    let (tx, rx) = mpsc::channel();
-    let completed = Arc::new(Mutex::new(HashSet::new()));
-    let in_progress = Arc::new(Mutex::new(HashSet::new()));
-    let failed_set = Arc::new(Mutex::new(HashSet::new()));
-    let failed_count = Arc::new(Mutex::new(0));
-
-    let builder = Arc::new(Builder::new(config.clone()));
-    let config_arc = Arc::new(config.clone());
-
-    loop {
-        let mut ready_to_launch = Vec::new();
-        {
-            let comp = completed.lock().unwrap();
-            let prog = in_progress.lock().unwrap();
-            let fail = failed_set.lock().unwrap();
-
-            for name in &build_set {
-                if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
-                    // Update mode ignores dependencies
-                    let all_deps_met = update || deps_map.get(name).unwrap().iter()
-                        .filter(|d| build_set.contains(*d))
-                        .all(|d| comp.contains(d));
-
-                    if all_deps_met {
-                        ready_to_launch.push(name.clone());
-                    }
-                }
-            }
-        }
-
-        for name in ready_to_launch {
-            if in_progress.lock().unwrap().len() >= jobs {
-                break;
-            }
-
-            in_progress.lock().unwrap().insert(name.clone());
-
-            let tx_clone = tx.clone();
-            let name_clone = name.clone();
-            let path = name_to_path.get(&name).unwrap().clone();
-            let builder_clone = builder.clone();
-            let config_clone = config_arc.clone();
-            let stage_clone = stage.clone();
-            let only_clone = only.clone();
-
-            std::thread::spawn(move || {
-                let manifest = match PackageManifest::from_file(&path) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
-                        return;
-                    }
-                };
-                let res = build_one(&builder_clone, &manifest, &path, &config_clone,
-                    stage_clone.as_deref(), only_clone.as_deref(), clean, lint, force, update);
-
-                match res {
-                    Ok(_) => tx_clone.send(Ok(name_clone)).unwrap(),
-                    Err(e) => {
-                        error!("Failed to process {}: {:#}", name_clone, e);
-                        tx_clone.send(Err((name_clone, e))).unwrap();
-                    }
-                }
-            });
-        }
-
-        let finished_count = completed.lock().unwrap().len() + *failed_count.lock().unwrap();
-        if in_progress.lock().unwrap().is_empty() && finished_count == build_set.len() {
-            break;
-        }
-
-        // Deadlock detection
-        if in_progress.lock().unwrap().is_empty() && finished_count < build_set.len() {
-             return Err(anyhow::anyhow!("Deadlock detected or dependency missing from plan set"));
-        }
-
-        match rx.recv().unwrap() {
-            Ok(name) => {
-                in_progress.lock().unwrap().remove(&name);
-                completed.lock().unwrap().insert(name);
-            }
-            Err((name, _)) => {
-                in_progress.lock().unwrap().remove(&name);
-                failed_set.lock().unwrap().insert(name.clone());
-                *failed_count.lock().unwrap() += 1;
-                // In update mode, we continue. In build mode, we stop.
-                if !update {
-                    return Err(anyhow::anyhow!("Construction failed due to error in {}", name));
-                }
-            }
-        }
-    }
-
-    let final_failed = *failed_count.lock().unwrap();
-    let final_completed = completed.lock().unwrap().len();
-
-    if final_failed > 0 {
-        warn!("Construction finished with {} successes and {} failures.", final_completed, final_failed);
-        if !update {
-            return Err(anyhow::anyhow!("Some parts failed to manufacture."));
-        }
-    } else {
-        info!("All {} tasks completed successfully.", final_completed);
-    }
-
-    Ok(())
-}
-
-fn build_one(
-    builder: &Builder,
-    manifest: &PackageManifest,
-    manifest_path: &Path,
-    config: &GlobalConfig,
-    stage: Option<&str>,
-    only: Option<&str>,
-    clean: bool,
-    lint: bool,
-    force: bool,
-    update: bool,
-) -> Result<()> {
-    if update {
-        builder.update_hashes(manifest, manifest_path).context("failed to update hashes")?;
-        info!("Updated plan hashes: {}", manifest.plan.name);
-        return Ok(());
-    }
-
-    if lint {
-        println!("valid plan: {} {}-{}", manifest.plan.name, manifest.plan.version, manifest.plan.release);
-        for split_name in manifest.split.keys() {
-            println!("  split: {}", split_name);
-        }
-        return Ok(());
-    }
-
-    if clean {
-        builder.clean(manifest).context("failed to clean workspace")?;
-    }
-
-    let output_dir = if config.general.components_dir.exists() || std::fs::create_dir_all(&config.general.components_dir).is_ok() {
-        config.general.components_dir.clone()
-    } else {
-        std::env::current_dir()?
-    };
-
-    // Skip if archive already exists (unless --force or --only)
-    if !force && only.is_none() {
-        let archive_name = manifest.archive_filename();
-        let existing = output_dir.join(&archive_name);
-        let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
-            let split_manifest = split_pkg.to_manifest(split_name, manifest);
-            output_dir.join(split_manifest.archive_filename()).exists()
-        });
-        if all_exist && existing.exists() {
-            info!("Skipping {} (all archives already exist, use --force to rebuild)", manifest.plan.name);
-            return Ok(());
-        }
-    }
-
-    info!("Manufacturing part {}...", manifest.plan.name);
-    let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, stage.map(String::from), only.map(String::from))?;
-
-    // Skip archive creation when --only is used for non-package stages
-    if only.is_none() || only == Some("package") || only == Some("post_package") {
-        let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
-        info!("Part stored in the Components Hold: {}", archive_path.display());
-
-        // Create split package archives
-        for (split_name, split_pkg) in &manifest.split {
-            let split_pkg_dir = result.split_pkg_dirs.get(split_name)
-                .ok_or_else(|| anyhow::anyhow!("missing split pkg_dir for '{}'", split_name))?;
-            let split_manifest = split_pkg.to_manifest(split_name, manifest);
-            let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
-            info!("Split part stored: {}", split_archive.display());
-        }
     }
 
     Ok(())

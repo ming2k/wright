@@ -40,6 +40,28 @@ pub struct Database {
     db_path: Option<PathBuf>,
 }
 
+/// Column list shared by all queries returning PackageInfo.
+const PKG_COLUMNS: &str =
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts";
+
+/// Map a row (with PKG_COLUMNS order) to PackageInfo.
+fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
+    Ok(PackageInfo {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        version: row.get(2)?,
+        release: row.get::<_, u32>(3)?,
+        description: row.get::<_, String>(4)?,
+        arch: row.get(5)?,
+        license: row.get::<_, String>(6)?,
+        url: row.get(7)?,
+        installed_at: row.get::<_, String>(8)?,
+        install_size: row.get::<_, u64>(9)?,
+        pkg_hash: row.get(10)?,
+        install_scripts: row.get(11)?,
+    })
+}
+
 fn acquire_lock(db_path: &Path) -> Result<File> {
     let lock_path = db_path.with_extension("lock");
     let file = File::create(&lock_path).map_err(|e| {
@@ -183,61 +205,24 @@ impl Database {
     }
 
     pub fn get_package(&self, name: &str) -> Result<Option<PackageInfo>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
-             FROM packages WHERE name = ?1",
-        )?;
+        let sql = format!("SELECT {} FROM packages WHERE name = ?1", PKG_COLUMNS);
+        let mut stmt = self.conn.prepare(&sql)?;
 
-        let result = stmt.query_row(params![name], |row| {
-            Ok(PackageInfo {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                version: row.get(2)?,
-                release: row.get::<_, u32>(3)?,
-                description: row.get::<_, String>(4)?,
-                arch: row.get(5)?,
-                license: row.get::<_, String>(6)?,
-                url: row.get(7)?,
-                installed_at: row.get::<_, String>(8)?,
-                install_size: row.get::<_, u64>(9)?,
-                pkg_hash: row.get(10)?,
-                install_scripts: row.get(11)?,
-            })
-        });
-
-        match result {
+        match stmt.query_row(params![name], row_to_package_info) {
             Ok(info) => Ok(Some(info)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(WrightError::DatabaseError(format!(
-                "failed to query package: {}",
-                e
+                "failed to query package: {}", e
             ))),
         }
     }
 
     pub fn list_packages(&self) -> Result<Vec<PackageInfo>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
-             FROM packages ORDER BY name",
-        )?;
+        let sql = format!("SELECT {} FROM packages ORDER BY name", PKG_COLUMNS);
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let rows = stmt
-            .query_map([], |row| {
-                Ok(PackageInfo {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    version: row.get(2)?,
-                    release: row.get::<_, u32>(3)?,
-                    description: row.get::<_, String>(4)?,
-                    arch: row.get(5)?,
-                    license: row.get::<_, String>(6)?,
-                    url: row.get(7)?,
-                    installed_at: row.get::<_, String>(8)?,
-                    install_size: row.get::<_, u64>(9)?,
-                    pkg_hash: row.get(10)?,
-                    install_scripts: row.get(11)?,
-                })
-            })?
+            .query_map([], row_to_package_info)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to list packages: {}", e)))?;
 
@@ -246,28 +231,14 @@ impl Database {
 
     pub fn search_packages(&self, keyword: &str) -> Result<Vec<PackageInfo>> {
         let pattern = format!("%{}%", keyword);
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts
-             FROM packages WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY name",
-        )?;
+        let sql = format!(
+            "SELECT {} FROM packages WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY name",
+            PKG_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let rows = stmt
-            .query_map(params![pattern], |row| {
-                Ok(PackageInfo {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    version: row.get(2)?,
-                    release: row.get::<_, u32>(3)?,
-                    description: row.get::<_, String>(4)?,
-                    arch: row.get(5)?,
-                    license: row.get::<_, String>(6)?,
-                    url: row.get(7)?,
-                    installed_at: row.get::<_, String>(8)?,
-                    install_size: row.get::<_, u64>(9)?,
-                    pkg_hash: row.get(10)?,
-                    install_scripts: row.get(11)?,
-                })
-            })?
+            .query_map(params![pattern], row_to_package_info)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to search packages: {}", e)))?;
 
@@ -418,6 +389,55 @@ impl Database {
             .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
 
         Ok(rows)
+    }
+
+    /// Get runtime dependencies for a package by name.
+    pub fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<(String, Option<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.depends_on, d.version_constraint
+             FROM dependencies d
+             JOIN packages p ON d.package_id = p.id
+             WHERE p.name = ?1",
+        )?;
+
+        let rows = stmt
+            .query_map(params![name], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get all transitive reverse dependents of a package (packages that depend on it,
+    /// directly or indirectly). Does NOT include the root package itself.
+    /// Returns names in leaf-first order (safe removal order: remove leaves before parents).
+    pub fn get_recursive_dependents(&self, name: &str) -> Result<Vec<String>> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(name.to_string()); // mark root as visited but don't add to result
+        self.collect_dependents_recursive(name, &mut visited, &mut result)?;
+        Ok(result)
+    }
+
+    fn collect_dependents_recursive(
+        &self,
+        name: &str,
+        visited: &mut std::collections::HashSet<String>,
+        result: &mut Vec<String>,
+    ) -> Result<()> {
+        let dependents = self.get_dependents(name)?;
+        for dep in &dependents {
+            if visited.contains(dep) {
+                continue;
+            }
+            visited.insert(dep.to_string());
+            // Recurse first so leaves are added before their parents
+            self.collect_dependents_recursive(dep, visited, result)?;
+            result.push(dep.to_string());
+        }
+        Ok(())
     }
 
     pub fn record_transaction(

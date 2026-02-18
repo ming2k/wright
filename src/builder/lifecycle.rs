@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::error::{WrightError, Result};
 use crate::package::manifest::{LifecycleStage, PackageManifest};
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
-use crate::sandbox::{ResourceLimits, SandboxLevel};
+use crate::sandbox::ResourceLimits;
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
@@ -145,7 +145,7 @@ impl<'a> LifecyclePipeline<'a> {
             .ok_or_else(|| WrightError::BuildError(format!("executor not found: {}", stage.executor)))?;
 
         let options = ExecutorOptions {
-            level: SandboxLevel::from_str(&stage.sandbox),
+            level: stage.sandbox.parse().unwrap(),
             src_dir: self.src_dir.clone(),
             pkg_dir: self.pkg_dir.clone(),
             files_dir: self.files_dir.clone(),

@@ -272,8 +272,8 @@ impl AssembliesConfig {
             return Ok(config);
         }
 
-        for entry in std::fs::read_dir(dir).map_err(|e| WrightError::IoError(e))? {
-            let entry = entry.map_err(|e| WrightError::IoError(e))?;
+        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
+            let entry = entry.map_err(WrightError::IoError)?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
                 let content = std::fs::read_to_string(&path).map_err(|e| {

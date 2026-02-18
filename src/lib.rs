@@ -6,4 +6,5 @@ pub mod transaction;
 pub mod builder;
 pub mod sandbox;
 pub mod repo;
+pub mod query;
 pub mod util;

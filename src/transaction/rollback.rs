@@ -22,6 +22,12 @@ pub struct RollbackState {
 // BACKUP\t<original>\t<backup>
 const DELIM: char = '\t';
 
+impl Default for RollbackState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RollbackState {
     pub fn new() -> Self {
         Self {

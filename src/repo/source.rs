@@ -88,9 +88,9 @@ impl SimpleResolver {
 
         if name.starts_with("http") {
              let filename = sanitize_cache_filename(
-                 name.split('/').last().unwrap_or("package.wright.tar.zst")
+                 name.split('/').next_back().unwrap_or("package.wright.tar.zst")
              );
-             std::fs::create_dir_all(&self.cache_dir).map_err(|e| WrightError::IoError(e))?;
+             std::fs::create_dir_all(&self.cache_dir).map_err(WrightError::IoError)?;
              let dest = self.cache_dir.join(&filename);
              if !dest.exists() {
                  download::download_file(name, &dest, self.download_timeout)?;
@@ -104,8 +104,8 @@ impl SimpleResolver {
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPackage>> {
         for dir in &self.search_dirs {
             if !dir.exists() { continue; }
-            for entry in std::fs::read_dir(dir).map_err(|e| WrightError::IoError(e))? {
-                let entry = entry.map_err(|e| WrightError::IoError(e))?;
+            for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
+                let entry = entry.map_err(WrightError::IoError)?;
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("zst") {
                     if let Ok(pkginfo) = archive::read_pkginfo(&path) {
@@ -167,7 +167,7 @@ impl SimpleResolver {
         for root in &self.plans_dirs {
             if !root.exists() { continue; }
             for entry in walkdir::WalkDir::new(root) {
-                let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
                 if entry.file_name() == "plan.toml" {
                     if let Ok(manifest) = crate::package::manifest::PackageManifest::from_file(entry.path()) {
                         map.insert(manifest.plan.name, entry.path().to_path_buf());

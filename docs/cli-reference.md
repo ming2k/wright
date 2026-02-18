@@ -33,7 +33,57 @@ Upgrade from local `.wright.tar.zst` files.
 
 #### `wright remove <PACKAGES...>`
 
-Remove installed packages by name.
+Remove installed packages by name. Refuses to remove a package if other installed packages depend on it (use `--force` to override, or `--recursive` to remove the entire dependency chain).
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Remove even if other packages depend on this one |
+| `--recursive` (`-r`) | Also remove all packages that depend on the target (leaf-first order) |
+
+**Examples:**
+
+```
+wright remove nginx                  # fails if other packages depend on nginx
+wright remove nginx --force          # remove anyway, leaving broken deps
+wright remove openssl --recursive    # remove openssl + everything that depends on it
+```
+
+#### `wright deps <PACKAGE>`
+
+Analyze package dependency relationships. Displays a tree view.
+
+| Flag | Description |
+|------|-------------|
+| `--reverse` (`-r`) | Show reverse dependencies (what depends on this package) |
+| `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
+| `--filter <PATTERN>` (`-f`) | Only show packages whose name contains the pattern |
+
+**Examples:**
+
+```
+wright deps openssl                  # what does openssl depend on?
+wright deps openssl --reverse        # what depends on openssl?
+wright deps openssl -r -d 1          # direct reverse dependents only
+wright deps openssl -r -f curl       # reverse deps, filter to "curl"
+```
+
+**Output:**
+
+```
+openssl
+├── zlib
+└── perl (>= 5.10) [not installed]
+```
+
+```
+openssl        (--reverse)
+├── curl
+│   └── git
+├── nginx
+└── python
+```
+
+Uninstalled dependencies are marked `[not installed]`. Version constraints are shown in parentheses.
 
 #### `wright list`
 
@@ -76,6 +126,7 @@ Build packages from `plan.toml` files. Targets can be plan directories, plan nam
 | `--force` (`-f`) | Overwrite existing archives |
 | `--update` | Download sources and update sha256 checksums |
 | `-j`/`--jobs <N>` | Parallel builds (default: 1) |
+| `--rebuild-deps` | After building the target, also rebuild all packages that depend on it (transitive) |
 
 Each build starts from a clean state (source re-extracted, all stages re-run) to ensure reproducibility. Downloaded sources are cached and reused across builds. Use `--stage` to stop early or `--only` to rerun a single stage — see [usage.md](usage.md#staged-builds) for the staged build workflow.
 
@@ -90,6 +141,10 @@ wright build --lint nginx              # validate only
 wright build --stage configure nginx   # stop after configure for debugging
 wright build --only compile nginx      # rerun just the compile stage
 wright build -j4 @desktop             # parallel
+wright build openssl --rebuild-deps    # rebuild openssl + all its dependents
+wright build openssl --rebuild-deps -j4  # same, with parallel rebuild
 ```
+
+`--rebuild-deps` is designed for ABI breakage scenarios: when a library is updated and all packages linked against it need to be rebuilt. The build system scans all known plans, transitively collects every package that depends (runtime or build) on the target, and includes them in the build set. The existing dependency-aware build orchestrator ensures correct build order.
 
 Archives are placed in the components directory. Build logs: `/tmp/wright-build/<name>-<version>/log/<stage>.log`.

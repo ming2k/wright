@@ -141,7 +141,7 @@ pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(|e| WrightError::IoError(e))?;
+    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(dest_dir).map_err(|e| {
@@ -152,7 +152,7 @@ pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 pub fn extract_tar_bz2(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use bzip2::read::BzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(|e| WrightError::IoError(e))?;
+    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = BzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(dest_dir).map_err(|e| {
@@ -163,7 +163,7 @@ pub fn extract_tar_bz2(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use xz2::read::XzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(|e| WrightError::IoError(e))?;
+    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = XzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(dest_dir).map_err(|e| {
