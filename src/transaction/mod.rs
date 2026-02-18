@@ -470,7 +470,11 @@ pub fn remove_package(
         // --- Multi-ownership check ---
         let other_owners = db.get_other_owners(pkg.id, &file.path)?;
         if !other_owners.is_empty() {
-            info!("Path {} is also owned by: {}. Skipping deletion.", file.path, other_owners.join(", "));
+            tracing::debug!(
+                "Path {} is also owned by: {}. Skipping deletion.",
+                file.path,
+                other_owners.join(", ")
+            );
             continue;
         }
 
@@ -655,7 +659,7 @@ pub fn upgrade_package(
 
         let other_owners = db.get_other_owners(old_pkg.id, &old_file.path)?;
         if !other_owners.is_empty() {
-            info!(
+            tracing::debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",
                 old_file.path,
                 other_owners.join(", ")

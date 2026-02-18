@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use tracing_subscriber::EnvFilter;
 
 use wright::config::GlobalConfig;
 use wright::database::Database;
@@ -25,6 +26,14 @@ struct Cli {
     /// Path to database file
     #[arg(long, global = true)]
     db: Option<PathBuf>,
+
+    /// Increase log verbosity (-v, -vv)
+    #[arg(long, short = 'v', global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Reduce log output (show warnings/errors only)
+    #[arg(long, global = true)]
+    quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -132,9 +141,20 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
     let cli = Cli::parse();
+
+    let mut filter = if cli.quiet {
+        EnvFilter::new("warn")
+    } else {
+        EnvFilter::new("info")
+    };
+    if cli.verbose > 0 {
+        filter = EnvFilter::new("debug");
+    }
+    if cli.verbose > 1 {
+        filter = EnvFilter::new("trace");
+    }
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let config = GlobalConfig::load(cli.config.as_deref())
         .context("failed to load config")?;
