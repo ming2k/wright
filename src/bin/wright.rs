@@ -71,7 +71,7 @@ enum Commands {
     /// Analyze package dependency relationships
     Deps {
         /// Package name
-        package: String,
+        package: Option<String>,
 
         /// Show reverse dependencies (what depends on this package)
         #[arg(long, short)]
@@ -84,12 +84,20 @@ enum Commands {
         /// Filter output to only show matching package names
         #[arg(long, short)]
         filter: Option<String>,
+
+        /// Show full system dependency tree
+        #[arg(long, short)]
+        tree: bool,
     },
     /// List installed packages
     List {
         /// Show only installed packages (default)
         #[arg(long)]
         installed: bool,
+
+        /// Show only top-level (root) packages
+        #[arg(long, short)]
+        roots: bool,
     },
     /// Show detailed package information
     Query {
@@ -115,6 +123,10 @@ enum Commands {
     Verify {
         /// Package name (or all if omitted)
         package: Option<String>,
+
+        /// Check for broken dependencies system-wide
+        #[arg(long)]
+        check_deps: bool,
     },
     /// Build packages from plan.toml files
     Build {
@@ -150,8 +162,8 @@ enum Commands {
         jobs: usize,
 
         /// Rebuild all packages that depend on the target (for ABI breakage)
-        #[arg(long)]
-        rebuild_deps: bool,
+        #[arg(short = 'R', long)]
+        rebuild_dependents: bool,
     },
 }
 
@@ -164,9 +176,9 @@ fn main() -> Result<()> {
         .context("failed to load config")?;
 
     // Build subcommand has its own setup path
-    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_deps } = cli.command {
+    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_dependents } = cli.command {
         return orchestrator::run_build(&config, targets, BuildOptions {
-            stage, only, clean, lint, force, update, jobs, rebuild_deps,
+            stage, only, clean, lint, force, update, jobs, rebuild_dependents,
         });
     }
 
@@ -267,26 +279,39 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Deps { package, reverse, depth, filter } => {
-            let pkg = db.get_package(&package)
+        Commands::Deps { package, reverse, depth, filter, tree } => {
+            if tree {
+                query::print_system_tree(&db)?;
+                return Ok(());
+            }
+
+            let package_name = package.ok_or_else(|| {
+                anyhow::anyhow!("package name is required unless using --tree")
+            })?;
+
+            let pkg = db.get_package(&package_name)
                 .context("failed to query package")?;
             if pkg.is_none() {
-                eprintln!("package '{}' is not installed", package);
+                eprintln!("package '{}' is not installed", package_name);
                 std::process::exit(1);
             }
 
             let max_depth = if depth == 0 { usize::MAX } else { depth };
 
-            println!("{}", package);
+            println!("{}", package_name);
             if reverse {
-                query::print_reverse_dep_tree(&db, &package, "", 1, max_depth, filter.as_deref())?;
+                query::print_reverse_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref())?;
             } else {
-                query::print_dep_tree(&db, &package, "", 1, max_depth, filter.as_deref())?;
+                query::print_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref())?;
             }
         }
-        Commands::List { .. } => {
-            let packages = db.list_packages()
-                .context("failed to list packages")?;
+        Commands::List { roots, .. } => {
+            let packages = if roots {
+                db.get_root_packages()
+            } else {
+                db.list_packages()
+            }.context("failed to list packages")?;
+
             if packages.is_empty() {
                 println!("no packages installed");
             } else {
@@ -361,7 +386,20 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Verify { package } => {
+        Commands::Verify { package, check_deps } => {
+            if check_deps {
+                let broken = query::check_dependencies(&db)?;
+                if broken.is_empty() {
+                    println!("All dependencies satisfied.");
+                } else {
+                    for issue in broken {
+                        eprintln!("{}", issue);
+                    }
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+
             let packages_to_verify: Vec<String> = if let Some(name) = package {
                 vec![name]
             } else {

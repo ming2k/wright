@@ -189,35 +189,36 @@ impl Builder {
             self.config.effective_jobs()
         };
 
-        let mut vars = variables::standard_variables(
-            &manifest.plan.name,
-            &manifest.plan.version,
-            manifest.plan.release,
-            &manifest.plan.arch,
-            &src_dir.to_string_lossy(),
-            &pkg_dir.to_string_lossy(),
-            &files_dir_str,
+        let vars = variables::standard_variables(variables::VariableContext {
+            pkg_name: &manifest.plan.name,
+            pkg_version: &manifest.plan.version,
+            pkg_release: manifest.plan.release,
+            pkg_arch: &manifest.plan.arch,
+            src_dir: &src_dir.to_string_lossy(),
+            pkg_dir: &pkg_dir.to_string_lossy(),
+            files_dir: &files_dir_str,
             nproc,
-            &self.config.build.cflags,
-            &self.config.build.cxxflags,
-        );
+            cflags: &self.config.build.cflags,
+            cxxflags: &self.config.build.cxxflags,
+        });
+        let mut vars = vars;
         vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
 
         let vars_for_splits = vars.clone();
 
-        let pipeline = lifecycle::LifecyclePipeline::new(
+        let pipeline = lifecycle::LifecyclePipeline::new(lifecycle::LifecycleContext {
             manifest,
             vars,
-            &src_dir,
-            &log_dir,
-            src_dir.clone(),
-            pkg_dir.clone(),
-            if files_dir.exists() { Some(files_dir.clone()) } else { None },
-            stop_after,
-            only_stage,
-            &self.executors,
-            rlimits.clone(),
-        );
+            working_dir: &src_dir,
+            log_dir: &log_dir,
+            src_dir: src_dir.clone(),
+            pkg_dir: pkg_dir.clone(),
+            files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+            stop_after: stop_after.clone(),
+            only_stage: only_stage.clone(),
+            executors: &self.executors,
+            rlimits: rlimits.clone(),
+        });
 
         pipeline.run()?;
 

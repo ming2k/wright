@@ -30,9 +30,12 @@ fn build_hello_archive() -> PathBuf {
         archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
 
     // Copy to persistent temp location
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let persistent = std::env::temp_dir().join(format!(
-        "hello-integration-{}.wright.tar.zst",
-        std::process::id()
+        "hello-integration-{}-{}.wright.tar.zst",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
     std::fs::copy(&archive, &persistent).unwrap();
     persistent

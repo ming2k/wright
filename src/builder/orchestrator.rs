@@ -17,6 +17,7 @@ use crate::package::version;
 use crate::repo::source::SimpleResolver;
 
 /// Options for a build run.
+#[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     pub stage: Option<String>,
     pub only: Option<String>,
@@ -25,7 +26,7 @@ pub struct BuildOptions {
     pub force: bool,
     pub update: bool,
     pub jobs: usize,
-    pub rebuild_deps: bool,
+    pub rebuild_dependents: bool,
 }
 
 /// Run a multi-target build with dependency ordering and parallel execution.
@@ -40,20 +41,33 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         return Err(anyhow::anyhow!("No targets specified to build."));
     }
 
-    // 1b. --rebuild-deps: transitively expand with all reverse dependents
-    if opts.rebuild_deps {
-        expand_rebuild_deps(&mut plans_to_build, &all_plans)?;
-    }
+    // 1b. Transitive expansion (Always for 'link' deps, optional for 'build'/'runtime' via --rebuild-dependents)
+    let reasons = expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents)?;
 
     // 2. Build dependency map
-    let (name_to_path, deps_map, build_set) = build_dep_map(&plans_to_build, opts.update)?;
+    let graph = build_dep_map(&plans_to_build, opts.update, reasons)?;
+
+    // --- Build Plan Summary ---
+    println!("Construction Plan:");
+    let mut sorted_targets: Vec<_> = graph.build_set.iter().collect();
+    sorted_targets.sort();
+    for name in sorted_targets {
+        let reason_str = match graph.rebuild_reasons.get(name) {
+            Some(RebuildReason::Explicit) => "[NEW]".to_string(),
+            Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
+            Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
+            None => "".to_string(),
+        };
+        println!("  {: <15} {}", reason_str, name);
+    }
+    println!();
 
     // 3. Execute builds
     execute_builds(
         config,
-        &name_to_path,
-        &deps_map,
-        &build_set,
+        &graph.name_to_path,
+        &graph.deps_map,
+        &graph.build_set,
         &opts,
     )
 }
@@ -144,72 +158,100 @@ fn resolve_targets(
     Ok(plans_to_build)
 }
 
-// ---------------------------------------------------------------------------
-// --rebuild-deps expansion
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebuildReason {
+    Explicit,
+    LinkDependency,
+    Transitive,
+}
+
+struct PlanGraph {
+    name_to_path: HashMap<String, PathBuf>,
+    deps_map: HashMap<String, Vec<String>>,
+    build_set: HashSet<String>,
+    rebuild_reasons: HashMap<String, RebuildReason>,
+}
 
 fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
-) -> Result<()> {
-    // Build a name→path + name→deps map for all known plans
-    let mut all_plan_deps: HashMap<String, Vec<String>> = HashMap::new();
+    rebuild_all: bool,
+) -> Result<HashMap<String, RebuildReason>> {
+    let mut reasons = HashMap::new();
+
+    // 1. Build dependency maps for all known plans
+    let mut build_runtime_deps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut link_deps: HashMap<String, Vec<String>> = HashMap::new();
     let mut all_name_to_path: HashMap<String, PathBuf> = HashMap::new();
+
     for (plan_name, plan_path) in all_plans {
         if let Ok(m) = PackageManifest::from_file(plan_path) {
-            let deps: Vec<String> = m.dependencies.runtime.iter()
+            let br_deps: Vec<String> = m.dependencies.runtime.iter()
                 .chain(m.dependencies.build.iter())
                 .map(|d| version::parse_dependency(d)
                     .unwrap_or_else(|_| (d.clone(), None)).0)
                 .collect();
-            all_plan_deps.insert(plan_name.clone(), deps);
+            let l_deps: Vec<String> = m.dependencies.link.iter()
+                .map(|d| version::parse_dependency(d)
+                    .unwrap_or_else(|_| (d.clone(), None)).0)
+                .collect();
+
+            build_runtime_deps.insert(plan_name.clone(), br_deps);
+            link_deps.insert(plan_name.clone(), l_deps);
             all_name_to_path.insert(plan_name.clone(), plan_path.clone());
         }
     }
 
-    // Collect original target names
+    // 2. Initial rebuild set
     let mut rebuild_set: HashSet<String> = HashSet::new();
     for path in plans_to_build.iter() {
         if let Ok(m) = PackageManifest::from_file(path) {
-            rebuild_set.insert(m.plan.name.clone());
+            let name = m.plan.name.clone();
+            rebuild_set.insert(name.clone());
+            reasons.insert(name, RebuildReason::Explicit);
         }
     }
 
-    // Iterate until stable
+    // 3. Transitively expand
     loop {
         let mut added = false;
-        for (name, deps) in &all_plan_deps {
+        for (name, path) in &all_name_to_path {
             if rebuild_set.contains(name) {
                 continue;
             }
-            if deps.iter().any(|d| rebuild_set.contains(d)) {
+
+            let link_changed = link_deps.get(name).map_or(false, |deps| {
+                deps.iter().any(|d| rebuild_set.contains(d))
+            });
+
+            let other_changed = rebuild_all && build_runtime_deps.get(name).map_or(false, |deps| {
+                deps.iter().any(|d| rebuild_set.contains(d))
+            });
+
+            if link_changed || other_changed {
                 rebuild_set.insert(name.clone());
+                plans_to_build.insert(path.clone());
+                reasons.insert(
+                    name.clone(),
+                    if link_changed { RebuildReason::LinkDependency } else { RebuildReason::Transitive }
+                );
                 added = true;
             }
         }
         if !added { break; }
     }
 
-    // Add newly discovered plans to the build set
-    for name in &rebuild_set {
-        if let Some(path) = all_name_to_path.get(name) {
-            if plans_to_build.insert(path.clone()) {
-                info!("--rebuild-deps: including {}", name);
-            }
-        }
-    }
-
-    Ok(())
+    Ok(reasons)
 }
 
-// ---------------------------------------------------------------------------
-// Dependency map construction
-// ---------------------------------------------------------------------------
+// ... (build_dep_map will need to take reasons)
+
 
 fn build_dep_map(
     plans_to_build: &HashSet<PathBuf>,
     update: bool,
-) -> Result<(HashMap<String, PathBuf>, HashMap<String, Vec<String>>, HashSet<String>)> {
+    rebuild_reasons: HashMap<String, RebuildReason>,
+) -> Result<PlanGraph> {
     let mut name_to_path = HashMap::new();
     let mut deps_map = HashMap::new();
     let mut build_set = HashSet::new();
@@ -230,11 +272,15 @@ fn build_dep_map(
                 deps.push(version::parse_dependency(dep)
                     .unwrap_or_else(|_| (dep.clone(), None)).0);
             }
+            for dep in &manifest.dependencies.link {
+                deps.push(version::parse_dependency(dep)
+                    .unwrap_or_else(|_| (dep.clone(), None)).0);
+            }
         }
         deps_map.insert(name, deps);
     }
 
-    Ok((name_to_path, deps_map, build_set))
+    Ok(PlanGraph { name_to_path, deps_map, build_set, rebuild_reasons })
 }
 
 // ---------------------------------------------------------------------------
@@ -289,12 +335,7 @@ fn execute_builds(
             let path = name_to_path.get(&name).unwrap().clone();
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
-            let stage_clone = opts.stage.clone();
-            let only_clone = opts.only.clone();
-            let clean = opts.clean;
-            let lint = opts.lint;
-            let force = opts.force;
-            let update = opts.update;
+            let opts_clone = opts.clone();
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -306,8 +347,7 @@ fn execute_builds(
                 };
                 let res = build_one(
                     &builder_clone, &manifest, &path, &config_clone,
-                    stage_clone.as_deref(), only_clone.as_deref(),
-                    clean, lint, force, update,
+                    &opts_clone,
                 );
 
                 match res {
@@ -370,20 +410,15 @@ fn build_one(
     manifest: &PackageManifest,
     manifest_path: &Path,
     config: &GlobalConfig,
-    stage: Option<&str>,
-    only: Option<&str>,
-    clean: bool,
-    lint: bool,
-    force: bool,
-    update: bool,
+    opts: &BuildOptions,
 ) -> Result<()> {
-    if update {
+    if opts.update {
         builder.update_hashes(manifest, manifest_path).context("failed to update hashes")?;
         info!("Updated plan hashes: {}", manifest.plan.name);
         return Ok(());
     }
 
-    if lint {
+    if opts.lint {
         println!("valid plan: {} {}-{}", manifest.plan.name, manifest.plan.version, manifest.plan.release);
         for split_name in manifest.split.keys() {
             println!("  split: {}", split_name);
@@ -391,7 +426,7 @@ fn build_one(
         return Ok(());
     }
 
-    if clean {
+    if opts.clean {
         builder.clean(manifest).context("failed to clean workspace")?;
     }
 
@@ -404,7 +439,7 @@ fn build_one(
     };
 
     // Skip if archive already exists (unless --force or --only)
-    if !force && only.is_none() {
+    if !opts.force && opts.only.is_none() {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
@@ -419,10 +454,10 @@ fn build_one(
 
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, stage.map(String::from), only.map(String::from))?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone())?;
 
     // Skip archive creation when --only is used for non-package stages
-    if only.is_none() || only == Some("package") || only == Some("post_package") {
+    if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 

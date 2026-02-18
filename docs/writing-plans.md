@@ -44,18 +44,25 @@ All fields default to empty lists if omitted.
 
 | Field       | Type                            | Description                          |
 |-------------|---------------------------------|--------------------------------------|
-| `runtime`   | list of strings                 | Must be installed when this package is installed |
-| `build`     | list of strings                 | Required only during build           |
+| `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
+| `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
+| `link`      | list of strings                 | Shared library dependencies. Triggers rebuild on update. |
 | `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
 | `conflicts` | list of strings                 | Packages that conflict with this one |
 | `provides`  | list of strings                 | Virtual packages this one provides   |
 
+#### `link` dependencies vs `runtime`
+
+- **`link`**: Use this for shared libraries (`.so`) that your program links against. Wright will **automatically rebuild** your package whenever a `link` dependency is updated, ensuring ABI compatibility. It also provides CRITICAL protection against removal.
+- **`runtime`**: Use this for tools or scripts called at runtime (e.g. a Python script needing `python`). Updating a `runtime` dependency does not trigger a rebuild.
+
 #### Version constraints
 
-Runtime, build, conflicts, and provides entries can include a version constraint:
+Runtime, build, link, conflicts, and provides entries can include a version constraint:
 
 ```toml
-runtime = ["openssl >= 3.0", "pcre2 >= 10.42", "zlib"]
+link = ["openssl >= 3.0"]
+runtime = ["python >= 3.10"]
 ```
 
 Supported operators: `>=`, `<=`, `>`, `<`, `=`.

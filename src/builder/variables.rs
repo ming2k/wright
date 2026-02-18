@@ -10,30 +10,33 @@ pub fn substitute(script: &str, vars: &HashMap<String, String>) -> String {
     result
 }
 
+/// Context for building standard variables.
+pub struct VariableContext<'a> {
+    pub pkg_name: &'a str,
+    pub pkg_version: &'a str,
+    pub pkg_release: u32,
+    pub pkg_arch: &'a str,
+    pub src_dir: &'a str,
+    pub pkg_dir: &'a str,
+    pub files_dir: &'a str,
+    pub nproc: u32,
+    pub cflags: &'a str,
+    pub cxxflags: &'a str,
+}
+
 /// Build the standard variable map for a build context.
-pub fn standard_variables(
-    pkg_name: &str,
-    pkg_version: &str,
-    pkg_release: u32,
-    pkg_arch: &str,
-    src_dir: &str,
-    pkg_dir: &str,
-    files_dir: &str,
-    nproc: u32,
-    cflags: &str,
-    cxxflags: &str,
-) -> HashMap<String, String> {
+pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     let mut vars = HashMap::new();
-    vars.insert("PKG_NAME".to_string(), pkg_name.to_string());
-    vars.insert("PKG_VERSION".to_string(), pkg_version.to_string());
-    vars.insert("PKG_RELEASE".to_string(), pkg_release.to_string());
-    vars.insert("PKG_ARCH".to_string(), pkg_arch.to_string());
-    vars.insert("SRC_DIR".to_string(), src_dir.to_string());
-    vars.insert("PKG_DIR".to_string(), pkg_dir.to_string());
-    vars.insert("FILES_DIR".to_string(), files_dir.to_string());
-    vars.insert("NPROC".to_string(), nproc.to_string());
-    vars.insert("CFLAGS".to_string(), cflags.to_string());
-    vars.insert("CXXFLAGS".to_string(), cxxflags.to_string());
+    vars.insert("PKG_NAME".to_string(), ctx.pkg_name.to_string());
+    vars.insert("PKG_VERSION".to_string(), ctx.pkg_version.to_string());
+    vars.insert("PKG_RELEASE".to_string(), ctx.pkg_release.to_string());
+    vars.insert("PKG_ARCH".to_string(), ctx.pkg_arch.to_string());
+    vars.insert("SRC_DIR".to_string(), ctx.src_dir.to_string());
+    vars.insert("PKG_DIR".to_string(), ctx.pkg_dir.to_string());
+    vars.insert("FILES_DIR".to_string(), ctx.files_dir.to_string());
+    vars.insert("NPROC".to_string(), ctx.nproc.to_string());
+    vars.insert("CFLAGS".to_string(), ctx.cflags.to_string());
+    vars.insert("CXXFLAGS".to_string(), ctx.cxxflags.to_string());
     vars
 }
 
@@ -73,10 +76,19 @@ mod tests {
 
     #[test]
     fn test_standard_variables() {
-        let vars = standard_variables(
-            "hello", "1.0.0", 1, "x86_64", "/tmp/src", "/tmp/pkg", "/tmp/patches", 4,
-            "-O2", "-O2",
-        );
+        let ctx = VariableContext {
+            pkg_name: "hello",
+            pkg_version: "1.0.0",
+            pkg_release: 1,
+            pkg_arch: "x86_64",
+            src_dir: "/tmp/src",
+            pkg_dir: "/tmp/pkg",
+            files_dir: "/tmp/patches",
+            nproc: 4,
+            cflags: "-O2",
+            cxxflags: "-O2",
+        };
+        let vars = standard_variables(ctx);
         assert_eq!(vars["PKG_NAME"], "hello");
         assert_eq!(vars["PKG_VERSION"], "1.0.0");
         assert_eq!(vars["PKG_RELEASE"], "1");

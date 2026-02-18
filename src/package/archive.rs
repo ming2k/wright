@@ -19,6 +19,7 @@ pub struct PkgInfo {
     pub install_size: u64,
     pub build_date: String,
     pub runtime_deps: Vec<String>,
+    pub link_deps: Vec<String>,
     pub backup_files: Vec<String>,
 }
 
@@ -137,28 +138,37 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut deps_toml = String::new();
-    if !manifest.dependencies.runtime.is_empty() {
-        deps_toml.push_str("\n[dependencies]\nruntime = [");
-        for (i, dep) in manifest.dependencies.runtime.iter().enumerate() {
-            if i > 0 {
-                deps_toml.push_str(", ");
+    if !manifest.dependencies.runtime.is_empty() || !manifest.dependencies.link.is_empty() {
+        deps_toml.push_str("\n[dependencies]\n");
+        if !manifest.dependencies.runtime.is_empty() {
+            deps_toml.push_str("runtime = [");
+            for (i, dep) in manifest.dependencies.runtime.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!("\"{}\"", dep));
             }
-            deps_toml.push_str(&format!("\"{}\"", dep));
+            deps_toml.push_str("]\n");
         }
-        deps_toml.push(']');
+        if !manifest.dependencies.link.is_empty() {
+            deps_toml.push_str("link = [");
+            for (i, dep) in manifest.dependencies.link.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!("\"{}\"", dep));
+            }
+            deps_toml.push_str("]\n");
+        }
     }
 
     let mut backup_toml = String::new();
     if let Some(ref backup) = manifest.backup {
         if !backup.files.is_empty() {
-            backup_toml.push_str("\n\n[backup]\nfiles = [");
+            backup_toml.push_str("\n[backup]\nfiles = [");
             for (i, f) in backup.files.iter().enumerate() {
                 if i > 0 {
                     backup_toml.push_str(", ");
                 }
                 backup_toml.push_str(&format!("\"{}\"", f));
             }
-            backup_toml.push(']');
+            backup_toml.push_str("]\n");
         }
     }
 
@@ -280,6 +290,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
     struct PkgInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
+        #[serde(default)]
+        link: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -292,6 +304,11 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
     })?;
 
+    let (runtime_deps, link_deps) = parsed
+        .dependencies
+        .map(|d| (d.runtime, d.link))
+        .unwrap_or_default();
+
     Ok(PkgInfo {
         name: parsed.package.name,
         version: parsed.package.version,
@@ -301,10 +318,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         license: parsed.package.license,
         install_size: parsed.package.install_size,
         build_date: parsed.package.build_date,
-        runtime_deps: parsed
-            .dependencies
-            .map(|d| d.runtime)
-            .unwrap_or_default(),
+        runtime_deps,
+        link_deps,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
     })
 }

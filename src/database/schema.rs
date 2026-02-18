@@ -36,6 +36,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             package_id INTEGER NOT NULL,
             depends_on TEXT NOT NULL,
             version_constraint TEXT,
+            dep_type TEXT DEFAULT 'runtime',
             FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
         );
 
@@ -67,6 +68,20 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             .map_err(|e| {
                 WrightError::DatabaseError(format!(
                     "failed to add install_scripts column: {}",
+                    e
+                ))
+            })?;
+    }
+
+    // Migrate: add dep_type column if missing
+    let has_dep_type = conn
+        .prepare("SELECT dep_type FROM dependencies LIMIT 0")
+        .is_ok();
+    if !has_dep_type {
+        conn.execute_batch("ALTER TABLE dependencies ADD COLUMN dep_type TEXT DEFAULT 'runtime'")
+            .map_err(|e| {
+                WrightError::DatabaseError(format!(
+                    "failed to add dep_type column: {}",
                     e
                 ))
             })?;

@@ -50,8 +50,8 @@ src/
 ├──────────────────────────────────────────────┤
 │  Orchestrator  │  Transaction  │    Query     │
 │  (parallel     │  (dep-safe    │  (dep tree,  │
-│   builds,      │   remove,     │   analysis)  │
-│   rebuild-deps)│   rollback)   │              │
+│   builds, plan │   remove,     │   analysis)  │
+│   preview)     │   rollback)   │              │
 ├──────────────────────────────────────────────┤
 │  Builder │ Database │ Sandbox │ Executor │ Util│
 ├──────────────────────────────────────────────┤
@@ -64,19 +64,20 @@ src/
 ```
 plan.toml → PackageManifest::from_file()
   → orchestrator::run_build()
-      → resolve targets → expand --rebuild-deps
+      → resolve targets → expand transitive rebuilds (Always for 'link' deps)
+      → display Construction Plan (reasons: [NEW], [LINK-REBUILD], [REV-REBUILD])
       → build dependency map → topological sort
       → parallel execution (thread pool):
           → Builder::build() per package
-          → archive::create_archive() → .wright.tar.zst
+          → archive::create_archive() → .wright.tar.zst (includes .PKGINFO with link deps)
 ```
 
 ## Data Flow: Install
 
 ```
 .wright.tar.zst → transaction::install_package()
-  → extract to temp dir → parse .PKGINFO
-  → BEGIN TRANSACTION → insert package + files + deps
+  → extract to temp dir → parse .PKGINFO (extract runtime + link deps)
+  → BEGIN TRANSACTION → insert package + files + deps (with dep_type)
   → copy files to root → COMMIT
   → on error: rollback (delete files, ROLLBACK)
 ```
@@ -85,7 +86,9 @@ plan.toml → PackageManifest::from_file()
 
 ```
 wright remove <pkg>
-  → check dependents → refuse if non-empty (unless --force)
+  → check dependents (including dep_type)
+  → if link-dependents exist: refuse with CRITICAL error (unless --force)
+  → if runtime-dependents exist: refuse (unless --force or --recursive)
   → with --recursive: collect transitive dependents (leaf-first)
   → remove each in safe order → delete files → remove from DB
 

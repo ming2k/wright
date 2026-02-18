@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-use crate::database::{Database, FileEntry};
+use crate::database::{Database, FileEntry, NewPackage};
 use crate::error::{WrightError, Result};
 use crate::package::archive::{self, PkgInfo};
 use crate::package::version::{self, Version};
@@ -123,6 +123,7 @@ pub fn install_packages(
                 let (dep_name, constraint) = version::parse_dependency(dep)
                     .unwrap_or_else(|_| (dep.clone(), None));
 
+                #[allow(clippy::map_entry)]
                 if !resolved_map.contains_key(&dep_name) {
                     // Check if already installed
                     if let Some(installed) = db.get_package(&dep_name)? {
@@ -282,31 +283,34 @@ pub fn install_package(
 
     // Record in database
     let pkg_hash = checksum::sha256_file(archive_path).ok();
-    let pkg_id = db.insert_package(
-        &pkginfo.name,
-        &pkginfo.version,
-        pkginfo.release,
-        &pkginfo.description,
-        &pkginfo.arch,
-        &pkginfo.license,
-        None,
-        pkginfo.install_size,
-        pkg_hash.as_deref(),
-        install_content.as_deref(),
-    )?;
+    let pkg_id = db.insert_package(NewPackage {
+        name: &pkginfo.name,
+        version: &pkginfo.version,
+        release: pkginfo.release,
+        description: &pkginfo.description,
+        arch: &pkginfo.arch,
+        license: &pkginfo.license,
+        url: None,
+        install_size: pkginfo.install_size,
+        pkg_hash: pkg_hash.as_deref(),
+        install_scripts: install_content.as_deref(),
+    })?;
 
     db.insert_files(pkg_id, &file_entries)?;
 
     // Record dependencies
-    let deps: Vec<(String, Option<String>)> = pkginfo
-        .runtime_deps
-        .iter()
-        .map(|d| {
-            let (name, constraint) = version::parse_dependency(d)
-                .unwrap_or_else(|_| (d.clone(), None));
-            (name, constraint.map(|c| c.to_string()))
-        })
-        .collect();
+    let mut deps = Vec::new();
+    for d in &pkginfo.runtime_deps {
+        let (name, constraint) = version::parse_dependency(d)
+            .unwrap_or_else(|_| (d.clone(), None));
+        deps.push((name, constraint.map(|c| c.to_string()), "runtime".to_string()));
+    }
+    for d in &pkginfo.link_deps {
+        let (name, constraint) = version::parse_dependency(d)
+            .unwrap_or_else(|_| (d.clone(), None));
+        deps.push((name, constraint.map(|c| c.to_string()), "link".to_string()));
+    }
+
     if !deps.is_empty() {
         db.insert_dependencies(pkg_id, &deps)?;
     }
@@ -350,17 +354,38 @@ pub fn remove_package(
     // Check if other packages depend on this one
     let dependents = db.get_dependents(name)?;
     if !dependents.is_empty() {
+        let mut link_dependents = Vec::new();
+        let mut other_dependents = Vec::new();
+
+        for (dep_name, dep_type) in &dependents {
+            if dep_type == "link" {
+                link_dependents.push(dep_name.clone());
+            } else {
+                other_dependents.push(dep_name.clone());
+            }
+        }
+
+        let all_deps_names: Vec<String> = dependents.iter().map(|(n, _)| n.clone()).collect();
+        let deps_str = all_deps_names.join(", ");
+
         if force {
             warn!(
                 "Warning: forcing removal of {} which is depended on by: {}",
                 name,
-                dependents.join(", ")
+                deps_str
             );
         } else {
+            if !link_dependents.is_empty() {
+                return Err(WrightError::DependencyError(format!(
+                    "CRITICAL: Cannot remove '{}' because it is a LINK dependency of: {}. \
+                     Removing it will cause these packages to CRASH. Use --force to override.",
+                    name, link_dependents.join(", ")
+                )));
+            }
             return Err(WrightError::DependencyError(format!(
                 "cannot remove '{}': required by {}",
                 name,
-                dependents.join(", ")
+                deps_str
             )));
         }
     }
@@ -569,31 +594,33 @@ pub fn upgrade_package(
 
     // 9. Update DB
     let pkg_hash = checksum::sha256_file(archive_path).ok();
-    db.update_package(
-        &pkginfo.name,
-        &pkginfo.version,
-        pkginfo.release,
-        &pkginfo.description,
-        &pkginfo.arch,
-        &pkginfo.license,
-        None,
-        pkginfo.install_size,
-        pkg_hash.as_deref(),
-        install_content.as_deref(),
-    )?;
+    db.update_package(NewPackage {
+        name: &pkginfo.name,
+        version: &pkginfo.version,
+        release: pkginfo.release,
+        description: &pkginfo.description,
+        arch: &pkginfo.arch,
+        license: &pkginfo.license,
+        url: None,
+        install_size: pkginfo.install_size,
+        pkg_hash: pkg_hash.as_deref(),
+        install_scripts: install_content.as_deref(),
+    })?;
 
     let updated_pkg = db.get_package(&pkginfo.name)?.unwrap();
     db.replace_files(updated_pkg.id, &new_entries)?;
 
-    let deps: Vec<(String, Option<String>)> = pkginfo
-        .runtime_deps
-        .iter()
-        .map(|d| {
-            let (name, constraint) = version::parse_dependency(d)
-                .unwrap_or_else(|_| (d.clone(), None));
-            (name, constraint.map(|c| c.to_string()))
-        })
-        .collect();
+    let mut deps = Vec::new();
+    for d in &pkginfo.runtime_deps {
+        let (name, constraint) = version::parse_dependency(d)
+            .unwrap_or_else(|_| (d.clone(), None));
+        deps.push((name, constraint.map(|c| c.to_string()), "runtime".to_string()));
+    }
+    for d in &pkginfo.link_deps {
+        let (name, constraint) = version::parse_dependency(d)
+            .unwrap_or_else(|_| (d.clone(), None));
+        deps.push((name, constraint.map(|c| c.to_string()), "link".to_string()));
+    }
     db.replace_dependencies(updated_pkg.id, &deps)?;
 
     db.update_transaction_status(tx_id, "completed")?;
@@ -1011,8 +1038,16 @@ mod tests {
     fn test_version_constraint_check() {
         let db = Database::open_in_memory().unwrap();
         // Simulate installed dependency with version 1.0.0
-        db.insert_package("libfoo", "1.0.0", 1, "foo lib", "x86_64", "MIT", None, 0, None, None)
-            .unwrap();
+        db.insert_package(NewPackage {
+            name: "libfoo",
+            version: "1.0.0",
+            release: 1,
+            description: "foo lib",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        })
+        .unwrap();
 
         // Check that >= 2.0 is NOT satisfied by 1.0.0
         let installed = db.get_package("libfoo").unwrap().unwrap();

@@ -89,6 +89,8 @@ pub struct Dependencies {
     #[serde(default)]
     pub build: Vec<String>,
     #[serde(default)]
+    pub link: Vec<String>,
+    #[serde(default)]
     pub optional: Vec<OptionalDependency>,
     #[serde(default)]
     pub conflicts: Vec<String>,

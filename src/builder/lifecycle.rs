@@ -31,32 +31,34 @@ pub struct LifecyclePipeline<'a> {
     rlimits: ResourceLimits,
 }
 
+pub struct LifecycleContext<'a> {
+    pub manifest: &'a PackageManifest,
+    pub vars: HashMap<String, String>,
+    pub working_dir: &'a Path,
+    pub log_dir: &'a Path,
+    pub src_dir: PathBuf,
+    pub pkg_dir: PathBuf,
+    pub files_dir: Option<PathBuf>,
+    pub stop_after: Option<String>,
+    pub only_stage: Option<String>,
+    pub executors: &'a ExecutorRegistry,
+    pub rlimits: ResourceLimits,
+}
+
 impl<'a> LifecyclePipeline<'a> {
-    pub fn new(
-        manifest: &'a PackageManifest,
-        vars: HashMap<String, String>,
-        working_dir: &'a Path,
-        log_dir: &'a Path,
-        src_dir: PathBuf,
-        pkg_dir: PathBuf,
-        files_dir: Option<PathBuf>,
-        stop_after: Option<String>,
-        only_stage: Option<String>,
-        executors: &'a ExecutorRegistry,
-        rlimits: ResourceLimits,
-    ) -> Self {
+    pub fn new(ctx: LifecycleContext<'a>) -> Self {
         Self {
-            manifest,
-            vars,
-            working_dir,
-            log_dir,
-            src_dir,
-            pkg_dir,
-            files_dir,
-            stop_after,
-            only_stage,
-            executors,
-            rlimits,
+            manifest: ctx.manifest,
+            vars: ctx.vars,
+            working_dir: ctx.working_dir,
+            log_dir: ctx.log_dir,
+            src_dir: ctx.src_dir,
+            pkg_dir: ctx.pkg_dir,
+            files_dir: ctx.files_dir,
+            stop_after: ctx.stop_after,
+            only_stage: ctx.only_stage,
+            executors: ctx.executors,
+            rlimits: ctx.rlimits,
         }
     }
 

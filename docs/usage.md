@@ -101,7 +101,7 @@ sandbox = "none"
 script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
 ```
 
-For a plan that downloads upstream sources:
+For a plan that downloads upstream sources and uses link dependencies:
 
 ```toml
 [plan]
@@ -114,6 +114,7 @@ arch = "x86_64"
 
 [dependencies]
 build = ["gcc", "make"]
+# No dependencies for zlib itself
 
 [sources]
 urls = ["https://zlib.net/zlib-${PKG_VERSION}.tar.gz"]
@@ -127,6 +128,17 @@ script = "cd ${BUILD_DIR} && make -j${NPROC}"
 
 [lifecycle.package]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
+```
+
+And a package linking against it:
+
+```toml
+[plan]
+name = "curl"
+# ...
+[dependencies]
+build = ["make", "perl"]
+link = ["zlib", "openssl"]
 ```
 
 ## Validating and Updating
@@ -143,6 +155,11 @@ wright build hello
 ```
 
 Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can also pass a path directly.
+
+Before building, Wright displays a **Construction Plan** showing what will be built and why:
+- `[NEW]`: The target you requested.
+- `[LINK-REBUILD]`: Packages that depend on your target via `link` and must be rebuilt for ABI compatibility.
+- `[REV-REBUILD]`: Transitive rebuilds requested via `--rebuild-dependents`.
 
 Lifecycle pipeline: fetch, verify, extract, prepare, configure, compile, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
 

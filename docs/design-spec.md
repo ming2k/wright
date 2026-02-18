@@ -254,13 +254,19 @@ maintainer = "Your Name <you@email>"    # Maintainer (optional)
 [dependencies]
 # Runtime dependencies: must be installed when this package is installed
 runtime = [
-    "openssl",              # Simple dependency (any version)
-    "pcre2 >= 10.42",       # Version constraint: >=, <=, =, >, <
-    "zlib >= 1.2",
+    "bash",                 # Dynamic execution dependency
+    "python >= 3.10",
 ]
 
 # Build dependencies: needed only at build time, not recorded as runtime deps
-build = ["perl", "gcc", "make"]
+build = ["cmake", "gcc", "make"]
+
+# Link dependencies: needed at build time (headers/libs) and runtime (shared libraries).
+# Updates to link-deps trigger an automatic rebuild of this package.
+link = [
+    "openssl >= 3.0",
+    "zlib",
+]
 
 # Optional dependencies: provide extra functionality, not enforced
 optional = [
@@ -707,6 +713,7 @@ CREATE TABLE dependencies (
     package_id INTEGER NOT NULL,
     depends_on TEXT NOT NULL,       -- Dependency package name
     version_constraint TEXT,        -- Version constraint string
+    dep_type TEXT DEFAULT 'runtime', -- 'runtime' or 'link'
     FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
 );
 
@@ -838,7 +845,8 @@ build_date = "2025-01-15T10:30:00Z"
 packager = "wright 0.1.0"
 
 [dependencies]
-runtime = ["openssl >= 3.0", "pcre2 >= 10.42", "zlib >= 1.2"]
+runtime = ["pcre2 >= 10.42"]
+link = ["openssl >= 3.0", "zlib >= 1.2"]
 
 [backup]
 files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
