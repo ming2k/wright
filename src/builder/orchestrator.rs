@@ -11,6 +11,7 @@ use tracing::{info, warn, error};
 
 use crate::builder::Builder;
 use crate::config::{GlobalConfig, AssembliesConfig};
+use crate::database::Database;
 use crate::package::archive;
 use crate::package::manifest::PackageManifest;
 use crate::package::version;
@@ -27,13 +28,12 @@ pub struct BuildOptions {
     pub update: bool,
     pub jobs: usize,
     pub rebuild_dependents: bool,
+    pub install: bool,
 }
 
 /// Run a multi-target build with dependency ordering and parallel execution.
 pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
     let resolver = setup_resolver(config)?;
-
-    // 1. Resolve all targets into manifest paths
     let all_plans = resolver.get_all_plans()?;
     let mut plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
 
@@ -41,7 +41,17 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         return Err(anyhow::anyhow!("No targets specified to build."));
     }
 
-    // 1b. Transitive expansion (Always for 'link' deps, optional for 'build'/'runtime' via --rebuild-dependents)
+    // Use a scoped block to ensure the database handle (and its flock) is released 
+    // before we start the parallel build/install process.
+    {
+        let db_path = config.general.db_path.clone();
+        let db = Database::open(&db_path).context("failed to open database for dependency resolution")?;
+        
+        // 1b. Recursive upward expansion: Find missing build/link dependencies in hold tree
+        expand_missing_dependencies(&mut plans_to_build, &all_plans, &db)?;
+    } 
+
+    // 1c. Transitive downward expansion (ABI rebuilds)
     let reasons = expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents)?;
 
     // 2. Build dependency map
@@ -172,6 +182,67 @@ struct PlanGraph {
     rebuild_reasons: HashMap<String, RebuildReason>,
 }
 
+// ---------------------------------------------------------------------------
+// Missing dependency expansion (Upward)
+// ---------------------------------------------------------------------------
+
+fn expand_missing_dependencies(
+    plans_to_build: &mut HashSet<PathBuf>,
+    all_plans: &HashMap<String, PathBuf>,
+    db: &Database,
+) -> Result<()> {
+    let mut build_set: HashSet<String> = HashSet::new();
+    for path in plans_to_build.iter() {
+        if let Ok(m) = PackageManifest::from_file(path) {
+            build_set.insert(m.plan.name.clone());
+        }
+    }
+
+    loop {
+        let mut added_any = false;
+        let mut to_add_paths = Vec::new();
+
+        for path in plans_to_build.iter() {
+            let manifest = PackageManifest::from_file(path)?;
+            
+            // Check build and link dependencies
+            let deps_to_check = manifest.dependencies.build.iter()
+                .chain(manifest.dependencies.link.iter());
+
+            for dep in deps_to_check {
+                let dep_name = version::parse_dependency(dep)
+                    .unwrap_or_else(|_| (dep.clone(), None)).0;
+
+                // If not in build set AND not installed, try to find plan
+                if !build_set.contains(&dep_name) {
+                    if db.get_package(&dep_name)?.is_none() {
+                        if let Some(plan_path) = all_plans.get(&dep_name) {
+                            info!("Auto-resolving missing dependency: {}", dep_name);
+                            to_add_paths.push(plan_path.clone());
+                            build_set.insert(dep_name.clone());
+                            added_any = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        for p in to_add_paths {
+            plans_to_build.insert(p);
+        }
+
+        if !added_any {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Transitive rebuild expansion (Downward)
+// ---------------------------------------------------------------------------
+
 fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
@@ -294,7 +365,7 @@ fn execute_builds(
     build_set: &HashSet<String>,
     opts: &BuildOptions,
 ) -> Result<()> {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, anyhow::Error)>>();
     let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
     let in_progress = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -302,6 +373,7 @@ fn execute_builds(
 
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
+    let install_lock = Arc::new(Mutex::new(())); // Serializes installation
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -336,6 +408,7 @@ fn execute_builds(
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
             let opts_clone = opts.clone();
+            let install_lock_clone = install_lock.clone();
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -351,10 +424,37 @@ fn execute_builds(
                 );
 
                 match res {
-                    Ok(_) => tx_clone.send(Ok(name_clone)).unwrap(),
+                    Ok(_) => {
+                        // Success! Now install if requested
+                        if opts_clone.install {
+                            let _guard = install_lock_clone.lock().unwrap();
+                            info!("Automatically installing built package: {}", name_clone);
+                            
+                            let output_dir = config_clone.general.components_dir.clone();
+                            let archive_path = output_dir.join(manifest.archive_filename());
+                            
+                            match Database::open(&config_clone.general.db_path) {
+                                Ok(db) => {
+                                    if let Err(e) = crate::transaction::install_package(
+                                        &db, &archive_path, &PathBuf::from("/"), true // Always force for auto-install
+                                    ) {
+                                        error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
+                                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                                        return;
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to open database for automatic installation: {:#}", e);
+                                    tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                                    return;
+                                }
+                            }
+                        }
+                        tx_clone.send(Ok(name_clone)).unwrap();
+                    },
                     Err(e) => {
                         error!("Failed to process {}: {:#}", name_clone, e);
-                        tx_clone.send(Err((name_clone, e))).unwrap();
+                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
                     }
                 }
             });

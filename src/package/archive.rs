@@ -20,6 +20,8 @@ pub struct PkgInfo {
     pub build_date: String,
     pub runtime_deps: Vec<String>,
     pub link_deps: Vec<String>,
+    pub replaces: Vec<String>,
+    pub conflicts: Vec<String>,
     pub backup_files: Vec<String>,
 }
 
@@ -151,6 +153,22 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
         if !manifest.dependencies.link.is_empty() {
             deps_toml.push_str("link = [");
             for (i, dep) in manifest.dependencies.link.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!("\"{}\"", dep));
+            }
+            deps_toml.push_str("]\n");
+        }
+        if !manifest.dependencies.replaces.is_empty() {
+            deps_toml.push_str("replaces = [");
+            for (i, dep) in manifest.dependencies.replaces.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!("\"{}\"", dep));
+            }
+            deps_toml.push_str("]\n");
+        }
+        if !manifest.dependencies.conflicts.is_empty() {
+            deps_toml.push_str("conflicts = [");
+            for (i, dep) in manifest.dependencies.conflicts.iter().enumerate() {
                 if i > 0 { deps_toml.push_str(", "); }
                 deps_toml.push_str(&format!("\"{}\"", dep));
             }
@@ -292,6 +310,10 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         runtime: Vec<String>,
         #[serde(default)]
         link: Vec<String>,
+        #[serde(default)]
+        replaces: Vec<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -304,9 +326,9 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
     })?;
 
-    let (runtime_deps, link_deps) = parsed
+    let (runtime_deps, link_deps, replaces, conflicts) = parsed
         .dependencies
-        .map(|d| (d.runtime, d.link))
+        .map(|d| (d.runtime, d.link, d.replaces, d.conflicts))
         .unwrap_or_default();
 
     Ok(PkgInfo {
@@ -320,6 +342,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         build_date: parsed.package.build_date,
         runtime_deps,
         link_deps,
+        replaces,
+        conflicts,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
     })
 }

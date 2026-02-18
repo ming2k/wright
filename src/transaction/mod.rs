@@ -229,8 +229,33 @@ pub fn install_package(
 
     let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
 
-    // Check if already installed
+    // --- Handle Replaces (Package Renaming) ---
+    for replaced_name in &pkginfo.replaces {
+        if db.get_package(replaced_name)?.is_some() {
+            info!("Package {} is replaced by {}. Removing {}...", replaced_name, pkginfo.name, replaced_name);
+            remove_package(db, replaced_name, root_dir, true)?;
+        }
+    }
+
+    // --- Handle Conflicts ---
+    if !force {
+        for conflict_name in &pkginfo.conflicts {
+            if db.get_package(conflict_name)?.is_some() {
+                return Err(WrightError::DependencyError(format!(
+                    "package conflict detected: '{}' conflicts with installed package '{}'. \
+                     Please remove it first or use --force.",
+                    pkginfo.name, conflict_name
+                )));
+            }
+        }
+    }
+
+    // Check if already installed (with same name)
     if db.get_package(&pkginfo.name)?.is_some() {
+        if force {
+            info!("Package {} already installed, attempting upgrade/reinstall", pkginfo.name);
+            return upgrade_package(db, archive_path, root_dir, true);
+        }
         return Err(WrightError::PackageAlreadyInstalled(pkginfo.name.clone()));
     }
 

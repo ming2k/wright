@@ -47,14 +47,20 @@ All fields default to empty lists if omitted.
 | `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
 | `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
 | `link`      | list of strings                 | Shared library dependencies. Triggers rebuild on update. |
+| `replaces`  | list of strings                 | Packages that this one replaces (automatically uninstalled) |
 | `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
-| `conflicts` | list of strings                 | Packages that conflict with this one |
+| `conflicts` | list of strings                 | Packages that cannot be installed alongside this one |
 | `provides`  | list of strings                 | Virtual packages this one provides   |
 
 #### `link` dependencies vs `runtime`
 
 - **`link`**: Use this for shared libraries (`.so`) that your program links against. Wright will **automatically rebuild** your package whenever a `link` dependency is updated, ensuring ABI compatibility. It also provides CRITICAL protection against removal.
 - **`runtime`**: Use this for tools or scripts called at runtime (e.g. a Python script needing `python`). Updating a `runtime` dependency does not trigger a rebuild.
+
+#### `replaces` vs `conflicts`
+
+- **`replaces`**: Use this for package renames or merges. If a package in this list is already installed, Wright will **automatically uninstall** it before installing the current package.
+- **`conflicts`**: Use this when two packages provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the package if a conflicting one is already present.
 
 #### Version constraints
 

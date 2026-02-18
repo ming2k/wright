@@ -135,9 +135,10 @@ Build packages from `plan.toml` files. Targets can be plan directories, plan nam
 | `--update` | Download sources and update sha256 checksums |
 | `-j`/`--jobs <N>` | Parallel builds (default: 1) |
 | `--rebuild-dependents` (`-R`) | Also rebuild all packages that depend on the target (transitive) |
+| `--install` (`-i`) | Automatically install each package after a successful build |
 
 Before building, wright displays a **Construction Plan** showing all targets and their rebuild reasons:
-- `[NEW]`: Explicitly requested targets.
+- `[NEW]`: Explicitly requested targets or auto-resolved missing dependencies.
 - `[LINK-REBUILD]`: Automatic rebuild due to a `link` dependency update.
 - `[REV-REBUILD]`: Transitive rebuild requested via `--rebuild-dependents`.
 
@@ -156,7 +157,10 @@ wright build --only compile nginx      # rerun just the compile stage
 wright build -j4 @desktop             # parallel
 wright build openssl --rebuild-dependents    # rebuild openssl + all its dependents
 wright build openssl -R -j4                  # same, with parallel rebuild
+wright build curl --install            # build curl, auto-resolve missing deps, and install all
 ```
+
+`--install` (or `-i`) is the most convenient way to build and install a package. Wright will recursively find all missing build/link dependencies in the hold tree, add them to the construction plan, and install them immediately after they are built so that the next packages in the queue can link against them.
 
 `--rebuild-dependents` is designed for ABI breakage scenarios: when a library is updated and all packages linked against it need to be rebuilt. wright **automatically** includes `link` dependents in the build set even without this flag. The flag expands this behavior to all dependency types (runtime and build).
 

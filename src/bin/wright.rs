@@ -164,6 +164,10 @@ enum Commands {
         /// Rebuild all packages that depend on the target (for ABI breakage)
         #[arg(short = 'R', long)]
         rebuild_dependents: bool,
+
+        /// Automatically install built packages (for dependency satisfaction)
+        #[arg(short = 'i', long)]
+        install: bool,
     },
 }
 
@@ -176,9 +180,9 @@ fn main() -> Result<()> {
         .context("failed to load config")?;
 
     // Build subcommand has its own setup path
-    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_dependents } = cli.command {
+    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_dependents, install } = cli.command {
         return orchestrator::run_build(&config, targets, BuildOptions {
-            stage, only, clean, lint, force, update, jobs, rebuild_dependents,
+            stage, only, clean, lint, force, update, jobs, rebuild_dependents, install,
         });
     }
 

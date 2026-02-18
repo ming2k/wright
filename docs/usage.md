@@ -157,9 +157,26 @@ wright build hello
 Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can also pass a path directly.
 
 Before building, Wright displays a **Construction Plan** showing what will be built and why:
-- `[NEW]`: The target you requested.
+- `[NEW]`: The target you requested, or a missing dependency that Wright found in the hold tree.
 - `[LINK-REBUILD]`: Packages that depend on your target via `link` and must be rebuilt for ABI compatibility.
 - `[REV-REBUILD]`: Transitive rebuilds requested via `--rebuild-dependents`.
+
+### One-Stop Build and Install
+
+The most efficient way to manage a package from source is using the `--install` (or `-i`) flag:
+
+```
+wright build -i curl
+```
+
+This command does the following:
+1.  Analyzes `curl`'s dependencies.
+2.  If any `build` or `link` dependencies are not installed, it searches for them in the hold tree (`plans_dir`).
+3.  Recursively adds all missing plans to the construction plan.
+4.  Starts parallel compilation.
+5.  Immediately installs each package after it finishes building.
+
+This ensures that `curl` (and all its requirements) are correctly installed on your system with a single command.
 
 Lifecycle pipeline: fetch, verify, extract, prepare, configure, compile, check, package, post_package. Undefined stages are skipped. Each stage writes a log to `<build_dir>/<name>-<version>/log/<stage>.log` and also prints output to the terminal in real time.
 
@@ -239,6 +256,16 @@ wright install --force pkg.wright.tar.zst         # reinstall
 wright install --nodeps pkg.wright.tar.zst        # skip dependency checks
 wright --root /mnt/target install pkg.wright.tar.zst  # alternate root
 ```
+
+### Smart Transaction Handling
+
+Wright automatically handles complex installation scenarios defined in the package manifest:
+
+- **Replaces**: If a new package declares it `replaces` an existing one, Wright automatically uninstalls the old package (preserving configuration) before installing the new one. This is ideal for package renames.
+- **Conflicts**: If a package `conflicts` with an already installed one, Wright will block the installation and error out to prevent system instability.
+- **Upgrades**: `wright upgrade` rejects downgrades unless `--force` is used.
+
+The installation process is fully atomic. If any step fails (including pre/post scripts), Wright rolls back changes to the previous consistent state.
 
 ### Version Handling
 
