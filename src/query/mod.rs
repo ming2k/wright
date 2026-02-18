@@ -1,6 +1,7 @@
 //! Query and analysis operations — dependency tree rendering, etc.
 
 use anyhow::{Context, Result};
+use rusqlite::params;
 
 use crate::database::Database;
 
@@ -130,4 +131,50 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
     }
 
     Ok(broken)
+}
+
+/// Check for circular dependencies in the installed database.
+pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
+    let all_packages = db.list_packages()?;
+    let mut issues = Vec::new();
+
+    for pkg in all_packages {
+        if let Err(e) = db.get_recursive_dependents(&pkg.name) {
+            if e.to_string().contains("circular") {
+                issues.push(format!("Circular dependency detected involving package '{}'", pkg.name));
+            }
+        }
+    }
+
+    Ok(issues)
+}
+
+/// Check if multiple packages claim ownership of the same file.
+pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
+    let mut stmt = db.connection().prepare(
+        "SELECT path, COUNT(package_id) as count FROM files 
+         GROUP BY path HAVING count > 1"
+    )?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let path: String = row.get(0)?;
+            Ok(path)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut issues = Vec::new();
+    for path in rows {
+        // Find who the owners are
+        let mut owner_stmt = db.connection().prepare(
+            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id WHERE f.path = ?1"
+        )?;
+        let owners = owner_stmt
+            .query_map(params![path], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        
+        issues.push(format!("File conflict: '{}' is claimed by multiple packages: {}", path, owners.join(", ")));
+    }
+
+    Ok(issues)
 }

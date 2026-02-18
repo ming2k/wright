@@ -152,6 +152,21 @@ impl Database {
         self.db_path.as_deref()
     }
 
+    /// Perform a physical integrity check on the SQLite database.
+    pub fn integrity_check(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("PRAGMA integrity_check")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // "ok" means no errors
+        if rows.len() == 1 && rows[0] == "ok" {
+            Ok(Vec::new())
+        } else {
+            Ok(rows)
+        }
+    }
+
     pub fn insert_package(&self, pkg: NewPackage) -> Result<i64> {
         self.conn
             .execute(

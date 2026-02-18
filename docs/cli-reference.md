@@ -117,6 +117,16 @@ Verify installed file integrity (SHA-256). Verifies all packages if none specifi
 |------|-------------|
 | `--check-deps` | Check for broken dependencies across the whole system |
 
+#### `wright doctor`
+
+Perform a comprehensive system health check. This command diagnoses:
+- **Database Integrity**: Physical check of the SQLite database file.
+- **Dependency Sanity**: Missing dependencies, broken links, and version mismatches.
+- **Circular Dependencies**: Detects logic errors in the dependency graph.
+- **File Ownership**: Identifies file conflicts where multiple packages claim the same file.
+
+Use this command if you suspect system corruption or after performing many `--force` operations.
+
 ---
 
 ## Build
