@@ -239,6 +239,7 @@ impl Builder {
             let mut split_vars = vars_for_splits.clone();
             split_vars.insert("PKG_DIR".to_string(), split_pkg_dir.to_string_lossy().to_string());
             split_vars.insert("PKG_NAME".to_string(), split_name.clone());
+            split_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
 
             info!("Running package stage for split: {}", split_name);
 
@@ -248,6 +249,7 @@ impl Builder {
                 pkg_dir: split_pkg_dir.clone(),
                 files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
                 rlimits: rlimits.clone(),
+                main_pkg_dir: Some(pkg_dir.clone()),
             };
 
             let split_executor = self.executors.get(&package_stage.executor)

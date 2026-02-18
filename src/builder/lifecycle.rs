@@ -150,6 +150,7 @@ impl<'a> LifecyclePipeline<'a> {
             pkg_dir: self.pkg_dir.clone(),
             files_dir: self.files_dir.clone(),
             rlimits: self.rlimits.clone(),
+            main_pkg_dir: None,
         };
 
         let result = executor::execute_script(

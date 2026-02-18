@@ -283,6 +283,7 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
 | `${PKG_DIR}`    | Package output directory (install files here) |
 | `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
+| `${MAIN_PKG_DIR}` | Main package's output directory (only available in split package stages) |
 | `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
@@ -295,6 +296,7 @@ When running inside a sandbox, path variables are remapped to sandbox mount poin
 | `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
 | `${PKG_DIR}`    | actual host path       | `/output`              |
 | `${FILES_DIR}`  | actual host path       | `/files`               |
+| `${MAIN_PKG_DIR}` | actual host path    | `/main-pkg`            |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
@@ -520,13 +522,13 @@ make DESTDIR=${PKG_DIR} install
 rm -rf ${PKG_DIR}/usr/lib/libstdc++*
 """
 
-[split.libstdcpp]
+[split."libstdc++"]
 description = "GNU C++ standard library"
 
-[split.libstdcpp.dependencies]
+[split."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[split.libstdcpp.lifecycle.package]
+[split."libstdc++".lifecycle.package]
 script = """
 cd ${BUILD_DIR}
 install -Dm755 libstdc++.so.6.0.33 ${PKG_DIR}/usr/lib/libstdc++.so.6.0.33
@@ -535,7 +537,23 @@ ln -sf libstdc++.so.6 ${PKG_DIR}/usr/lib/libstdc++.so
 """
 ```
 
-Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `compile`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`.
+Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `compile`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[split."libstdc++"]`).
+
+The `${MAIN_PKG_DIR}` variable is available in split package stages and points to the main package's output directory. Use it to move files from the main package into the split:
+
+```toml
+[lifecycle.package]
+script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
+
+[split."libfoo-dev"]
+description = "Development headers for libfoo"
+
+[split."libfoo-dev".lifecycle.package]
+script = """
+mv ${MAIN_PKG_DIR}/usr/include ${PKG_DIR}/usr/include
+mv ${MAIN_PKG_DIR}/usr/lib/pkgconfig ${PKG_DIR}/usr/lib/pkgconfig
+"""
+```
 
 Split packages are independent archives — installing the parent does **not** automatically install its splits. To create a meta-package that pulls in all splits, list them as `runtime` dependencies on the parent:
 
@@ -575,7 +593,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_-]*`, max 64 characters |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[split."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **description** | Must not be empty |

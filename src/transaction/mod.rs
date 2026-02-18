@@ -334,23 +334,35 @@ pub fn install_package(
 // ---------------------------------------------------------------------------
 
 /// Remove an installed package.
+///
+/// By default, removal is denied if other installed packages depend on this one.
+/// Use `force` to override this check.
 pub fn remove_package(
     db: &Database,
     name: &str,
     root_dir: &Path,
+    force: bool,
 ) -> Result<()> {
     let pkg = db.get_package(name)?.ok_or_else(|| {
         WrightError::PackageNotFound(name.to_string())
     })?;
 
-    // Check if other packages depend on this one (warn only)
+    // Check if other packages depend on this one
     let dependents = db.get_dependents(name)?;
     if !dependents.is_empty() {
-        warn!(
-            "Warning: the following packages depend on {}: {}",
-            name,
-            dependents.join(", ")
-        );
+        if force {
+            warn!(
+                "Warning: forcing removal of {} which is depended on by: {}",
+                name,
+                dependents.join(", ")
+            );
+        } else {
+            return Err(WrightError::DependencyError(format!(
+                "cannot remove '{}': required by {}",
+                name,
+                dependents.join(", ")
+            )));
+        }
     }
 
     // Run pre_remove hook
@@ -936,7 +948,7 @@ mod tests {
         install_package(&db, &archive, root.path(), false).unwrap();
         assert!(root.path().join("usr/bin/hello").exists());
 
-        remove_package(&db, "hello", root.path()).unwrap();
+        remove_package(&db, "hello", root.path(), false).unwrap();
 
         assert!(!root.path().join("usr/bin/hello").exists());
         assert!(db.get_package("hello").unwrap().is_none());
@@ -959,7 +971,7 @@ mod tests {
     #[test]
     fn test_remove_nonexistent() {
         let (db, root) = setup_test();
-        let result = remove_package(&db, "nonexistent", root.path());
+        let result = remove_package(&db, "nonexistent", root.path(), false);
         assert!(result.is_err());
     }
 

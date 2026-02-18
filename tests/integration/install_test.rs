@@ -75,7 +75,7 @@ fn test_end_to_end_install_query_remove() {
     assert!(issues.is_empty());
 
     // Remove
-    transaction::remove_package(&db, "hello", root.path()).unwrap();
+    transaction::remove_package(&db, "hello", root.path(), false).unwrap();
 
     // Verify file is gone
     assert!(!hello_bin.exists());

@@ -241,7 +241,7 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 
 # ---- Package metadata (required) ----
 [plan]
-name = "nginx"                          # Package name, [a-z0-9][a-z0-9_-]*, max 64 chars
+name = "nginx"                          # Package name, [a-z0-9][a-z0-9_+.-]*, max 64 chars
 version = "1.25.3"                      # Upstream version (free-form string)
 release = 1                             # Release number (integer, increment when build script changes)
 description = "High performance HTTP and reverse proxy server"
@@ -421,6 +421,7 @@ The `script` fields in package description files support the following variables
 | `${SRC_DIR}` | Source directory after extraction (build working directory) |
 | `${PKG_DIR}` | Package output directory (simulated install root) |
 | `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
+| `${MAIN_PKG_DIR}` | Main package's output directory (split package stages only) |
 | `${NPROC}` | Number of CPU cores (for parallel compilation) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |

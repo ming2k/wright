@@ -98,6 +98,8 @@ pub struct ExecutorOptions {
     pub pkg_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
     pub rlimits: ResourceLimits,
+    /// Main package's pkg_dir, mounted at /main-pkg for split package stages.
+    pub main_pkg_dir: Option<PathBuf>,
 }
 
 pub struct ExecutionResult {
@@ -131,6 +133,9 @@ pub fn execute_script(
         if options.files_dir.is_some() {
             v.insert("FILES_DIR".to_string(), "/files".to_string());
         }
+        if options.main_pkg_dir.is_some() {
+            v.insert("MAIN_PKG_DIR".to_string(), "/main-pkg".to_string());
+        }
         v
     } else {
         vars.clone()
@@ -149,6 +154,11 @@ pub fn execute_script(
     let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone());
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
+
+    // Mount main package dir for split package stages
+    if let Some(ref main_pkg) = options.main_pkg_dir {
+        config.extra_binds.push((main_pkg.clone(), PathBuf::from("/main-pkg"), false));
+    }
 
     // Set environment variables
     for (key, value) in env_vars {

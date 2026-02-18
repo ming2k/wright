@@ -64,6 +64,10 @@ enum Commands {
         /// Package names to remove
         #[arg(required = true)]
         packages: Vec<String>,
+
+        /// Force removal even if other packages depend on this one
+        #[arg(long)]
+        force: bool,
     },
     /// List installed packages
     List {
@@ -211,9 +215,9 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Remove { packages } => {
+        Commands::Remove { packages, force } => {
             for name in &packages {
-                match transaction::remove_package(&db, name, &root_dir) {
+                match transaction::remove_package(&db, name, &root_dir, force) {
                     Ok(()) => println!("removed: {}", name),
                     Err(e) => {
                         eprintln!("error removing {}: {}", name, e);
