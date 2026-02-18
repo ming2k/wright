@@ -151,8 +151,8 @@ impl Builder {
     /// Returns the BuildResult with paths to the build artifacts.
     ///
     /// `extra_env` is merged into every lifecycle stage's variable map.
-    /// For bootstrap builds the orchestrator injects WRIGHT_BOOTSTRAP_BUILD=1
-    /// and WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1 here.
+    /// For MVP builds the orchestrator injects WRIGHT_BUILD_PHASE=mvp along
+    /// with WRIGHT_BOOTSTRAP_BUILD=1 and WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1.
     pub fn build(
         &self,
         manifest: &PackageManifest,

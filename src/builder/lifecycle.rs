@@ -106,13 +106,13 @@ impl<'a> LifecyclePipeline<'a> {
     fn run_stage_with_hooks(&self, stage_name: &str) -> Result<()> {
         // Run pre-hook if exists
         let pre_hook = format!("pre_{}", stage_name);
-        if let Some(stage) = self.manifest.lifecycle.get(&pre_hook) {
+        if let Some(stage) = self.get_stage(&pre_hook) {
             info!("Running hook: {}", pre_hook);
             self.run_stage(&pre_hook, stage)?;
         }
 
         // Run the actual stage
-        if let Some(stage) = self.manifest.lifecycle.get(stage_name) {
+        if let Some(stage) = self.get_stage(stage_name) {
             info!("Running stage: {}", stage_name);
             self.run_stage(stage_name, stage)?;
         } else {
@@ -121,7 +121,7 @@ impl<'a> LifecyclePipeline<'a> {
 
         // Run post-hook if exists
         let post_hook = format!("post_{}", stage_name);
-        if let Some(stage) = self.manifest.lifecycle.get(&post_hook) {
+        if let Some(stage) = self.get_stage(&post_hook) {
             info!("Running hook: {}", post_hook);
             self.run_stage(&post_hook, stage)?;
         }
@@ -130,11 +130,33 @@ impl<'a> LifecyclePipeline<'a> {
     }
 
     fn get_stage_order(&self) -> Vec<String> {
-        if let Some(ref order) = self.manifest.lifecycle_order {
-            order.stages.clone()
-        } else {
-            DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
+        let phase = self.phase_name();
+        if let Some(cfg) = self.manifest.phase.get(phase) {
+            if let Some(ref order) = cfg.lifecycle_order {
+                return order.stages.clone();
+            }
         }
+        if let Some(ref order) = self.manifest.lifecycle_order {
+            return order.stages.clone();
+        }
+        DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn phase_name(&self) -> &str {
+        self.vars
+            .get("WRIGHT_BUILD_PHASE")
+            .map(|s| s.as_str())
+            .unwrap_or("full")
+    }
+
+    fn get_stage(&self, name: &str) -> Option<&LifecycleStage> {
+        let phase = self.phase_name();
+        if let Some(cfg) = self.manifest.phase.get(phase) {
+            if let Some(stage) = cfg.lifecycle.get(name) {
+                return Some(stage);
+            }
+        }
+        self.manifest.lifecycle.get(name)
     }
 
     fn run_stage(&self, stage_name: &str, stage: &LifecycleStage) -> Result<()> {

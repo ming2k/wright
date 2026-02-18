@@ -47,12 +47,12 @@ plan.toml → PackageManifest
       → expand missing deps (Upward, build ops only)
       → expand transitive rebuilds (Downward, build ops only)
       → detect dependency cycles (Tarjan SCC)
-          → if cycle found and bootstrap_without declared:
+          → if cycle found and [phase.mvp].dependencies declared:
               inject two-pass plan ({pkg}:bootstrap → rest → {pkg}:full)
-          → if cycle found and no bootstrap_without: error with cycle description
+          → if cycle found and no [phase.mvp].dependencies: error with cycle description
       → display Construction Plan ([NEW] / [LINK-REBUILD] / [BOOTSTRAP] / [FULL])
       → parallel execution (topology-ordered):
-          → bootstrap pass: Builder::build() with WRIGHT_BOOTSTRAP_BUILD=1 env vars, no cache write
+          → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp (and WRIGHT_BOOTSTRAP_BUILD=1), no cache write
           → full pass: Builder::build() force=true, normal cache
           → archive::create_archive() → PKGINFO (with link/replaces/conflicts)
       → if --install: acquisition of serial install lock → transaction::install_package()

@@ -167,7 +167,6 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `bootstrap_without` | list of strings | `[]`    | Dependencies to omit in the first build pass when this package is part of a dependency cycle. See [Bootstrap Cycles](#bootstrap-cycles). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -213,6 +212,31 @@ Override the default pipeline order:
 [lifecycle_order]
 stages = ["fetch", "verify", "extract", "configure", "compile", "package"]
 ```
+
+### `[phase.<name>]` — Phase Overrides
+
+Phases let you define alternative lifecycle scripts for specific build passes.
+The most common phase is `mvp`, which is used to break dependency cycles.
+
+```toml
+[phase.mvp.dependencies]
+link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
+
+[phase.mvp.lifecycle.configure]
+script = """
+meson setup build \
+  --prefix=/usr \
+  -Dpixbuf=disabled
+"""
+```
+
+Phase dependencies override the top-level `[dependencies]`. Any field omitted in
+`[phase.<name>.dependencies]` falls back to the corresponding top-level list.
+
+Resolution order during a phase:
+
+1. If `[phase.<name>.lifecycle.<stage>]` exists, it is used.
+2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
 ### `[install_scripts]`
 
@@ -283,40 +307,41 @@ echo "Compilation complete."
 
 Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `sandbox`, `optional`, `env`, `script`).
 
-## Bootstrap Cycles
+## Phase-Based Cycles (MVP → Full)
 
 Some packages have genuine circular build-time dependencies. The classic example is `freetype` ↔ `harfbuzz`: freetype needs harfbuzz for OpenType shaping, and harfbuzz needs freetype for glyph rendering. These cycles cannot be broken by fixing dependency types — they are real.
 
 Wright resolves them automatically using a **two-pass build**:
 
-1. **Bootstrap pass** — builds the package without the cyclic dependency (producing a functional but reduced binary).
-2. **Full pass** — after the rest of the cycle is built, rebuilds the package with all dependencies (producing the complete binary).
+1. **MVP pass** — builds the package without the cyclic dependency (functional but reduced).
+2. **Full pass** — after the rest of the cycle is built, rebuilds the package with all dependencies.
 
-### Declaring a bootstrap
+### Declaring an MVP phase
 
-Add `bootstrap_without` to `[options]` in the plan that should be built first:
+Define phase-specific dependencies for the MVP build so the graph becomes acyclic:
 
 ```toml
-[options]
-bootstrap_without = ["harfbuzz"]
+[phase.mvp.dependencies]
+link = ["freetype"] # omit harfbuzz in MVP
 ```
 
-Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `bootstrap_without` listing a cyclic edge, it automatically inserts the two-pass schedule. If no plan declares `bootstrap_without`, the build fails with a clear error identifying the cycle.
+Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[phase.mvp].dependencies` that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
 
-### Bootstrap environment variables
+### Phase environment variables
 
-During the bootstrap pass, Wright injects these variables into every lifecycle stage:
+During the MVP pass, Wright injects these variables into every lifecycle stage:
 
 | Variable | Value | Description |
 |----------|-------|-------------|
-| `WRIGHT_BOOTSTRAP_BUILD` | `1` | Always set during a bootstrap pass |
+| `WRIGHT_BUILD_PHASE` | `mvp` | Phase name for the MVP pass (`full` in the normal pass) |
+| `WRIGHT_BOOTSTRAP_BUILD` | `1` | Set during the MVP pass for backward-compatible scripts |
 | `WRIGHT_BOOTSTRAP_WITHOUT_<DEP>` | `1` | Set for each excluded dependency (name uppercased, hyphens → underscores) |
 
-The plan script uses these to disable the relevant feature:
+The plan script can still use these variables to disable the relevant feature:
 
 ```toml
-[options]
-bootstrap_without = ["harfbuzz"]
+[phase.mvp.dependencies]
+link = ["freetype"]
 
 [lifecycle.configure]
 script = """
@@ -326,29 +351,72 @@ cmake -B build \
 """
 ```
 
+### Phase lifecycle overrides (recommended)
+
+For complex packages, it is safer to provide **dedicated phase scripts** instead of
+embedding conditionals. Wright supports a `[phase.<name>]` section that overrides
+`[lifecycle]` **only during that phase**.
+
+```toml
+[phase.mvp.dependencies]
+link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
+
+[lifecycle.configure]
+script = """
+meson setup build \
+  --prefix=/usr \
+  -Dpixbuf=enabled
+"""
+
+[phase.mvp.lifecycle.configure]
+script = """
+meson setup build \
+  --prefix=/usr \
+  -Dpixbuf=disabled \
+  -Dpixbuf-loader=disabled
+"""
+```
+
+Resolution order for a phase pass:
+
+1. If `[phase.<name>.lifecycle.<stage>]` exists, it is used.
+2. Otherwise, it falls back to `[lifecycle.<stage>]`.
+
+This keeps the **MVP build** separate from the **full build**, and avoids
+fragile shell conditionals.
+
+### Dependency Graph Analysis (lint)
+
+`wbuild lint` prints a report of the dependency graph:
+
+- Whether the graph is acyclic
+- Each detected cycle (if any)
+- MVP candidates that would break the cycle
+- The selected candidate (deterministic: fewest excluded edges, then name)
+
 ### Construction Plan output
 
-When a bootstrap cycle is resolved, the plan summary shows the two-pass schedule:
+When a cycle is resolved, the plan summary shows the two-pass schedule:
 
 ```
 Construction Plan:
-  [BOOTSTRAP]     freetype
+  [MVP]           freetype
   [NEW]           harfbuzz
   [FULL]          freetype
 ```
 
-`[BOOTSTRAP]` is the first pass (incomplete). `[FULL]` is the second pass (complete, automatically force-rebuilt). Bootstrap builds are never written to the build cache.
+`[MVP]` is the first pass (incomplete). `[FULL]` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
 
 ### Dependency type classification comes first
 
-Most apparent cycles are caused by incorrect dependency classification. Before reaching for `bootstrap_without`, verify that:
+Most apparent cycles are caused by incorrect dependency classification. Before defining phase-specific dependencies, verify that:
 
 - **`link`** is only used for shared libraries your binary actually links against at build time.
 - **`runtime`** is used for plugins, loaders, and tools called at runtime.
 
-For example, `gdk-pixbuf` using glycin (an image loader plugin) as a `link` dependency creates a false cycle. The correct fix is `runtime = ["glycin"]`, not `bootstrap_without`.
+For example, `gdk-pixbuf` using glycin (an image loader plugin) as a `link` dependency creates a false cycle. The correct fix is `runtime = ["glycin"]`, not a phase override.
 
-Reserve `bootstrap_without` for cycles that remain after dependency types are correct.
+Reserve phase-specific dependencies for cycles that remain after dependency types are correct.
 
 ## Variable Substitution
 
@@ -368,8 +436,9 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
-| `${WRIGHT_BOOTSTRAP_BUILD}` | Set to `1` during a bootstrap pass (see [Bootstrap Cycles](#bootstrap-cycles)) |
-| `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the bootstrap pass |
+| `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
+| `${WRIGHT_BOOTSTRAP_BUILD}` | Set to `1` during the MVP pass (backward compatibility) |
+| `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
 When running inside a sandbox, path variables are remapped to sandbox mount points:
 

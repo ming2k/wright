@@ -120,10 +120,10 @@ Before building, `wbuild run` displays a **Construction Plan** listing all packa
 | `[NEW]` | Explicitly requested target |
 | `[LINK-REBUILD]` | Triggered because a link dependency was updated |
 | `[REV-REBUILD]` | Triggered transitively via `-R` |
-| `[BOOTSTRAP]` | First pass of a two-pass bootstrap cycle build (built without cyclic dep) |
-| `[FULL]` | Second pass of a bootstrap cycle build (complete rebuild after cycle is resolved) |
+| `[MVP]` | First pass of a two-pass cycle build (built without cyclic dep) |
+| `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
-See [Bootstrap Cycles](writing-plans.md#bootstrap-cycles) for details on the two-pass mechanism.
+See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
 
 #### `wbuild check [TARGETS]...`
 

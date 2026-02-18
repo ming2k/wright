@@ -19,6 +19,8 @@ pub struct PackageManifest {
     #[serde(default)]
     pub lifecycle_order: Option<LifecycleOrder>,
     #[serde(default)]
+    pub phase: HashMap<String, PhaseConfig>,
+    #[serde(default)]
     pub install_scripts: Option<InstallScripts>,
     #[serde(default)]
     pub backup: Option<BackupConfig>,
@@ -61,6 +63,7 @@ impl SplitPackage {
             options: BuildOptions::default(),
             lifecycle: HashMap::new(),
             lifecycle_order: None,
+            phase: HashMap::new(),
             install_scripts: self.install_scripts.clone(),
             backup: self.backup.clone(),
             split: HashMap::new(),
@@ -132,17 +135,6 @@ pub struct BuildOptions {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Dependencies to omit in the first (bootstrap) build pass when this
-    /// package is part of a dependency cycle.  The orchestrator detects the
-    /// cycle automatically; this field tells it *how* to break it.
-    ///
-    /// Example (freetype ↔ harfbuzz):
-    ///   bootstrap_without = ["harfbuzz"]
-    ///
-    /// The plan script can then branch on WRIGHT_BOOTSTRAP_BUILD=1 or
-    /// WRIGHT_BOOTSTRAP_WITHOUT_HARFBUZZ=1 to disable the feature.
-    #[serde(default)]
-    pub bootstrap_without: Vec<String>,
 }
 
 impl Default for BuildOptions {
@@ -156,7 +148,6 @@ impl Default for BuildOptions {
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
-            bootstrap_without: Vec::new(),
         }
     }
 }
@@ -190,6 +181,28 @@ fn default_sandbox_level() -> String {
 #[derive(Debug, Deserialize, Clone)]
 pub struct LifecycleOrder {
     pub stages: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PhaseConfig {
+    /// Phase-specific dependency overrides. Any field omitted falls back
+    /// to the top-level [dependencies].
+    #[serde(default)]
+    pub dependencies: Option<PhaseDependencies>,
+    #[serde(default)]
+    pub lifecycle: HashMap<String, LifecycleStage>,
+    #[serde(default)]
+    pub lifecycle_order: Option<LifecycleOrder>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct PhaseDependencies {
+    #[serde(default)]
+    pub runtime: Option<Vec<String>>,
+    #[serde(default)]
+    pub build: Option<Vec<String>>,
+    #[serde(default)]
+    pub link: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -16,6 +16,7 @@ use crate::package::archive;
 use crate::package::manifest::PackageManifest;
 use crate::package::version;
 use crate::repo::source::SimpleResolver;
+use crate::package::manifest::PhaseDependencies;
 
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
@@ -50,6 +51,10 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
     if plans_to_build.is_empty() {
         return Err(anyhow::anyhow!("No targets specified to build."));
+    }
+
+    if opts.lint {
+        return lint_dependency_graph(&plans_to_build, &all_plans);
     }
 
     // Use a scoped block to ensure the database handle (and its flock) is released 
@@ -96,7 +101,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             && graph.build_set.contains(&format!("{}:bootstrap", name));
 
         let reason_str = if is_bootstrap_task {
-            "[BOOTSTRAP]".to_string()
+            "[MVP]".to_string()
         } else if is_full_after_bootstrap {
             "[FULL]".to_string()
         } else {
@@ -118,7 +123,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         &graph.deps_map,
         &graph.build_set,
         &opts,
-        &graph.bootstrap_without,
+        &graph.bootstrap_excluded,
     )
 }
 
@@ -220,9 +225,125 @@ struct PlanGraph {
     deps_map: HashMap<String, Vec<String>>,
     build_set: HashSet<String>,
     rebuild_reasons: HashMap<String, RebuildReason>,
+    pkg_to_plan: HashMap<String, String>,
     /// For bootstrap tasks (key = "{pkg}:bootstrap"), the deps that were
     /// excluded so the cycle could be broken.
-    bootstrap_without: HashMap<String, Vec<String>>,
+    bootstrap_excluded: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct CycleCandidate {
+    pkg: String,
+    excluded: Vec<String>,
+}
+
+fn collect_phase_deps(
+    manifest: &PackageManifest,
+    pkg_to_plan: &HashMap<String, String>,
+    phase: &str,
+) -> Vec<String> {
+    let base = &manifest.dependencies;
+    let overrides: Option<&PhaseDependencies> = manifest
+        .phase
+        .get(phase)
+        .and_then(|p| p.dependencies.as_ref());
+
+    let build = overrides
+        .and_then(|o| o.build.clone())
+        .unwrap_or_else(|| base.build.clone());
+    let runtime = overrides
+        .and_then(|o| o.runtime.clone())
+        .unwrap_or_else(|| base.runtime.clone());
+    let link = overrides
+        .and_then(|o| o.link.clone())
+        .unwrap_or_else(|| base.link.clone());
+
+    let mut deps = Vec::new();
+    let mut raw_deps = Vec::new();
+    raw_deps.extend(build);
+    raw_deps.extend(runtime);
+    raw_deps.extend(link);
+
+    for dep in raw_deps {
+        let dep_pkg_name = version::parse_dependency(&dep)
+            .unwrap_or_else(|_| (dep.clone(), None)).0;
+
+        if let Some(parent_plan) = pkg_to_plan.get(&dep_pkg_name) {
+            if parent_plan != &manifest.plan.name {
+                deps.push(parent_plan.clone());
+            }
+        } else {
+            deps.push(dep_pkg_name);
+        }
+    }
+
+    deps
+}
+
+fn cycle_candidates_for(
+    cycle: &[String],
+    graph: &PlanGraph,
+) -> Vec<CycleCandidate> {
+    let cycle_set: HashSet<&str> = cycle.iter().map(|s| s.as_str()).collect();
+    let mut candidates = Vec::new();
+
+    for pkg in cycle {
+        let path = match graph.name_to_path.get(pkg) {
+            Some(p) => p,
+            None => continue,
+        };
+        let manifest = match PackageManifest::from_file(path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let has_mvp = manifest
+            .phase
+            .get("mvp")
+            .and_then(|p| p.dependencies.as_ref())
+            .is_some();
+        if !has_mvp {
+            continue;
+        }
+
+        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, "full");
+        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, "mvp");
+
+        let cycle_edges: Vec<String> = full_deps
+            .iter()
+            .filter(|d| cycle_set.contains(d.as_str()))
+            .cloned()
+            .collect();
+
+        let excluded: Vec<String> = cycle_edges
+            .iter()
+            .filter(|d| !mvp_deps.contains(d))
+            .cloned()
+            .collect();
+
+        if !excluded.is_empty() {
+            candidates.push(CycleCandidate {
+                pkg: pkg.clone(),
+                excluded,
+            });
+        }
+    }
+
+    candidates
+}
+
+fn pick_candidate(mut candidates: Vec<CycleCandidate>) -> Option<CycleCandidate> {
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|a, b| {
+        let len_cmp = a.excluded.len().cmp(&b.excluded.len());
+        if len_cmp == std::cmp::Ordering::Equal {
+            a.pkg.cmp(&b.pkg)
+        } else {
+            len_cmp
+        }
+    });
+    Some(candidates.remove(0))
 }
 
 // ---------------------------------------------------------------------------
@@ -291,56 +412,30 @@ fn tarjan_visit(v: &str, graph: &HashMap<String, Vec<String>>, s: &mut SccState)
 }
 
 /// For each dependency cycle in the graph, find a package with
-/// `bootstrap_without` that breaks the cycle and insert a two-pass
+/// `[phase.mvp].without` that breaks the cycle and insert a two-pass
 /// build plan: `{pkg}:bootstrap` runs first (no cyclic dep), then
 /// the rest of the cycle, then `{pkg}` (full) rebuilds with all deps.
 fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
     let cycles = find_cycles(&graph.deps_map);
     if cycles.is_empty() {
+        info!("Dependency graph is acyclic.");
         return Ok(());
     }
 
     for cycle in &cycles {
-        let cycle_set: HashSet<&str> = cycle.iter().map(|s| s.as_str()).collect();
+        info!("Dependency cycle detected: {}", cycle.join(" → "));
 
-        // Find a package in the cycle that declares bootstrap_without covering
-        // at least one edge that is part of the cycle.
-        let mut chosen: Option<(String, Vec<String>)> = None;
-        for pkg in cycle {
-            let path = match graph.name_to_path.get(pkg) {
-                Some(p) => p.clone(),
-                None => continue,
-            };
-            let manifest = match PackageManifest::from_file(&path) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let bw = &manifest.options.bootstrap_without;
-            if bw.is_empty() { continue; }
-
-            // Only keep entries that are actual cycle edges for this package.
-            let cycle_edges: Vec<String> = graph.deps_map
-                .get(pkg)
-                .map(|deps| deps.iter()
-                    .filter(|d| bw.contains(d) && cycle_set.contains(d.as_str()))
-                    .cloned()
-                    .collect())
-                .unwrap_or_default();
-
-            if !cycle_edges.is_empty() {
-                chosen = Some((pkg.clone(), cycle_edges));
-                break;
-            }
-        }
+        let candidates = cycle_candidates_for(cycle, graph);
+        let chosen = pick_candidate(candidates.clone());
 
         let (pkg, excl) = match chosen {
-            Some(c) => c,
+            Some(c) => (c.pkg, c.excluded),
             None => {
                 return Err(anyhow::anyhow!(
                     "Dependency cycle cannot be automatically resolved.\n\
                      Cycle: {}\n\
-                     Add 'bootstrap_without' to [options] in one of these plans \
-                     to declare how to break it.",
+                     Add '[phase.mvp].dependencies' in one of these plans to declare \
+                     an acyclic MVP dependency set.",
                     cycle.join(" → ")
                 ));
             }
@@ -349,13 +444,8 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         let bootstrap_key = format!("{}:bootstrap", pkg);
 
         // Bootstrap task: same deps as full, minus the cycle-breaking edges.
-        let bootstrap_deps: Vec<String> = graph.deps_map
-            .get(&pkg)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|d| !excl.contains(d))
-            .collect();
+        let mvp_manifest = PackageManifest::from_file(&graph.name_to_path[&pkg])?;
+        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, "mvp");
 
         graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
         graph.build_set.insert(bootstrap_key.clone());
@@ -363,7 +453,7 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
             bootstrap_key.clone(),
             graph.name_to_path[&pkg].clone(),
         );
-        graph.bootstrap_without.insert(bootstrap_key.clone(), excl.clone());
+        graph.bootstrap_excluded.insert(bootstrap_key.clone(), excl.clone());
 
         // Full task now waits for its own bootstrap to finish.
         graph.deps_map.get_mut(&pkg).unwrap().push(bootstrap_key.clone());
@@ -382,8 +472,8 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         }
 
         info!(
-            "Bootstrap cycle resolved: '{}' will be built twice \
-             (first without [{}], then fully)",
+            "Cycle resolved: '{}' will be built twice \
+             (first as MVP without [{}], then fully)",
             pkg,
             excl.join(", ")
         );
@@ -585,30 +675,19 @@ fn build_dep_map(
 
         let mut deps = Vec::new();
         if !checksum {
-            let mut raw_deps = Vec::new();
-            raw_deps.extend(manifest.dependencies.build.iter().cloned());
-            raw_deps.extend(manifest.dependencies.runtime.iter().cloned());
-            raw_deps.extend(manifest.dependencies.link.iter().cloned());
-
-            for dep in raw_deps {
-                let dep_pkg_name = version::parse_dependency(&dep)
-                    .unwrap_or_else(|_| (dep.clone(), None)).0;
-                
-                // Translate the package dependency to its parent plan name
-                if let Some(parent_plan) = pkg_to_plan.get(&dep_pkg_name) {
-                    // CRITICAL: Avoid self-dependency (e.g. cairo-dev depending on cairo)
-                    if parent_plan != &name {
-                        deps.push(parent_plan.clone());
-                    }
-                } else {
-                    deps.push(dep_pkg_name);
-                }
-            }
+            deps = collect_phase_deps(&manifest, &pkg_to_plan, "full");
         }
         deps_map.insert(name, deps);
     }
 
-    Ok(PlanGraph { name_to_path, deps_map, build_set, rebuild_reasons, bootstrap_without: HashMap::new() })
+    Ok(PlanGraph {
+        name_to_path,
+        deps_map,
+        build_set,
+        rebuild_reasons,
+        pkg_to_plan,
+        bootstrap_excluded: HashMap::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -621,7 +700,7 @@ fn execute_builds(
     deps_map: &HashMap<String, Vec<String>>,
     build_set: &HashSet<String>,
     opts: &BuildOptions,
-    bootstrap_without: &HashMap<String, Vec<String>>,
+    bootstrap_excluded: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, anyhow::Error)>>();
     let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -632,7 +711,7 @@ fn execute_builds(
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
-    let bootstrap_without = Arc::new(bootstrap_without.clone());
+    let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
 
     let actual_jobs = if opts.jobs == 0 {
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
@@ -675,12 +754,12 @@ fn execute_builds(
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
             let install_lock_clone = install_lock.clone();
-            let bootstrap_without_clone = bootstrap_without.clone();
+            let bootstrap_excluded_clone = bootstrap_excluded.clone();
 
             // Bootstrap tasks: build without cyclic deps, set env vars.
             // Full tasks that follow a bootstrap: force rebuild (archive exists
             // but is the incomplete bootstrap version).
-            let bootstrap_excl = bootstrap_without_clone
+            let bootstrap_excl = bootstrap_excluded_clone
                 .get(&name)
                 .cloned()
                 .unwrap_or_default();
@@ -809,6 +888,55 @@ fn execute_builds(
     Ok(())
 }
 
+fn lint_dependency_graph(
+    plans_to_build: &HashSet<PathBuf>,
+    all_plans: &HashMap<String, PathBuf>,
+) -> Result<()> {
+    let graph = build_dep_map(plans_to_build, false, HashMap::new(), all_plans)?;
+    let cycles = find_cycles(&graph.deps_map);
+
+    println!("Dependency Analysis Report");
+    println!("Status: {}", if cycles.is_empty() { "acyclic" } else { "cyclic" });
+
+    if cycles.is_empty() {
+        return Ok(());
+    }
+
+    println!();
+    println!("Cycles ({}):", cycles.len());
+    for (idx, cycle) in cycles.iter().enumerate() {
+        println!("{}: {}", idx + 1, cycle.join(" → "));
+    }
+
+    println!();
+    println!("MVP Candidates (deterministic pick = fewest excluded edges, then name):");
+    println!("Cycle | Candidate | Excludes | Selected");
+    println!("----- | --------- | -------- | --------");
+    for (idx, cycle) in cycles.iter().enumerate() {
+        let candidates = cycle_candidates_for(cycle, &graph);
+        if candidates.is_empty() {
+            println!("{} | - | - | no candidates", idx + 1);
+            continue;
+        }
+        let chosen = pick_candidate(candidates.clone());
+        for cand in candidates {
+            let selected = match &chosen {
+                Some(c) if c.pkg == cand.pkg && c.excluded == cand.excluded => "yes",
+                _ => "no",
+            };
+            println!(
+                "{} | {} | {} | {}",
+                idx + 1,
+                cand.pkg,
+                cand.excluded.join(", "),
+                selected
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Single package build
 // ---------------------------------------------------------------------------
@@ -864,7 +992,15 @@ fn build_one(
     // Build extra env vars for bootstrap pass.
     let mut extra_env = std::collections::HashMap::new();
     if !bootstrap_excl.is_empty() {
+        if !manifest.phase.contains_key("mvp") {
+            warn!(
+                "Package '{}' declares no [phase.mvp].dependencies; \
+                 cannot compute MVP deps for cycle breaking.",
+                manifest.plan.name
+            );
+        }
         extra_env.insert("WRIGHT_BOOTSTRAP_BUILD".to_string(), "1".to_string());
+        extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
         for dep in bootstrap_excl {
             let key = format!(
                 "WRIGHT_BOOTSTRAP_WITHOUT_{}",
@@ -873,12 +1009,15 @@ fn build_one(
             extra_env.insert(key, "1".to_string());
         }
         info!(
-            "Bootstrap build of '{}' (without: {})",
+            "MVP build of '{}' (without: {})",
             manifest.plan.name,
             bootstrap_excl.join(", ")
         );
     }
 
+    if !extra_env.contains_key("WRIGHT_BUILD_PHASE") {
+        extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
+    }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
     let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env)?;
