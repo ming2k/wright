@@ -157,16 +157,17 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 ### `[options]`
 
-| Field            | Type    | Default | Description                              |
-|------------------|---------|---------|------------------------------------------|
-| `strip`          | bool    | `true`  | Strip debug symbols from binaries        |
-| `static`         | bool    | `false` | Build statically linked binaries         |
-| `debug`          | bool    | `false` | Build with debug info                    |
-| `ccache`         | bool    | `true`  | Use ccache for compilation if available  |
-| `jobs`           | integer | —       | Override global parallel jobs for this package |
-| `memory_limit`   | integer | —       | Max virtual address space per build process (MB), overrides global |
-| `cpu_time_limit` | integer | —       | Max CPU time per build process (seconds), overrides global |
-| `timeout`        | integer | —       | Wall-clock timeout per build stage (seconds), overrides global |
+| Field               | Type            | Default | Description                              |
+|---------------------|-----------------|---------|------------------------------------------|
+| `strip`             | bool            | `true`  | Strip debug symbols from binaries        |
+| `static`            | bool            | `false` | Build statically linked binaries         |
+| `debug`             | bool            | `false` | Build with debug info                    |
+| `ccache`            | bool            | `true`  | Use ccache for compilation if available  |
+| `jobs`              | integer         | —       | Override global parallel jobs for this package |
+| `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
+| `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
+| `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
+| `bootstrap_without` | list of strings | `[]`    | Dependencies to omit in the first build pass when this package is part of a dependency cycle. See [Bootstrap Cycles](#bootstrap-cycles). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -282,6 +283,73 @@ echo "Compilation complete."
 
 Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `sandbox`, `optional`, `env`, `script`).
 
+## Bootstrap Cycles
+
+Some packages have genuine circular build-time dependencies. The classic example is `freetype` ↔ `harfbuzz`: freetype needs harfbuzz for OpenType shaping, and harfbuzz needs freetype for glyph rendering. These cycles cannot be broken by fixing dependency types — they are real.
+
+Wright resolves them automatically using a **two-pass build**:
+
+1. **Bootstrap pass** — builds the package without the cyclic dependency (producing a functional but reduced binary).
+2. **Full pass** — after the rest of the cycle is built, rebuilds the package with all dependencies (producing the complete binary).
+
+### Declaring a bootstrap
+
+Add `bootstrap_without` to `[options]` in the plan that should be built first:
+
+```toml
+[options]
+bootstrap_without = ["harfbuzz"]
+```
+
+Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `bootstrap_without` listing a cyclic edge, it automatically inserts the two-pass schedule. If no plan declares `bootstrap_without`, the build fails with a clear error identifying the cycle.
+
+### Bootstrap environment variables
+
+During the bootstrap pass, Wright injects these variables into every lifecycle stage:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `WRIGHT_BOOTSTRAP_BUILD` | `1` | Always set during a bootstrap pass |
+| `WRIGHT_BOOTSTRAP_WITHOUT_<DEP>` | `1` | Set for each excluded dependency (name uppercased, hyphens → underscores) |
+
+The plan script uses these to disable the relevant feature:
+
+```toml
+[options]
+bootstrap_without = ["harfbuzz"]
+
+[lifecycle.configure]
+script = """
+cmake -B build \
+    ${WRIGHT_BOOTSTRAP_WITHOUT_HARFBUZZ:+-DFREETYPE_WITH_HARFBUZZ=OFF} \
+    -DCMAKE_INSTALL_PREFIX=/usr
+"""
+```
+
+### Construction Plan output
+
+When a bootstrap cycle is resolved, the plan summary shows the two-pass schedule:
+
+```
+Construction Plan:
+  [BOOTSTRAP]     freetype
+  [NEW]           harfbuzz
+  [FULL]          freetype
+```
+
+`[BOOTSTRAP]` is the first pass (incomplete). `[FULL]` is the second pass (complete, automatically force-rebuilt). Bootstrap builds are never written to the build cache.
+
+### Dependency type classification comes first
+
+Most apparent cycles are caused by incorrect dependency classification. Before reaching for `bootstrap_without`, verify that:
+
+- **`link`** is only used for shared libraries your binary actually links against at build time.
+- **`runtime`** is used for plugins, loaders, and tools called at runtime.
+
+For example, `gdk-pixbuf` using glycin (an image loader plugin) as a `link` dependency creates a false cycle. The correct fix is `runtime = ["glycin"]`, not `bootstrap_without`.
+
+Reserve `bootstrap_without` for cycles that remain after dependency types are correct.
+
 ## Variable Substitution
 
 Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. Unrecognized variables are left as-is.
@@ -300,6 +368,8 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
+| `${WRIGHT_BOOTSTRAP_BUILD}` | Set to `1` during a bootstrap pass (see [Bootstrap Cycles](#bootstrap-cycles)) |
+| `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the bootstrap pass |
 
 When running inside a sandbox, path variables are remapped to sandbox mount points:
 

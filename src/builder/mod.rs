@@ -149,12 +149,17 @@ impl Builder {
 
     /// Run the full build pipeline for a package manifest.
     /// Returns the BuildResult with paths to the build artifacts.
+    ///
+    /// `extra_env` is merged into every lifecycle stage's variable map.
+    /// For bootstrap builds the orchestrator injects WRIGHT_BOOTSTRAP_BUILD=1
+    /// and WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1 here.
     pub fn build(
         &self,
         manifest: &PackageManifest,
         hold_dir: &Path,
         stop_after: Option<String>,
         only_stage: Option<String>,
+        extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -163,13 +168,15 @@ impl Builder {
         let log_dir = build_root.join("log");
 
         let single_stage = only_stage.is_some();
+        let is_bootstrap = extra_env.contains_key("WRIGHT_BOOTSTRAP_BUILD");
 
         // --- Caching Logic (Step 1: Check) ---
+        // Bootstrap builds are intentionally incomplete; never use or save cache.
         let build_key = self.compute_build_key(manifest)?;
         let cache_dir = self.config.general.cache_dir.join("builds");
         let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
 
-        if !single_stage && stop_after.is_none() && cache_file.exists() {
+        if !is_bootstrap && !single_stage && stop_after.is_none() && cache_file.exists() {
             info!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
             
             // Recreate directories
@@ -287,6 +294,8 @@ impl Builder {
         });
         let mut vars = vars;
         vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
+        // Inject bootstrap env vars (WRIGHT_BOOTSTRAP_BUILD, WRIGHT_BOOTSTRAP_WITHOUT_*)
+        vars.extend(extra_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
         let vars_for_splits = vars.clone();
 
@@ -371,7 +380,8 @@ impl Builder {
         }
 
         // --- Caching Logic (Step 2: Save) ---
-        if !single_stage && stop_after.is_none() {
+        // Bootstrap builds are incomplete by design; skip saving to cache.
+        if !is_bootstrap && !single_stage && stop_after.is_none() {
             if !cache_dir.exists() {
                 let _ = std::fs::create_dir_all(&cache_dir);
             }

@@ -132,6 +132,17 @@ pub struct BuildOptions {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// Dependencies to omit in the first (bootstrap) build pass when this
+    /// package is part of a dependency cycle.  The orchestrator detects the
+    /// cycle automatically; this field tells it *how* to break it.
+    ///
+    /// Example (freetype ↔ harfbuzz):
+    ///   bootstrap_without = ["harfbuzz"]
+    ///
+    /// The plan script can then branch on WRIGHT_BOOTSTRAP_BUILD=1 or
+    /// WRIGHT_BOOTSTRAP_WITHOUT_HARFBUZZ=1 to disable the feature.
+    #[serde(default)]
+    pub bootstrap_without: Vec<String>,
 }
 
 impl Default for BuildOptions {
@@ -145,6 +156,7 @@ impl Default for BuildOptions {
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
+            bootstrap_without: Vec::new(),
         }
     }
 }

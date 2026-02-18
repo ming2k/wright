@@ -113,6 +113,18 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--depth <N>` | Maximum recursion depth for `-D` and `-R` (default: 1) |
 
+Before building, `wbuild run` displays a **Construction Plan** listing all packages to be built and the reason:
+
+| Label | Meaning |
+|-------|---------|
+| `[NEW]` | Explicitly requested target |
+| `[LINK-REBUILD]` | Triggered because a link dependency was updated |
+| `[REV-REBUILD]` | Triggered transitively via `-R` |
+| `[BOOTSTRAP]` | First pass of a two-pass bootstrap cycle build (built without cyclic dep) |
+| `[FULL]` | Second pass of a bootstrap cycle build (complete rebuild after cycle is resolved) |
+
+See [Bootstrap Cycles](writing-plans.md#bootstrap-cycles) for details on the two-pass mechanism.
+
 #### `wbuild check [TARGETS]...`
 
 Validate `plan.toml` files for syntax and logic errors.
@@ -125,6 +137,6 @@ Download and cache sources for the specified plans without building.
 
 Analyze the **static** dependency tree of a plan in the hold tree. Shows what *would* be built.
 
-#### `wbuild update [TARGETS]...`
+#### `wbuild checksum [TARGETS]...`
 
-Download sources and update SHA256 checksums in `plan.toml`.
+Download sources and update SHA256 checksums in `plan.toml`. Only updates the specified plans — no dependency cascade is applied (unlike `wbuild run`, checksum is a per-plan metadata operation).

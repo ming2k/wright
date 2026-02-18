@@ -1,5 +1,5 @@
 //! Build orchestrator — parallel build scheduling, dependency resolution,
-//! and --rebuild-deps expansion.
+//! cascade expansion, and automatic bootstrap cycle detection/resolution.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -78,20 +78,36 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     };
 
     // 2. Build dependency map
-    let graph = build_dep_map(&plans_to_build, opts.checksum, reasons, &all_plans)?;
+    let mut graph = build_dep_map(&plans_to_build, opts.checksum, reasons, &all_plans)?;
+
+    // 2b. Detect and resolve bootstrap cycles
+    if opts.is_build_op() {
+        inject_bootstrap_passes(&mut graph)?;
+    }
 
     // --- Build Plan Summary ---
     println!("Construction Plan:");
     let mut sorted_targets: Vec<_> = graph.build_set.iter().collect();
     sorted_targets.sort();
     for name in sorted_targets {
-        let reason_str = match graph.rebuild_reasons.get(name) {
-            Some(RebuildReason::Explicit) => "[NEW]".to_string(),
-            Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
-            Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
-            None => "".to_string(),
+        let is_bootstrap_task = name.ends_with(":bootstrap");
+        let base_name = name.trim_end_matches(":bootstrap");
+        let is_full_after_bootstrap = !is_bootstrap_task
+            && graph.build_set.contains(&format!("{}:bootstrap", name));
+
+        let reason_str = if is_bootstrap_task {
+            "[BOOTSTRAP]".to_string()
+        } else if is_full_after_bootstrap {
+            "[FULL]".to_string()
+        } else {
+            match graph.rebuild_reasons.get(name.as_str()) {
+                Some(RebuildReason::Explicit) => "[NEW]".to_string(),
+                Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
+                Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
+                None => "".to_string(),
+            }
         };
-        println!("  {: <15} {}", reason_str, name);
+        println!("  {: <15} {}", reason_str, base_name);
     }
     println!();
 
@@ -102,6 +118,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         &graph.deps_map,
         &graph.build_set,
         &opts,
+        &graph.bootstrap_without,
     )
 }
 
@@ -203,6 +220,176 @@ struct PlanGraph {
     deps_map: HashMap<String, Vec<String>>,
     build_set: HashSet<String>,
     rebuild_reasons: HashMap<String, RebuildReason>,
+    /// For bootstrap tasks (key = "{pkg}:bootstrap"), the deps that were
+    /// excluded so the cycle could be broken.
+    bootstrap_without: HashMap<String, Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap cycle detection (Tarjan's SCC)
+// ---------------------------------------------------------------------------
+
+struct SccState {
+    index: usize,
+    stack: Vec<String>,
+    on_stack: HashMap<String, bool>,
+    indices: HashMap<String, usize>,
+    lowlinks: HashMap<String, usize>,
+    sccs: Vec<Vec<String>>,
+}
+
+/// Return all strongly-connected components with more than one node.
+fn find_cycles(graph: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
+    let mut state = SccState {
+        index: 0,
+        stack: Vec::new(),
+        on_stack: HashMap::new(),
+        indices: HashMap::new(),
+        lowlinks: HashMap::new(),
+        sccs: Vec::new(),
+    };
+    for node in graph.keys() {
+        if !state.indices.contains_key(node.as_str()) {
+            tarjan_visit(node, graph, &mut state);
+        }
+    }
+    state.sccs
+}
+
+fn tarjan_visit(v: &str, graph: &HashMap<String, Vec<String>>, s: &mut SccState) {
+    let idx = s.index;
+    s.indices.insert(v.to_string(), idx);
+    s.lowlinks.insert(v.to_string(), idx);
+    s.index += 1;
+    s.stack.push(v.to_string());
+    s.on_stack.insert(v.to_string(), true);
+
+    let neighbors = graph.get(v).cloned().unwrap_or_default();
+    for w in &neighbors {
+        if !s.indices.contains_key(w.as_str()) {
+            tarjan_visit(w, graph, s);
+            let ll_w = s.lowlinks[w.as_str()];
+            *s.lowlinks.get_mut(v).unwrap() = s.lowlinks[v].min(ll_w);
+        } else if *s.on_stack.get(w.as_str()).unwrap_or(&false) {
+            let idx_w = s.indices[w.as_str()];
+            *s.lowlinks.get_mut(v).unwrap() = s.lowlinks[v].min(idx_w);
+        }
+    }
+
+    if s.lowlinks[v] == s.indices[v] {
+        let mut scc = Vec::new();
+        loop {
+            let w = s.stack.pop().unwrap();
+            s.on_stack.insert(w.clone(), false);
+            scc.push(w.clone());
+            if w == v { break; }
+        }
+        if scc.len() > 1 {
+            s.sccs.push(scc);
+        }
+    }
+}
+
+/// For each dependency cycle in the graph, find a package with
+/// `bootstrap_without` that breaks the cycle and insert a two-pass
+/// build plan: `{pkg}:bootstrap` runs first (no cyclic dep), then
+/// the rest of the cycle, then `{pkg}` (full) rebuilds with all deps.
+fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
+    let cycles = find_cycles(&graph.deps_map);
+    if cycles.is_empty() {
+        return Ok(());
+    }
+
+    for cycle in &cycles {
+        let cycle_set: HashSet<&str> = cycle.iter().map(|s| s.as_str()).collect();
+
+        // Find a package in the cycle that declares bootstrap_without covering
+        // at least one edge that is part of the cycle.
+        let mut chosen: Option<(String, Vec<String>)> = None;
+        for pkg in cycle {
+            let path = match graph.name_to_path.get(pkg) {
+                Some(p) => p.clone(),
+                None => continue,
+            };
+            let manifest = match PackageManifest::from_file(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let bw = &manifest.options.bootstrap_without;
+            if bw.is_empty() { continue; }
+
+            // Only keep entries that are actual cycle edges for this package.
+            let cycle_edges: Vec<String> = graph.deps_map
+                .get(pkg)
+                .map(|deps| deps.iter()
+                    .filter(|d| bw.contains(d) && cycle_set.contains(d.as_str()))
+                    .cloned()
+                    .collect())
+                .unwrap_or_default();
+
+            if !cycle_edges.is_empty() {
+                chosen = Some((pkg.clone(), cycle_edges));
+                break;
+            }
+        }
+
+        let (pkg, excl) = match chosen {
+            Some(c) => c,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Dependency cycle cannot be automatically resolved.\n\
+                     Cycle: {}\n\
+                     Add 'bootstrap_without' to [options] in one of these plans \
+                     to declare how to break it.",
+                    cycle.join(" → ")
+                ));
+            }
+        };
+
+        let bootstrap_key = format!("{}:bootstrap", pkg);
+
+        // Bootstrap task: same deps as full, minus the cycle-breaking edges.
+        let bootstrap_deps: Vec<String> = graph.deps_map
+            .get(&pkg)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| !excl.contains(d))
+            .collect();
+
+        graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
+        graph.build_set.insert(bootstrap_key.clone());
+        graph.name_to_path.insert(
+            bootstrap_key.clone(),
+            graph.name_to_path[&pkg].clone(),
+        );
+        graph.bootstrap_without.insert(bootstrap_key.clone(), excl.clone());
+
+        // Full task now waits for its own bootstrap to finish.
+        graph.deps_map.get_mut(&pkg).unwrap().push(bootstrap_key.clone());
+
+        // Other packages inside the cycle that depend on `pkg` should now
+        // depend on the bootstrap version so they can start earlier.
+        for other in cycle {
+            if other == &pkg { continue; }
+            if let Some(deps) = graph.deps_map.get_mut(other) {
+                for dep in deps.iter_mut() {
+                    if dep == &pkg {
+                        *dep = bootstrap_key.clone();
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Bootstrap cycle resolved: '{}' will be built twice \
+             (first without [{}], then fully)",
+            pkg,
+            excl.join(", ")
+        );
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +608,7 @@ fn build_dep_map(
         deps_map.insert(name, deps);
     }
 
-    Ok(PlanGraph { name_to_path, deps_map, build_set, rebuild_reasons })
+    Ok(PlanGraph { name_to_path, deps_map, build_set, rebuild_reasons, bootstrap_without: HashMap::new() })
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +621,7 @@ fn execute_builds(
     deps_map: &HashMap<String, Vec<String>>,
     build_set: &HashSet<String>,
     opts: &BuildOptions,
+    bootstrap_without: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, anyhow::Error)>>();
     let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -444,6 +632,7 @@ fn execute_builds(
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
+    let bootstrap_without = Arc::new(bootstrap_without.clone());
 
     let actual_jobs = if opts.jobs == 0 {
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
@@ -485,8 +674,22 @@ fn execute_builds(
             let path = name_to_path.get(&name).unwrap().clone();
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
-            let opts_clone = opts.clone();
             let install_lock_clone = install_lock.clone();
+            let bootstrap_without_clone = bootstrap_without.clone();
+
+            // Bootstrap tasks: build without cyclic deps, set env vars.
+            // Full tasks that follow a bootstrap: force rebuild (archive exists
+            // but is the incomplete bootstrap version).
+            let bootstrap_excl = bootstrap_without_clone
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let is_post_bootstrap = !name.ends_with(":bootstrap")
+                && build_set.contains(&format!("{}:bootstrap", name));
+            let mut effective_opts = opts.clone();
+            if is_post_bootstrap {
+                effective_opts.force = true;
+            }
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -498,13 +701,13 @@ fn execute_builds(
                 };
                 let res = build_one(
                     &builder_clone, &manifest, &path, &config_clone,
-                    &opts_clone,
+                    &effective_opts, &bootstrap_excl,
                 );
 
                 match res {
                     Ok(_) => {
                         // Success! Now install if requested
-                        if opts_clone.install {
+                        if effective_opts.install {
                             let _guard = install_lock_clone.lock().unwrap();
                             info!("Automatically installing built package: {}", name_clone);
                             
@@ -616,6 +819,7 @@ fn build_one(
     manifest_path: &Path,
     config: &GlobalConfig,
     opts: &BuildOptions,
+    bootstrap_excl: &[String],
 ) -> Result<()> {
     if opts.checksum {
         builder.update_hashes(manifest, manifest_path).context("failed to update hashes")?;
@@ -657,9 +861,27 @@ fn build_one(
         }
     }
 
+    // Build extra env vars for bootstrap pass.
+    let mut extra_env = std::collections::HashMap::new();
+    if !bootstrap_excl.is_empty() {
+        extra_env.insert("WRIGHT_BOOTSTRAP_BUILD".to_string(), "1".to_string());
+        for dep in bootstrap_excl {
+            let key = format!(
+                "WRIGHT_BOOTSTRAP_WITHOUT_{}",
+                dep.to_uppercase().replace('-', "_")
+            );
+            extra_env.insert(key, "1".to_string());
+        }
+        info!(
+            "Bootstrap build of '{}' (without: {})",
+            manifest.plan.name,
+            bootstrap_excl.join(", ")
+        );
+    }
+
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone())?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env)?;
 
     // Skip archive creation when --only is used for non-package stages
     if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {
