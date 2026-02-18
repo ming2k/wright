@@ -16,7 +16,7 @@ sha256 = []
 
 [lifecycle.prepare]
 executor = "shell"
-sandbox = "none"
+sandbox = "strict"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -26,14 +26,14 @@ EOF
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "none"
+sandbox = "strict"
 script = """
 gcc -o hello hello.c
 """
 
 [lifecycle.package]
 executor = "shell"
-sandbox = "none"
+sandbox = "strict"
 script = """
 install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 """

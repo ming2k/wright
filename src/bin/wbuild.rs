@@ -51,8 +51,8 @@ enum Commands {
         #[arg(long, short)]
         force: bool,
 
-        /// Max number of parallel builds
-        #[arg(short = 'j', long, default_value = "1")]
+        /// Max number of parallel builds (0 = auto-detect)
+        #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
 
         /// Rebuild all packages that depend on the target (for ABI breakage)
@@ -67,8 +67,8 @@ enum Commands {
         #[arg(short = 'i', long)]
         install: bool,
 
-        /// Maximum recursion depth for -D and -R (0 = unlimited, default = 1)
-        #[arg(long, default_value = "1")]
+        /// Maximum recursion depth for -D and -R (0 = unlimited)
+        #[arg(long, default_value = "0")]
         depth: usize,
     },
     /// Validate plan.toml files for syntax and logic errors

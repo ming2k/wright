@@ -5,7 +5,7 @@ pub mod orchestrator;
 
 use std::path::{Path, PathBuf};
 
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
@@ -72,6 +72,42 @@ impl Builder {
         Self { config, executors }
     }
 
+    /// Compute a unique hash representing the entire build context.
+    pub fn compute_build_key(&self, manifest: &PackageManifest) -> Result<String> {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+
+        // 1. Hash the plan itself
+        hasher.update(manifest.plan.name.as_bytes());
+        hasher.update(manifest.plan.version.as_bytes());
+        hasher.update(manifest.plan.release.to_string().as_bytes());
+
+        // 2. Hash source URIs and their expected hashes
+        for (i, uri) in manifest.sources.uris.iter().enumerate() {
+            hasher.update(uri.as_bytes());
+            if let Some(h) = manifest.sources.sha256.get(i) {
+                hasher.update(h.as_bytes());
+            }
+        }
+
+        // 3. Hash build instructions (lifecycle scripts)
+        let mut stage_names: Vec<_> = manifest.lifecycle.keys().collect();
+        stage_names.sort();
+        for name in stage_names {
+            if let Some(stage) = manifest.lifecycle.get(name) {
+                hasher.update(name.as_bytes());
+                hasher.update(stage.script.as_bytes());
+                hasher.update(stage.executor.as_bytes());
+            }
+        }
+
+        // 4. Hash global build flags (CFLAGS, etc.)
+        hasher.update(self.config.build.cflags.as_bytes());
+        hasher.update(self.config.build.cxxflags.as_bytes());
+
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
     /// Process a URI by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
     fn process_uri(&self, uri: &str, manifest: &PackageManifest) -> String {
         let mut vars = std::collections::HashMap::new();
@@ -114,6 +150,41 @@ impl Builder {
         let log_dir = build_root.join("log");
 
         let single_stage = only_stage.is_some();
+
+        // --- Caching Logic (Step 1: Check) ---
+        let build_key = self.compute_build_key(manifest)?;
+        let cache_dir = self.config.general.cache_dir.join("builds");
+        let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
+
+        if !single_stage && stop_after.is_none() && cache_file.exists() {
+            info!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
+            
+            // Recreate directories
+            for dir in [&src_dir, &pkg_dir, &log_dir] {
+                if dir.exists() { std::fs::remove_dir_all(dir).ok(); }
+                std::fs::create_dir_all(dir).map_err(|e| WrightError::IoError(e))?;
+            }
+
+            // Extract cache into build_root
+            compress::extract_archive(&cache_file, &build_root)?;
+            
+            // Re-detect split package directories from the cached build_root
+            let mut split_pkg_dirs = std::collections::HashMap::new();
+            for split_name in manifest.split.keys() {
+                let split_dir = build_root.join(format!("pkg-{}", split_name));
+                if split_dir.exists() {
+                    split_pkg_dirs.insert(split_name.clone(), split_dir);
+                }
+            }
+
+            return Ok(BuildResult {
+                pkg_dir,
+                src_dir,
+                log_dir,
+                build_dir: build_root,
+                split_pkg_dirs,
+            });
+        }
 
         if single_stage {
             // When running a single stage, validate that a previous build exists
@@ -284,6 +355,39 @@ impl Builder {
             }
 
             split_pkg_dirs.insert(split_name.clone(), split_pkg_dir);
+        }
+
+        // --- Caching Logic (Step 2: Save) ---
+        if !single_stage && stop_after.is_none() {
+            if !cache_dir.exists() {
+                let _ = std::fs::create_dir_all(&cache_dir);
+            }
+            // For the cache, we only store pkg/, log/ and pkg-* directories.
+            // We exclude src/ to keep the cache compact.
+            // A dedicated "cache builder" temporary directory to collect these
+            let tmp_cache_dir = tempfile::tempdir().map_err(WrightError::IoError)?;
+            for entry in std::fs::read_dir(&build_root).map_err(WrightError::IoError)? {
+                let entry = entry.map_err(WrightError::IoError)?;
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str == "pkg" || name_str == "log" || name_str.starts_with("pkg-") {
+                    let dest = tmp_cache_dir.path().join(&name);
+                    if entry.file_type().unwrap().is_dir() {
+                        // Use shell CP for speed and robustness with symlinks
+                        let _ = std::process::Command::new("cp")
+                            .arg("-a")
+                            .arg(entry.path())
+                            .arg(dest)
+                            .status();
+                    }
+                }
+            }
+
+            if let Err(e) = compress::create_tar_zst(tmp_cache_dir.path(), &cache_file) {
+                warn!("Failed to create build cache for {}: {}", manifest.plan.name, e);
+            } else {
+                debug!("Saved build cache for {} at {}", manifest.plan.name, cache_file.display());
+            }
         }
 
         Ok(BuildResult {

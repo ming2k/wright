@@ -296,14 +296,42 @@ pub fn run_in_sandbox(
                         die(format!("mkdir newroot: {e}"));
                     }
 
-                    if let Err(e) = mount(
-                        Some("tmpfs"),
-                        &newroot,
-                        Some("tmpfs"),
-                        MsFlags::empty(),
-                        None::<&str>,
-                    ) {
-                        die(format!("mount tmpfs on newroot: {e}"));
+                    // Try OverlayFS first (much faster and cleaner)
+                    let mut overlay_success = false;
+                    let task_id = std::process::id();
+                    let overlay_base = PathBuf::from(format!("/tmp/wright-overlay-{}", task_id));
+                    let upper = overlay_base.join("upper");
+                    let work = overlay_base.join("work");
+
+                    if std::fs::create_dir_all(&upper).is_ok() && std::fs::create_dir_all(&work).is_ok() {
+                        let opts = format!(
+                            "lowerdir=/,upperdir={},workdir={}",
+                            upper.to_string_lossy(),
+                            work.to_string_lossy()
+                        );
+                        if mount(
+                            Some("overlay"),
+                            &newroot,
+                            Some("overlay"),
+                            MsFlags::empty(),
+                            Some(opts.as_str()),
+                        ).is_ok() {
+                            overlay_success = true;
+                            debug!("Using OverlayFS for sandbox root");
+                        }
+                    }
+
+                    if !overlay_success {
+                        debug!("OverlayFS failed, falling back to tmpfs + bind mounts");
+                        if let Err(e) = mount(
+                            Some("tmpfs"),
+                            &newroot,
+                            Some("tmpfs"),
+                            MsFlags::empty(),
+                            None::<&str>,
+                        ) {
+                            die(format!("mount tmpfs on newroot: {e}"));
+                        }
                     }
 
                     // Helper to bind-mount a path into the new root.
@@ -312,23 +340,27 @@ pub fn run_in_sandbox(
                                 readonly: bool|
                      -> std::result::Result<(), String> {
                         let dest = newroot.join(dest_rel.trim_start_matches('/'));
-                        if src.is_dir() {
-                            std::fs::create_dir_all(&dest)
-                                .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
-                        } else {
-                            if let Some(parent) = dest.parent() {
-                                std::fs::create_dir_all(parent)
-                                    .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+                        
+                        // If using overlay, the destination might already exist from lowerdir
+                        if !overlay_success {
+                            if src.is_dir() {
+                                std::fs::create_dir_all(&dest)
+                                    .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+                            } else {
+                                if let Some(parent) = dest.parent() {
+                                    std::fs::create_dir_all(parent)
+                                        .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+                                }
+                                std::fs::write(&dest, b"")
+                                    .map_err(|e| format!("touch {}: {e}", dest.display()))?;
                             }
-                            std::fs::write(&dest, b"")
-                                .map_err(|e| format!("touch {}: {e}", dest.display()))?;
                         }
 
                         mount(
                             Some(src),
                             &dest,
                             None::<&str>,
-                            MsFlags::MS_BIND,
+                            MsFlags::MS_BIND | MsFlags::MS_REC, // Added REC for completeness
                             None::<&str>,
                         )
                         .map_err(|e| {
@@ -352,44 +384,32 @@ pub fn run_in_sandbox(
                         Ok(())
                     };
 
-                    // System directories (read-only).
-                    // Handle merged-usr layouts where /bin, /lib, etc.
-                    // are symlinks to /usr/bin, /usr/lib, etc.
-                    for dir in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
-                        let p = Path::new(dir);
-                        let dest = newroot.join(dir.trim_start_matches('/'));
-                        if let Ok(target) = std::fs::read_link(p) {
-                            // It's a symlink — recreate it in the new root.
-                            if let Err(e) = std::os::unix::fs::symlink(&target, &dest) {
-                                if e.kind() != std::io::ErrorKind::AlreadyExists {
-                                    die(format!(
-                                        "symlink {} -> {}: {e}",
-                                        dest.display(),
-                                        target.display()
-                                    ));
+                    // If not using overlay, we must manually bind system dirs.
+                    // If using overlay, these are already present via lowerdir=/.
+                    if !overlay_success {
+                        for dir in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
+                            let p = Path::new(dir);
+                            let dest = newroot.join(dir.trim_start_matches('/'));
+                            if let Ok(target) = std::fs::read_link(p) {
+                                if let Err(e) = std::os::unix::fs::symlink(&target, &dest) {
+                                    if e.kind() != std::io::ErrorKind::AlreadyExists {
+                                        die(format!("symlink {} -> {}: {e}", dest.display(), target.display()));
+                                    }
+                                }
+                            } else if p.exists() {
+                                if let Err(e) = bind(p, dir, true) {
+                                    die(e);
                                 }
                             }
-                        } else if p.exists() {
-                            // Real directory — bind-mount it.
-                            if let Err(e) = bind(p, dir, true) {
-                                die(e);
-                            }
                         }
-                    }
 
-                    // Essential /etc files (read-only).
-                    for etc_file in [
-                        "/etc/ld.so.conf",
-                        "/etc/ld.so.cache",
-                        "/etc/resolv.conf",
-                        "/etc/hosts",
-                        "/etc/passwd",
-                        "/etc/group",
-                    ] {
-                        let p = Path::new(etc_file);
-                        if p.exists() {
-                            if let Err(e) = bind(p, etc_file, true) {
-                                die(e);
+                        // Essential /etc files.
+                        for etc_file in ["/etc/ld.so.conf", "/etc/ld.so.cache", "/etc/resolv.conf", "/etc/hosts", "/etc/passwd", "/etc/group"] {
+                            let p = Path::new(etc_file);
+                            if p.exists() {
+                                if let Err(e) = bind(p, etc_file, true) {
+                                    die(e);
+                                }
                             }
                         }
                     }

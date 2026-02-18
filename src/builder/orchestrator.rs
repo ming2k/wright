@@ -423,6 +423,14 @@ fn execute_builds(
     let config_arc = Arc::new(config.clone());
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
 
+    let actual_jobs = if opts.jobs == 0 {
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    } else {
+        opts.jobs
+    };
+
+    info!("Starting build with {} parallel jobs", actual_jobs);
+
     loop {
         let mut ready_to_launch = Vec::new();
         {
@@ -444,7 +452,7 @@ fn execute_builds(
         }
 
         for name in ready_to_launch {
-            if in_progress.lock().unwrap().len() >= opts.jobs {
+            if in_progress.lock().unwrap().len() >= actual_jobs {
                 break;
             }
 

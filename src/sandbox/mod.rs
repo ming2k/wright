@@ -1,4 +1,3 @@
-pub mod bwrap;
 pub mod native;
 
 use std::io::{Read, Write};
