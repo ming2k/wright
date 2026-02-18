@@ -178,3 +178,8 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
 
     Ok(issues)
 }
+
+/// Get recorded shadowed file information.
+pub fn check_shadowed_files(db: &Database) -> Result<Vec<String>> {
+    Ok(db.get_shadowed_conflicts()?)
+}

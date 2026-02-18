@@ -28,7 +28,9 @@ pub struct BuildOptions {
     pub update: bool,
     pub jobs: usize,
     pub rebuild_dependents: bool,
+    pub rebuild_dependencies: bool,
     pub install: bool,
+    pub depth: Option<usize>,
 }
 
 /// Run a multi-target build with dependency ordering and parallel execution.
@@ -47,15 +49,21 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         let db_path = config.general.db_path.clone();
         let db = Database::open(&db_path).context("failed to open database for dependency resolution")?;
         
+        let max_depth = opts.depth.unwrap_or(1);
+        let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
+
         // 1b. Recursive upward expansion: Find missing build/link dependencies in hold tree
-        expand_missing_dependencies(&mut plans_to_build, &all_plans, &db)?;
+        expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
     } 
 
+    let max_depth = opts.depth.unwrap_or(1);
+    let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
+
     // 1c. Transitive downward expansion (ABI rebuilds)
-    let reasons = expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents)?;
+    let reasons = expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?;
 
     // 2. Build dependency map
-    let graph = build_dep_map(&plans_to_build, opts.update, reasons)?;
+    let graph = build_dep_map(&plans_to_build, opts.update, reasons, &all_plans)?;
 
     // --- Build Plan Summary ---
     println!("Construction Plan:");
@@ -86,7 +94,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 // Resolver setup
 // ---------------------------------------------------------------------------
 
-fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
+pub fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
     let mut all_assemblies = AssembliesConfig { assemblies: HashMap::new() };
 
     if let Ok(f) = AssembliesConfig::load_all(&config.general.assemblies_dir) {
@@ -186,10 +194,14 @@ struct PlanGraph {
 // Missing dependency expansion (Upward)
 // ---------------------------------------------------------------------------
 
+const SYSTEM_TOOLCHAIN: &[&str] = &["gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed", "gawk"];
+
 fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
+    force_all: bool,
+    max_depth: usize,
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
     for path in plans_to_build.iter() {
@@ -198,26 +210,43 @@ fn expand_missing_dependencies(
         }
     }
 
+    let mut current_depth = 0;
     loop {
+        if current_depth >= max_depth { break; }
         let mut added_any = false;
         let mut to_add_paths = Vec::new();
 
         for path in plans_to_build.iter() {
             let manifest = PackageManifest::from_file(path)?;
             
-            // Check build and link dependencies
-            let deps_to_check = manifest.dependencies.build.iter()
-                .chain(manifest.dependencies.link.iter());
+            // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
+            // For auto-resolving missing deps, we prioritize build and link as they are required for compilation.
+            let deps_to_check = if force_all {
+                manifest.dependencies.build.iter()
+                    .chain(manifest.dependencies.link.iter())
+                    .chain(manifest.dependencies.runtime.iter())
+                    .collect::<Vec<_>>()
+            } else {
+                manifest.dependencies.build.iter()
+                    .chain(manifest.dependencies.link.iter())
+                    .collect::<Vec<_>>()
+            };
 
             for dep in deps_to_check {
                 let dep_name = version::parse_dependency(dep)
                     .unwrap_or_else(|_| (dep.clone(), None)).0;
 
-                // If not in build set AND not installed, try to find plan
+                // Protect toolchain: don't automatically rebuild core tools unless they are missing
+                if force_all && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
+                    continue;
+                }
+
                 if !build_set.contains(&dep_name) {
-                    if db.get_package(&dep_name)?.is_none() {
+                    if force_all || db.get_package(&dep_name)?.is_none() {
                         if let Some(plan_path) = all_plans.get(&dep_name) {
-                            info!("Auto-resolving missing dependency: {}", dep_name);
+                            info!("{} dependency (depth {}): {}", 
+                                if force_all { "Forcing rebuild of" } else { "Auto-resolving missing" }, 
+                                current_depth + 1, dep_name);
                             to_add_paths.push(plan_path.clone());
                             build_set.insert(dep_name.clone());
                             added_any = true;
@@ -227,13 +256,9 @@ fn expand_missing_dependencies(
             }
         }
 
-        for p in to_add_paths {
-            plans_to_build.insert(p);
-        }
-
-        if !added_any {
-            break;
-        }
+        for p in to_add_paths { plans_to_build.insert(p); }
+        if !added_any { break; }
+        current_depth += 1;
     }
 
     Ok(())
@@ -247,6 +272,7 @@ fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     rebuild_all: bool,
+    max_depth: usize,
 ) -> Result<HashMap<String, RebuildReason>> {
     let mut reasons = HashMap::new();
 
@@ -284,7 +310,9 @@ fn expand_rebuild_deps(
     }
 
     // 3. Transitively expand
+    let mut current_depth = 0;
     loop {
+        if current_depth >= max_depth { break; }
         let mut added = false;
         for (name, path) in &all_name_to_path {
             if rebuild_set.contains(name) {
@@ -310,6 +338,7 @@ fn expand_rebuild_deps(
             }
         }
         if !added { break; }
+        current_depth += 1;
     }
 
     Ok(reasons)
@@ -322,10 +351,22 @@ fn build_dep_map(
     plans_to_build: &HashSet<PathBuf>,
     update: bool,
     rebuild_reasons: HashMap<String, RebuildReason>,
+    all_plans: &HashMap<String, PathBuf>,
 ) -> Result<PlanGraph> {
     let mut name_to_path = HashMap::new();
     let mut deps_map = HashMap::new();
     let mut build_set = HashSet::new();
+
+    // 1. Create a mapping of EVERY package name (main and splits) to its providing plan name.
+    let mut pkg_to_plan = HashMap::new();
+    for (plan_name, path) in all_plans {
+        pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
+        if let Ok(m) = PackageManifest::from_file(path) {
+            for split_name in m.split.keys() {
+                pkg_to_plan.insert(split_name.clone(), plan_name.clone());
+            }
+        }
+    }
 
     for path in plans_to_build {
         let manifest = PackageManifest::from_file(path)?;
@@ -335,17 +376,24 @@ fn build_dep_map(
 
         let mut deps = Vec::new();
         if !update {
-            for dep in &manifest.dependencies.build {
-                deps.push(version::parse_dependency(dep)
-                    .unwrap_or_else(|_| (dep.clone(), None)).0);
-            }
-            for dep in &manifest.dependencies.runtime {
-                deps.push(version::parse_dependency(dep)
-                    .unwrap_or_else(|_| (dep.clone(), None)).0);
-            }
-            for dep in &manifest.dependencies.link {
-                deps.push(version::parse_dependency(dep)
-                    .unwrap_or_else(|_| (dep.clone(), None)).0);
+            let mut raw_deps = Vec::new();
+            raw_deps.extend(manifest.dependencies.build.iter().cloned());
+            raw_deps.extend(manifest.dependencies.runtime.iter().cloned());
+            raw_deps.extend(manifest.dependencies.link.iter().cloned());
+
+            for dep in raw_deps {
+                let dep_pkg_name = version::parse_dependency(&dep)
+                    .unwrap_or_else(|_| (dep.clone(), None)).0;
+                
+                // Translate the package dependency to its parent plan name
+                if let Some(parent_plan) = pkg_to_plan.get(&dep_pkg_name) {
+                    // CRITICAL: Avoid self-dependency (e.g. cairo-dev depending on cairo)
+                    if parent_plan != &name {
+                        deps.push(parent_plan.clone());
+                    }
+                } else {
+                    deps.push(dep_pkg_name);
+                }
             }
         }
         deps_map.insert(name, deps);
@@ -435,12 +483,25 @@ fn execute_builds(
                             
                             match Database::open(&config_clone.general.db_path) {
                                 Ok(db) => {
+                                    // 1. Install main package
                                     if let Err(e) = crate::transaction::install_package(
-                                        &db, &archive_path, &PathBuf::from("/"), true // Always force for auto-install
+                                        &db, &archive_path, &PathBuf::from("/"), true
                                     ) {
                                         error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
                                         tx_clone.send(Err((name_clone, e.into()))).unwrap();
                                         return;
+                                    }
+
+                                    // 2. Install all split packages
+                                    for split_name in manifest.split.keys() {
+                                        let split_manifest = manifest.split.get(split_name).unwrap().to_manifest(split_name, &manifest);
+                                        let split_archive_path = output_dir.join(split_manifest.archive_filename());
+                                        info!("Automatically installing split package: {}", split_name);
+                                        if let Err(e) = crate::transaction::install_package(
+                                            &db, &split_archive_path, &PathBuf::from("/"), true
+                                        ) {
+                                            warn!("Automatic installation of split package '{}' failed: {:#}", split_name, e);
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -467,7 +528,21 @@ fn execute_builds(
 
         // Deadlock detection
         if in_progress.lock().unwrap().is_empty() && finished_count < build_set.len() {
-            return Err(anyhow::anyhow!("Deadlock detected or dependency missing from plan set"));
+            let mut message = String::from("Deadlock detected or dependency missing from plan set:\n");
+            let comp = completed.lock().unwrap();
+            let prog = in_progress.lock().unwrap();
+            let fail = failed_set.lock().unwrap();
+
+            for name in build_set {
+                if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
+                    let missing: Vec<_> = deps_map.get(name).unwrap().iter()
+                        .filter(|d| build_set.contains(*d) && !comp.contains(*d))
+                        .cloned()
+                        .collect();
+                    message.push_str(&format!("  - {} is waiting for: {}\n", name, missing.join(", ")));
+                }
+            }
+            return Err(anyhow::anyhow!(message));
         }
 
         match rx.recv().unwrap() {

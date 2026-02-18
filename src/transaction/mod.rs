@@ -265,15 +265,20 @@ pub fn install_package(
     // Collect file list and check for conflicts
     let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
+    let mut shadows = Vec::new();
     for entry in &file_entries {
         if entry.file_type == "file" {
-            if let Some(owner) = db.find_owner(&entry.path)? {
+            if let Some(owner_name) = db.find_owner(&entry.path)? {
                 if force {
-                    warn!("overwriting {} (owned by {})", entry.path, owner);
+                    // Don't record self-shadowing (upgrade case)
+                    if owner_name != pkginfo.name {
+                        warn!("overwriting {} (owned by {})", entry.path, owner_name);
+                        shadows.push((entry.path.clone(), owner_name));
+                    }
                 } else {
                     return Err(WrightError::FileConflict {
                         path: PathBuf::from(&entry.path),
-                        owner,
+                        owner: owner_name,
                     });
                 }
             }
@@ -320,6 +325,13 @@ pub fn install_package(
         pkg_hash: pkg_hash.as_deref(),
         install_scripts: install_content.as_deref(),
     })?;
+
+    // Record shadows
+    for (path, owner_name) in shadows {
+        if let Some(owner_pkg) = db.get_package(&owner_name)? {
+            let _ = db.record_shadowed_file(&path, owner_pkg.id, pkg_id);
+        }
+    }
 
     db.insert_files(pkg_id, &file_entries)?;
 
@@ -444,6 +456,14 @@ pub fn remove_package(
             info!("Preserving config file: {}", file.path);
             continue;
         }
+
+        // --- Multi-ownership check ---
+        let other_owners = db.get_other_owners(pkg.id, &file.path)?;
+        if !other_owners.is_empty() {
+            info!("Path {} is also owned by: {}. Skipping deletion.", file.path, other_owners.join(", "));
+            continue;
+        }
+
         match file.file_type.as_str() {
             "file" | "symlink" => {
                 if full_path.exists() || full_path.symlink_metadata().is_ok() {

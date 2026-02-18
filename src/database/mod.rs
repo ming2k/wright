@@ -167,6 +167,29 @@ impl Database {
         }
     }
 
+    /// Get details of all shadowed file ownerships (forced overwrites).
+    pub fn get_shadowed_conflicts(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.path, p1.name as original, p2.name as shadower 
+             FROM shadowed_files s
+             JOIN packages p1 ON s.original_owner_id = p1.id
+             JOIN packages p2 ON s.shadowed_by_id = p2.id"
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(format!(
+                    "Path '{}' (owned by {}) is shadowed by {}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     pub fn insert_package(&self, pkg: NewPackage) -> Result<i64> {
         self.conn
             .execute(
@@ -288,6 +311,19 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn record_shadowed_file(
+        &self,
+        path: &str,
+        original_owner_id: i64,
+        shadowed_by_id: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO shadowed_files (path, original_owner_id, shadowed_by_id) VALUES (?1, ?2, ?3)",
+            params![path, original_owner_id, shadowed_by_id],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()
             .map_err(|e| WrightError::DatabaseError(format!("failed to begin transaction: {}", e)))?;
@@ -314,6 +350,18 @@ impl Database {
         tx.commit()
             .map_err(|e| WrightError::DatabaseError(format!("failed to commit files: {}", e)))?;
         Ok(())
+    }
+
+    /// Find other packages that own the same path.
+    pub fn get_other_owners(&self, current_pkg_id: i64, path: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id 
+             WHERE f.path = ?1 AND p.id != ?2"
+        )?;
+        let rows = stmt
+            .query_map(params![path, current_pkg_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn replace_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {

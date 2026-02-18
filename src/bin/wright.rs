@@ -5,12 +5,11 @@ use clap::{Parser, Subcommand};
 
 use wright::config::GlobalConfig;
 use wright::database::Database;
-use wright::builder::orchestrator::{self, BuildOptions};
 use wright::transaction;
 use wright::query;
 
 #[derive(Parser)]
-#[command(name = "wright", about = "wright package manager")]
+#[command(name = "wright", about = "wright system administrator")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -68,7 +67,7 @@ enum Commands {
         #[arg(long, short)]
         recursive: bool,
     },
-    /// Analyze package dependency relationships
+    /// Analyze installed package dependency relationships
     Deps {
         /// Package name
         package: Option<String>,
@@ -128,47 +127,6 @@ enum Commands {
         #[arg(long)]
         check_deps: bool,
     },
-    /// Build packages from plan.toml files
-    Build {
-        /// Paths to plan directories, part names, or @assemblies
-        targets: Vec<String>,
-
-        /// Stop after a specific lifecycle stage
-        #[arg(long)]
-        stage: Option<String>,
-
-        /// Run only a single lifecycle stage (preserve build dir from previous build)
-        #[arg(long)]
-        only: Option<String>,
-
-        /// Clean build directory before building
-        #[arg(long)]
-        clean: bool,
-
-        /// Validate plan syntax only
-        #[arg(long)]
-        lint: bool,
-
-        /// Force overwrite existing archive
-        #[arg(long, short)]
-        force: bool,
-
-        /// Update sha256 checksums in plan
-        #[arg(long)]
-        update: bool,
-
-        /// Max number of parallel builds
-        #[arg(short = 'j', long, default_value = "1")]
-        jobs: usize,
-
-        /// Rebuild all packages that depend on the target (for ABI breakage)
-        #[arg(short = 'R', long)]
-        rebuild_dependents: bool,
-
-        /// Automatically install built packages (for dependency satisfaction)
-        #[arg(short = 'i', long)]
-        install: bool,
-    },
     /// Perform a full system health check
     Doctor,
 }
@@ -180,13 +138,6 @@ fn main() -> Result<()> {
 
     let config = GlobalConfig::load(cli.config.as_deref())
         .context("failed to load config")?;
-
-    // Build subcommand has its own setup path
-    if let Commands::Build { targets, stage, only, clean, lint, force, update, jobs, rebuild_dependents, install } = cli.command {
-        return orchestrator::run_build(&config, targets, BuildOptions {
-            stage, only, clean, lint, force, update, jobs, rebuild_dependents, install,
-        });
-    }
 
     let repo_config = wright::config::RepoConfig::load(None)
         .context("failed to load repo config")?;
@@ -499,6 +450,21 @@ fn main() -> Result<()> {
                 }
             }
 
+            // 5. Shadowed Files (History of Overwrites)
+            print!("Checking for recorded file overlaps (shadows)... ");
+            match query::check_shadowed_files(&db) {
+                Ok(issues) if issues.is_empty() => println!("OK (None)"),
+                Ok(issues) => {
+                    println!("INFO (Found {} overlaps)", issues.len());
+                    for issue in issues { println!("  [SHADOW] {}", issue); }
+                    // We don't increment total_issues here as this is often intentional info
+                }
+                Err(e) => {
+                    println!("ERROR: {}", e);
+                    total_issues += 1;
+                }
+            }
+
             println!("===========================");
             if total_issues == 0 {
                 println!("Result: System is healthy.");
@@ -507,7 +473,6 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Build { .. } => unreachable!(),
     }
 
     Ok(())

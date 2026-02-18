@@ -51,10 +51,22 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             backup_path TEXT
         );
 
-        CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
         CREATE INDEX IF NOT EXISTS idx_files_package ON files(package_id);
         CREATE INDEX IF NOT EXISTS idx_deps_package ON dependencies(package_id);
         CREATE INDEX IF NOT EXISTS idx_deps_on ON dependencies(depends_on);
+
+        -- Shadowed files (for conflict analysis and safe removal)
+        CREATE TABLE IF NOT EXISTS shadowed_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL,
+            original_owner_id INTEGER NOT NULL,
+            shadowed_by_id INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (original_owner_id) REFERENCES packages(id) ON DELETE CASCADE,
+            FOREIGN KEY (shadowed_by_id) REFERENCES packages(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_shadowed_path ON shadowed_files(path);
         ",
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
