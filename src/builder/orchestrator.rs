@@ -25,12 +25,21 @@ pub struct BuildOptions {
     pub clean: bool,
     pub lint: bool,
     pub force: bool,
-    pub update: bool,
+    pub checksum: bool,
     pub jobs: usize,
     pub rebuild_dependents: bool,
     pub rebuild_dependencies: bool,
     pub install: bool,
     pub depth: Option<usize>,
+}
+
+impl BuildOptions {
+    /// Returns true if this is a real build operation.
+    /// Per-plan metadata operations (checksum, lint, fetch) skip all
+    /// dependency cascade expansion.
+    fn is_build_op(&self) -> bool {
+        !self.checksum && !self.lint && self.stage.as_deref() != Some("extract")
+    }
 }
 
 /// Run a multi-target build with dependency ordering and parallel execution.
@@ -52,18 +61,24 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         let max_depth = opts.depth.unwrap_or(1);
         let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
 
-        // 1b. Recursive upward expansion: Find missing build/link dependencies in hold tree
-        expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
-    } 
+        // 1b. Recursive upward expansion: only for build operations
+        if opts.is_build_op() {
+            expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
+        }
+    }
 
     let max_depth = opts.depth.unwrap_or(1);
     let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
 
-    // 1c. Transitive downward expansion (ABI rebuilds)
-    let reasons = expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?;
+    // 1c. Transitive downward expansion (ABI rebuilds): only for build operations
+    let reasons = if opts.is_build_op() {
+        expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?
+    } else {
+        HashMap::new()
+    };
 
     // 2. Build dependency map
-    let graph = build_dep_map(&plans_to_build, opts.update, reasons, &all_plans)?;
+    let graph = build_dep_map(&plans_to_build, opts.checksum, reasons, &all_plans)?;
 
     // --- Build Plan Summary ---
     println!("Construction Plan:");
@@ -356,7 +371,7 @@ fn expand_rebuild_deps(
 
 fn build_dep_map(
     plans_to_build: &HashSet<PathBuf>,
-    update: bool,
+    checksum: bool,
     rebuild_reasons: HashMap<String, RebuildReason>,
     all_plans: &HashMap<String, PathBuf>,
 ) -> Result<PlanGraph> {
@@ -382,7 +397,7 @@ fn build_dep_map(
         build_set.insert(name.clone());
 
         let mut deps = Vec::new();
-        if !update {
+        if !checksum {
             let mut raw_deps = Vec::new();
             raw_deps.extend(manifest.dependencies.build.iter().cloned());
             raw_deps.extend(manifest.dependencies.runtime.iter().cloned());
@@ -447,7 +462,7 @@ fn execute_builds(
 
             for name in build_set {
                 if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
-                    let all_deps_met = opts.update || deps_map.get(name).unwrap().iter()
+                    let all_deps_met = opts.checksum || deps_map.get(name).unwrap().iter()
                         .filter(|d| build_set.contains(*d))
                         .all(|d| comp.contains(d));
 
@@ -569,7 +584,7 @@ fn execute_builds(
                 in_progress.lock().unwrap().remove(&name);
                 failed_set.lock().unwrap().insert(name.clone());
                 *failed_count.lock().unwrap() += 1;
-                if !opts.update {
+                if !opts.checksum {
                     return Err(anyhow::anyhow!("Construction failed due to error in {}", name));
                 }
             }
@@ -581,7 +596,7 @@ fn execute_builds(
 
     if final_failed > 0 {
         warn!("Construction finished with {} successes and {} failures.", final_completed, final_failed);
-        if !opts.update {
+        if !opts.checksum {
             return Err(anyhow::anyhow!("Some parts failed to manufacture."));
         }
     } else {
@@ -602,7 +617,7 @@ fn build_one(
     config: &GlobalConfig,
     opts: &BuildOptions,
 ) -> Result<()> {
-    if opts.update {
+    if opts.checksum {
         builder.update_hashes(manifest, manifest_path).context("failed to update hashes")?;
         info!("Updated plan hashes: {}", manifest.plan.name);
         return Ok(());

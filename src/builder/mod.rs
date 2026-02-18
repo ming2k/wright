@@ -37,6 +37,14 @@ fn is_git_uri(uri: &str) -> bool {
     uri.starts_with("git+")
 }
 
+/// Compute the cache filename for a remote source URI.
+/// Prefixes with the package name to prevent collisions between packages
+/// that use similarly-named upstream tarballs (e.g. GitHub archive v*.tar.gz).
+fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
+    let basename = uri.split('/').next_back().unwrap_or("source");
+    sanitize_cache_filename(&format!("{}-{}", pkg_name, basename))
+}
+
 /// Check whether a filename looks like a supported archive format.
 fn is_archive(filename: &str) -> bool {
     filename.ends_with(".tar.gz")
@@ -434,9 +442,7 @@ impl Builder {
             }
 
             let processed_uri = self.process_uri(uri, manifest);
-            let filename = sanitize_cache_filename(
-                processed_uri.split('/').next_back().unwrap_or("source")
-            );
+            let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let path = cache_dir.join(&filename);
 
             if !path.exists() {
@@ -481,29 +487,30 @@ impl Builder {
                     "HEAD".to_string()
                 };
 
-                info!("Checking out Git ref '{}' to src/...", git_ref);
-                // We use git clone from the local cache to the src_dir
-                std::process::Command::new("git")
-                    .arg("clone")
-                    .arg(&cache_path)
-                    .arg(dest_dir.join(&git_dir_name))
-                    .status()
+                let target_dir = dest_dir.join(&git_dir_name);
+                info!("Extracting Git repo to {} (ref: {})...", target_dir.display(), git_ref);
+
+                // Open the cached bare repo and clone it locally to the target_dir
+                let repo = git2::Repository::clone(cache_path.to_str().unwrap(), &target_dir)
                     .map_err(|e| WrightError::BuildError(format!("local git clone failed: {}", e)))?;
-                
-                std::process::Command::new("git")
-                    .arg("-C")
-                    .arg(dest_dir.join(&git_dir_name))
-                    .arg("checkout")
-                    .arg(&git_ref)
-                    .status()
+
+                // Resolve and checkout the specific ref
+                let (object, reference) = repo.revparse_ext(&git_ref)
+                    .or_else(|_| repo.revparse_ext(&format!("origin/{}", git_ref)))
+                    .map_err(|e| WrightError::BuildError(format!("failed to resolve ref {}: {}", git_ref, e)))?;
+
+                repo.checkout_tree(&object, None)
                     .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
+
+                match reference {
+                    Some(gref) => repo.set_head(gref.name().unwrap()),
+                    None => repo.set_head_detached(object.id()),
+                }.map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
                 
                 continue;
             }
 
-            let filename = sanitize_cache_filename(
-                processed_uri.split('/').next_back().unwrap_or("source")
-            );
+            let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let path = cache_dir.join(&filename);
 
             if is_archive(&filename) {
@@ -570,9 +577,7 @@ impl Builder {
                 continue;
             }
 
-            let cache_filename = sanitize_cache_filename(
-                processed_uri.split('/').next_back().unwrap_or("source")
-            );
+            let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let cache_path = cache_dir.join(&cache_filename);
 
             if cache_path.exists() {
@@ -624,7 +629,7 @@ impl Builder {
         Ok(())
     }
 
-    /// Fetch a Git repository into the cache.
+    /// Fetch a Git repository into the cache using native git2 library.
     fn fetch_git_repo(&self, uri: &str, dest: &Path) -> Result<String> {
         let (git_url, git_ref) = if let Some(pos) = uri.find('#') {
             (uri[4..pos].to_string(), uri[pos+1..].to_string())
@@ -635,43 +640,31 @@ impl Builder {
         let ref_parts: Vec<&str> = git_ref.split('=').collect();
         let actual_ref = if ref_parts.len() == 2 { ref_parts[1] } else { &git_ref };
 
-        if !dest.exists() {
-            info!("Cloning Git repository: {}", git_url);
-            std::process::Command::new("git")
-                .arg("clone")
-                .arg("--mirror") // Use mirror for cache to save space and allow switching refs
-                .arg(&git_url)
-                .arg(dest)
-                .status()
-                .map_err(|e| WrightError::BuildError(format!("git clone failed: {}", e)))?;
+        let repo = if !dest.exists() {
+            info!("Cloning Git repository (native): {}", git_url);
+            git2::Repository::init_bare(dest)
+                .map_err(|e| WrightError::BuildError(format!("git init failed: {}", e)))?
         } else {
-            info!("Updating Git repository: {}", git_url);
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(dest)
-                .arg("remote")
-                .arg("update")
-                .arg("--prune")
-                .status()
-                .map_err(|e| WrightError::BuildError(format!("git remote update failed: {}", e)))?;
-        }
+            git2::Repository::open_bare(dest)
+                .map_err(|e| WrightError::BuildError(format!("git open failed: {}", e)))?
+        };
 
-        // Get the actual commit hash for the requested ref
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dest)
-            .arg("rev-parse")
-            .arg(actual_ref)
-            .output()
-            .map_err(|e| WrightError::BuildError(format!("git rev-parse failed: {}", e)))?;
+        let mut remote = repo.remote_anonymous(&git_url)
+            .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
-        if !output.status.success() {
-            return Err(WrightError::BuildError(format!(
-                "failed to resolve git ref '{}' for {}", actual_ref, git_url
-            )));
-        }
+        // Configure fetch options (e.g. proxy support can be added here)
+        let mut fetch_opts = git2::FetchOptions::new();
+        fetch_opts.download_tags(git2::AutotagOption::All);
 
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        info!("Fetching from remote: {}", git_url);
+        remote.fetch(&["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"], Some(&mut fetch_opts), None)
+            .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)))?;
+
+        // Resolve the ref to a commit
+        let obj = repo.revparse_single(actual_ref)
+            .map_err(|e| WrightError::BuildError(format!("failed to resolve git ref '{}': {}", actual_ref, e)))?;
+        
+        Ok(obj.id().to_string())
     }
 
     /// Fetch sources for a package to the cache directory.
@@ -703,9 +696,7 @@ impl Builder {
 
             if is_remote_uri(&processed_uri) {
                 // Remote URI: download to cache
-                let filename = sanitize_cache_filename(
-                    processed_uri.split('/').next_back().unwrap_or("source")
-                );
+                let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
                 let dest = cache_dir.join(&filename);
 
                 let expected_hash = manifest.sources.sha256.get(i).map(|s| s.as_str());

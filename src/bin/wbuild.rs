@@ -90,9 +90,9 @@ enum Commands {
         #[arg(long, short, default_value = "0")]
         depth: usize,
     },
-    /// Update SHA256 checksums in plan.toml
-    Update {
-        /// Plans to update
+    /// Compute and update SHA256 checksums in plan.toml
+    Checksum {
+        /// Plans to checksum
         targets: Vec<String>,
     },
 }
@@ -110,9 +110,9 @@ fn main() -> Result<()> {
             rebuild_dependents, rebuild_dependencies, install, depth 
         } => {
             orchestrator::run_build(&config, targets, BuildOptions {
-                stage, only, clean, force, jobs, 
+                stage, only, clean, force, jobs,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
-                update: false,
+                checksum: false,
                 lint: false,
             })
         }
@@ -128,9 +128,9 @@ fn main() -> Result<()> {
                 ..Default::default()
             })
         }
-        Commands::Update { targets } => {
+        Commands::Checksum { targets } => {
             orchestrator::run_build(&config, targets, BuildOptions {
-                update: true,
+                checksum: true,
                 ..Default::default()
             })
         }
