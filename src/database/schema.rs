@@ -68,6 +68,17 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_shadowed_path ON shadowed_files(path);
+
+        -- Optional (informational) dependencies, not enforced
+        CREATE TABLE IF NOT EXISTS optional_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_opt_deps_package ON optional_dependencies(package_id);
         ",
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;

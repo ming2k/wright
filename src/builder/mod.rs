@@ -540,28 +540,30 @@ impl Builder {
                 continue;
             }
 
-            let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
-            let path = cache_dir.join(&filename);
+            let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
+            let path = cache_dir.join(&cache_filename);
 
-            if is_archive(&filename) {
-                debug!("Extracting {}...", filename);
+            if is_archive(&cache_filename) {
+                debug!("Extracting {}...", cache_filename);
                 compress::extract_archive(&path, dest_dir)?;
             } else {
-                // Non-archive file: copy to files_dir
+                // Non-archive file: copy to files_dir using the original basename
+                // so build scripts can reference it by its natural name (e.g. $FILES_DIR/config).
                 std::fs::create_dir_all(files_dir).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to create files directory {}: {}",
                         files_dir.display(), e
                     ))
                 })?;
-                let dest = files_dir.join(&filename);
+                let dest_name = processed_uri.split('/').next_back().unwrap_or(&processed_uri);
+                let dest = files_dir.join(dest_name);
                 std::fs::copy(&path, &dest).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to copy {} to {}: {}",
                         path.display(), dest.display(), e
                     ))
                 })?;
-                debug!("Copied {} to files directory", filename);
+                debug!("Copied {} to files directory as {}", cache_filename, dest_name);
             }
         }
 
@@ -776,11 +778,7 @@ impl Builder {
             } else {
                 // Local URI: validate path is within plan dir and copy to cache
                 let local_path = validate_local_path(hold_dir, &processed_uri)?;
-                let filename = sanitize_cache_filename(
-                    local_path.file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("source")
-                );
+                let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
                 let dest = cache_dir.join(&filename);
 
                 if !dest.exists() {

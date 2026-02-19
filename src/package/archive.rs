@@ -23,6 +23,7 @@ pub struct PkgInfo {
     pub replaces: Vec<String>,
     pub conflicts: Vec<String>,
     pub backup_files: Vec<String>,
+    pub optional_deps: Vec<(String, String)>,
 }
 
 /// Files that should never be included in a package.
@@ -140,7 +141,12 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut deps_toml = String::new();
-    if !manifest.dependencies.runtime.is_empty() || !manifest.dependencies.link.is_empty() {
+    if !manifest.dependencies.runtime.is_empty()
+        || !manifest.dependencies.link.is_empty()
+        || !manifest.dependencies.replaces.is_empty()
+        || !manifest.dependencies.conflicts.is_empty()
+        || !manifest.dependencies.optional.is_empty()
+    {
         deps_toml.push_str("\n[dependencies]\n");
         if !manifest.dependencies.runtime.is_empty() {
             deps_toml.push_str("runtime = [");
@@ -171,6 +177,17 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
             for (i, dep) in manifest.dependencies.conflicts.iter().enumerate() {
                 if i > 0 { deps_toml.push_str(", "); }
                 deps_toml.push_str(&format!("\"{}\"", dep));
+            }
+            deps_toml.push_str("]\n");
+        }
+        if !manifest.dependencies.optional.is_empty() {
+            deps_toml.push_str("optional = [");
+            for (i, dep) in manifest.dependencies.optional.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!(
+                    "{{name = \"{}\", description = \"{}\"}}",
+                    dep.name, dep.description
+                ));
             }
             deps_toml.push_str("]\n");
         }
@@ -305,6 +322,12 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
     }
 
     #[derive(serde::Deserialize)]
+    struct PkgInfoOptDep {
+        name: String,
+        description: String,
+    }
+
+    #[derive(serde::Deserialize)]
     struct PkgInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
@@ -314,6 +337,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         replaces: Vec<String>,
         #[serde(default)]
         conflicts: Vec<String>,
+        #[serde(default)]
+        optional: Vec<PkgInfoOptDep>,
     }
 
     #[derive(serde::Deserialize)]
@@ -326,9 +351,12 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
     })?;
 
-    let (runtime_deps, link_deps, replaces, conflicts) = parsed
+    let (runtime_deps, link_deps, replaces, conflicts, optional_deps) = parsed
         .dependencies
-        .map(|d| (d.runtime, d.link, d.replaces, d.conflicts))
+        .map(|d| {
+            let opt = d.optional.into_iter().map(|o| (o.name, o.description)).collect();
+            (d.runtime, d.link, d.replaces, d.conflicts, opt)
+        })
         .unwrap_or_default();
 
     Ok(PkgInfo {
@@ -345,5 +373,6 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         replaces,
         conflicts,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
+        optional_deps,
     })
 }

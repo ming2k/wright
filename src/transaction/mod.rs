@@ -362,6 +362,10 @@ pub fn install_package(
         db.insert_dependencies(pkg_id, &deps)?;
     }
 
+    if !pkginfo.optional_deps.is_empty() {
+        db.insert_optional_dependencies(pkg_id, &pkginfo.optional_deps)?;
+    }
+
     db.update_transaction_status(tx_id, "completed")?;
 
     // Run post_install hook
@@ -709,6 +713,7 @@ pub fn upgrade_package(
         deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Link });
     }
     db.replace_dependencies(updated_pkg.id, &deps)?;
+    db.replace_optional_dependencies(updated_pkg.id, &pkginfo.optional_deps)?;
 
     db.update_transaction_status(tx_id, "completed")?;
 

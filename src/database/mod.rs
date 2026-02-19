@@ -651,6 +651,45 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn insert_optional_dependencies(
+        &self,
+        package_id: i64,
+        deps: &[(String, String)],
+    ) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO optional_dependencies (package_id, name, description) VALUES (?1, ?2, ?3)",
+        )?;
+        for (name, description) in deps {
+            stmt.execute(params![package_id, name, description])?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_optional_dependencies(
+        &self,
+        package_id: i64,
+        deps: &[(String, String)],
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM optional_dependencies WHERE package_id = ?1",
+            params![package_id],
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e)))?;
+        self.insert_optional_dependencies(package_id, deps)
+    }
+
+    pub fn get_optional_dependencies(&self, package_id: i64) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, description FROM optional_dependencies WHERE package_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map(params![package_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get optional deps: {}", e)))?;
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]

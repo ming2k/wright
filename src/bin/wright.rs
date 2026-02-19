@@ -323,6 +323,14 @@ fn main() -> Result<()> {
                     if let Some(ref hash) = info.pkg_hash {
                         println!("Package Hash: {}", hash);
                     }
+                    let opt_deps = db.get_optional_dependencies(info.id)
+                        .context("failed to get optional dependencies")?;
+                    if !opt_deps.is_empty() {
+                        println!("Optional    :");
+                        for (name, desc) in &opt_deps {
+                            println!("  {} - {}", name, desc);
+                        }
+                    }
                 }
                 None => {
                     eprintln!("package '{}' is not installed", package);
