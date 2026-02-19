@@ -80,10 +80,18 @@ enum Commands {
         #[arg(long, default_value = "0")]
         depth: usize,
 
-        /// Build exactly the listed packages: skip automatic missing-dep pull-in
-        /// and skip link-cascade reverse rebuilds
-        #[arg(short = 'x', long)]
-        exact: bool,
+        /// Include the listed packages themselves in the build
+        #[arg(short = 's', long = "self")]
+        include_self: bool,
+
+        /// Include missing upstream dependencies in the build (but not the listed packages)
+        #[arg(short = 'd', long = "deps")]
+        include_deps: bool,
+
+        /// Include downstream link-rebuild dependents (packages that depend on the targets,
+        /// but not the targets themselves)
+        #[arg(long = "dependents")]
+        include_dependents: bool,
     },
     /// Validate plan.toml files for syntax and logic errors
     Check {
@@ -132,7 +140,8 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Run {
             targets, stage, only, clean, force, jobs,
-            rebuild_dependents, rebuild_dependencies, install, depth, exact
+            rebuild_dependents, rebuild_dependencies, install, depth,
+            include_self, include_deps, include_dependents,
         } => {
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 stage, only, clean, force, jobs,
@@ -141,7 +150,9 @@ fn main() -> Result<()> {
                 lint: false,
                 verbose: cli.verbose > 0,
                 quiet: cli.quiet,
-                exact,
+                include_self,
+                include_deps,
+                include_dependents,
             })?)
         }
         Commands::Check { targets } => {

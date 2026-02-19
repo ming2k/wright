@@ -34,9 +34,12 @@ pub struct BuildOptions {
     pub depth: Option<usize>,
     pub verbose: bool,
     pub quiet: bool,
-    /// Build exactly the listed packages: skip automatic dependency pull-in
-    /// (missing deps) and skip link-cascade reverse rebuilds.
-    pub exact: bool,
+    /// --self (-s): include the listed packages themselves in the build.
+    pub include_self: bool,
+    /// --deps (-d): include missing upstream dependencies in the build.
+    pub include_deps: bool,
+    /// --dependents: include downstream link-rebuild dependents (not the listed packages themselves).
+    pub include_dependents: bool,
 }
 
 impl BuildOptions {
@@ -67,28 +70,48 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         if max_depth == 0 { usize::MAX } else { max_depth }
     };
 
+    // Determine effective scope.
+    // Default (no explicit scope flags): build self + resolve missing deps, no cascade.
+    // When any scope flag is given, only the explicitly requested scopes apply.
+    let any_explicit_scope = opts.include_self || opts.include_deps || opts.include_dependents;
+    let do_self       = if any_explicit_scope { opts.include_self }       else { true };
+    let do_deps       = if any_explicit_scope { opts.include_deps }       else { true };
+    let do_dependents = if any_explicit_scope { opts.include_dependents } else { false };
+
+    // Save the originally listed packages so we can optionally exclude them later.
+    let original_plans: HashSet<PathBuf> = plans_to_build.clone();
+
     // Use a scoped block to ensure the database handle (and its flock) is released
     // before we start the parallel build/install process.
     {
         let db_path = config.general.db_path.clone();
         let db = Database::open(&db_path).context("failed to open database for dependency resolution")?;
 
-        // 1b. Recursive upward expansion: only for build operations, skipped with --exact.
-        if opts.is_build_op() && !opts.exact {
+        // 1b. Upward expansion: resolve missing upstream deps.
+        if opts.is_build_op() && do_deps {
             expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
         }
     }
 
-    // 1c. Transitive downward expansion (ABI rebuilds): only for build operations, skipped with --exact.
-    let reasons = if opts.is_build_op() && !opts.exact {
+    // 1c. Downward expansion: cascade link rebuilds to packages that depend on the targets.
+    let reasons = if opts.is_build_op() && do_dependents {
         expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?
     } else {
-        // Mark every explicitly listed package as Explicit with no expansion.
         plans_to_build.iter()
             .filter_map(|p| PackageManifest::from_file(p).ok())
             .map(|m| (m.plan.name, RebuildReason::Explicit))
             .collect()
     };
+
+    // 1d. If --self was not requested, remove the originally-listed packages from the
+    //     build set. Their metadata was still used above to find deps/dependents.
+    if opts.is_build_op() && !do_self {
+        plans_to_build.retain(|p| !original_plans.contains(p));
+        if plans_to_build.is_empty() {
+            info!("Nothing to build: all requested deps/dependents are already satisfied.");
+            return Ok(());
+        }
+    }
 
     // 2. Build dependency map
     let mut graph = build_dep_map(&plans_to_build, opts.checksum, reasons, &all_plans)?;
@@ -1046,7 +1069,7 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose)?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force)?;
 
     // Skip archive creation when --only is used for non-package stages
     if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {

@@ -23,7 +23,7 @@ fn build_hello_archive() -> PathBuf {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, None, None, &std::collections::HashMap::new(), false).unwrap();
+    let result = builder.build(&manifest, hold_dir, None, None, &std::collections::HashMap::new(), false, false).unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =

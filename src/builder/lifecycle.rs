@@ -208,9 +208,26 @@ impl<'a> LifecyclePipeline<'a> {
                     stage_name, result.exit_code
                 );
             } else {
+                // Many build tools (meson, cmake, autoconf) write errors to stdout.
+                // Show stderr if non-empty, otherwise fall back to the tail of stdout.
+                let output_snippet = {
+                    let relevant = if !result.stderr.trim().is_empty() {
+                        result.stderr.trim()
+                    } else {
+                        result.stdout.trim()
+                    };
+                    // Limit to last 40 lines to keep the message readable.
+                    let lines: Vec<&str> = relevant.lines().collect();
+                    let tail = if lines.len() > 40 {
+                        format!("... ({} lines omitted) ...\n{}", lines.len() - 40, lines[lines.len() - 40..].join("\n"))
+                    } else {
+                        relevant.to_string()
+                    };
+                    tail
+                };
                 return Err(WrightError::BuildError(format!(
-                    "stage '{}' failed with exit code {}\nstderr: {}",
-                    stage_name, result.exit_code, result.stderr
+                    "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
+                    stage_name, result.exit_code, log_path.display(), output_snippet
                 )));
             }
         }

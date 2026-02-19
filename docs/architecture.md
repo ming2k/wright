@@ -61,16 +61,21 @@ plan.toml → PackageManifest
 
 ### Dependency cascade rules
 
-| Operation | Link cascade | `-D` upward | `-R` downward |
-|-----------|-------------|-------------|---------------|
-| `wbuild run` | always (skip with `--exact`) | with flag (skipped with `--exact`) | with flag (skipped with `--exact`) |
-| `wbuild checksum` | — | — | — |
-| `wbuild fetch` | — | — | — |
-| `wbuild check` | — | — | — |
+Scope flags `--self`, `--deps`, `--dependents` are composable. Default (no flags) = self + deps, no cascade.
 
-`checksum`, `fetch`, and `check` are **per-plan metadata operations** that skip all cascade expansion. Only `wbuild run` triggers dependency-driven rebuild logic.
+| Scope | Listed packages | Missing upstream deps | Downstream link cascade |
+|-------|-----------------|-----------------------|------------------------|
+| default (no flags) | ✓ | ✓ | ✗ |
+| `--self` | ✓ | ✗ | ✗ |
+| `--deps` | ✗ | ✓ | ✗ |
+| `--dependents` | ✗ | ✗ | ✓ |
+| `--self --deps` | ✓ | ✓ | ✗ |
+| `--self --dependents` | ✓ | ✗ | ✓ |
+| `--self --deps --dependents` | ✓ | ✓ | ✓ |
 
-`--exact` (`-x`) opts out of all automatic expansion for a single `wbuild run` invocation — it builds precisely the packages listed, nothing more. This is useful when iterating on a single package without inadvertently pulling in its reverse link dependents.
+`checksum`, `fetch`, and `check` are **per-plan metadata operations** that skip all scope expansion. Only `wbuild run` triggers dependency-driven rebuild logic.
+
+`-D` and `-R` are force-rebuild modifiers that layer on top of scope flags: `-D` force-rebuilds all deps (even installed), `-R` force-rebuilds all dependents (not just link deps).
 
 ## Data Flow: Management (wright)
 

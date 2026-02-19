@@ -176,6 +176,7 @@ impl Builder {
         only_stage: Option<String>,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
+        force: bool,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -192,7 +193,7 @@ impl Builder {
         let cache_dir = self.config.general.cache_dir.join("builds");
         let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
 
-        if !is_bootstrap && !single_stage && stop_after.is_none() && cache_file.exists() {
+        if !force && !is_bootstrap && !single_stage && stop_after.is_none() && cache_file.exists() {
             info!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
             
             // Recreate directories

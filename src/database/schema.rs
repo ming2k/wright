@@ -16,7 +16,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             url TEXT,
             installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             install_size INTEGER,
-            pkg_hash TEXT
+            pkg_hash TEXT,
+            install_scripts TEXT
         );
 
         CREATE TABLE IF NOT EXISTS files (
@@ -70,34 +71,6 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         ",
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
-
-    // Migrate: add install_scripts column if missing
-    let has_install_scripts = conn
-        .prepare("SELECT install_scripts FROM packages LIMIT 0")
-        .is_ok();
-    if !has_install_scripts {
-        conn.execute_batch("ALTER TABLE packages ADD COLUMN install_scripts TEXT")
-            .map_err(|e| {
-                WrightError::DatabaseError(format!(
-                    "failed to add install_scripts column: {}",
-                    e
-                ))
-            })?;
-    }
-
-    // Migrate: add dep_type column if missing
-    let has_dep_type = conn
-        .prepare("SELECT dep_type FROM dependencies LIMIT 0")
-        .is_ok();
-    if !has_dep_type {
-        conn.execute_batch("ALTER TABLE dependencies ADD COLUMN dep_type TEXT DEFAULT 'runtime'")
-            .map_err(|e| {
-                WrightError::DatabaseError(format!(
-                    "failed to add dep_type column: {}",
-                    e
-                ))
-            })?;
-    }
 
     // Enable foreign keys
     conn.execute_batch("PRAGMA foreign_keys = ON;")

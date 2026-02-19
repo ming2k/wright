@@ -130,7 +130,47 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--rebuild-dependencies` (`-D`) | Also rebuild packages that the target depends on (upward) |
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--depth <N>` | Maximum recursion depth for `-D` and `-R` (default: 1) |
-| `--exact` (`-x`) | Build exactly the listed packages — skip automatic missing-dep pull-in and link-cascade reverse rebuilds |
+| `--self` (`-s`) | Include the listed packages themselves in the build |
+| `--deps` (`-d`) | Include missing upstream dependencies (not the listed packages themselves) |
+| `--dependents` | Include downstream link-rebuild dependents (not the listed packages themselves) |
+
+##### Expansion scope
+
+These three flags are **additive and composable**. When none are given, the default applies. When any are given, only the specified scopes are built.
+
+| Flags used | Listed packages | Missing upstream deps | Downstream link cascade |
+|------------|-----------------|-----------------------|------------------------|
+| (default) | ✓ | ✓ | ✗ |
+| `--self` | ✓ | ✗ | ✗ |
+| `--deps` | ✗ | ✓ | ✗ |
+| `--dependents` | ✗ | ✗ | ✓ |
+| `--self --deps` | ✓ | ✓ | ✗ |
+| `--self --dependents` | ✓ | ✗ | ✓ |
+| `--self --deps --dependents` | ✓ | ✓ | ✓ |
+
+**Examples:**
+
+```bash
+# Default: rebuild gtk4 + auto-resolve its missing deps (no downstream cascade)
+wbuild run gtk4
+
+# Only rebuild gtk4 itself — all deps assumed installed
+wbuild run gtk4 --self
+
+# Only build gtk4's missing deps — don't rebuild gtk4 itself (pre-stage deps)
+wbuild run gtk4 --deps
+
+# gtk4 already updated — cascade rebuild to packages that link against it, skip gtk4 itself
+wbuild run gtk4 --dependents
+
+# Rebuild gtk4 AND cascade to its link-dependents (full ABI rebuild)
+wbuild run gtk4 --self --dependents
+
+# Everything: deps + self + cascade
+wbuild run gtk4 --self --deps --dependents
+```
+
+`-D` and `-R` layer on top as force-rebuild modifiers: `-D` force-rebuilds all deps (even installed ones), `-R` force-rebuilds all dependents (not just link deps).
 
 ##### Output control
 
