@@ -33,6 +33,7 @@ wright remove hello                                   # remove
 - [CLI Reference](docs/cli-reference.md) — all commands and flags
 - [Configuration](docs/configuration.md) — wright.toml, repos.toml, executors
 - [Logging](docs/logging.md) — log locations, verbosity, and configuration
+- [Maintenance Guide](docs/os-maintenance-guide.md) — OS package maintenance policy (not wright tool maintenance)
 - [Architecture](docs/architecture.md) — code structure and module overview
 - [Design Specification](docs/design-spec.md) — full technical design document
 - [Contributing](docs/contributing.md) — development setup and conventions
