@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
 use crate::database::{Database, Dependency, DepType, FileEntry, FileType, NewPackage};
@@ -253,7 +253,7 @@ pub fn install_package(
     // Check if already installed (with same name)
     if db.get_package(&pkginfo.name)?.is_some() {
         if force {
-            info!("Package {} already installed, attempting upgrade/reinstall", pkginfo.name);
+            debug!("Package {} already installed, attempting upgrade/reinstall", pkginfo.name);
             return upgrade_package(db, archive_path, root_dir, true);
         }
         return Err(WrightError::PackageAlreadyInstalled(pkginfo.name.clone()));
@@ -367,7 +367,7 @@ pub fn install_package(
     // Run post_install hook
     if let Some(ref content) = install_content {
         if let Some(script) = parse_install_section(content, "post_install") {
-            info!("Running post_install hook for {}", pkginfo.name);
+            debug!("Running post_install hook for {}", pkginfo.name);
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("post_install script failed: {}", e);
             }
@@ -440,7 +440,7 @@ pub fn remove_package(
     // Run pre_remove hook
     if let Some(ref content) = pkg.install_scripts {
         if let Some(script) = parse_install_section(content, "pre_remove") {
-            info!("Running pre_remove hook for {}", name);
+            debug!("Running pre_remove hook for {}", name);
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("pre_remove script failed (continuing removal): {}", e);
             }
@@ -715,7 +715,7 @@ pub fn upgrade_package(
     // 10. Run post_upgrade hook
     if let Some(ref content) = install_content {
         if let Some(script) = parse_install_section(content, "post_upgrade") {
-            info!("Running post_upgrade hook for {}", pkginfo.name);
+            debug!("Running post_upgrade hook for {}", pkginfo.name);
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("post_upgrade script failed: {}", e);
             }

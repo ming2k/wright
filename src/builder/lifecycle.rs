@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::{WrightError, Result};
 use crate::package::manifest::{LifecycleStage, PackageManifest};
@@ -88,7 +88,7 @@ impl<'a> LifecyclePipeline<'a> {
         for stage_name in &stages {
             // Skip built-in stages (handled by Builder)
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
-                info!("Built-in stage {} is handled by Builder", stage_name);
+                debug!("Built-in stage {} is handled by Builder", stage_name);
                 continue;
             }
 
@@ -110,7 +110,7 @@ impl<'a> LifecyclePipeline<'a> {
         // Run pre-hook if exists
         let pre_hook = format!("pre_{}", stage_name);
         if let Some(stage) = self.get_stage(&pre_hook) {
-            info!("Running hook: {}", pre_hook);
+            debug!("Running hook: {}", pre_hook);
             self.run_stage(&pre_hook, stage)?;
         }
 
@@ -121,13 +121,13 @@ impl<'a> LifecyclePipeline<'a> {
             self.run_stage(stage_name, stage)?;
             info!("Stage {} finished in {:.1}s", stage_name, t0.elapsed().as_secs_f64());
         } else {
-            info!("Skipping undefined stage: {}", stage_name);
+            debug!("Skipping undefined stage: {}", stage_name);
         }
 
         // Run post-hook if exists
         let post_hook = format!("post_{}", stage_name);
         if let Some(stage) = self.get_stage(&post_hook) {
-            info!("Running hook: {}", post_hook);
+            debug!("Running hook: {}", post_hook);
             self.run_stage(&post_hook, stage)?;
         }
 
@@ -165,7 +165,7 @@ impl<'a> LifecyclePipeline<'a> {
 
     fn run_stage(&self, stage_name: &str, stage: &LifecycleStage) -> Result<()> {
         if stage.script.is_empty() {
-            info!("Stage {} has empty script, skipping", stage_name);
+            debug!("Stage {} has empty script, skipping", stage_name);
             return Ok(());
         }
 

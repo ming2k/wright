@@ -51,7 +51,7 @@ plan.toml → PackageManifest
               inject two-pass plan ({pkg}:bootstrap → rest → {pkg}:full)
           → if cycle found and no [mvp.dependencies]: error with cycle description
       → display Construction Plan ([NEW] / [LINK-REBUILD] / [REV-REBUILD] / [MVP] / [FULL])
-          (suppressed with --quiet; subprocess output echoed only with --verbose and -j1)
+          (suppressed with --quiet; subprocess output echoed only with --verbose and single job)
       → parallel execution (topology-ordered):
           → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp (and WRIGHT_BOOTSTRAP_BUILD=1), no cache write
           → full pass: Builder::build() force=true, normal cache
@@ -75,7 +75,9 @@ Scope flags `--self`, `--deps`, `--dependents` are composable. Default (no flags
 
 `checksum`, `fetch`, and `check` are **per-plan metadata operations** that skip all scope expansion. Only `wbuild run` triggers dependency-driven rebuild logic.
 
-`-D` and `-R` are force-rebuild modifiers that layer on top of scope flags: `-D` force-rebuilds all deps (even installed), `-R` force-rebuilds all dependents (not just link deps).
+`-D` and `-R` are **force-rebuild escalators** that layer on top of scope flags:
+- `-D` extends `--deps` to also include already-installed dependencies (force-rebuild even if installed)
+- `-R` extends `--dependents` to also include runtime/build dependents (not just link deps)
 
 ## Data Flow: Management (wright)
 

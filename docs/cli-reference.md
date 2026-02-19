@@ -19,6 +19,8 @@ wright [OPTIONS] <COMMAND>
 | `--root <PATH>` | Alternate root directory for file operations (default: `/`) |
 | `--config <PATH>` | Path to config file |
 | `--db <PATH>` | Path to database file |
+| `-v` / `--verbose` | Increase log verbosity; use twice (`-vv`) for trace-level logs |
+| `--quiet` | Reduce output to warnings and errors only |
 
 ### Commands
 
@@ -69,11 +71,20 @@ Analyze dependency relationships of **installed** packages.
 
 #### `wright doctor`
 
-Perform a full system health check. Diagnoses database integrity, dependency satisfaction, circular dependencies, file ownership conflicts, and records of forced overwrites (shadows).
+Perform a full system health check. Diagnoses:
+- Database integrity
+- Dependency satisfaction (broken or missing deps)
+- Circular dependencies
+- File ownership conflicts
+- Recorded forced overwrites (shadows)
 
 #### `wright list`
 
-List installed packages. Use `--roots` to show only top-level packages.
+List installed packages.
+
+| Flag | Description |
+|------|-------------|
+| `--roots` (`-r`) | Show only top-level packages with no installed dependents |
 
 #### `wright query <PACKAGE>`
 
@@ -81,7 +92,7 @@ Show detailed info for an installed package.
 
 #### `wright search <KEYWORD>`
 
-Search installed packages by keyword.
+Search installed packages by keyword (name and description).
 
 #### `wright files <PACKAGE>`
 
@@ -93,7 +104,7 @@ Find which package owns a file.
 
 #### `wright verify [PACKAGE]`
 
-Verify installed file integrity (SHA-256). Use `--check-deps` for a system-wide dependency check.
+Verify installed file integrity (SHA-256 checksums). Omit the package name to verify all installed packages. For a full dependency and integrity health check, use `wright doctor`.
 
 ---
 
@@ -121,22 +132,22 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 
 | Flag | Description |
 |------|-------------|
-| `--stage <STAGE>` | Stop after a specific lifecycle stage |
-| `--only <STAGE>` | Run only a single stage |
-| `--clean` | Clean build directory before building |
-| `--force` (`-f`) | Overwrite existing archives |
-| `-j`/`--jobs <N>` | Parallel builds (0 = auto-detect) |
-| `--rebuild-dependents` (`-R`) | Also rebuild packages that depend on the target (downward) |
-| `--rebuild-dependencies` (`-D`) | Also rebuild packages that the target depends on (upward) |
+| `--until <STAGE>` | Run all stages up to and including this one, then stop (e.g. `configure`, `compile`) |
+| `--only <STAGE>` | Run exactly one stage; all others are skipped (requires a previous full build) |
+| `--clean` | Remove the build directory before starting |
+| `--force` (`-f`) | Force rebuild: overwrite existing archive and bypass the build cache |
+| `-j` / `--jobs <N>` | Parallel builds (0 = auto-detect CPU count) |
 | `--install` (`-i`) | Automatically install each package after a successful build |
-| `--depth <N>` | Maximum recursion depth for `-D` and `-R` (default: 1) |
-| `--self` (`-s`) | Include the listed packages themselves in the build |
-| `--deps` (`-d`) | Include missing upstream dependencies (not the listed packages themselves) |
-| `--dependents` | Include downstream link-rebuild dependents (not the listed packages themselves) |
 
 ##### Expansion scope
 
-These three flags are **additive and composable**. When none are given, the default applies. When any are given, only the specified scopes are built.
+These three flags control **which packages** are added to the build set. They are additive and composable. When none are given, the default applies.
+
+| Flag | Description |
+|------|-------------|
+| `--self` (`-s`) | Include the listed packages themselves |
+| `--deps` (`-d`) | Include missing upstream dependencies (build + link, not yet installed) |
+| `--dependents` | Include packages that link against the target |
 
 | Flags used | Listed packages | Missing upstream deps | Downstream link cascade |
 |------------|-----------------|-----------------------|------------------------|
@@ -147,6 +158,22 @@ These three flags are **additive and composable**. When none are given, the defa
 | `--self --deps` | ✓ | ✓ | ✗ |
 | `--self --dependents` | ✓ | ✗ | ✓ |
 | `--self --deps --dependents` | ✓ | ✓ | ✓ |
+
+##### Force-rebuild modifiers
+
+These two flags are **force-rebuild escalators** — they extend the scope of the corresponding expansion flags to include packages that would otherwise be skipped (already installed or non-link dependents).
+
+| Flag | What it does | Compared to its scope counterpart |
+|------|--------------|-----------------------------------|
+| `-D` / `--rebuild-dependencies` | Force-rebuild ALL upstream dependencies, including already-installed ones | Like `--deps` but does not skip installed packages |
+| `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
+
+`-D` and `-R` can be combined with scope flags:
+- `--deps -D`: add missing deps to build set AND force-rebuild installed deps
+- `--dependents -R`: add link dependents AND force-rebuild non-link dependents too
+
+| Flag | `--depth <N>` | Maximum expansion depth for all cascade operations (0 = unlimited) |
+|------|---------------|----------------------------------------------------------------------|
 
 **Examples:**
 
@@ -168,38 +195,40 @@ wbuild run gtk4 --self --dependents
 
 # Everything: deps + self + cascade
 wbuild run gtk4 --self --deps --dependents
-```
 
-`-D` and `-R` layer on top as force-rebuild modifiers: `-D` force-rebuilds all deps (even installed ones), `-R` force-rebuilds all dependents (not just link deps).
+# Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
+wbuild run gtk4 --deps -D
+
+# gtk4 ABI changed, force-rebuild every package that depends on it (not just link deps)
+wbuild run gtk4 --dependents -R
+```
 
 ##### Output control
 
 By default `wbuild run` is quiet about subprocess I/O — build tool output (make, cmake, etc.) is captured to per-stage `.log` files only. The **Construction Plan** and per-package `[done]` completion lines are written to stderr.
 
 | Mode | Subprocess output | Construction Plan / done lines | Log level |
-|------|:-----------------:|:-----------------------------:|-----------|
+|------|:-----------------:|:-----------------------------:|-----------:|
 | default | captured only | shown | info |
-| `--verbose` (`-v`) | echoed to terminal in real time | shown | debug |
+| `--verbose` (`-v`) | echoed to terminal | shown | debug |
 | `--quiet` | captured only | hidden | warn |
-| `-j >1` with `-v` | captured only (parallel builds suppress echo to avoid interleaving) | shown | debug |
+| `-j >1` with `-v` | captured only (parallel — no interleaving) | shown | debug |
 
 Before building, `wbuild run` displays a **Construction Plan** listing all packages to be built and the reason:
 
 | Label | Meaning |
-|-------|---------|
+|-------|---------:|
 | `[NEW]` | Explicitly requested target |
 | `[LINK-REBUILD]` | Triggered because a link dependency was updated |
 | `[REV-REBUILD]` | Triggered transitively via `-R` |
 | `[MVP]` | First pass of a two-pass cycle build (built without cyclic dep) |
 | `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
-`--exact` suppresses all automatic expansion; every package in the plan will be labelled `[NEW]`.
-
 See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
 
 #### `wbuild check [TARGETS]...`
 
-Validate `plan.toml` files for syntax and logic errors.
+Validate `plan.toml` files for syntax and logic errors. Also prints a dependency graph analysis: whether the graph is acyclic, any detected cycles, and which MVP candidates would break each cycle.
 
 #### `wbuild fetch [TARGETS]...`
 
@@ -208,6 +237,10 @@ Download and cache sources for the specified plans without building.
 #### `wbuild deps <TARGET>`
 
 Analyze the **static** dependency tree of a plan in the hold tree. Shows what *would* be built.
+
+| Flag | Description |
+|------|-------------|
+| `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
 
 #### `wbuild checksum [TARGETS]...`
 

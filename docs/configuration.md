@@ -75,7 +75,7 @@ plans_dir = "/var/lib/wright/plans"      # Plan definitions
 components_dir = "/var/lib/wright/components" # Built package archives
 cache_dir = "/var/lib/wright/cache"       # Downloaded sources cache
 db_path = "/var/lib/wright/db/packages.db" # Installed package database
-log_dir = "/var/log/wright"               # Build and operation logs
+log_dir = "/var/log/wright"               # Operation logs (build logs are under build_dir/<name>-<version>/log)
 executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
 assemblies_dir = "/etc/wright/assemblies" # Assembly definitions (*.toml)
 
@@ -105,7 +105,7 @@ retry_count = 3                         # Download retry attempts
 | `components_dir` | path | `/var/lib/wright/components` | Built package archives (`.wright.tar.zst`) |
 | `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
 | `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database (SQLite) |
-| `log_dir` | path | `/var/log/wright` | Build and operation logs |
+| `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |
 | `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
 | `assemblies_dir` | path | `/etc/wright/assemblies` | Assembly definition files (`*.toml`) |
 

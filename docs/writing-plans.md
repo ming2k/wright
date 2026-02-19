@@ -385,9 +385,9 @@ Resolution order for the MVP pass:
 This keeps the **MVP build** separate from the **full build**, and avoids
 fragile shell conditionals.
 
-### Dependency Graph Analysis (lint)
+### Dependency Graph Analysis
 
-`wbuild lint` prints a report of the dependency graph:
+`wbuild check` validates each plan and prints a dependency graph report:
 
 - Whether the graph is acyclic
 - Each detected cycle (if any)

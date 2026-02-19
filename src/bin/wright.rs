@@ -99,11 +99,7 @@ enum Commands {
     },
     /// List installed packages
     List {
-        /// Show only installed packages (default)
-        #[arg(long)]
-        installed: bool,
-
-        /// Show only top-level (root) packages
+        /// Show only top-level (root) packages with no installed dependents
         #[arg(long, short)]
         roots: bool,
     },
@@ -127,16 +123,12 @@ enum Commands {
         /// File path
         file: String,
     },
-    /// Verify installed package file integrity
+    /// Verify installed package file integrity (SHA-256 checksums)
     Verify {
-        /// Package name (or all if omitted)
+        /// Package name; omit to verify all installed packages
         package: Option<String>,
-
-        /// Check for broken dependencies system-wide
-        #[arg(long)]
-        check_deps: bool,
     },
-    /// Perform a full system health check
+    /// Perform a full system health check (integrity, dependencies, file conflicts, shadows)
     Doctor,
     /// Upgrade all installed packages to latest available versions
     Sysupgrade {
@@ -149,18 +141,26 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut filter = if cli.quiet {
+    let filter = if cli.verbose > 1 {
+        EnvFilter::new("trace")
+    } else if cli.verbose > 0 {
+        EnvFilter::new("debug")
+    } else if cli.quiet {
         EnvFilter::new("warn")
     } else {
         EnvFilter::new("info")
     };
+
     if cli.verbose > 0 {
-        filter = EnvFilter::new("debug");
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    } else {
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_target(false)
+            .with_level(true)
+            .with_env_filter(filter)
+            .init();
     }
-    if cli.verbose > 1 {
-        filter = EnvFilter::new("trace");
-    }
-    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let config = GlobalConfig::load(cli.config.as_deref())
         .context("failed to load config")?;
@@ -369,20 +369,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Verify { package, check_deps } => {
-            if check_deps {
-                let broken = query::check_dependencies(&db)?;
-                if broken.is_empty() {
-                    println!("All dependencies satisfied.");
-                } else {
-                    for issue in broken {
-                        eprintln!("{}", issue);
-                    }
-                    std::process::exit(1);
-                }
-                return Ok(());
-            }
-
+        Commands::Verify { package } => {
             let packages_to_verify: Vec<String> = if let Some(name) = package {
                 vec![name]
             } else {

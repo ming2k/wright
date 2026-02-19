@@ -44,39 +44,44 @@ enum Commands {
         /// Paths to plan directories, part names, or @assemblies
         targets: Vec<String>,
 
-        /// Stop after a specific lifecycle stage
+        /// Run all stages up to and including this one, then stop (e.g. configure, compile)
         #[arg(long)]
-        stage: Option<String>,
+        until: Option<String>,
 
-        /// Run only a single lifecycle stage
+        /// Run exactly one lifecycle stage; all others are skipped (requires a previous full build)
         #[arg(long)]
         only: Option<String>,
 
-        /// Clean build directory before building
+        /// Remove the build directory before starting
         #[arg(long)]
         clean: bool,
 
-        /// Force overwrite existing archive
+        /// Force rebuild: overwrite existing archive and bypass the build cache
         #[arg(long, short)]
         force: bool,
 
-        /// Max number of parallel builds (0 = auto-detect)
+        /// Max number of parallel builds (0 = auto-detect CPU count)
         #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
 
-        /// Rebuild all packages that depend on the target (for ABI breakage)
+        /// Force-rebuild ALL downstream dependents, not just link dependents
+        /// (extends --dependents beyond link-only packages; use together with --dependents
+        /// to also include the expansion, or alone to only force-rebuild already-expanded sets)
         #[arg(short = 'R', long)]
         rebuild_dependents: bool,
 
-        /// Rebuild all packages that the target depends on
+        /// Force-rebuild ALL upstream dependencies, including already-installed ones
+        /// (extends --deps to installed packages; use together with --deps
+        /// to also include the expansion, or alone to force-rebuild without expanding)
         #[arg(short = 'D', long)]
         rebuild_dependencies: bool,
 
-        /// Automatically install built packages
+        /// Automatically install each package after a successful build
         #[arg(short = 'i', long)]
         install: bool,
 
-        /// Maximum recursion depth for -D and -R (0 = unlimited)
+        /// Maximum expansion depth for dependency cascade operations (0 = unlimited,
+        /// applies to --deps, --dependents, -D, and -R)
         #[arg(long, default_value = "0")]
         depth: usize,
 
@@ -84,12 +89,13 @@ enum Commands {
         #[arg(short = 's', long = "self")]
         include_self: bool,
 
-        /// Include missing upstream dependencies in the build (but not the listed packages)
+        /// Expand build set to include missing upstream dependencies (build + link,
+        /// not yet installed; does not include the listed packages themselves)
         #[arg(short = 'd', long = "deps")]
         include_deps: bool,
 
-        /// Include downstream link-rebuild dependents (packages that depend on the targets,
-        /// but not the targets themselves)
+        /// Expand build set to include packages that link against the target
+        /// (does not include the listed packages themselves)
         #[arg(long = "dependents")]
         include_dependents: bool,
     },
@@ -122,29 +128,39 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut filter = if cli.quiet {
+    let filter = if cli.verbose > 1 {
+        EnvFilter::new("trace")
+    } else if cli.verbose > 0 {
+        EnvFilter::new("debug")
+    } else if cli.quiet {
         EnvFilter::new("warn")
     } else {
         EnvFilter::new("info")
     };
+
     if cli.verbose > 0 {
-        filter = EnvFilter::new("debug");
+        // Verbose: show full format with timestamps and module paths for debugging
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    } else {
+        // Default/quiet: clean format without timestamps or module paths
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_target(false)
+            .with_level(true)
+            .with_env_filter(filter)
+            .init();
     }
-    if cli.verbose > 1 {
-        filter = EnvFilter::new("trace");
-    }
-    tracing_subscriber::fmt().with_env_filter(filter).init();
     let config = GlobalConfig::load(cli.config.as_deref())
         .context("failed to load config")?;
 
     match cli.command {
         Commands::Run {
-            targets, stage, only, clean, force, jobs,
+            targets, until, only, clean, force, jobs,
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents,
         } => {
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stage, only, clean, force, jobs,
+                stage: until, only, clean, force, jobs,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,

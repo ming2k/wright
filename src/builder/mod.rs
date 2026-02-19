@@ -194,7 +194,7 @@ impl Builder {
         let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
 
         if !force && !is_bootstrap && !single_stage && stop_after.is_none() && cache_file.exists() {
-            info!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
+            debug!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
             
             // Recreate directories
             for dir in [&src_dir, &pkg_dir, &log_dir] {
@@ -241,7 +241,7 @@ impl Builder {
             }
         }
 
-        info!("Build directory: {}", build_root.display());
+        debug!("Build directory: {}", build_root.display());
 
         let files_dir = build_root.join("files");
 
@@ -336,7 +336,7 @@ impl Builder {
             split_vars.insert("PKG_NAME".to_string(), split_name.clone());
             split_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
 
-            info!("Running package stage for split: {}", split_name);
+            debug!("Running package stage for split: {}", split_name);
 
             let split_options = executor::ExecutorOptions {
                 level: package_stage.sandbox.parse().unwrap(),
@@ -453,7 +453,7 @@ impl Builder {
                 .ok_or_else(|| WrightError::ValidationError(format!("no sha256 hash provided for source {}", i)))?;
 
             if expected_hash == "SKIP" {
-                info!("Skipping verification for source {}", i);
+                debug!("Skipping verification for source {}", i);
                 continue;
             }
 
@@ -472,7 +472,7 @@ impl Builder {
                     filename, expected_hash, actual_hash
                 )));
             }
-            info!("Verified source: {}", filename);
+            debug!("Verified source: {}", filename);
         }
 
         Ok(())
@@ -508,7 +508,7 @@ impl Builder {
                 };
 
                 let target_dir = dest_dir.join(&git_dir_name);
-                info!("Extracting Git repo to {} (ref: {})...", target_dir.display(), git_ref);
+                debug!("Extracting Git repo to {} (ref: {})...", target_dir.display(), git_ref);
 
                 // Open the cached bare repo and clone it locally to the target_dir
                 let cache_str = cache_path.to_str()
@@ -544,7 +544,7 @@ impl Builder {
             let path = cache_dir.join(&filename);
 
             if is_archive(&filename) {
-                info!("Extracting {}...", filename);
+                debug!("Extracting {}...", filename);
                 compress::extract_archive(&path, dest_dir)?;
             } else {
                 // Non-archive file: copy to files_dir
@@ -561,7 +561,7 @@ impl Builder {
                         path.display(), dest.display(), e
                     ))
                 })?;
-                info!("Copied {} to files directory", filename);
+                debug!("Copied {} to files directory", filename);
             }
         }
 
@@ -579,7 +579,7 @@ impl Builder {
 
         let build_dir = if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
             let dir = entries[0].path();
-            info!("Source directory: {}", dir.display());
+            debug!("Source directory: {}", dir.display());
             dir
         } else {
             src_dir.to_path_buf()
@@ -611,7 +611,7 @@ impl Builder {
             let cache_path = cache_dir.join(&cache_filename);
 
             if cache_path.exists() {
-                info!("Using cached source: {}", cache_filename);
+                debug!("Using cached source: {}", cache_filename);
             } else {
                 info!("Downloading {}...", processed_uri);
                 download::download_file(&processed_uri, &cache_path, self.config.network.download_timeout).map_err(|e| {
@@ -620,7 +620,7 @@ impl Builder {
             }
 
             let hash = checksum::sha256_file(&cache_path)?;
-            info!("Computed hash: {}", hash);
+            debug!("Computed hash: {}", hash);
             new_hashes.push(hash);
         }
 
@@ -688,7 +688,7 @@ impl Builder {
         let mut fetch_opts = git2::FetchOptions::new();
         fetch_opts.download_tags(git2::AutotagOption::All);
 
-        info!("Fetching from remote: {}", git_url);
+        debug!("Fetching from remote: {}", git_url);
         remote.fetch(&["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"], Some(&mut fetch_opts), None)
             .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)))?;
 
@@ -722,7 +722,7 @@ impl Builder {
                 let dest = git_cache_dir.join(&git_dir_name);
 
                 let commit_id = self.fetch_git_repo(&processed_uri, &dest)?;
-                info!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
+                debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
                 continue;
             }
 
@@ -738,12 +738,12 @@ impl Builder {
 
                 if dest.exists() {
                     if skip_verify {
-                        info!("Source {} already cached (SKIP verification)", filename);
+                        debug!("Source {} already cached (SKIP verification)", filename);
                         needs_download = false;
                     } else if let Some(hash) = expected_hash {
                         if let Ok(actual_hash) = checksum::sha256_file(&dest) {
                             if actual_hash == hash {
-                                info!("Source {} already cached and verified", filename);
+                                debug!("Source {} already cached and verified", filename);
                                 needs_download = false;
                             } else {
                                 warn!("Cached source {} hash mismatch, re-downloading...", filename);
@@ -751,7 +751,7 @@ impl Builder {
                             }
                         }
                     } else {
-                        info!("Source {} already cached (no hash to verify)", filename);
+                        debug!("Source {} already cached (no hash to verify)", filename);
                         needs_download = false;
                     }
                 }
@@ -790,9 +790,9 @@ impl Builder {
                             local_path.display(), e
                         ))
                     })?;
-                    info!("Copied local file {} to cache", processed_uri);
+                    debug!("Copied local file {} to cache", processed_uri);
                 } else {
-                    info!("Local file {} already in cache", filename);
+                    debug!("Local file {} already in cache", filename);
                 }
             }
         }

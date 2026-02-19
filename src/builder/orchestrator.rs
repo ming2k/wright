@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 
 use crate::error::{WrightError, Result, WrightResultExt};
-use tracing::{info, warn, error};
+use tracing::{debug, info, warn, error};
 
 use crate::builder::Builder;
 use crate::config::{GlobalConfig, AssembliesConfig};
@@ -452,7 +452,7 @@ fn tarjan_visit(v: &str, graph: &HashMap<String, Vec<String>>, s: &mut SccState)
 fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
     let cycles = find_cycles(&graph.deps_map);
     if cycles.is_empty() {
-        info!("Dependency graph is acyclic.");
+        debug!("Dependency graph is acyclic.");
         return Ok(());
     }
 
@@ -805,11 +805,16 @@ fn execute_builds(
             if is_post_bootstrap {
                 effective_opts.force = true;
             }
-            // Suppress subprocess output when running multiple jobs in parallel
-            // to avoid interleaved output on the terminal.
-            if actual_jobs > 1 {
+            // Output routing rules:
+            //   single job + no --quiet  → show subprocess output by default (like makepkg/emerge)
+            //   multi  job + no --verbose → suppress to avoid interleaved terminal noise
+            //   multi  job + --verbose   → user explicitly asked; show (may interleave)
+            if actual_jobs == 1 && !opts.quiet {
+                effective_opts.verbose = true;
+            } else if actual_jobs > 1 && !opts.verbose {
                 effective_opts.verbose = false;
             }
+            // else: multi-job + explicit -v → keep opts.verbose = true (user's choice)
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -829,7 +834,7 @@ fn execute_builds(
                         // Success! Now install if requested
                         if effective_opts.install {
                             let _guard = install_lock_clone.lock().unwrap();
-                            info!("Automatically installing built package: {}", name_clone);
+                            debug!("Automatically installing built package: {}", name_clone);
                             
                             let output_dir = config_clone.general.components_dir.clone();
                             let archive_path = output_dir.join(manifest.archive_filename());
@@ -849,7 +854,7 @@ fn execute_builds(
                                     for split_name in manifest.split.keys() {
                                         let split_manifest = manifest.split.get(split_name).unwrap().to_manifest(split_name, &manifest);
                                         let split_archive_path = output_dir.join(split_manifest.archive_filename());
-                                        info!("Automatically installing split package: {}", split_name);
+                                        debug!("Automatically installing split package: {}", split_name);
                                         if let Err(e) = crate::transaction::install_package(
                                             &db, &split_archive_path, &PathBuf::from("/"), true
                                         ) {

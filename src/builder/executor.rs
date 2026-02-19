@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use tracing::info;
+use tracing::debug;
 
 use crate::error::{WrightError, Result};
 use crate::builder::variables;
@@ -80,7 +80,7 @@ impl ExecutorRegistry {
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
                 let content = std::fs::read_to_string(&path).map_err(WrightError::IoError)?;
                 let config: ExecutorWrapper = toml::from_str(&content)?;
-                info!("Loaded executor: {} from {}", config.executor.name, path.display());
+                debug!("Loaded executor: {} from {}", config.executor.name, path.display());
                 self.executors.insert(config.executor.name.clone(), config.executor);
             }
         }
@@ -197,6 +197,10 @@ pub fn execute_script(
         // make
         if !config.env.iter().any(|(k, _)| k == "MAKEFLAGS") {
             config.env.push(("MAKEFLAGS".to_string(), format!("-j{}", nproc_val)));
+        }
+        // cargo
+        if !config.env.iter().any(|(k, _)| k == "CARGO_BUILD_JOBS") {
+            config.env.push(("CARGO_BUILD_JOBS".to_string(), nproc_val.clone()));
         }
     }
 
