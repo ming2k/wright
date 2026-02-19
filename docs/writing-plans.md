@@ -327,6 +327,14 @@ link = ["freetype"] # omit harfbuzz in MVP
 
 Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[mvp.dependencies]` that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
 
+The MVP phase can also be triggered **manually** without a cycle being present, using the `--mvp` flag:
+
+```bash
+wbuild run freetype --mvp
+```
+
+This builds using `[mvp.dependencies]` and sets the same `WRIGHT_BUILD_PHASE=mvp` environment variables as an automatic cycle-breaking pass. It is useful for testing that a plan's MVP configuration is correct before it is needed in a real cycle.
+
 ### Phase environment variables
 
 During the MVP pass, Wright injects these variables into every lifecycle stage:
@@ -406,6 +414,13 @@ Construction Plan:
 ```
 
 `[MVP]` is the first pass (incomplete). `[FULL]` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
+
+When `--mvp` is used explicitly, all targets show `[MVP]` — no `[FULL]` pass follows:
+
+```
+Construction Plan:
+  [MVP]           freetype
+```
 
 ### Dependency type classification comes first
 

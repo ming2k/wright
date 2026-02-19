@@ -193,11 +193,13 @@ impl<'a> LifecyclePipeline<'a> {
         )?;
         let elapsed = t0.elapsed().as_secs_f64();
 
-        // Write logs
+        // Write logs — include the expanded script and working dir for easier debugging
+        let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
         let log_path = self.log_dir.join(format!("{}.log", stage_name));
         let log_content = format!(
-            "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-            stage_name, result.exit_code, elapsed, result.stdout, result.stderr
+            "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n=== Working dir: {} ===\n\n--- script ---\n{}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+            stage_name, result.exit_code, elapsed, self.working_dir.display(),
+            expanded_script.trim(), result.stdout, result.stderr
         );
         let _ = std::fs::write(&log_path, &log_content);
 

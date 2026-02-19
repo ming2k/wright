@@ -98,6 +98,11 @@ enum Commands {
         /// (does not include the listed packages themselves)
         #[arg(long = "dependents")]
         include_dependents: bool,
+
+        /// Build using the MVP dependency set from [mvp.dependencies] without
+        /// requiring a dependency cycle to trigger it
+        #[arg(long)]
+        mvp: bool,
     },
     /// Validate plan.toml files for syntax and logic errors
     Check {
@@ -157,7 +162,7 @@ fn main() -> Result<()> {
         Commands::Run {
             targets, until, only, clean, force, jobs,
             rebuild_dependents, rebuild_dependencies, install, depth,
-            include_self, include_deps, include_dependents,
+            include_self, include_deps, include_dependents, mvp,
         } => {
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 stage: until, only, clean, force, jobs,
@@ -169,6 +174,7 @@ fn main() -> Result<()> {
                 include_self,
                 include_deps,
                 include_dependents,
+                mvp,
             })?)
         }
         Commands::Check { targets } => {

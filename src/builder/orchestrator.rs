@@ -40,6 +40,8 @@ pub struct BuildOptions {
     pub include_deps: bool,
     /// --dependents: include downstream link-rebuild dependents (not the listed packages themselves).
     pub include_dependents: bool,
+    /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
+    pub mvp: bool,
 }
 
 impl BuildOptions {
@@ -114,10 +116,10 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     }
 
     // 2. Build dependency map
-    let mut graph = build_dep_map(&plans_to_build, opts.checksum, reasons, &all_plans)?;
+    let mut graph = build_dep_map(&plans_to_build, opts.checksum, opts.mvp, reasons, &all_plans)?;
 
-    // 2b. Detect and resolve bootstrap cycles
-    if opts.is_build_op() {
+    // 2b. Detect and resolve bootstrap cycles (skip when --mvp: already using MVP deps)
+    if opts.is_build_op() && !opts.mvp {
         inject_bootstrap_passes(&mut graph)?;
     }
 
@@ -132,7 +134,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             let is_full_after_bootstrap = !is_bootstrap_task
                 && graph.build_set.contains(&format!("{}:bootstrap", name));
 
-            let reason_str = if is_bootstrap_task {
+            let reason_str = if is_bootstrap_task || opts.mvp {
                 "[MVP]".to_string()
             } else if is_full_after_bootstrap {
                 "[FULL]".to_string()
@@ -685,12 +687,14 @@ fn expand_rebuild_deps(
 fn build_dep_map(
     plans_to_build: &HashSet<PathBuf>,
     checksum: bool,
+    is_mvp: bool,
     rebuild_reasons: HashMap<String, RebuildReason>,
     all_plans: &HashMap<String, PathBuf>,
 ) -> Result<PlanGraph> {
     let mut name_to_path = HashMap::new();
     let mut deps_map = HashMap::new();
     let mut build_set = HashSet::new();
+    let mut bootstrap_excluded = HashMap::new();
 
     // 1. Create a mapping of EVERY package name (main and splits) to its providing plan name.
     let mut pkg_to_plan = HashMap::new();
@@ -711,7 +715,21 @@ fn build_dep_map(
 
         let mut deps = Vec::new();
         if !checksum {
-            deps = collect_phase_deps(&manifest, &pkg_to_plan, false);
+            deps = collect_phase_deps(&manifest, &pkg_to_plan, is_mvp);
+
+            // For explicit --mvp builds, compute which deps are excluded vs. full
+            // so build_one can pass the right WRIGHT_BOOTSTRAP_WITHOUT_* env vars.
+            if is_mvp {
+                let full_deps = collect_phase_deps(&manifest, &pkg_to_plan, false);
+                let mvp_deps = collect_phase_deps(&manifest, &pkg_to_plan, true);
+                let excluded: Vec<String> = full_deps
+                    .into_iter()
+                    .filter(|d| !mvp_deps.contains(d))
+                    .collect();
+                if !excluded.is_empty() {
+                    bootstrap_excluded.insert(name.clone(), excluded);
+                }
+            }
         }
         deps_map.insert(name, deps);
     }
@@ -722,7 +740,7 @@ fn build_dep_map(
         build_set,
         rebuild_reasons,
         pkg_to_plan,
-        bootstrap_excluded: HashMap::new(),
+        bootstrap_excluded,
     })
 }
 
@@ -946,7 +964,7 @@ fn lint_dependency_graph(
     plans_to_build: &HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
 ) -> Result<()> {
-    let graph = build_dep_map(plans_to_build, false, HashMap::new(), all_plans)?;
+    let graph = build_dep_map(plans_to_build, false, false, HashMap::new(), all_plans)?;
     let cycles = find_cycles(&graph.deps_map);
 
     println!("Dependency Analysis Report");
@@ -1043,10 +1061,10 @@ fn build_one(
         }
     }
 
-    // Build extra env vars for bootstrap pass.
+    // Build extra env vars for bootstrap/MVP pass.
     let mut extra_env = std::collections::HashMap::new();
-    if !bootstrap_excl.is_empty() {
-        if manifest.mvp.is_none() {
+    if !bootstrap_excl.is_empty() || opts.mvp {
+        if manifest.mvp.is_none() && !bootstrap_excl.is_empty() {
             warn!(
                 "Package '{}' declares no [mvp.dependencies]; \
                  cannot compute MVP deps for cycle breaking.",
@@ -1062,11 +1080,15 @@ fn build_one(
             );
             extra_env.insert(key, "1".to_string());
         }
-        info!(
-            "MVP build of '{}' (without: {})",
-            manifest.plan.name,
-            bootstrap_excl.join(", ")
-        );
+        if !bootstrap_excl.is_empty() {
+            info!(
+                "MVP build of '{}' (without: {})",
+                manifest.plan.name,
+                bootstrap_excl.join(", ")
+            );
+        } else {
+            info!("MVP build of '{}'", manifest.plan.name);
+        }
     }
 
     if !extra_env.contains_key("WRIGHT_BUILD_PHASE") {

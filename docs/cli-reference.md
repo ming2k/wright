@@ -138,6 +138,7 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--force` (`-f`) | Force rebuild: overwrite existing archive and bypass the build cache |
 | `-j` / `--jobs <N>` | Parallel builds (0 = auto-detect CPU count) |
 | `--install` (`-i`) | Automatically install each package after a successful build |
+| `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 
 ##### Expansion scope
 
@@ -201,6 +202,12 @@ wbuild run gtk4 --deps -D
 
 # gtk4 ABI changed, force-rebuild every package that depends on it (not just link deps)
 wbuild run gtk4 --dependents -R
+
+# Build freetype using its [mvp.dependencies] set (e.g. to test the MVP phase manually)
+wbuild run freetype --mvp
+
+# MVP build up to the configure stage only
+wbuild run freetype --mvp --until configure
 ```
 
 ##### Output control
@@ -221,7 +228,7 @@ Before building, `wbuild run` displays a **Construction Plan** listing all packa
 | `[NEW]` | Explicitly requested target |
 | `[LINK-REBUILD]` | Triggered because a link dependency was updated |
 | `[REV-REBUILD]` | Triggered transitively via `-R` |
-| `[MVP]` | First pass of a two-pass cycle build (built without cyclic dep) |
+| `[MVP]` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
 | `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
 See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
