@@ -213,16 +213,16 @@ Override the default pipeline order:
 stages = ["fetch", "verify", "extract", "configure", "compile", "package"]
 ```
 
-### `[phase.<name>]` — Phase Overrides
+### `[mvp]` — MVP Phase Overrides
 
-Phases let you define alternative lifecycle scripts for specific build passes.
-The most common phase is `mvp`, which is used to break dependency cycles.
+The `[mvp]` section defines alternative dependencies and lifecycle scripts for the
+MVP build pass, which is used to break dependency cycles.
 
 ```toml
-[phase.mvp.dependencies]
+[mvp.dependencies]
 link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
 
-[phase.mvp.lifecycle.configure]
+[mvp.lifecycle.configure]
 script = """
 meson setup build \
   --prefix=/usr \
@@ -230,12 +230,12 @@ meson setup build \
 """
 ```
 
-Phase dependencies override the top-level `[dependencies]`. Any field omitted in
-`[phase.<name>.dependencies]` falls back to the corresponding top-level list.
+MVP dependencies override the top-level `[dependencies]`. Any field omitted in
+`[mvp.dependencies]` falls back to the corresponding top-level list.
 
-Resolution order during a phase:
+Resolution order during the MVP pass:
 
-1. If `[phase.<name>.lifecycle.<stage>]` exists, it is used.
+1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
 ### `[install_scripts]`
@@ -318,14 +318,14 @@ Wright resolves them automatically using a **two-pass build**:
 
 ### Declaring an MVP phase
 
-Define phase-specific dependencies for the MVP build so the graph becomes acyclic:
+Define MVP-specific dependencies so the graph becomes acyclic:
 
 ```toml
-[phase.mvp.dependencies]
+[mvp.dependencies]
 link = ["freetype"] # omit harfbuzz in MVP
 ```
 
-Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[phase.mvp].dependencies` that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
+Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[mvp.dependencies]` that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
 
 ### Phase environment variables
 
@@ -340,7 +340,7 @@ During the MVP pass, Wright injects these variables into every lifecycle stage:
 The plan script can still use these variables to disable the relevant feature:
 
 ```toml
-[phase.mvp.dependencies]
+[mvp.dependencies]
 link = ["freetype"]
 
 [lifecycle.configure]
@@ -351,14 +351,14 @@ cmake -B build \
 """
 ```
 
-### Phase lifecycle overrides (recommended)
+### MVP lifecycle overrides (recommended)
 
-For complex packages, it is safer to provide **dedicated phase scripts** instead of
-embedding conditionals. Wright supports a `[phase.<name>]` section that overrides
-`[lifecycle]` **only during that phase**.
+For complex packages, it is safer to provide **dedicated MVP scripts** instead of
+embedding conditionals. Wright supports a `[mvp.lifecycle]` section that overrides
+`[lifecycle]` **only during the MVP pass**.
 
 ```toml
-[phase.mvp.dependencies]
+[mvp.dependencies]
 link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
 
 [lifecycle.configure]
@@ -368,7 +368,7 @@ meson setup build \
   -Dpixbuf=enabled
 """
 
-[phase.mvp.lifecycle.configure]
+[mvp.lifecycle.configure]
 script = """
 meson setup build \
   --prefix=/usr \
@@ -377,9 +377,9 @@ meson setup build \
 """
 ```
 
-Resolution order for a phase pass:
+Resolution order for the MVP pass:
 
-1. If `[phase.<name>.lifecycle.<stage>]` exists, it is used.
+1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
 This keeps the **MVP build** separate from the **full build**, and avoids

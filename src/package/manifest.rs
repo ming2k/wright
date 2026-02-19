@@ -19,7 +19,7 @@ pub struct PackageManifest {
     #[serde(default)]
     pub lifecycle_order: Option<LifecycleOrder>,
     #[serde(default)]
-    pub phase: HashMap<String, PhaseConfig>,
+    pub mvp: Option<PhaseConfig>,
     #[serde(default)]
     pub install_scripts: Option<InstallScripts>,
     #[serde(default)]
@@ -63,7 +63,7 @@ impl SplitPackage {
             options: BuildOptions::default(),
             lifecycle: HashMap::new(),
             lifecycle_order: None,
-            phase: HashMap::new(),
+            mvp: None,
             install_scripts: self.install_scripts.clone(),
             backup: self.backup.clone(),
             split: HashMap::new(),
@@ -745,6 +745,35 @@ script = "true"
 "#;
         let err = PackageManifest::parse(toml).unwrap_err();
         assert!(err.to_string().contains("must not collide with the main package name"));
+    }
+
+    #[test]
+    fn test_parse_mvp_section() {
+        let toml = r#"
+[plan]
+name = "harfbuzz"
+version = "8.0.0"
+release = 1
+description = "Text shaping library"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+link = ["freetype", "cairo", "glib"]
+
+[mvp.dependencies]
+link = ["freetype"]
+
+[mvp.lifecycle.configure]
+script = "meson setup build -Dglib=disabled"
+"#;
+        let manifest = PackageManifest::parse(toml).unwrap();
+        let mvp = manifest.mvp.as_ref().unwrap();
+        let mvp_deps = mvp.dependencies.as_ref().unwrap();
+        assert_eq!(mvp_deps.link.as_deref(), Some(&["freetype".to_string()][..]));
+        assert!(mvp.lifecycle.contains_key("configure"));
+        // Full deps unaffected
+        assert_eq!(manifest.dependencies.link.len(), 3);
     }
 
     #[test]

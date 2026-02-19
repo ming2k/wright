@@ -54,6 +54,21 @@ fn is_archive(filename: &str) -> bool {
         || filename.ends_with(".tar.zst")
 }
 
+/// Remove a directory if it exists (logs a warning on failure), then recreate it.
+fn ensure_clean_dir(dir: &Path) -> Result<()> {
+    if dir.exists() {
+        if let Err(e) = std::fs::remove_dir_all(dir) {
+            warn!("Failed to clean directory {}: {}", dir.display(), e);
+        }
+    }
+    std::fs::create_dir_all(dir).map_err(|e| {
+        WrightError::BuildError(format!(
+            "failed to create build directory {}: {}",
+            dir.display(), e
+        ))
+    })
+}
+
 /// Validate that a local URI resolves within the plan directory.
 fn validate_local_path(hold_dir: &Path, relative_path: &str) -> Result<PathBuf> {
     let resolved = hold_dir.join(relative_path).canonicalize().map_err(|e| {
@@ -160,6 +175,7 @@ impl Builder {
         stop_after: Option<String>,
         only_stage: Option<String>,
         extra_env: &std::collections::HashMap<String, String>,
+        verbose: bool,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -181,8 +197,7 @@ impl Builder {
             
             // Recreate directories
             for dir in [&src_dir, &pkg_dir, &log_dir] {
-                if dir.exists() { std::fs::remove_dir_all(dir).ok(); }
-                std::fs::create_dir_all(dir).map_err(|e| WrightError::IoError(e))?;
+                ensure_clean_dir(dir)?;
             }
 
             // Extract cache into build_root
@@ -215,30 +230,13 @@ impl Builder {
             }
             // Only recreate pkg_dir and log_dir for fresh output
             for dir in [&pkg_dir, &log_dir] {
-                if dir.exists() {
-                    std::fs::remove_dir_all(dir).ok();
-                }
-                std::fs::create_dir_all(dir).map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to create build directory {}: {}",
-                        dir.display(), e
-                    ))
-                })?;
+                ensure_clean_dir(dir)?;
             }
             info!("Running only stage: {}", only_stage.as_deref().unwrap());
         } else {
             // Ensure clean build directories
             for dir in [&src_dir, &pkg_dir, &log_dir] {
-                if dir.exists() {
-                    std::fs::remove_dir_all(dir).ok();
-                }
-                std::fs::create_dir_all(dir).map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to create build directory {}: {}",
-                        dir.display(),
-                        e
-                    ))
-                })?;
+                ensure_clean_dir(dir)?;
             }
         }
 
@@ -311,6 +309,7 @@ impl Builder {
             only_stage: only_stage.clone(),
             executors: &self.executors,
             rlimits: rlimits.clone(),
+            verbose,
         });
 
         pipeline.run()?;
@@ -345,6 +344,7 @@ impl Builder {
                 files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
                 rlimits: rlimits.clone(),
                 main_pkg_dir: Some(pkg_dir.clone()),
+                verbose,
             };
 
             let split_executor = self.executors.get(&package_stage.executor)
@@ -367,7 +367,9 @@ impl Builder {
                 "=== Split package: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
                 split_name, result.exit_code, result.stdout, result.stderr
             );
-            let _ = std::fs::write(&log_path, &log_content);
+            if let Err(e) = std::fs::write(&log_path, &log_content) {
+                warn!("Failed to write build log {}: {}", log_path.display(), e);
+            }
 
             if result.exit_code != 0 {
                 return Err(WrightError::BuildError(format!(
@@ -382,8 +384,8 @@ impl Builder {
         // --- Caching Logic (Step 2: Save) ---
         // Bootstrap builds are incomplete by design; skip saving to cache.
         if !is_bootstrap && !single_stage && stop_after.is_none() {
-            if !cache_dir.exists() {
-                let _ = std::fs::create_dir_all(&cache_dir);
+            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                warn!("Failed to create build cache directory {}: {}", cache_dir.display(), e);
             }
             // For the cache, we only store pkg/, log/ and pkg-* directories.
             // We exclude src/ to keep the cache compact.
@@ -395,13 +397,16 @@ impl Builder {
                 let name_str = name.to_string_lossy();
                 if name_str == "pkg" || name_str == "log" || name_str.starts_with("pkg-") {
                     let dest = tmp_cache_dir.path().join(&name);
-                    if entry.file_type().unwrap().is_dir() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                         // Use shell CP for speed and robustness with symlinks
-                        let _ = std::process::Command::new("cp")
+                        if let Err(e) = std::process::Command::new("cp")
                             .arg("-a")
                             .arg(entry.path())
-                            .arg(dest)
-                            .status();
+                            .arg(&dest)
+                            .status()
+                        {
+                            warn!("Failed to copy {} to build cache: {}", entry.path().display(), e);
+                        }
                     }
                 }
             }
@@ -481,10 +486,14 @@ impl Builder {
             let processed_uri = self.process_uri(uri, manifest);
 
             if is_git_uri(&processed_uri) {
+                let base_uri = processed_uri.split('#').next().unwrap_or(&processed_uri);
+                let last_segment = base_uri.split('/').next_back()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| WrightError::BuildError(
+                        format!("cannot derive directory name from git URI: {}", processed_uri)
+                    ))?;
                 let git_dir_name = sanitize_cache_filename(
-                    processed_uri.split('#').next().unwrap()
-                        .split('/').next_back().unwrap()
-                        .strip_suffix(".git").unwrap_or(processed_uri.split('/').next_back().unwrap())
+                    last_segment.strip_suffix(".git").unwrap_or(last_segment)
                 );
                 let cache_path = cache_dir.join("git").join(&git_dir_name);
                 
@@ -501,7 +510,11 @@ impl Builder {
                 info!("Extracting Git repo to {} (ref: {})...", target_dir.display(), git_ref);
 
                 // Open the cached bare repo and clone it locally to the target_dir
-                let repo = git2::Repository::clone(cache_path.to_str().unwrap(), &target_dir)
+                let cache_str = cache_path.to_str()
+                    .ok_or_else(|| WrightError::BuildError(
+                        format!("git cache path contains non-UTF-8 characters: {}", cache_path.display())
+                    ))?;
+                let repo = git2::Repository::clone(cache_str, &target_dir)
                     .map_err(|e| WrightError::BuildError(format!("local git clone failed: {}", e)))?;
 
                 // Resolve and checkout the specific ref
@@ -513,7 +526,13 @@ impl Builder {
                     .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
 
                 match reference {
-                    Some(gref) => repo.set_head(gref.name().unwrap()),
+                    Some(gref) => {
+                        let ref_name = gref.name()
+                            .ok_or_else(|| WrightError::BuildError(
+                                "git reference name is non-UTF-8".to_string()
+                            ))?;
+                        repo.set_head(ref_name)
+                    }
                     None => repo.set_head_detached(object.id()),
                 }.map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
                 
@@ -641,10 +660,12 @@ impl Builder {
 
     /// Fetch a Git repository into the cache using native git2 library.
     fn fetch_git_repo(&self, uri: &str, dest: &Path) -> Result<String> {
-        let (git_url, git_ref) = if let Some(pos) = uri.find('#') {
-            (uri[4..pos].to_string(), uri[pos+1..].to_string())
+        let uri_body = uri.strip_prefix("git+")
+            .ok_or_else(|| WrightError::BuildError(format!("invalid git URI: {}", uri)))?;
+        let (git_url, git_ref) = if let Some(pos) = uri_body.find('#') {
+            (uri_body[..pos].to_string(), uri_body[pos+1..].to_string())
         } else {
-            (uri[4..].to_string(), "HEAD".to_string())
+            (uri_body.to_string(), "HEAD".to_string())
         };
 
         let ref_parts: Vec<&str> = git_ref.split('=').collect();

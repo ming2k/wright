@@ -106,6 +106,7 @@ pub struct ExecutorOptions {
     pub rlimits: ResourceLimits,
     /// Main package's pkg_dir, mounted at /main-pkg for split package stages.
     pub main_pkg_dir: Option<PathBuf>,
+    pub verbose: bool,
 }
 
 pub struct ExecutionResult {
@@ -164,6 +165,7 @@ pub fn execute_script(
     let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone(), task_id);
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
+    config.verbose = options.verbose;
 
     // Mount main package dir for split package stages
     if let Some(ref main_pkg) = options.main_pkg_dir {

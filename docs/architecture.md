@@ -47,10 +47,11 @@ plan.toml → PackageManifest
       → expand missing deps (Upward, build ops only)
       → expand transitive rebuilds (Downward, build ops only)
       → detect dependency cycles (Tarjan SCC)
-          → if cycle found and [phase.mvp].dependencies declared:
+          → if cycle found and [mvp.dependencies] declared:
               inject two-pass plan ({pkg}:bootstrap → rest → {pkg}:full)
-          → if cycle found and no [phase.mvp].dependencies: error with cycle description
-      → display Construction Plan ([NEW] / [LINK-REBUILD] / [BOOTSTRAP] / [FULL])
+          → if cycle found and no [mvp.dependencies]: error with cycle description
+      → display Construction Plan ([NEW] / [LINK-REBUILD] / [REV-REBUILD] / [MVP] / [FULL])
+          (suppressed with --quiet; subprocess output echoed only with --verbose and -j1)
       → parallel execution (topology-ordered):
           → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp (and WRIGHT_BOOTSTRAP_BUILD=1), no cache write
           → full pass: Builder::build() force=true, normal cache
@@ -62,12 +63,14 @@ plan.toml → PackageManifest
 
 | Operation | Link cascade | `-D` upward | `-R` downward |
 |-----------|-------------|-------------|---------------|
-| `wbuild run` | always | with flag | with flag |
+| `wbuild run` | always (skip with `--exact`) | with flag (skipped with `--exact`) | with flag (skipped with `--exact`) |
 | `wbuild checksum` | — | — | — |
 | `wbuild fetch` | — | — | — |
 | `wbuild check` | — | — | — |
 
 `checksum`, `fetch`, and `check` are **per-plan metadata operations** that skip all cascade expansion. Only `wbuild run` triggers dependency-driven rebuild logic.
+
+`--exact` (`-x`) opts out of all automatic expansion for a single `wbuild run` invocation — it builds precisely the packages listed, nothing more. This is useful when iterating on a single package without inadvertently pulling in its reverse link dependents.
 
 ## Data Flow: Management (wright)
 

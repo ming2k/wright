@@ -1,9 +1,9 @@
 //! Query and analysis operations — dependency tree rendering, etc.
 
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightResultExt};
 use rusqlite::params;
 
-use crate::database::Database;
+use crate::database::{Database, DepType};
 
 /// Print the forward dependency tree for a package.
 pub fn print_dep_tree(
@@ -22,27 +22,27 @@ pub fn print_dep_tree(
         .context(format!("failed to get dependencies for {}", name))?;
 
     let children: Vec<_> = if let Some(f) = filter {
-        deps.iter().filter(|(n, _, _)| n.contains(f)).collect()
+        deps.iter().filter(|d| d.name.contains(f)).collect()
     } else {
         deps.iter().collect()
     };
 
-    for (i, (dep_name, constraint, dep_type)) in children.iter().enumerate() {
+    for (i, dep) in children.iter().enumerate() {
         let is_last_child = i == children.len() - 1;
         let connector = if is_last_child { "└── " } else { "├── " };
-        let version_info = constraint.as_ref()
+        let version_info = dep.constraint.as_ref()
             .map(|c| format!(" ({})", c))
             .unwrap_or_default();
-        let type_info = if *dep_type == "link" { " [link]" } else { "" };
-        let installed_mark = if db.get_package(dep_name)
+        let type_info = if dep.dep_type == DepType::Link { " [link]" } else { "" };
+        let installed_mark = if db.get_package(&dep.name)
             .unwrap_or(None).is_some() { "" } else { " [not installed]" };
 
-        println!("{}{}{}{}{}{}", prefix, connector, dep_name, version_info, type_info, installed_mark);
+        println!("{}{}{}{}{}{}", prefix, connector, dep.name, version_info, type_info, installed_mark);
 
-        if db.get_package(dep_name).unwrap_or(None).is_some() {
+        if db.get_package(&dep.name).unwrap_or(None).is_some() {
             let new_prefix = format!("{}{}", prefix,
                 if is_last_child { "    " } else { "│   " });
-            print_dep_tree(db, dep_name, &new_prefix,
+            print_dep_tree(db, &dep.name, &new_prefix,
                 current_depth + 1, max_depth, filter)?;
         }
     }
@@ -119,12 +119,12 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
 
     for pkg in all_packages {
         let deps = db.get_dependencies(pkg.id)?;
-        for (dep_name, constraint, _) in deps {
-            if db.get_package(&dep_name)?.is_none() {
-                let constraint_str = constraint.map(|c| format!(" ({})", c)).unwrap_or_default();
+        for dep in deps {
+            if db.get_package(&dep.name)?.is_none() {
+                let constraint_str = dep.constraint.map(|c| format!(" ({})", c)).unwrap_or_default();
                 broken.push(format!(
                     "Package '{}' has a broken dependency: '{}'{} not found",
-                    pkg.name, dep_name, constraint_str
+                    pkg.name, dep.name, constraint_str
                 ));
             }
         }

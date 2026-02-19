@@ -8,6 +8,80 @@ use rusqlite::{params, Connection};
 
 use crate::error::{WrightError, Result};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileType {
+    File,
+    Symlink,
+    Directory,
+}
+
+impl FileType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Symlink => "symlink",
+            Self::Directory => "dir",
+        }
+    }
+}
+
+impl TryFrom<&str> for FileType {
+    type Error = WrightError;
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "file" => Ok(Self::File),
+            "symlink" => Ok(Self::Symlink),
+            "dir" => Ok(Self::Directory),
+            _ => Err(WrightError::DatabaseError(format!("unknown file type: {}", s))),
+        }
+    }
+}
+
+impl rusqlite::ToSql for FileType {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepType {
+    Runtime,
+    Link,
+    Build,
+}
+
+impl DepType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Runtime => "runtime",
+            Self::Link => "link",
+            Self::Build => "build",
+        }
+    }
+}
+
+impl TryFrom<&str> for DepType {
+    type Error = WrightError;
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "runtime" => Ok(Self::Runtime),
+            "link" => Ok(Self::Link),
+            "build" => Ok(Self::Build),
+            _ => Err(WrightError::DatabaseError(format!("unknown dep type: {}", s))),
+        }
+    }
+}
+
+impl rusqlite::ToSql for DepType {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PackageInfo {
     pub id: i64,
@@ -28,7 +102,7 @@ pub struct PackageInfo {
 pub struct FileEntry {
     pub path: String,
     pub file_hash: Option<String>,
-    pub file_type: String,
+    pub file_type: FileType,
     pub file_mode: Option<u32>,
     pub file_size: Option<u64>,
     pub is_config: bool,
@@ -46,6 +120,13 @@ pub struct NewPackage<'a> {
     pub install_size: u64,
     pub pkg_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Dependency {
+    pub name: String,
+    pub constraint: Option<String>,
+    pub dep_type: DepType,
 }
 
 pub struct Database {
@@ -379,17 +460,24 @@ impl Database {
 
         let rows = stmt
             .query_map(params![package_id], |row| {
-                Ok(FileEntry {
-                    path: row.get(0)?,
-                    file_hash: row.get(1)?,
-                    file_type: row.get(2)?,
-                    file_mode: row.get(3)?,
-                    file_size: row.get(4)?,
-                    is_config: row.get(5)?,
-                })
+                let ft_str: String = row.get(2)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    ft_str,
+                    row.get::<_, Option<u32>>(3)?,
+                    row.get::<_, Option<u64>>(4)?,
+                    row.get::<_, bool>(5)?,
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))?;
+
+        let rows = rows.into_iter().map(|(path, file_hash, ft_str, file_mode, file_size, is_config)| {
+            let file_type = FileType::try_from(ft_str.as_str())
+                .unwrap_or(FileType::File);
+            FileEntry { path, file_hash, file_type, file_mode, file_size, is_config }
+        }).collect();
 
         Ok(rows)
     }
@@ -412,15 +500,15 @@ impl Database {
     pub fn insert_dependencies(
         &self,
         package_id: i64,
-        deps: &[(String, Option<String>, String)],
+        deps: &[Dependency],
     ) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "INSERT INTO dependencies (package_id, depends_on, version_constraint, dep_type)
              VALUES (?1, ?2, ?3, ?4)",
         )?;
 
-        for (dep_name, constraint, dep_type) in deps {
-            stmt.execute(params![package_id, dep_name, constraint, dep_type])?;
+        for dep in deps {
+            stmt.execute(params![package_id, dep.name, dep.constraint, dep.dep_type])?;
         }
 
         Ok(())
@@ -429,7 +517,7 @@ impl Database {
     pub fn replace_dependencies(
         &self,
         package_id: i64,
-        deps: &[(String, Option<String>, String)],
+        deps: &[Dependency],
     ) -> Result<()> {
         self.conn
             .execute(
@@ -467,23 +555,27 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn get_dependencies(&self, package_id: i64) -> Result<Vec<(String, Option<String>, String)>> {
+    pub fn get_dependencies(&self, package_id: i64) -> Result<Vec<Dependency>> {
         let mut stmt = self.conn.prepare(
             "SELECT depends_on, version_constraint, dep_type FROM dependencies WHERE package_id = ?1",
         )?;
 
         let rows = stmt
             .query_map(params![package_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(|(name, constraint, dt_str)| Dependency {
+            name,
+            constraint,
+            dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
+        }).collect())
     }
 
     /// Get runtime dependencies for a package by name.
-    pub fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<(String, Option<String>, String)>> {
+    pub fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<Dependency>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.depends_on, d.version_constraint, d.dep_type
              FROM dependencies d
@@ -493,12 +585,16 @@ impl Database {
 
         let rows = stmt
             .query_map(params![name], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(|(n, constraint, dt_str)| Dependency {
+            name: n,
+            constraint,
+            dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
+        }).collect())
     }
 
     /// Get all transitive reverse dependents of a package (packages that depend on it,
@@ -655,7 +751,7 @@ mod tests {
             &[FileEntry {
                 path: "/usr/bin/hello".to_string(),
                 file_hash: Some("abc123".to_string()),
-                file_type: "file".to_string(),
+                file_type: FileType::File,
                 file_mode: Some(0o755),
                 file_size: Some(1024),
                 is_config: false,
@@ -686,7 +782,7 @@ mod tests {
             FileEntry {
                 path: "/usr/bin/hello".to_string(),
                 file_hash: Some("abc".to_string()),
-                file_type: "file".to_string(),
+                file_type: FileType::File,
                 file_mode: Some(0o755),
                 file_size: Some(1024),
                 is_config: false,
@@ -694,7 +790,7 @@ mod tests {
             FileEntry {
                 path: "/usr/share/hello/README".to_string(),
                 file_hash: Some("def".to_string()),
-                file_type: "file".to_string(),
+                file_type: FileType::File,
                 file_mode: Some(0o644),
                 file_size: Some(512),
                 is_config: false,
@@ -726,7 +822,7 @@ mod tests {
             &[FileEntry {
                 path: "/usr/bin/hello".to_string(),
                 file_hash: None,
-                file_type: "file".to_string(),
+                file_type: FileType::File,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
@@ -880,7 +976,7 @@ mod tests {
         db.insert_files(id, &[FileEntry {
             path: "/usr/bin/hello".to_string(),
             file_hash: Some("abc".to_string()),
-            file_type: "file".to_string(),
+            file_type: FileType::File,
             file_mode: Some(0o755),
             file_size: Some(1024),
             is_config: false,
@@ -889,7 +985,7 @@ mod tests {
         db.replace_files(id, &[FileEntry {
             path: "/usr/bin/hello2".to_string(),
             file_hash: Some("def".to_string()),
-            file_type: "file".to_string(),
+            file_type: FileType::File,
             file_mode: Some(0o755),
             file_size: Some(2048),
             is_config: false,
@@ -915,13 +1011,13 @@ mod tests {
             })
             .unwrap();
 
-        db.insert_dependencies(id, &[("openssl".to_string(), Some(">= 3.0".to_string()), "runtime".to_string())]).unwrap();
-        db.replace_dependencies(id, &[("zlib".to_string(), None, "runtime".to_string())]).unwrap();
+        db.insert_dependencies(id, &[Dependency { name: "openssl".to_string(), constraint: Some(">= 3.0".to_string()), dep_type: DepType::Runtime }]).unwrap();
+        db.replace_dependencies(id, &[Dependency { name: "zlib".to_string(), constraint: None, dep_type: DepType::Runtime }]).unwrap();
 
         let deps = db.get_dependencies(id).unwrap();
         assert_eq!(deps.len(), 1);
-        assert_eq!(deps[0].0, "zlib");
-        assert_eq!(deps[0].2, "runtime");
+        assert_eq!(deps[0].name, "zlib");
+        assert_eq!(deps[0].dep_type, DepType::Runtime);
     }
 
     #[test]

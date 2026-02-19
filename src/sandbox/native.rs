@@ -13,6 +13,22 @@ use tracing::{debug, info};
 use super::{ResourceLimits, SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
 use crate::error::{Result, WrightError};
 
+/// Route subprocess I/O based on `verbose`. When verbose, output is echoed to
+/// stdout/stderr in real time; otherwise it is silently captured via a sink.
+fn make_tee<R: std::io::Read + Send + 'static>(
+    source: R,
+    verbose: bool,
+    to_stdout: bool,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    if verbose && to_stdout {
+        spawn_tee_reader(source, std::io::stdout())
+    } else if verbose {
+        spawn_tee_reader(source, std::io::stderr())
+    } else {
+        spawn_tee_reader(source, std::io::sink())
+    }
+}
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -116,8 +132,8 @@ pub fn run_in_sandbox(
             .spawn()
             .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
-        let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+        let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
+        let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
             .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
@@ -185,8 +201,8 @@ pub fn run_in_sandbox(
             .spawn()
             .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = spawn_tee_reader(child.stdout.take().unwrap(), std::io::stdout());
-        let stderr_handle = spawn_tee_reader(child.stderr.take().unwrap(), std::io::stderr());
+        let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
+        let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
             .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
@@ -633,8 +649,8 @@ pub fn run_in_sandbox(
                 spawn_timeout_watchdog(child.as_raw() as u32, t, false)
             });
 
-            let stdout_handle = spawn_tee_reader(out_file, std::io::stdout());
-            let stderr_handle = spawn_tee_reader(err_file, std::io::stderr());
+            let stdout_handle = make_tee(out_file, config.verbose, true);
+            let stderr_handle = make_tee(err_file, config.verbose, false);
 
             let status = wait_for_child(child)?;
             if let Some(done) = watchdog { done.store(true, Ordering::Release); }

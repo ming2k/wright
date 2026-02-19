@@ -29,6 +29,7 @@ pub struct LifecyclePipeline<'a> {
     only_stage: Option<String>,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
+    verbose: bool,
 }
 
 pub struct LifecycleContext<'a> {
@@ -43,6 +44,7 @@ pub struct LifecycleContext<'a> {
     pub only_stage: Option<String>,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
+    pub verbose: bool,
 }
 
 impl<'a> LifecyclePipeline<'a> {
@@ -59,6 +61,7 @@ impl<'a> LifecyclePipeline<'a> {
             only_stage: ctx.only_stage,
             executors: ctx.executors,
             rlimits: ctx.rlimits,
+            verbose: ctx.verbose,
         }
     }
 
@@ -113,8 +116,10 @@ impl<'a> LifecyclePipeline<'a> {
 
         // Run the actual stage
         if let Some(stage) = self.get_stage(stage_name) {
+            let t0 = std::time::Instant::now();
             info!("Running stage: {}", stage_name);
             self.run_stage(stage_name, stage)?;
+            info!("Stage {} finished in {:.1}s", stage_name, t0.elapsed().as_secs_f64());
         } else {
             info!("Skipping undefined stage: {}", stage_name);
         }
@@ -130,10 +135,11 @@ impl<'a> LifecyclePipeline<'a> {
     }
 
     fn get_stage_order(&self) -> Vec<String> {
-        let phase = self.phase_name();
-        if let Some(cfg) = self.manifest.phase.get(phase) {
-            if let Some(ref order) = cfg.lifecycle_order {
-                return order.stages.clone();
+        if self.is_mvp_pass() {
+            if let Some(ref cfg) = self.manifest.mvp {
+                if let Some(ref order) = cfg.lifecycle_order {
+                    return order.stages.clone();
+                }
             }
         }
         if let Some(ref order) = self.manifest.lifecycle_order {
@@ -142,18 +148,16 @@ impl<'a> LifecyclePipeline<'a> {
         DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
     }
 
-    fn phase_name(&self) -> &str {
-        self.vars
-            .get("WRIGHT_BUILD_PHASE")
-            .map(|s| s.as_str())
-            .unwrap_or("full")
+    fn is_mvp_pass(&self) -> bool {
+        self.vars.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str()) == Some("mvp")
     }
 
     fn get_stage(&self, name: &str) -> Option<&LifecycleStage> {
-        let phase = self.phase_name();
-        if let Some(cfg) = self.manifest.phase.get(phase) {
-            if let Some(stage) = cfg.lifecycle.get(name) {
-                return Some(stage);
+        if self.is_mvp_pass() {
+            if let Some(ref cfg) = self.manifest.mvp {
+                if let Some(stage) = cfg.lifecycle.get(name) {
+                    return Some(stage);
+                }
             }
         }
         self.manifest.lifecycle.get(name)
@@ -175,8 +179,10 @@ impl<'a> LifecyclePipeline<'a> {
             files_dir: self.files_dir.clone(),
             rlimits: self.rlimits.clone(),
             main_pkg_dir: None,
+            verbose: self.verbose,
         };
 
+        let t0 = std::time::Instant::now();
         let result = executor::execute_script(
             executor,
             &stage.script,
@@ -185,12 +191,13 @@ impl<'a> LifecyclePipeline<'a> {
             &self.vars,
             &options,
         )?;
+        let elapsed = t0.elapsed().as_secs_f64();
 
         // Write logs
         let log_path = self.log_dir.join(format!("{}.log", stage_name));
         let log_content = format!(
-            "=== Stage: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-            stage_name, result.exit_code, result.stdout, result.stderr
+            "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+            stage_name, result.exit_code, elapsed, result.stdout, result.stderr
         );
         let _ = std::fs::write(&log_path, &log_content);
 

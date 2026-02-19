@@ -39,6 +39,14 @@ Upgrade from local `.wright.tar.zst` files.
 |------|-------------|
 | `--force` | Allow downgrades |
 
+#### `wright sysupgrade`
+
+Upgrade all installed packages to the latest available versions found by the resolver.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` (`-n`) | Preview what would be upgraded without making changes |
+
 #### `wright remove <PACKAGES...>`
 
 Remove installed packages by name. Refuses to remove a package if other installed packages depend on it. **Link dependencies** provide CRITICAL protection and block removal unless `--force` is used.
@@ -95,6 +103,16 @@ Verify installed file integrity (SHA-256). Use `--check-deps` for a system-wide 
 wbuild [OPTIONS] <COMMAND> [TARGETS]...
 ```
 
+### Global Options
+
+| Flag | Description |
+|------|-------------|
+| `--root <PATH>` | Alternate root directory for file operations |
+| `--config <PATH>` | Path to config file |
+| `--db <PATH>` | Path to database file |
+| `--verbose` (`-v`) | Increase log verbosity; use twice (`-vv`) for trace-level logs |
+| `--quiet` | Reduce output to warnings and errors only; suppresses Construction Plan and `[done]` messages |
+
 ### Commands
 
 #### `wbuild run [TARGETS]...`
@@ -107,11 +125,23 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--only <STAGE>` | Run only a single stage |
 | `--clean` | Clean build directory before building |
 | `--force` (`-f`) | Overwrite existing archives |
-| `-j`/`--jobs <N>` | Parallel builds |
-| `--rebuild-dependents` (`-R`) | Rebuild packages that depend on the target (downward) |
-| `--rebuild-dependencies` (`-D`) | Rebuild packages that the target depends on (upward) |
+| `-j`/`--jobs <N>` | Parallel builds (0 = auto-detect) |
+| `--rebuild-dependents` (`-R`) | Also rebuild packages that depend on the target (downward) |
+| `--rebuild-dependencies` (`-D`) | Also rebuild packages that the target depends on (upward) |
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--depth <N>` | Maximum recursion depth for `-D` and `-R` (default: 1) |
+| `--exact` (`-x`) | Build exactly the listed packages — skip automatic missing-dep pull-in and link-cascade reverse rebuilds |
+
+##### Output control
+
+By default `wbuild run` is quiet about subprocess I/O — build tool output (make, cmake, etc.) is captured to per-stage `.log` files only. The **Construction Plan** and per-package `[done]` completion lines are written to stderr.
+
+| Mode | Subprocess output | Construction Plan / done lines | Log level |
+|------|:-----------------:|:-----------------------------:|-----------|
+| default | captured only | shown | info |
+| `--verbose` (`-v`) | echoed to terminal in real time | shown | debug |
+| `--quiet` | captured only | hidden | warn |
+| `-j >1` with `-v` | captured only (parallel builds suppress echo to avoid interleaving) | shown | debug |
 
 Before building, `wbuild run` displays a **Construction Plan** listing all packages to be built and the reason:
 
@@ -122,6 +152,8 @@ Before building, `wbuild run` displays a **Construction Plan** listing all packa
 | `[REV-REBUILD]` | Triggered transitively via `-R` |
 | `[MVP]` | First pass of a two-pass cycle build (built without cyclic dep) |
 | `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
+
+`--exact` suppresses all automatic expansion; every package in the plan will be labelled `[NEW]`.
 
 See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
 

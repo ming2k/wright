@@ -79,6 +79,11 @@ enum Commands {
         /// Maximum recursion depth for -D and -R (0 = unlimited)
         #[arg(long, default_value = "0")]
         depth: usize,
+
+        /// Build exactly the listed packages: skip automatic missing-dep pull-in
+        /// and skip link-cascade reverse rebuilds
+        #[arg(short = 'x', long)]
+        exact: bool,
     },
     /// Validate plan.toml files for syntax and logic errors
     Check {
@@ -125,40 +130,43 @@ fn main() -> Result<()> {
         .context("failed to load config")?;
 
     match cli.command {
-        Commands::Run { 
-            targets, stage, only, clean, force, jobs, 
-            rebuild_dependents, rebuild_dependencies, install, depth 
+        Commands::Run {
+            targets, stage, only, clean, force, jobs,
+            rebuild_dependents, rebuild_dependencies, install, depth, exact
         } => {
-            orchestrator::run_build(&config, targets, BuildOptions {
+            Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 stage, only, clean, force, jobs,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,
-            })
+                verbose: cli.verbose > 0,
+                quiet: cli.quiet,
+                exact,
+            })?)
         }
         Commands::Check { targets } => {
-            orchestrator::run_build(&config, targets, BuildOptions {
+            Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 lint: true,
                 ..Default::default()
-            })
+            })?)
         }
         Commands::Fetch { targets } => {
-            orchestrator::run_build(&config, targets, BuildOptions {
+            Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 stage: Some("extract".to_string()),
                 ..Default::default()
-            })
+            })?)
         }
         Commands::Checksum { targets } => {
-            orchestrator::run_build(&config, targets, BuildOptions {
+            Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 checksum: true,
                 ..Default::default()
-            })
+            })?)
         }
         Commands::Deps { target, depth } => {
             // Static analysis of plans in hold tree
             let resolver = wright::builder::orchestrator::setup_resolver(&config)?;
             let all_plans = resolver.get_all_plans()?;
-            
+
             println!("Plan dependency tree for: {}", target);
             print_plan_tree(&target, &all_plans, "", 1, if depth == 0 { usize::MAX } else { depth })
         }

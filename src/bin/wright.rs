@@ -138,6 +138,12 @@ enum Commands {
     },
     /// Perform a full system health check
     Doctor,
+    /// Upgrade all installed packages to latest available versions
+    Sysupgrade {
+        /// Preview what would be upgraded without actually doing it
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -403,6 +409,54 @@ fn main() -> Result<()> {
             }
             if !all_ok {
                 std::process::exit(1);
+            }
+        }
+        Commands::Sysupgrade { dry_run } => {
+            let packages = db.list_packages().context("failed to list packages")?;
+            let mut upgraded = 0usize;
+            let mut up_to_date = 0usize;
+            let mut not_found = 0usize;
+
+            for pkg in &packages {
+                match resolver.resolve(&pkg.name) {
+                    Ok(Some(resolved)) => {
+                        match wright::package::archive::read_pkginfo(&resolved.path) {
+                            Ok(info) => {
+                                let is_newer = info.version != pkg.version
+                                    || info.release > pkg.release;
+                                if is_newer {
+                                    println!("upgrade: {} {}-{} -> {}-{}",
+                                        pkg.name, pkg.version, pkg.release,
+                                        info.version, info.release);
+                                    if !dry_run {
+                                        if let Err(e) = transaction::upgrade_package(
+                                            &db, &resolved.path, &root_dir, false
+                                        ) {
+                                            eprintln!("  error: {}", e);
+                                        } else {
+                                            upgraded += 1;
+                                        }
+                                    } else {
+                                        upgraded += 1;
+                                    }
+                                } else {
+                                    up_to_date += 1;
+                                }
+                            }
+                            Err(e) => eprintln!("warning: could not read {}: {}", pkg.name, e),
+                        }
+                    }
+                    Ok(None) => { not_found += 1; }
+                    Err(e) => eprintln!("warning: resolver error for {}: {}", pkg.name, e),
+                }
+            }
+
+            if dry_run {
+                println!("\n[dry-run] would upgrade {} package(s), {} up to date, {} not found in resolver",
+                    upgraded, up_to_date, not_found);
+            } else {
+                println!("\nupgraded {}, {} up to date, {} not found",
+                    upgraded, up_to_date, not_found);
             }
         }
         Commands::Doctor => {

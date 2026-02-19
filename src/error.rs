@@ -64,3 +64,16 @@ pub enum WrightError {
 }
 
 pub type Result<T> = std::result::Result<T, WrightError>;
+
+/// Extension trait that adds `.context()` to any Result,
+/// converting errors into WrightError::BuildError with a context message.
+/// Mirrors anyhow::Context so orchestrator/query can use familiar syntax.
+pub trait WrightResultExt<T> {
+    fn context(self, msg: impl std::fmt::Display) -> Result<T>;
+}
+
+impl<T, E: std::fmt::Display> WrightResultExt<T> for std::result::Result<T, E> {
+    fn context(self, msg: impl std::fmt::Display) -> Result<T> {
+        self.map_err(|e| WrightError::BuildError(format!("{}: {}", msg, e)))
+    }
+}

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
-use crate::database::{Database, FileEntry, NewPackage};
+use crate::database::{Database, Dependency, DepType, FileEntry, FileType, NewPackage};
 use crate::error::{WrightError, Result};
 use crate::package::archive::{self, PkgInfo};
 use crate::package::version::{self, Version};
@@ -267,7 +267,7 @@ pub fn install_package(
 
     let mut shadows = Vec::new();
     for entry in &file_entries {
-        if entry.file_type == "file" {
+        if entry.file_type == FileType::File {
             if let Some(owner_name) = db.find_owner(&entry.path)? {
                 if force {
                     // Don't record self-shadowing (upgrade case)
@@ -350,12 +350,12 @@ pub fn install_package(
     for d in &pkginfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d)
             .unwrap_or_else(|_| (d.clone(), None));
-        deps.push((name, constraint.map(|c| c.to_string()), "runtime".to_string()));
+        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Runtime });
     }
     for d in &pkginfo.link_deps {
         let (name, constraint) = version::parse_dependency(d)
             .unwrap_or_else(|_| (d.clone(), None));
-        deps.push((name, constraint.map(|c| c.to_string()), "link".to_string()));
+        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Link });
     }
 
     if !deps.is_empty() {
@@ -478,8 +478,8 @@ pub fn remove_package(
             continue;
         }
 
-        match file.file_type.as_str() {
-            "file" | "symlink" => {
+        match file.file_type {
+            FileType::File | FileType::Symlink => {
                 if full_path.exists() || full_path.symlink_metadata().is_ok() {
                     std::fs::remove_file(&full_path).map_err(|e| {
                         WrightError::RemoveError(format!(
@@ -490,13 +490,12 @@ pub fn remove_package(
                     })?;
                 }
             }
-            "dir" => {
+            FileType::Directory => {
                 // Only remove empty directories
                 if full_path.is_dir() {
                     let _ = std::fs::remove_dir(&full_path);
                 }
             }
-            _ => {}
         }
     }
 
@@ -555,7 +554,7 @@ pub fn upgrade_package(
 
     // Check for conflicts with OTHER packages
     for entry in &new_entries {
-        if entry.file_type == "file" {
+        if entry.file_type == FileType::File {
             if let Some(owner) = db.find_owner(&entry.path)? {
                 if owner != pkginfo.name {
                     if force {
@@ -604,7 +603,7 @@ pub fn upgrade_package(
             continue;
         }
 
-        if old_file.file_type == "file" {
+        if old_file.file_type == FileType::File {
             let backup_path = backup_dir.path().join(
                 old_file.path.trim_start_matches('/'),
             );
@@ -625,7 +624,7 @@ pub fn upgrade_package(
                 ))
             })?;
             rollback_state.record_backup(full_path, backup_path);
-        } else if old_file.file_type == "symlink" {
+        } else if old_file.file_type == FileType::Symlink {
             if let Ok(target) = std::fs::read_link(&full_path) {
                 rollback_state.record_symlink_backup(
                     full_path,
@@ -668,16 +667,15 @@ pub fn upgrade_package(
         }
 
         let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-        match old_file.file_type.as_str() {
-            "file" | "symlink" => {
+        match old_file.file_type {
+            FileType::File | FileType::Symlink => {
                 if full_path.exists() || full_path.symlink_metadata().is_ok() {
                     let _ = std::fs::remove_file(&full_path);
                 }
             }
-            "dir" => {
+            FileType::Directory => {
                 let _ = std::fs::remove_dir(&full_path);
             }
-            _ => {}
         }
     }
 
@@ -703,12 +701,12 @@ pub fn upgrade_package(
     for d in &pkginfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d)
             .unwrap_or_else(|_| (d.clone(), None));
-        deps.push((name, constraint.map(|c| c.to_string()), "runtime".to_string()));
+        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Runtime });
     }
     for d in &pkginfo.link_deps {
         let (name, constraint) = version::parse_dependency(d)
             .unwrap_or_else(|_| (d.clone(), None));
-        deps.push((name, constraint.map(|c| c.to_string()), "link".to_string()));
+        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Link });
     }
     db.replace_dependencies(updated_pkg.id, &deps)?;
 
@@ -763,7 +761,7 @@ pub fn verify_package(
             continue;
         }
 
-        if file.file_type == "file" {
+        if file.file_type == FileType::File {
             if let Some(ref expected_hash) = file.file_hash {
                 match checksum::sha256_file(&full_path) {
                     Ok(actual_hash) => {
@@ -776,7 +774,7 @@ pub fn verify_package(
                     }
                 }
             }
-        } else if file.file_type == "symlink" {
+        } else if file.file_type == FileType::Symlink {
             if let Some(ref expected_target) = file.file_hash {
                 match std::fs::read_link(&full_path) {
                     Ok(actual_target) => {
@@ -832,22 +830,22 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<Fil
         })?;
 
         let file_type = if metadata.is_dir() {
-            "dir"
+            FileType::Directory
         } else if metadata.file_type().is_symlink() {
-            "symlink"
+            FileType::Symlink
         } else {
-            "file"
+            FileType::File
         };
 
-        let file_hash = if file_type == "file" {
-            checksum::sha256_file(entry.path()).ok()
-        } else if file_type == "symlink" {
-            // Store symlink target in file_hash field
-            std::fs::read_link(entry.path())
-                .ok()
-                .map(|t| t.to_string_lossy().to_string())
-        } else {
-            None
+        let file_hash = match file_type {
+            FileType::File => checksum::sha256_file(entry.path()).ok(),
+            FileType::Symlink => {
+                // Store symlink target in file_hash field
+                std::fs::read_link(entry.path())
+                    .ok()
+                    .map(|t| t.to_string_lossy().to_string())
+            }
+            FileType::Directory => None,
         };
 
         let is_config = pkginfo
@@ -858,13 +856,13 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<Fil
         entries.push(FileEntry {
             path: file_path,
             file_hash,
-            file_type: file_type.to_string(),
-            file_mode: Some(metadata.permissions().mode()),
-            file_size: if file_type == "file" {
+            file_size: if file_type == FileType::File {
                 Some(metadata.len())
             } else {
                 None
             },
+            file_type,
+            file_mode: Some(metadata.permissions().mode()),
             is_config,
         });
     }
@@ -875,6 +873,30 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<Fil
 // ---------------------------------------------------------------------------
 // File copy helper (Step 5c: symlink fix)
 // ---------------------------------------------------------------------------
+
+/// Back up an existing file/symlink at `dest_path` into `backup_root`,
+/// recording the action in `rollback`.
+fn backup_existing_path(
+    dest_path: &Path,
+    relative_str: &str,
+    backup_root: &Path,
+    rollback: &mut RollbackState,
+) -> Result<()> {
+    let Ok(existing_meta) = dest_path.symlink_metadata() else { return Ok(()); };
+    if existing_meta.file_type().is_symlink() {
+        if let Ok(target) = std::fs::read_link(dest_path) {
+            rollback.record_symlink_backup(dest_path.to_path_buf(), target.to_string_lossy().into());
+        }
+    } else if existing_meta.is_file() {
+        let backup_path = backup_root.join(relative_str);
+        if let Some(parent) = backup_path.parent() {
+            std::fs::create_dir_all(parent).map_err(WrightError::IoError)?;
+        }
+        std::fs::copy(dest_path, &backup_path).map_err(WrightError::IoError)?;
+        rollback.record_backup(dest_path.to_path_buf(), backup_path);
+    }
+    Ok(())
+}
 
 /// Copy files from extracted archive to root directory.
 fn copy_files_to_root(
@@ -932,35 +954,7 @@ fn copy_files_to_root(
             })?;
 
             if let Some(backup_root) = backup_dir {
-                if let Ok(existing) = dest_path.symlink_metadata() {
-                    if existing.file_type().is_symlink() {
-                        if let Ok(target) = std::fs::read_link(&dest_path) {
-                            rollback.record_symlink_backup(
-                                dest_path.clone(),
-                                target.to_string_lossy().to_string(),
-                            );
-                        }
-                    } else if existing.is_file() {
-                        let backup_path = backup_root.join(&relative_str);
-                        if let Some(parent) = backup_path.parent() {
-                            std::fs::create_dir_all(parent).map_err(|e| {
-                                WrightError::InstallError(format!(
-                                    "failed to create backup directory {}: {}",
-                                    parent.display(),
-                                    e
-                                ))
-                            })?;
-                        }
-                        std::fs::copy(&dest_path, &backup_path).map_err(|e| {
-                            WrightError::InstallError(format!(
-                                "failed to backup {}: {}",
-                                dest_path.display(),
-                                e
-                            ))
-                        })?;
-                        rollback.record_backup(dest_path.clone(), backup_path);
-                    }
-                }
+                backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
             }
 
             // Ensure parent directory exists
@@ -1012,35 +1006,7 @@ fn copy_files_to_root(
             }
 
             if let Some(backup_root) = backup_dir {
-                if let Ok(existing) = dest_path.symlink_metadata() {
-                    if existing.file_type().is_symlink() {
-                        if let Ok(target) = std::fs::read_link(&dest_path) {
-                            rollback.record_symlink_backup(
-                                dest_path.clone(),
-                                target.to_string_lossy().to_string(),
-                            );
-                        }
-                    } else if existing.is_file() {
-                        let backup_path = backup_root.join(&relative_str);
-                        if let Some(parent) = backup_path.parent() {
-                            std::fs::create_dir_all(parent).map_err(|e| {
-                                WrightError::InstallError(format!(
-                                    "failed to create backup directory {}: {}",
-                                    parent.display(),
-                                    e
-                                ))
-                            })?;
-                        }
-                        std::fs::copy(&dest_path, &backup_path).map_err(|e| {
-                            WrightError::InstallError(format!(
-                                "failed to backup {}: {}",
-                                dest_path.display(),
-                                e
-                            ))
-                        })?;
-                        rollback.record_backup(dest_path.clone(), backup_path);
-                    }
-                }
+                backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
             }
 
             std::fs::copy(entry.path(), &dest_path).map_err(|e| {
@@ -1099,7 +1065,7 @@ mod tests {
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let result = builder
-            .build(&manifest, hold_dir, None, None, &extra_env)
+            .build(&manifest, hold_dir, None, None, &extra_env, false)
             .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
@@ -1385,7 +1351,7 @@ build_date = "1970-01-01T00:00:00Z"
             DbFileEntry {
                 path: "/usr/share/shared.conf".to_string(),
                 file_hash: None,
-                file_type: "file".to_string(),
+                file_type: crate::database::FileType::File,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
@@ -1393,7 +1359,7 @@ build_date = "1970-01-01T00:00:00Z"
             DbFileEntry {
                 path: "/usr/bin/oldtool".to_string(),
                 file_hash: None,
-                file_type: "file".to_string(),
+                file_type: crate::database::FileType::File,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
@@ -1404,7 +1370,7 @@ build_date = "1970-01-01T00:00:00Z"
             DbFileEntry {
                 path: "/usr/share/shared.conf".to_string(),
                 file_hash: None,
-                file_type: "file".to_string(),
+                file_type: crate::database::FileType::File,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
@@ -1482,7 +1448,7 @@ build_date = "1970-01-01T00:00:00Z"
             DbFileEntry {
                 path: "/usr/bin/a_link".to_string(),
                 file_hash: Some("target1".to_string()),
-                file_type: "symlink".to_string(),
+                file_type: crate::database::FileType::Symlink,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
@@ -1550,7 +1516,7 @@ build_date = "1970-01-01T00:00:00Z"
             &[FileEntry {
                 path: "/usr/bin/mytool".to_string(),
                 file_hash: Some("target1".to_string()),
-                file_type: "symlink".to_string(),
+                file_type: crate::database::FileType::Symlink,
                 file_mode: None,
                 file_size: None,
                 is_config: false,

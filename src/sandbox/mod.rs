@@ -81,6 +81,7 @@ pub struct SandboxConfig {
     pub extra_binds: Vec<(PathBuf, PathBuf, bool)>, // (host_path, dest_path, read_only)
     pub env: Vec<(String, String)>,
     pub rlimits: ResourceLimits,
+    pub verbose: bool, // Whether to echo subprocess output to the terminal
 }
 
 impl SandboxConfig {
@@ -94,6 +95,7 @@ impl SandboxConfig {
             extra_binds: Vec::new(),
             env: Vec::new(),
             rlimits: ResourceLimits::default(),
+            verbose: false,
         }
     }
 }

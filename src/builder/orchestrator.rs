@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 
-use anyhow::{Context, Result};
+use crate::error::{WrightError, Result, WrightResultExt};
 use tracing::{info, warn, error};
 
 use crate::builder::Builder;
@@ -32,6 +32,11 @@ pub struct BuildOptions {
     pub rebuild_dependencies: bool,
     pub install: bool,
     pub depth: Option<usize>,
+    pub verbose: bool,
+    pub quiet: bool,
+    /// Build exactly the listed packages: skip automatic dependency pull-in
+    /// (missing deps) and skip link-cascade reverse rebuilds.
+    pub exact: bool,
 }
 
 impl BuildOptions {
@@ -50,36 +55,39 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     let mut plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
 
     if plans_to_build.is_empty() {
-        return Err(anyhow::anyhow!("No targets specified to build."));
+        return Err(WrightError::BuildError("No targets specified to build.".to_string()));
     }
 
     if opts.lint {
         return lint_dependency_graph(&plans_to_build, &all_plans);
     }
 
-    // Use a scoped block to ensure the database handle (and its flock) is released 
+    let actual_max = {
+        let max_depth = opts.depth.unwrap_or(1);
+        if max_depth == 0 { usize::MAX } else { max_depth }
+    };
+
+    // Use a scoped block to ensure the database handle (and its flock) is released
     // before we start the parallel build/install process.
     {
         let db_path = config.general.db_path.clone();
         let db = Database::open(&db_path).context("failed to open database for dependency resolution")?;
-        
-        let max_depth = opts.depth.unwrap_or(1);
-        let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
 
-        // 1b. Recursive upward expansion: only for build operations
-        if opts.is_build_op() {
+        // 1b. Recursive upward expansion: only for build operations, skipped with --exact.
+        if opts.is_build_op() && !opts.exact {
             expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
         }
     }
 
-    let max_depth = opts.depth.unwrap_or(1);
-    let actual_max = if max_depth == 0 { usize::MAX } else { max_depth };
-
-    // 1c. Transitive downward expansion (ABI rebuilds): only for build operations
-    let reasons = if opts.is_build_op() {
+    // 1c. Transitive downward expansion (ABI rebuilds): only for build operations, skipped with --exact.
+    let reasons = if opts.is_build_op() && !opts.exact {
         expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?
     } else {
-        HashMap::new()
+        // Mark every explicitly listed package as Explicit with no expansion.
+        plans_to_build.iter()
+            .filter_map(|p| PackageManifest::from_file(p).ok())
+            .map(|m| (m.plan.name, RebuildReason::Explicit))
+            .collect()
     };
 
     // 2. Build dependency map
@@ -91,30 +99,32 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     }
 
     // --- Build Plan Summary ---
-    println!("Construction Plan:");
-    let mut sorted_targets: Vec<_> = graph.build_set.iter().collect();
-    sorted_targets.sort();
-    for name in sorted_targets {
-        let is_bootstrap_task = name.ends_with(":bootstrap");
-        let base_name = name.trim_end_matches(":bootstrap");
-        let is_full_after_bootstrap = !is_bootstrap_task
-            && graph.build_set.contains(&format!("{}:bootstrap", name));
+    if !opts.quiet {
+        eprintln!("Construction Plan:");
+        let mut sorted_targets: Vec<_> = graph.build_set.iter().collect();
+        sorted_targets.sort();
+        for name in sorted_targets {
+            let is_bootstrap_task = name.ends_with(":bootstrap");
+            let base_name = name.trim_end_matches(":bootstrap");
+            let is_full_after_bootstrap = !is_bootstrap_task
+                && graph.build_set.contains(&format!("{}:bootstrap", name));
 
-        let reason_str = if is_bootstrap_task {
-            "[MVP]".to_string()
-        } else if is_full_after_bootstrap {
-            "[FULL]".to_string()
-        } else {
-            match graph.rebuild_reasons.get(name.as_str()) {
-                Some(RebuildReason::Explicit) => "[NEW]".to_string(),
-                Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
-                Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
-                None => "".to_string(),
-            }
-        };
-        println!("  {: <15} {}", reason_str, base_name);
+            let reason_str = if is_bootstrap_task {
+                "[MVP]".to_string()
+            } else if is_full_after_bootstrap {
+                "[FULL]".to_string()
+            } else {
+                match graph.rebuild_reasons.get(name.as_str()) {
+                    Some(RebuildReason::Explicit) => "[NEW]".to_string(),
+                    Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
+                    Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
+                    None => "".to_string(),
+                }
+            };
+            eprintln!("  {: <15} {}", reason_str, base_name);
+        }
+        eprintln!();
     }
-    println!();
 
     // 3. Execute builds
     execute_builds(
@@ -204,7 +214,7 @@ fn resolve_targets(
                     }
                 }
                 if !found {
-                    return Err(anyhow::anyhow!("Target not found: {}", clean_target));
+                    return Err(WrightError::BuildError(format!("Target not found: {}", clean_target)));
                 }
             }
         }
@@ -240,13 +250,14 @@ struct CycleCandidate {
 fn collect_phase_deps(
     manifest: &PackageManifest,
     pkg_to_plan: &HashMap<String, String>,
-    phase: &str,
+    is_mvp: bool,
 ) -> Vec<String> {
     let base = &manifest.dependencies;
-    let overrides: Option<&PhaseDependencies> = manifest
-        .phase
-        .get(phase)
-        .and_then(|p| p.dependencies.as_ref());
+    let overrides: Option<&PhaseDependencies> = if is_mvp {
+        manifest.mvp.as_ref().and_then(|p| p.dependencies.as_ref())
+    } else {
+        None
+    };
 
     let build = overrides
         .and_then(|o| o.build.clone())
@@ -297,16 +308,16 @@ fn cycle_candidates_for(
             Err(_) => continue,
         };
         let has_mvp = manifest
-            .phase
-            .get("mvp")
+            .mvp
+            .as_ref()
             .and_then(|p| p.dependencies.as_ref())
             .is_some();
         if !has_mvp {
             continue;
         }
 
-        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, "full");
-        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, "mvp");
+        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, false);
+        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, true);
 
         let cycle_edges: Vec<String> = full_deps
             .iter()
@@ -390,17 +401,17 @@ fn tarjan_visit(v: &str, graph: &HashMap<String, Vec<String>>, s: &mut SccState)
         if !s.indices.contains_key(w.as_str()) {
             tarjan_visit(w, graph, s);
             let ll_w = s.lowlinks[w.as_str()];
-            *s.lowlinks.get_mut(v).unwrap() = s.lowlinks[v].min(ll_w);
+            *s.lowlinks.get_mut(v).expect("v was inserted at function entry") = s.lowlinks[v].min(ll_w);
         } else if *s.on_stack.get(w.as_str()).unwrap_or(&false) {
             let idx_w = s.indices[w.as_str()];
-            *s.lowlinks.get_mut(v).unwrap() = s.lowlinks[v].min(idx_w);
+            *s.lowlinks.get_mut(v).expect("v was inserted at function entry") = s.lowlinks[v].min(idx_w);
         }
     }
 
     if s.lowlinks[v] == s.indices[v] {
         let mut scc = Vec::new();
         loop {
-            let w = s.stack.pop().unwrap();
+            let w = s.stack.pop().expect("stack must contain v and its descendants");
             s.on_stack.insert(w.clone(), false);
             scc.push(w.clone());
             if w == v { break; }
@@ -431,13 +442,13 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         let (pkg, excl) = match chosen {
             Some(c) => (c.pkg, c.excluded),
             None => {
-                return Err(anyhow::anyhow!(
+                return Err(WrightError::BuildError(format!(
                     "Dependency cycle cannot be automatically resolved.\n\
                      Cycle: {}\n\
-                     Add '[phase.mvp].dependencies' in one of these plans to declare \
+                     Add '[mvp.dependencies]' in one of these plans to declare \
                      an acyclic MVP dependency set.",
                     cycle.join(" → ")
-                ));
+                )));
             }
         };
 
@@ -445,7 +456,7 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
 
         // Bootstrap task: same deps as full, minus the cycle-breaking edges.
         let mvp_manifest = PackageManifest::from_file(&graph.name_to_path[&pkg])?;
-        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, "mvp");
+        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, true);
 
         graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
         graph.build_set.insert(bootstrap_key.clone());
@@ -456,7 +467,9 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         graph.bootstrap_excluded.insert(bootstrap_key.clone(), excl.clone());
 
         // Full task now waits for its own bootstrap to finish.
-        graph.deps_map.get_mut(&pkg).unwrap().push(bootstrap_key.clone());
+        if let Some(deps) = graph.deps_map.get_mut(&pkg) {
+            deps.push(bootstrap_key.clone());
+        }
 
         // Other packages inside the cycle that depend on `pkg` should now
         // depend on the bootstrap version so they can start earlier.
@@ -675,7 +688,7 @@ fn build_dep_map(
 
         let mut deps = Vec::new();
         if !checksum {
-            deps = collect_phase_deps(&manifest, &pkg_to_plan, "full");
+            deps = collect_phase_deps(&manifest, &pkg_to_plan, false);
         }
         deps_map.insert(name, deps);
     }
@@ -702,7 +715,7 @@ fn execute_builds(
     opts: &BuildOptions,
     bootstrap_excluded: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
-    let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, anyhow::Error)>>();
+    let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>();
     let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
     let in_progress = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -768,6 +781,11 @@ fn execute_builds(
             let mut effective_opts = opts.clone();
             if is_post_bootstrap {
                 effective_opts.force = true;
+            }
+            // Suppress subprocess output when running multiple jobs in parallel
+            // to avoid interleaved output on the terminal.
+            if actual_jobs > 1 {
+                effective_opts.verbose = false;
             }
 
             std::thread::spawn(move || {
@@ -854,20 +872,28 @@ fn execute_builds(
                     message.push_str(&format!("  - {} is waiting for: {}\n", name, missing.join(", ")));
                 }
             }
-            return Err(anyhow::anyhow!(message));
+            return Err(WrightError::BuildError(message));
         }
 
-        match rx.recv().unwrap() {
-            Ok(name) => {
-                in_progress.lock().unwrap().remove(&name);
-                completed.lock().unwrap().insert(name);
+        match rx.recv() {
+            Err(_) => {
+                return Err(WrightError::BuildError(
+                    "build worker thread disconnected unexpectedly".to_string()
+                ));
             }
-            Err((name, _)) => {
+            Ok(Ok(name)) => {
+                in_progress.lock().unwrap().remove(&name);
+                completed.lock().unwrap().insert(name.clone());
+                if !opts.quiet {
+                    eprintln!("[done] {}", name);
+                }
+            }
+            Ok(Err((name, _))) => {
                 in_progress.lock().unwrap().remove(&name);
                 failed_set.lock().unwrap().insert(name.clone());
                 *failed_count.lock().unwrap() += 1;
                 if !opts.checksum {
-                    return Err(anyhow::anyhow!("Construction failed due to error in {}", name));
+                    return Err(WrightError::BuildError(format!("Construction failed due to error in {}", name)));
                 }
             }
         }
@@ -879,7 +905,7 @@ fn execute_builds(
     if final_failed > 0 {
         warn!("Construction finished with {} successes and {} failures.", final_completed, final_failed);
         if !opts.checksum {
-            return Err(anyhow::anyhow!("Some parts failed to manufacture."));
+            return Err(WrightError::BuildError("Some parts failed to manufacture.".to_string()));
         }
     } else {
         info!("All {} tasks completed successfully.", final_completed);
@@ -992,9 +1018,9 @@ fn build_one(
     // Build extra env vars for bootstrap pass.
     let mut extra_env = std::collections::HashMap::new();
     if !bootstrap_excl.is_empty() {
-        if !manifest.phase.contains_key("mvp") {
+        if manifest.mvp.is_none() {
             warn!(
-                "Package '{}' declares no [phase.mvp].dependencies; \
+                "Package '{}' declares no [mvp.dependencies]; \
                  cannot compute MVP deps for cycle breaking.",
                 manifest.plan.name
             );
@@ -1020,7 +1046,7 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env)?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose)?;
 
     // Skip archive creation when --only is used for non-package stages
     if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {
@@ -1029,7 +1055,7 @@ fn build_one(
 
         for (split_name, split_pkg) in &manifest.split {
             let split_pkg_dir = result.split_pkg_dirs.get(split_name)
-                .ok_or_else(|| anyhow::anyhow!("missing split pkg_dir for '{}'", split_name))?;
+                .ok_or_else(|| WrightError::BuildError(format!("missing split pkg_dir for '{}'", split_name)))?;
             let split_manifest = split_pkg.to_manifest(split_name, manifest);
             let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
             info!("Split part stored: {}", split_archive.display());
