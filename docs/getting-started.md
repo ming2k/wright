@@ -57,7 +57,7 @@ script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
 Build, install, verify, remove:
 
 ```
-wright build plans/hello
+wbuild run plans/hello
 wright install hello-1.0.0-1-x86_64.wright.tar.zst
 wright query hello
 wright files hello

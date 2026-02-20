@@ -65,10 +65,10 @@ This command does the following:
 
 ### Staged Builds
 
-Use `--stage` to stop the pipeline after a specific stage, and `--only` to run a single stage in isolation:
+Use `--until` to stop the pipeline after a specific stage, and `--only` to run a single stage in isolation:
 
 ```bash
-wbuild run --stage configure hello      # stop after configure
+wbuild run --until configure hello      # stop after configure
 wbuild run --only compile hello         # run only the compile stage
 ```
 
@@ -78,7 +78,7 @@ The build directory (`/tmp/wright-build/<name>-<version>/`) is preserved after a
 
 ```bash
 wbuild check hello              # validate syntax only
-wbuild update zlib              # download sources, fill in sha256
+wbuild checksum zlib            # download sources, fill in sha256
 ```
 
 ### Assembly Builds

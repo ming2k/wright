@@ -24,44 +24,23 @@ Default level is `info`. Logs are printed to stderr by the CLI.
 
 ## Build Logs (per-stage files)
 
-`wbuild run` captures build tool output (e.g. `make`, `cmake`) to files instead
-of echoing it to the terminal. Logs are written under the build directory:
+`wbuild run` captures build tool output (make, cmake, etc.) to per-stage files
+under `<build_dir>/<name>-<version>/log/`. Every run recreates this directory
+so logs are always fresh.
 
-```
-<build_dir>/<name>-<version>/log/
-```
-
-The default `build_dir` is `/tmp/wright-build`, so a typical log path looks like:
-
-```
-/tmp/wright-build/zlib-1.3.1/log/compile.log
-```
-
-Each lifecycle stage writes a log named `<stage>.log` and includes:
-
-- stage name
-- exit code
-- duration (seconds)
-- stdout and stderr
-
-Split packages also emit `package-<split>.log` logs.
-
-### When Logs Are Recreated
-
-Every build run recreates `log/` for a clean result, so logs from earlier runs
-with the same `<name>-<version>` are overwritten. `--only` also recreates `log/`
-to keep the output fresh.
+For the full layout, log format, and recreation rules per operation, see
+[build-mechanics.md — Log Files](build-mechanics.md#log-files).
 
 ### Seeing Output in Real Time
 
-If you want live output in the terminal, use `-v`:
+To stream subprocess output to the terminal instead of capturing it:
 
 ```bash
 wbuild run -v <target>
 ```
 
-Note: when building with multiple workers (`-w > 1`), `-v` keeps subprocess output captured
-to avoid interleaving noise.
+With multiple workers (`-w > 1`), `-v` keeps output captured per worker to
+avoid interleaving noise. Use `-w 1 -v` for fully live output.
 
 ## Configuration
 

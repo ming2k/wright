@@ -61,23 +61,9 @@ plan.toml → PackageManifest
 
 ### Dependency cascade rules
 
-Scope flags `--self`, `--deps`, `--dependents` are composable. Default (no flags) = self + deps, no cascade.
+`wbuild run` is the only command that performs dependency-driven expansion. Scope flags (`--self`, `--deps`, `--dependents`) are composable; `-D` and `-R` are force-rebuild escalators that extend the scope to already-installed or non-link dependents. `checksum`, `fetch`, and `check` skip all expansion entirely.
 
-| Scope | Listed packages | Missing upstream deps | Downstream link cascade |
-|-------|-----------------|-----------------------|------------------------|
-| default (no flags) | ✓ | ✓ | ✗ |
-| `--self` | ✓ | ✗ | ✗ |
-| `--deps` | ✗ | ✓ | ✗ |
-| `--dependents` | ✗ | ✗ | ✓ |
-| `--self --deps` | ✓ | ✓ | ✗ |
-| `--self --dependents` | ✓ | ✗ | ✓ |
-| `--self --deps --dependents` | ✓ | ✓ | ✓ |
-
-`checksum`, `fetch`, and `check` are **per-plan metadata operations** that skip all scope expansion. Only `wbuild run` triggers dependency-driven rebuild logic.
-
-`-D` and `-R` are **force-rebuild escalators** that layer on top of scope flags:
-- `-D` extends `--deps` to also include already-installed dependencies (force-rebuild even if installed)
-- `-R` extends `--dependents` to also include runtime/build dependents (not just link deps)
+See [dependencies.md](dependencies.md) for the conceptual model and [cli-reference.md](cli-reference.md) for the full flag reference.
 
 ## Data Flow: Management (wright)
 
