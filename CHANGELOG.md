@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.2] - 2026-02-20
+
+### Fixes
+- Fix `ETXTBSY` error when installing or rolling back a package that replaces a running executable
+
 ## [1.0.1] - 2026-02-20
 
 ### Fixes
