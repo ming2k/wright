@@ -52,7 +52,10 @@ enum Commands {
         #[arg(long)]
         only: Option<String>,
 
-        /// Remove the build directory before starting
+        /// Clear the build cache entry and working directory before starting.
+        /// Use this when you want to force a full recompile bypassing the
+        /// build cache. Composable with --force: --clean clears the cache,
+        /// --force bypasses the output archive skip check.
         #[arg(long)]
         clean: bool,
 

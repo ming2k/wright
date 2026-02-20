@@ -64,9 +64,13 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         })?;
         let full_path = entry.path();
         let raw_rel_path = full_path.strip_prefix(source_dir).unwrap_or(full_path);
+        // The root entry itself produces an empty relative path — skip silently.
+        if raw_rel_path == std::path::Path::new("") {
+            continue;
+        }
         let Some(rel_path) = normalize_archive_path(raw_rel_path) else {
             warn!(
-                "Skipping unsafe or empty archive path: {} (source: {})",
+                "Skipping unsafe archive path: {} (source: {})",
                 raw_rel_path.display(),
                 full_path.display()
             );

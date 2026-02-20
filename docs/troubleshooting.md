@@ -233,7 +233,11 @@ the key does not hash).
 **Fix:**
 
 ```bash
-wbuild run <pkg> --force   # bypasses build cache and archive skip check
+# Clear the build cache and force a full recompile
+wbuild run <pkg> --clean
+
+# Also overwrite the existing output archive
+wbuild run <pkg> --clean --force
 ```
 
 ---

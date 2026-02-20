@@ -127,15 +127,17 @@ The cache archive contains `pkg/`, `log/`, and any `pkg-<split>/` directories.
 `src/` is **not** cached to keep the archive compact. On a cache hit, Wright
 restores these directories and skips the entire build pipeline.
 
-### When the cache is bypassed
+### When the cache is bypassed or cleared
 
-| Situation | Cache read | Cache write |
-|-----------|:----------:|:-----------:|
-| Normal build | ✓ | ✓ |
-| `--force` | ✗ | ✓ |
-| `--only <stage>` | ✗ | ✗ |
-| `--until <stage>` | ✗ | ✗ |
-| Bootstrap (MVP first pass) | ✗ | ✗ |
+| Situation | Cache entry | Cache read | Cache write |
+|-----------|:-----------:|:----------:|:-----------:|
+| Normal build | kept | ✓ | ✓ |
+| `--force` | kept | ✗ | ✓ |
+| `--clean` | **deleted** | ✗ | ✓ |
+| `--clean --force` | **deleted** | ✗ | ✓ |
+| `--only <stage>` | kept | ✗ | ✗ |
+| `--until <stage>` | kept | ✗ | ✗ |
+| Bootstrap (MVP first pass) | kept | ✗ | ✗ |
 
 Bootstrap passes are intentionally incomplete builds — caching them would
 produce a broken archive that a later full pass would have to overwrite anyway.
@@ -168,10 +170,16 @@ Split packages each get their own archive from their `pkg-<split>/` directory.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Build cache | Output archive | Build dir |
+| Flag | Source cache | Build cache | Output archive | Working dir |
 |------|:---:|:---:|:---:|:---:|
-| (default) | reuse | reuse | skip if exists | clean |
-| `--force` | reuse | rebuild + save | overwrite | clean |
-| `--clean` | reuse | reuse | skip if exists | delete first |
+| (default) | reuse | reuse | skip if exists | always recreated |
+| `--force` | reuse | bypass read, overwrite | overwrite | always recreated |
+| `--clean` | reuse | **delete + rebuild** | skip if exists | delete then recreated |
+| `--clean --force` | reuse | **delete + rebuild** | overwrite | delete then recreated |
 | `--only` | reuse | bypass | skip | keep `src/` |
-| `--until` | reuse | bypass | skip | clean |
+| `--until` | reuse | bypass | skip | always recreated |
+
+`--clean` and `--force` address orthogonal concerns and compose naturally:
+- `--clean` — invalidate the build cache (force full recompile)
+- `--force` — bypass the output archive skip check (always produce a new archive)
+- `--clean --force` — "start completely from scratch": clear cache and always write a new archive

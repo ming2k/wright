@@ -134,8 +134,8 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 |------|-------------|
 | `--until <STAGE>` | Run all stages up to and including this one, then stop (e.g. `configure`, `compile`) |
 | `--only <STAGE>` | Run exactly one stage; all others are skipped (requires a previous full build) |
-| `--clean` | Remove the build directory before starting |
-| `--force` (`-f`) | Force rebuild: overwrite existing archive and bypass the build cache |
+| `--clean` | Clear the build cache entry and working directory before starting. The working directory is recreated at the start of every build anyway; the primary effect of `--clean` is invalidating the build cache so the next build must compile fully. Composable with `--force`. |
+| `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `-w` / `--workers <N>` | Max concurrent build workers (0 = auto-detect CPU count). Only packages with no direct or indirect dependency relationship are scheduled simultaneously — the scheduler enforces ordering automatically. This controls package-level concurrency, **not** compiler-level parallelism inside each package (which is controlled by `jobs` in `wright.toml` or `plan.toml`, exposed as `$NPROC` in build scripts). When both `--workers` and `jobs` are left at their auto defaults, the scheduler divides the total CPU count evenly across workers (`NPROC = total_cpus / workers`) to avoid oversubscription. If `jobs` is explicitly set in config or a plan, that value is always used as-is. |
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |

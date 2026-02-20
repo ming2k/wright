@@ -437,8 +437,19 @@ impl Builder {
         })
     }
 
-    /// Clean the build directory for a package.
+    /// Clean the working directory and build cache entry for a package.
+    ///
+    /// Working directory (`build_dir/<name>-<version>/`) is removed so the
+    /// next build re-extracts sources from scratch.
+    ///
+    /// Build cache entry (`cache_dir/builds/<name>-<key>.tar.zst`) is also
+    /// removed so the next build cannot hit the cache and must compile fully.
+    /// This is the primary reason to use `--clean`: the working directory is
+    /// recreated at the start of every build anyway, but the build cache
+    /// persists across runs and can only be invalidated by a key change or
+    /// this explicit clean.
     pub fn clean(&self, manifest: &PackageManifest) -> Result<()> {
+        // 1. Remove working directory.
         let build_root = self.build_root(manifest)?;
         if build_root.exists() {
             std::fs::remove_dir_all(&build_root).map_err(|e| {
@@ -448,7 +459,24 @@ impl Builder {
                     e
                 ))
             })?;
+            tracing::debug!("Removed build directory: {}", build_root.display());
         }
+
+        // 2. Remove build cache entry.
+        let build_key = self.compute_build_key(manifest)?;
+        let cache_file = self.config.general.cache_dir
+            .join("builds")
+            .join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
+        if cache_file.exists() {
+            std::fs::remove_file(&cache_file).map_err(|e| {
+                WrightError::BuildError(format!(
+                    "failed to remove build cache for {}: {}",
+                    manifest.plan.name, e
+                ))
+            })?;
+            tracing::info!("Cleared build cache for {}", manifest.plan.name);
+        }
+
         Ok(())
     }
 
