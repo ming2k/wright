@@ -56,7 +56,7 @@ enum Commands {
         /// Use this when you want to force a full recompile bypassing the
         /// build cache. Composable with --force: --clean clears the cache,
         /// --force bypasses the output archive skip check.
-        #[arg(long)]
+        #[arg(long, short = 'c')]
         clean: bool,
 
         /// Force rebuild: overwrite existing archive and bypass the build cache
