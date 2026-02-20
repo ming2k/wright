@@ -1014,6 +1014,12 @@ fn copy_files_to_root(
                 backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
             }
 
+            // Unlink the destination before copying so that replacing a
+            // running executable does not fail with ETXTBSY. The running
+            // process keeps its open file descriptor to the old inode.
+            if dest_path.exists() {
+                let _ = std::fs::remove_file(&dest_path);
+            }
             std::fs::copy(entry.path(), &dest_path).map_err(|e| {
                 WrightError::InstallError(format!(
                     "failed to copy {} to {}: {}",

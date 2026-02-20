@@ -164,6 +164,7 @@ impl RollbackState {
 
         // Restore backups
         for (original, backup) in &self.backups {
+            let _ = std::fs::remove_file(original);
             if let Err(e) = std::fs::copy(backup, original) {
                 warn!("Rollback: failed to restore {} from {}: {}", original.display(), backup.display(), e);
             }
@@ -221,6 +222,7 @@ impl RollbackState {
                 Some("BACKUP") if parts.len() == 3 => {
                     let original = Self::unescape_field(parts[1]);
                     let backup = Self::unescape_field(parts[2]);
+                    let _ = std::fs::remove_file(&original);
                     if let Err(e) = std::fs::copy(&backup, &original) {
                         warn!("Journal replay: failed to restore {} from {}: {}", original, backup, e);
                     }
