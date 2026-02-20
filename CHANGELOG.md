@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1] - 2026-02-20
+
+### Fixes
+- Add `-c` short alias for `--clean` flag in `wbuild run`
+- Fix spurious WARN on archive root entry during package creation
+- Track `Cargo.lock` for reproducible builds (removed from `.gitignore`)
+
 ## [1.0.0] - 2026-02-20
 
 ### Features
