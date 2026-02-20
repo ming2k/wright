@@ -60,9 +60,12 @@ enum Commands {
         #[arg(long, short)]
         force: bool,
 
-        /// Max number of parallel builds (0 = auto-detect CPU count)
-        #[arg(short = 'j', long, default_value = "0")]
-        jobs: usize,
+        /// Max number of concurrent build workers. Only packages with no
+        /// direct or indirect dependency relationship run simultaneously;
+        /// the scheduler enforces ordering automatically.
+        /// 0 = auto-detect CPU count.
+        #[arg(short = 'w', long, default_value = "0")]
+        workers: usize,
 
         /// Force-rebuild ALL downstream dependents, not just link dependents
         /// (extends --dependents beyond link-only packages; use together with --dependents
@@ -160,12 +163,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run {
-            targets, until, only, clean, force, jobs,
+            targets, until, only, clean, force, workers,
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents, mvp,
         } => {
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stage: until, only, clean, force, jobs,
+                stage: until, only, clean, force, workers,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,
@@ -175,6 +178,7 @@ fn main() -> Result<()> {
                 include_deps,
                 include_dependents,
                 mvp,
+                nproc_per_worker: None, // computed by the scheduler in execute_builds
             })?)
         }
         Commands::Check { targets } => {

@@ -60,7 +60,7 @@ If you want live output in the terminal, use `-v`:
 wbuild run -v <target>
 ```
 
-Note: when building in parallel (`-j > 1`), `-v` keeps subprocess output captured
+Note: when building with multiple workers (`-w > 1`), `-v` keeps subprocess output captured
 to avoid interleaving noise.
 
 ## Configuration

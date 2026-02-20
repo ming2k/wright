@@ -27,7 +27,10 @@ pub struct BuildOptions {
     pub lint: bool,
     pub force: bool,
     pub checksum: bool,
-    pub jobs: usize,
+    /// Max number of concurrently active build workers.
+    /// Only packages with no dependency relationship (direct or indirect)
+    /// are scheduled simultaneously. 0 = auto-detect CPU count.
+    pub workers: usize,
     pub rebuild_dependents: bool,
     pub rebuild_dependencies: bool,
     pub install: bool,
@@ -42,6 +45,10 @@ pub struct BuildOptions {
     pub include_dependents: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
+    /// Per-worker NPROC hint: how many compiler threads each worker should use.
+    /// Computed by the scheduler as `total_cpus / actual_workers` when both are
+    /// auto-detected. None means let the builder fall back to its own logic.
+    pub nproc_per_worker: Option<u32>,
 }
 
 impl BuildOptions {
@@ -767,13 +774,24 @@ fn execute_builds(
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
 
-    let actual_jobs = if opts.jobs == 0 {
-        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    let total_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let actual_workers = if opts.workers == 0 { total_cpus } else { opts.workers };
+
+    // When both worker count and per-package jobs are auto-detected, divide
+    // CPU budget evenly across workers so we don't oversubscribe.
+    // If the user explicitly set jobs in wright.toml or plan.toml, we leave
+    // that value alone — they know their machine.
+    let per_worker_nproc = if opts.workers == 0 || actual_workers == 1 {
+        None // single worker or auto workers: let builder use full CPU count
     } else {
-        opts.jobs
+        Some((total_cpus / actual_workers).max(1) as u32)
     };
 
-    info!("Starting build with {} parallel jobs", actual_jobs);
+    info!(
+        "Starting build with {} concurrent workers ({} compiler threads each)",
+        actual_workers,
+        per_worker_nproc.map_or_else(|| total_cpus as u32, |n| n),
+    );
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -796,7 +814,7 @@ fn execute_builds(
         }
 
         for name in ready_to_launch {
-            if in_progress.lock().unwrap().len() >= actual_jobs {
+            if in_progress.lock().unwrap().len() >= actual_workers {
                 break;
             }
 
@@ -824,15 +842,16 @@ fn execute_builds(
                 effective_opts.force = true;
             }
             // Output routing rules:
-            //   single job + no --quiet  → show subprocess output by default (like makepkg/emerge)
-            //   multi  job + no --verbose → suppress to avoid interleaved terminal noise
-            //   multi  job + --verbose   → user explicitly asked; show (may interleave)
-            if actual_jobs == 1 && !opts.quiet {
+            //   single worker + no --quiet  → stream subprocess output to terminal (like makepkg/emerge)
+            //   multi  worker + no --verbose → suppress to avoid interleaved terminal noise
+            //   multi  worker + --verbose   → user explicitly asked; show (may interleave)
+            if actual_workers == 1 && !opts.quiet {
                 effective_opts.verbose = true;
-            } else if actual_jobs > 1 && !opts.verbose {
+            } else if actual_workers > 1 && !opts.verbose {
                 effective_opts.verbose = false;
             }
-            // else: multi-job + explicit -v → keep opts.verbose = true (user's choice)
+            // else: multi-worker + explicit -v → keep opts.verbose = true (user's choice)
+            effective_opts.nproc_per_worker = per_worker_nproc;
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -1096,7 +1115,7 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force)?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force, opts.nproc_per_worker)?;
 
     // Skip archive creation when --only is used for non-package stages
     if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {

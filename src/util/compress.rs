@@ -2,6 +2,7 @@ use std::io::Read;
 use std::path::{Component, Path};
 
 use crate::error::{WrightError, Result};
+use tracing::warn;
 
 pub fn compress_zstd(input: &Path, output: &Path) -> Result<()> {
     let input_data = std::fs::read(input).map_err(|e| {
@@ -59,10 +60,15 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
             WrightError::ArchiveError(format!("failed to walk directory: {}", e))
         })?;
         let full_path = entry.path();
-        let rel_path = full_path.strip_prefix(source_dir).unwrap_or(full_path);
-        if rel_path == Path::new("") {
+        let raw_rel_path = full_path.strip_prefix(source_dir).unwrap_or(full_path);
+        let Some(rel_path) = normalize_archive_path(raw_rel_path) else {
+            warn!(
+                "Skipping unsafe or empty archive path: {} (source: {})",
+                raw_rel_path.display(),
+                full_path.display()
+            );
             continue;
-        }
+        };
 
         let metadata = entry.path().symlink_metadata().map_err(|e| {
             WrightError::ArchiveError(format!("failed to read metadata for {}: {}", full_path.display(), e))
@@ -79,15 +85,15 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
             header.set_mtime(metadata.modified()
                 .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .unwrap_or(0));
-            tar_builder.append_link(&mut header, rel_path, &target).map_err(|e| {
+            tar_builder.append_link(&mut header, &rel_path, &target).map_err(|e| {
                 WrightError::ArchiveError(format!("tar append symlink failed: {}", e))
             })?;
         } else if metadata.is_dir() {
-            tar_builder.append_dir(rel_path, full_path).map_err(|e| {
+            tar_builder.append_dir(&rel_path, full_path).map_err(|e| {
                 WrightError::ArchiveError(format!("tar append dir failed: {}", e))
             })?;
         } else {
-            tar_builder.append_path_with_name(full_path, rel_path).map_err(|e| {
+            tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
                 WrightError::ArchiveError(format!("tar append file failed: {}", e))
             })?;
         }
@@ -102,6 +108,24 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         .map_err(|e| WrightError::ArchiveError(format!("zstd finish failed: {}", e)))?;
 
     Ok(())
+}
+
+/// Normalize a filesystem path into a safe, relative path for archive entry names.
+fn normalize_archive_path(path: &Path) -> Option<std::path::PathBuf> {
+    let mut normalized = std::path::PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Normal(seg) => normalized.push(seg),
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {}
+            Component::ParentDir => return None,
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 /// Extract a tar.zst archive to a directory.

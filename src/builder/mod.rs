@@ -177,6 +177,10 @@ impl Builder {
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
         force: bool,
+        // Per-worker NPROC hint from the scheduler. Applied only when both the
+        // plan and global config leave jobs at 0 (auto-detect), preventing
+        // CPU oversubscription when multiple workers run simultaneously.
+        nproc_per_worker: Option<u32>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -268,15 +272,20 @@ impl Builder {
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
-        // Per-plan jobs override global setting
-        let nproc = if let Some(plan_jobs) = manifest.options.jobs {
-            if plan_jobs == 0 {
-                self.config.effective_jobs()
-            } else {
-                plan_jobs
+        // Per-plan jobs override global setting.
+        // When both plan and global config are auto (0), use the scheduler's
+        // per-worker hint to avoid oversubscribing CPUs across parallel workers.
+        let nproc = match manifest.options.jobs {
+            Some(0) | None => {
+                if self.config.build.jobs == 0 {
+                    // Both auto: respect the scheduler's budget split.
+                    nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs())
+                } else {
+                    // Global config explicitly set: honour it.
+                    self.config.build.jobs
+                }
             }
-        } else {
-            self.config.effective_jobs()
+            Some(plan_jobs) => plan_jobs, // Plan explicitly set: honour it.
         };
 
         let vars = variables::standard_variables(variables::VariableContext {
