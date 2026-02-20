@@ -4,6 +4,9 @@ use std::path::{Component, Path};
 use crate::error::{WrightError, Result};
 use tracing::warn;
 
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
 pub fn compress_zstd(input: &Path, output: &Path) -> Result<()> {
     let input_data = std::fs::read(input).map_err(|e| {
         WrightError::ArchiveError(format!("failed to read {}: {}", input.display(), e))
@@ -93,9 +96,70 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                 WrightError::ArchiveError(format!("tar append dir failed: {}", e))
             })?;
         } else {
-            tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
-                WrightError::ArchiveError(format!("tar append file failed: {}", e))
-            })?;
+            // The tar crate's append_path_with_name passes the absolute source path
+            // to append_special for device/FIFO entries, ignoring the archive name.
+            // Handle special files explicitly to avoid that bug.
+            #[cfg(unix)]
+            {
+                let file_type = metadata.file_type();
+                if file_type.is_socket() {
+                    // Sockets cannot be archived.
+                    warn!("Skipping socket in archive: {}", rel_path.display());
+                } else if file_type.is_fifo()
+                    || file_type.is_char_device()
+                    || file_type.is_block_device()
+                {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_path(&rel_path).map_err(|e| {
+                        WrightError::ArchiveError(format!(
+                            "tar set path failed for {}: {}",
+                            rel_path.display(), e
+                        ))
+                    })?;
+                    header.set_mode(metadata.mode());
+                    header.set_uid(metadata.uid() as u64);
+                    header.set_gid(metadata.gid() as u64);
+                    header.set_size(0);
+                    header.set_mtime(metadata.modified()
+                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                        .unwrap_or(0));
+                    if file_type.is_fifo() {
+                        header.set_entry_type(tar::EntryType::Fifo);
+                    } else {
+                        let dev_id = metadata.rdev();
+                        let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
+                        let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | (dev_id & 0x0000_00ff);
+                        if file_type.is_char_device() {
+                            header.set_entry_type(tar::EntryType::Char);
+                        } else {
+                            header.set_entry_type(tar::EntryType::Block);
+                        }
+                        header.set_device_major(dev_major as u32).map_err(|e| {
+                            WrightError::ArchiveError(format!("tar set device major failed: {}", e))
+                        })?;
+                        header.set_device_minor(dev_minor as u32).map_err(|e| {
+                            WrightError::ArchiveError(format!("tar set device minor failed: {}", e))
+                        })?;
+                    }
+                    header.set_cksum();
+                    tar_builder.append(&header, std::io::empty()).map_err(|e| {
+                        WrightError::ArchiveError(format!(
+                            "tar append special failed for {}: {}",
+                            rel_path.display(), e
+                        ))
+                    })?;
+                } else {
+                    tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
+                        WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                    })?;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
+                    WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                })?;
+            }
         }
     }
 
