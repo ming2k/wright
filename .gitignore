@@ -1,7 +1,5 @@
 /target
 **/*.rs.bk
-Cargo.lock
-
 # IDEs
 .idea/
 .vscode/
