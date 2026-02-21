@@ -67,7 +67,7 @@ Analyze dependency relationships of **installed** packages.
 | `--reverse` (`-r`) | Show reverse dependencies (what depends on this package) |
 | `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
 | `--filter <PATTERN>` (`-f`) | Only show packages whose name contains the pattern |
-| `--tree` (`-t`) | Show full system dependency tree (all packages) |
+| `--all` (`-a`) | Show dependency tree for all installed packages |
 
 #### `wright doctor`
 

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -8,6 +9,26 @@ use wright::config::GlobalConfig;
 use wright::database::Database;
 use wright::transaction;
 use wright::query;
+
+/// Write `content` to `$PAGER` (default: `less`) when stdout is a TTY,
+/// otherwise print directly. Falls back to plain print if the pager fails.
+fn print_paged(content: &str) {
+    use std::io::IsTerminal;
+    if std::io::stdout().is_terminal() {
+        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
+        if let Ok(mut child) = std::process::Command::new(&pager)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(content.as_bytes());
+            }
+            let _ = child.wait();
+            return;
+        }
+    }
+    print!("{}", content);
+}
 
 #[derive(Parser)]
 #[command(name = "wright", about = "wright system administrator")]
@@ -93,9 +114,9 @@ enum Commands {
         #[arg(long, short)]
         filter: Option<String>,
 
-        /// Show full system dependency tree
+        /// Show dependency tree for all installed packages
         #[arg(long, short)]
-        tree: bool,
+        all: bool,
     },
     /// List installed packages
     List {
@@ -262,31 +283,34 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Deps { package, reverse, depth, filter, tree } => {
-            if tree {
-                query::print_system_tree(&db)?;
-                return Ok(());
-            }
+        Commands::Deps { package, reverse, depth, filter, all } => {
+            let mut buf = Vec::new();
 
-            let package_name = package.ok_or_else(|| {
-                anyhow::anyhow!("package name is required unless using --tree")
-            })?;
-
-            let pkg = db.get_package(&package_name)
-                .context("failed to query package")?;
-            if pkg.is_none() {
-                eprintln!("package '{}' is not installed", package_name);
-                std::process::exit(1);
-            }
-
-            let max_depth = if depth == 0 { usize::MAX } else { depth };
-
-            println!("{}", package_name);
-            if reverse {
-                query::print_reverse_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref())?;
+            if all {
+                query::write_system_tree(&db, &mut buf)?;
             } else {
-                query::print_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref())?;
+                let package_name = package.ok_or_else(|| {
+                    anyhow::anyhow!("package name is required unless using --all")
+                })?;
+
+                let pkg = db.get_package(&package_name)
+                    .context("failed to query package")?;
+                if pkg.is_none() {
+                    eprintln!("package '{}' is not installed", package_name);
+                    std::process::exit(1);
+                }
+
+                let max_depth = if depth == 0 { usize::MAX } else { depth };
+
+                writeln!(buf, "{}", package_name)?;
+                if reverse {
+                    query::write_reverse_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref(), &mut buf)?;
+                } else {
+                    query::write_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref(), &mut buf)?;
+                }
             }
+
+            print_paged(&String::from_utf8_lossy(&buf));
         }
         Commands::List { roots, .. } => {
             let packages = if roots {

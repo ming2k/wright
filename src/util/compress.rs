@@ -287,9 +287,37 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
             )));
         }
 
+        // The tar crate's unpack_in strips setuid/setgid/sticky bits (a security
+        // measure). Capture the full mode from the header beforehand so we can
+        // re-apply it afterwards, preserving bits like the setuid on unix_chkpwd.
+        #[cfg(unix)]
+        let restore = {
+            let mode = entry.header().mode().ok();
+            let is_file = matches!(
+                entry.header().entry_type(),
+                tar::EntryType::Regular | tar::EntryType::GNUSparse
+            );
+            let dest = dest_dir.join(&*path);
+            (mode, is_file, dest)
+        };
+
         entry.unpack_in(dest_dir).map_err(|e| {
             WrightError::ArchiveError(format!("tar extract failed: {}", e))
         })?;
+
+        #[cfg(unix)]
+        {
+            let (mode, is_file, dest) = restore;
+            if is_file {
+                if let Some(m) = mode {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &dest,
+                        std::fs::Permissions::from_mode(m),
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -20,7 +20,7 @@ Wright handles dependencies, conflicts, and package replacements (renames) autom
 ```bash
 wright list --roots          # Show top-level installed packages
 wright query nginx           # Show detailed info
-wright deps openssl --tree   # Show full dependency hierarchy
+wright deps --all            # Show full dependency hierarchy
 ```
 
 ### Health Check

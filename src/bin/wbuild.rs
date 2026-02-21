@@ -214,19 +214,35 @@ fn main() -> Result<()> {
 }
 
 fn print_plan_tree(
-    name: &str, 
-    all_plans: &HashMap<String, PathBuf>, 
-    prefix: &str, 
-    current_depth: usize, 
-    max_depth: usize
+    name: &str,
+    all_plans: &HashMap<String, PathBuf>,
+    prefix: &str,
+    current_depth: usize,
+    max_depth: usize,
+) -> Result<()> {
+    let mut visited = std::collections::HashSet::new();
+    let mut ancestors = std::collections::HashSet::new();
+    visited.insert(name.to_string());
+    ancestors.insert(name.to_string());
+    print_plan_tree_inner(name, all_plans, prefix, current_depth, max_depth, &mut visited, &mut ancestors)
+}
+
+fn print_plan_tree_inner(
+    name: &str,
+    all_plans: &HashMap<String, PathBuf>,
+    prefix: &str,
+    current_depth: usize,
+    max_depth: usize,
+    visited: &mut std::collections::HashSet<String>,
+    ancestors: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
     if current_depth > max_depth { return Ok(()); }
 
     let path = all_plans.get(name)
         .ok_or_else(|| anyhow::anyhow!("Plan '{}' not found in hold tree", name))?;
-    
+
     let manifest = PackageManifest::from_file(path)?;
-    
+
     let mut all_deps = Vec::new();
     all_deps.extend(manifest.dependencies.build.iter().cloned());
     all_deps.extend(manifest.dependencies.link.iter().cloned());
@@ -236,12 +252,27 @@ fn print_plan_tree(
         let dep_name = version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None)).0;
         let is_last = i == all_deps.len() - 1;
         let connector = if is_last { "└── " } else { "├── " };
-        
-        println!("{}{}{}", prefix, connector, dep);
-        
-        if all_plans.contains_key(&dep_name) {
-            let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-            print_plan_tree(&dep_name, all_plans, &new_prefix, current_depth + 1, max_depth)?;
+
+        if ancestors.contains(&dep_name) {
+            // True cycle: check if the dep has [mvp.dependencies] that could break it
+            let cycle_note = all_plans.get(&dep_name)
+                .and_then(|p| PackageManifest::from_file(p).ok())
+                .and_then(|m| m.mvp)
+                .and_then(|mvp| mvp.dependencies)
+                .map(|_| " (cycle → resolvable via mvp)")
+                .unwrap_or(" (cycle → no mvp defined!)");
+            println!("{}{}{}{}", prefix, connector, dep, cycle_note);
+        } else if visited.contains(&dep_name) {
+            println!("{}{}{} (*)", prefix, connector, dep);
+        } else {
+            println!("{}{}{}", prefix, connector, dep);
+            if all_plans.contains_key(&dep_name) {
+                visited.insert(dep_name.clone());
+                ancestors.insert(dep_name.clone());
+                let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
+                print_plan_tree_inner(&dep_name, all_plans, &new_prefix, current_depth + 1, max_depth, visited, ancestors)?;
+                ancestors.remove(&dep_name);
+            }
         }
     }
 

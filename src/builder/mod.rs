@@ -275,17 +275,30 @@ impl Builder {
         // Per-plan jobs override global setting.
         // When both plan and global config are auto (0), use the scheduler's
         // per-worker hint to avoid oversubscribing CPUs across parallel workers.
-        let nproc = match manifest.options.jobs {
-            Some(0) | None => {
-                if self.config.build.jobs == 0 {
-                    // Both auto: respect the scheduler's budget split.
-                    nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs())
-                } else {
-                    // Global config explicitly set: honour it.
-                    self.config.build.jobs
+        //
+        // When multiple workers run simultaneously the scheduler passes a
+        // per_worker_nproc cap (= total_cpus / workers).  Explicit values in
+        // the plan or global config are honoured as an *upper bound* against
+        // this cap so that N workers × M jobs never blows past the CPU budget.
+        let nproc = {
+            let uncapped = match manifest.options.jobs {
+                Some(0) | None => {
+                    if self.config.build.jobs == 0 {
+                        // Both auto: respect the scheduler's budget split.
+                        nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs())
+                    } else {
+                        // Global config explicitly set.
+                        self.config.build.jobs
+                    }
                 }
+                Some(plan_jobs) => plan_jobs, // Plan explicitly set.
+            };
+            // Cap by the scheduler's per-worker budget when it is present
+            // (i.e. more than one explicit worker is running in parallel).
+            match nproc_per_worker {
+                Some(cap) => uncapped.min(cap),
+                None => uncapped,
             }
-            Some(plan_jobs) => plan_jobs, // Plan explicitly set: honour it.
         };
 
         let vars = variables::standard_variables(variables::VariableContext {
