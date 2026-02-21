@@ -6,6 +6,12 @@
 - Layered config merging: all `wright.toml` files that exist (system `/etc/wright/`, user XDG, project-local `./`) are now merged in ascending priority order. Higher-priority files only need to set the keys they want to override; remaining keys are inherited from the layer below. The `--config` flag continues to bypass layering and load a single file as-is.
 - Config file protection on upgrade: files declared in `[backup]` are never overwritten during an upgrade. The new package default is always written alongside as `<path>.wnew` with a warning so the user can diff and merge at their own pace. Files not declared in `[backup]` are overwritten directly as before.
 
+## [1.2.1] - 2026-02-21
+
+### Changes
+- Replace `--until` and `--only` lifecycle flags with a unified `--stage` flag that accepts multiple values (e.g. `--stage check --stage package`). Empty `--stage` runs the full pipeline; one or more `--stage` values run exactly those stages in pipeline order, skipping fetch/verify/extract (requires a previous full build).
+- `wbuild fetch` now correctly stops after source extraction without running lifecycle stages.
+
 ## [1.2.0] - 2026-02-21
 
 ### Features
