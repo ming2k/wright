@@ -158,10 +158,14 @@ pub struct BuildOptions {
     #[serde(default = "default_true")]
     pub ccache: bool,
     /// Semantic resource profile for this build.  Controls `$NPROC` and
-    /// injects tool-specific parallelism env vars.  Replaces the old
-    /// numeric `jobs` field.
+    /// injects tool-specific parallelism env vars.
     #[serde(default)]
     pub build_type: BuildType,
+    /// Hard per-plan ceiling on `$NPROC`, applied after the `build_type`
+    /// modifier and the global `[build] jobs` cap.  Unset means no
+    /// additional plan-level limit.
+    #[serde(default)]
+    pub jobs: Option<u32>,
     /// Package-wide environment variables injected into every lifecycle stage.
     /// Per-stage `[lifecycle.<stage>.env]` takes precedence over these.
     #[serde(default)]
@@ -182,6 +186,7 @@ impl Default for BuildOptions {
             debug: false,
             ccache: true,
             build_type: BuildType::Default,
+            jobs: None,
             env: std::collections::HashMap::new(),
             memory_limit: None,
             cpu_time_limit: None,

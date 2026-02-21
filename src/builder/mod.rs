@@ -286,10 +286,17 @@ impl Builder {
             // Global config sets a system-wide ceiling; still honour the scheduler share.
             self.config.build.jobs.min(scheduler_share)
         };
-        let nproc = match build_type {
-            crate::package::manifest::BuildType::Serial => 1,
-            crate::package::manifest::BuildType::Heavy => (base / 2).max(1),
-            _ => base, // Default, Make, Rust, Go, Custom all use the full base share.
+        let nproc = {
+            let after_type = match build_type {
+                crate::package::manifest::BuildType::Serial => 1,
+                crate::package::manifest::BuildType::Heavy => (base / 2).max(1),
+                _ => base.max(1), // defensive: scheduler_share is always ≥ 1, but guard anyway
+            };
+            // Per-plan hard cap: applied last, after build_type and global config.
+            match manifest.options.jobs {
+                Some(plan_cap) if plan_cap > 0 => after_type.min(plan_cap),
+                _ => after_type,
+            }
         };
 
         let vars = variables::standard_variables(variables::VariableContext {
