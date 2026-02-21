@@ -6,6 +6,11 @@
 - Layered config merging: all `wright.toml` files that exist (system `/etc/wright/`, user XDG, project-local `./`) are now merged in ascending priority order. Higher-priority files only need to set the keys they want to override; remaining keys are inherited from the layer below. The `--config` flag continues to bypass layering and load a single file as-is.
 - Config file protection on upgrade: files declared in `[backup]` are never overwritten during an upgrade. The new package default is always written alongside as `<path>.wnew` with a warning so the user can diff and merge at their own pace. Files not declared in `[backup]` are overwritten directly as before.
 
+## [1.2.3] - 2026-02-22
+
+### Features
+- FHS validation after the `package` stage: every file and symlink in `$PKG_DIR` is checked against the distribution's merged-usr path whitelist before the archive is created. Violations produce a `ValidationError` with a clear hint (e.g. "install to /usr/bin"). Absolute symlink targets are also validated. Set `[options] skip_fhs_check = true` to bypass for edge cases such as kernel modules.
+
 ## [1.2.2] - 2026-02-21
 
 ### Changes
