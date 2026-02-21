@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1] - 2026-02-21
+
+### Fixes
+- Add `.max(1)` guard to NPROC resolution for all build types (defensive; scheduler share was always ≥ 1 in practice)
+- Add per-plan `jobs` cap in `plan.toml [options]` applied after `build_type` modifier and global cap
+- Fix cli-reference.md output table: multi-worker with explicit `--verbose` correctly documented as echoed (may interleave), not captured
+- Rewrite resource-allocation.md: three-layer model, semantic alias clarification for `make`/`rust`/`custom` build types, `[options.env]` substitution behaviour, NPROC resolution as explicit computation steps
+
 ## [1.1.0] - 2026-02-21
 
 ### Features
