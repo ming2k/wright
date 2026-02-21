@@ -12,20 +12,20 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 ```
 /
-├── bin/            → symlink to /usr/bin (usrmerge)
-├── sbin/           → symlink to /usr/sbin (usrmerge)
-├── lib/            → symlink to /usr/lib (usrmerge)
+├── bin             → usr/bin   (usrmerge)
+├── sbin            → usr/bin   (usrmerge; sbin is fully merged into bin)
+├── lib             → usr/lib   (usrmerge)
+├── lib64           → usr/lib   (or usr/lib64 on glibc multi-arch systems)
 ├── usr/
-│   ├── bin/        # All user and system executables
-│   ├── sbin/       # System management tools (optional, can be merged into bin/)
+│   ├── bin/        # All executables — user commands and root tools unified
 │   ├── lib/        # Shared libraries (.so) and internal libraries
-│   ├── libexec/    # Helper executables for internal program use
-│   ├── include/    # C/C++ header files
+│   ├── lib64/      # Multi-arch secondary library directory (if needed)
 │   ├── share/      # Architecture-independent data
 │   │   ├── man/    # Manual pages
 │   │   ├── doc/    # Documentation
 │   │   ├── info/   # Info pages
 │   │   └── locale/ # Localization files
+│   ├── include/    # C/C++ header files
 │   └── local/      # User-installed software (NOT managed by Wright)
 ├── etc/            # System configuration files
 │   ├── wright/     # Wright package manager configuration
@@ -39,32 +39,34 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 │   ├── service/    → symlinks to enabled services in /etc/sv
 │   ├── hold/       # Hold tree (collection of plan files)
 │   └── tmp/        # Temporary files (cleared on reboot)
+├── home/           # User home directories
+├── root/           # root user home directory
+├── run/            # Runtime data (tmpfs, or symlink to /var/run)
+├── tmp/            # Temporary files (tmpfs, world-writable)
+├── opt/            # Self-contained third-party software trees
+├── boot/           # Kernel and bootloader files
 ├── dev/            # Device files (devtmpfs)
 ├── proc/           # Process information (procfs)
-├── sys/            # Kernel interface (sysfs)
-├── tmp/            # Temporary files (tmpfs, world-writable)
-├── run/            → symlink to /var/run (or independent tmpfs)
-├── boot/           # Kernel and bootloader files
-├── home/           # User home directories
-└── root/           # root user home directory
+└── sys/            # Kernel interface (sysfs)
 ```
 
 ### 1.2 Key Design Decisions
 
-**usrmerge**: `/bin`, `/sbin`, and `/lib` are all symlinks to their corresponding directories under `/usr/`. All packages should install files under `/usr/`. This simplifies the system structure and avoids historical fragmentation between `/bin` and `/usr/bin`.
+**usrmerge**: `/bin`, `/sbin`, and `/lib` are all symlinks to their counterparts under `/usr/`. All packages must install files under `/usr/`. This eliminates the historical split between `/bin` and `/usr/bin`.
 
-**No /lib64**: musl libc does not distinguish between `lib` and `lib64`. All libraries are installed in `/usr/lib/`.
+**sbin merged into bin**: `/sbin` and `/usr/sbin` both resolve to `/usr/bin`. There is no separate `sbin` directory. Root-only tools (e.g. `mount`, `ip`) live in `/usr/bin` like everything else; privilege is enforced by permissions, not path.
 
-**No /opt**: The `/opt` directory is not used. All native packages are installed in standard FHS locations. For isolated third-party software, use Flatpak.
+**lib64 handling**: On musl systems, `/lib64` is a symlink to `/usr/lib` — musl does not distinguish `lib` from `lib64`. On glibc multi-arch systems, `/lib64` may point to `/usr/lib64` instead, and `/usr/lib64/` holds the secondary architecture's libraries. All packages should target `/usr/lib/` unless explicitly building for a secondary architecture.
 
-**No /usr/local pollution**: `/usr/local/` is reserved for software manually compiled and installed by the user. Packages managed by Wright should never install files into this directory.
+**No /usr/local pollution**: `/usr/local/` is reserved for software manually compiled and installed by the user. Packages managed by Wright must never install files there.
+
+**opt for third-party trees**: `/opt` is available for self-contained third-party software (e.g. proprietary bundles, Flatpak runtimes) that cannot conform to standard FHS paths. Native Wright packages do not install into `/opt`.
 
 ### 1.3 Package File Installation Conventions
 
 | File Type | Installation Path | Description |
 |-----------|-------------------|-------------|
-| Executable | `/usr/bin/` | Unified location for user and system commands |
-| Management Tool | `/usr/sbin/` | Root-only management tools (optional) |
+| Executable | `/usr/bin/` | All executables — user commands and root tools unified |
 | Shared Library | `/usr/lib/` | `.so` files and version symlinks |
 | Static Library | `/usr/lib/` | `.a` files |
 | Header File | `/usr/include/` | C/C++ development headers |

@@ -776,21 +776,20 @@ fn execute_builds(
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
 
-    let total_cpus = {
-        let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        if let Some(cap) = config.build.max_cpus {
-            available.min(cap.max(1))
-        } else {
-            available
-        }
-    };
     let available_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let total_cpus = if let Some(cap) = config.build.max_cpus {
+        available_cpus.min(cap.max(1))
+    } else {
+        // Reserve 4 CPUs for the OS by default so the system stays responsive
+        // during heavy parallel builds. Set max_cpus explicitly to override.
+        available_cpus.saturating_sub(4).max(1)
+    };
     let actual_dockyards = if opts.dockyards == 0 { total_cpus } else { opts.dockyards.min(total_cpus) };
 
     let cpu_cap_note = if let Some(cap) = config.build.max_cpus {
-        format!(" (capped at {} of {} available)", total_cpus, cap.max(1))
+        format!(" (max_cpus={})", cap.max(1))
     } else {
-        String::new()
+        format!(" (reserved 4 for OS)")
     };
     eprintln!(
         "Dockyards: {} active  |  CPUs: {}/{}{}",

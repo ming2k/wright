@@ -39,7 +39,7 @@ To stream subprocess output to the terminal instead of capturing it:
 wbuild run -v <target>
 ```
 
-With multiple workers (`-w > 1`), `-v` keeps output captured per worker to
+With multiple dockyards (`-w > 1`), `-v` keeps output captured per dockyard to
 avoid interleaving noise. Use `-w 1 -v` for fully live output.
 
 ## Configuration

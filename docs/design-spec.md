@@ -17,7 +17,7 @@ Provide a complete package management solution for custom Linux distributions bu
 - **Declarative package descriptions**: Define package metadata, dependencies, sources, and build procedures using TOML format
 - **Lifecycle pipeline**: Build processes are split into ordered stages (lifecycle stages), each supporting pre/post hooks
 - **Pluggable executors**: Build scripts are not limited to shell — support Python, Lua, and other runtimes
-- **Sandbox isolation**: All build stages run in Linux namespace-isolated environments using bubblewrap (bwrap)
+- **Dockyard isolation**: All build stages run in Linux namespace-isolated environments using bubblewrap (bwrap)
 - **Transactional operations**: Package installation and removal support atomic operations with rollback
 - **Binary package distribution**: Build artifacts are distributable binary packages (tar.zst format)
 
@@ -139,7 +139,7 @@ Services are **not** enabled by default. The user explicitly enables services by
 
 | Tool | Purpose | Required |
 |------|---------|----------|
-| `bubblewrap` (bwrap) | Sandbox isolation (namespaces) | **Yes** |
+| `bubblewrap` (bwrap) | Dockyard isolation (namespaces) | **Yes** |
 | `bash` | Default shell executor | **Yes** |
 | `python3` | Python executor | Optional |
 | `curl` / `wget` | Fallback download tools | Optional |
@@ -219,7 +219,7 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 ├─────────────────────────────────────────────────────┤
 │                  Subsystem Layer                      │
 │  ┌──────────┬──────────┬──────────┬───────────────┐ │
-│  │ Database │ Sandbox  │ Executor │  Downloader    │ │
+│  │ Database │Dockyard  │ Executor │  Downloader    │ │
 │  │ (SQLite) │ (bwrap)  │ (plugin) │  (reqwest)     │ │
 │  └──────────┴──────────┴──────────┴───────────────┘ │
 ├─────────────────────────────────────────────────────┤
@@ -311,7 +311,7 @@ ccache = true           # Enable ccache if available (default: true)
 # Each stage format:
 #   [lifecycle.<stage_name>]
 #   executor = "shell"           # Executor name (matches definition in /etc/wright/executors/)
-#   sandbox = "strict"           # Sandbox level: none / relaxed / strict
+#   dockyard = "strict"           # Dockyard level: none / relaxed / strict
 #   optional = false             # Whether failure is non-fatal
 #   env = { KEY = "VALUE" }      # Additional environment variables
 #   script = """..."""           # Execution content
@@ -322,7 +322,7 @@ ccache = true           # Enable ccache if available (default: true)
 
 [lifecycle.configure]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
 cd ${BUILD_DIR}
@@ -336,7 +336,7 @@ cd ${BUILD_DIR}
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
 cd ${BUILD_DIR}
@@ -345,7 +345,7 @@ make
 
 [lifecycle.check]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 optional = true
 script = """
 cd ${BUILD_DIR}
@@ -354,7 +354,7 @@ make test
 
 [lifecycle.package]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
@@ -365,7 +365,7 @@ install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 # ---- Custom stage example ----
 [lifecycle.post_package]
 executor = "python"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 import os, glob
 
@@ -450,11 +450,11 @@ args = ["-e", "-o", "pipefail"]     # -e: exit on error, -o pipefail: propagate 
 delivery = "tempfile"               # "tempfile" or "stdin"
 tempfile_extension = ".sh"          # Temporary file extension
 
-# Additional paths required to be visible inside the sandbox (read-only)
+# Additional paths required to be visible inside the dockyard (read-only)
 required_paths = ["/bin", "/usr/bin"]
 
-# Default sandbox level if not specified by the package
-default_sandbox = "strict"
+# Default dockyard level if not specified by the package
+default_dockyard = "strict"
 ```
 
 ```toml
@@ -467,7 +467,7 @@ args = ["-u"]                       # Unbuffered output
 delivery = "tempfile"
 tempfile_extension = ".py"
 required_paths = ["/usr/lib/python3", "/usr/lib/python3.*/"]
-default_sandbox = "strict"
+default_dockyard = "strict"
 ```
 
 ```toml
@@ -480,7 +480,7 @@ args = []
 delivery = "tempfile"
 tempfile_extension = ".lua"
 required_paths = ["/usr/lib/lua", "/usr/share/lua"]
-default_sandbox = "strict"
+default_dockyard = "strict"
 ```
 
 ### 5.2 Executor Invocation Flow
@@ -493,7 +493,7 @@ default_sandbox = "strict"
    - tempfile: Write script to a temporary file, pass path as argument to command
    - stdin: Pipe script content to command via standard input
 5. Set environment variables (global + stage-level env overrides)
-6. Launch the process inside the sandbox environment
+6. Launch the process inside the dockyard environment
 7. Capture stdout/stderr, write to build log
 8. Check exit code; if non-zero, decide whether to abort based on the optional field
 ```
@@ -509,7 +509,7 @@ Security constraints:
 
 ---
 
-## 6. Sandbox Isolation System
+## 6. Dockyard Isolation System
 
 ### 6.1 Isolation Level Definitions
 
@@ -519,12 +519,12 @@ Security constraints:
 | `relaxed` | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | `strict` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (optional) |
 
-### 6.2 Sandbox Root Filesystem Layout
+### 6.2 Dockyard Root Filesystem Layout
 
-For each lifecycle stage execution, the filesystem view inside the sandbox is:
+For each lifecycle stage execution, the filesystem view inside the dockyard is:
 
 ```
-/ (sandbox root)
+/ (dockyard root)
 ├── usr/            ← Read-only bind mount of host /usr
 ├── lib/            ← Read-only bind mount of host /lib (if exists)
 ├── lib64/          ← Read-only bind mount of host /lib64 (if exists)
@@ -544,7 +544,7 @@ For each lifecycle stage execution, the filesystem view inside the sandbox is:
 
 ### 6.3 bwrap Invocation Template
 
-The build tool should generate the corresponding `bwrap` command line based on the sandbox level:
+The build tool should generate the corresponding `bwrap` command line based on the dockyard level:
 
 ```bash
 # strict mode example
@@ -580,12 +580,12 @@ bwrap \
     -- /bin/bash -e -o pipefail /tmp/_build_script.sh
 ```
 
-### 6.4 Sandbox Exceptions for Special Stages
+### 6.4 Dockyard Exceptions for Special Stages
 
-- `fetch` stage: **Does not enter sandbox** — handled directly by the build tool (downloads + local file copies)
-- `verify` stage: **Does not enter sandbox** — SHA-256 verification handled directly by the build tool
-- `extract` stage: **Does not enter sandbox** — extraction and file copying handled directly by the build tool
-- `install_scripts` (post_install, etc.): **Does not run in sandbox** — needs to modify the real system
+- `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
+- `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
+- `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
+- `install_scripts` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -618,7 +618,7 @@ Each stage supports pre/post hooks, defined as:
 ```toml
 [lifecycle.pre_compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 echo "About to start building..."
 # Pre-checks or preparation work
@@ -626,14 +626,14 @@ echo "About to start building..."
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 make
 """
 
 [lifecycle.post_compile]
 executor = "python"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 # Post-build automated checks
 import subprocess
@@ -870,7 +870,7 @@ log_dir = "/var/log/wright"
 
 [build]
 build_dir = "/tmp/wright-build"       # Build working directory (tmpfs recommended)
-default_sandbox = "strict"          # Default sandbox level
+default_dockyard = "strict"          # Default dockyard level
 jobs = 0                            # Parallel compilation count, 0 = auto-detect nproc
 cflags = "-O2 -pipe -march=x86-64"
 cxxflags = "${cflags}"
@@ -901,19 +901,19 @@ Tasks:
 - [ ] plan.toml parser (manifest.rs)
 - [ ] Shell executor
 - [ ] Basic lifecycle pipeline (prepare → build → package)
-- [ ] Unsandboxed builds (sandbox = none)
+- [ ] Unsandboxed builds (dockyard = none)
 - [ ] tar.zst packaging
 - [ ] SQLite database + file manifest tracking
 - [ ] `wright install/remove/list/files/owner` commands
 - [ ] Basic dependency checking (no automatic installation)
 
-### Phase 2: Sandbox + Dependencies
+### Phase 2: Dockyard + Dependencies
 
 Goal: Secure isolated builds, automatic dependency resolution.
 
 Tasks:
-- [ ] bubblewrap sandbox integration
-- [ ] strict / relaxed sandbox levels
+- [ ] bubblewrap dockyard integration
+- [ ] strict / relaxed dockyard levels
 - [ ] Topological sort dependency resolution
 - [ ] Automatic dependency installation
 - [ ] Version constraint checking
@@ -1119,11 +1119,11 @@ Recommended hosting options:
 
 ### 14.1 Security Constraints
 
-- Build scripts **must never** run as root outside the sandbox
+- Build scripts **must never** run as root outside the dockyard
 - `install_scripts` (post_install, etc.) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
-- Network access is **forbidden** in strict sandbox mode
+- Network access is **forbidden** in strict dockyard mode
 
 ### 14.2 Compatibility Constraints
 
@@ -1168,6 +1168,6 @@ Recommended hosting options:
 - Dependency chain installation: A depends on B depends on C
 - Conflict detection: file conflicts, package conflicts
 - Rollback: Verify system is clean after a mid-install failure
-- Sandbox: Verify build scripts cannot access files or network outside the sandbox
+- Dockyard: Verify build scripts cannot access files or network outside the dockyard
 
 Test fixtures live in `tests/fixtures/`.

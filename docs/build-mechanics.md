@@ -19,7 +19,7 @@ Each package gets its own working directory under `build_dir`
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
 
-`src/` is the sandbox's `/build` mount. `pkg/` is `/output`. The directory is
+`src/` is the dockyard's `/build` mount. `pkg/` is `/output`. The directory is
 recreated clean at the start of every full build run. `--only` recreates `pkg/`
 and `log/` but leaves `src/` intact so the previous extraction is reused.
 

@@ -65,7 +65,7 @@ pub struct BuildConfig {
     pub nproc_per_dockyard: Option<u32>,
     /// Hard cap on the number of CPU cores wright will use in total.
     /// Limits both the parallel dockyard count and the dynamic NPROC budget.
-    /// Unset = use all available CPUs.
+    /// Unset = available CPUs - 4 (minimum 1), reserving headroom for the OS.
     #[serde(default)]
     pub max_cpus: Option<usize>,
 }

@@ -32,20 +32,20 @@ wbuild run <pkg> --only compile
 wbuild run -v <pkg>
 ```
 
-Note: with multiple workers (`-w > 1`), `-v` still captures output per worker
+Note: with multiple dockyards (`-w > 1`), `-v` still captures output per dockyard
 to avoid interleaving. Run with `-w 1 -v` for fully live output.
 
 ---
 
-## Sandbox Setup Failed
+## Dockyard Setup Failed
 
 **Symptom:**
 
 ```
-ERROR sandbox setup failed: unshare: Operation not permitted
+ERROR dockyard setup failed: unshare: Operation not permitted
 ```
 
-Wright requires Linux user namespaces to run the strict sandbox. This can fail
+Wright requires Linux user namespaces to run the strict dockyard. This can fail
 inside containers or on kernels with namespace restrictions.
 
 **Cause 1: unprivileged namespaces disabled**
@@ -59,13 +59,13 @@ sysctl -w kernel.unprivileged_userns_clone=1
 
 **Cause 2: running inside Docker/Podman without `--privileged`**
 
-Re-run with `--privileged`, or use the `relaxed` or `none` sandbox level in
+Re-run with `--privileged`, or use the `relaxed` or `none` dockyard level in
 your plan while developing:
 
 ```toml
-# plan.toml — per-stage sandbox override for local dev
+# plan.toml — per-stage dockyard override for local dev
 [lifecycle.compile]
-sandbox = "none"
+dockyard = "none"
 script = "make"
 ```
 

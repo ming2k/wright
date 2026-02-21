@@ -6,17 +6,32 @@ This page explains how `wbuild` allocates CPU time across builds and how to tune
 
 | Layer | Controls | Where to configure |
 |-------|----------|--------------------|
-| **Worker concurrency** | How many packages build simultaneously | `build.workers` in `wright.toml`, overridden by `-w` / `--workers` |
-| **CPU affinity** | How many CPUs each sandboxed process can use | Computed as `total_cpus / active_workers`; overridden by `build.nproc_per_worker` in `wright.toml` |
+| **Dockyard concurrency** | How many packages build simultaneously | `build.dockyards` in `wright.toml`, overridden by `-w` / `--dockyards` |
+| **CPU affinity** | How many CPUs each dockyard process can use | Computed as `total_cpus / active_dockyards`; overridden by `build.nproc_per_dockyard` in `wright.toml` |
 
-The layers compose. On a 16-core machine with 4 concurrent workers, each sandboxed build process is pinned to 4 CPUs — so `nproc` inside the sandbox returns 4, and `make -j$(nproc)` uses 4 threads. 16 threads total.
+The layers compose. On a 16-core machine (12 usable after the 4-core OS reserve) with 4 concurrent dockyards, each dockyard process is pinned to 3 CPUs — so `nproc` inside the dockyard returns 3, and `make -j$(nproc)` uses 3 threads. 12 threads total.
 
-## Worker Concurrency
+## CPU Budget
 
-The scheduler runs as many workers as the limit allows, but only launches a package when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the worker count is a ceiling, not a guarantee.
+By default wright reserves 4 CPUs for the OS, keeping the system responsive during heavy parallel builds:
 
 ```
-dependency graph:          with workers = 3:
+total_cpus = available_cpus - 4   (minimum 1)
+```
+
+Override with `max_cpus` in `wright.toml`:
+
+```toml
+[build]
+max_cpus = 16   # use exactly 16 cores; 0 or unset = available - 4
+```
+
+## Dockyard Concurrency
+
+The scheduler runs as many dockyards as the limit allows, but only launches a package when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the dockyard count is a ceiling, not a guarantee.
+
+```
+dependency graph:          with dockyards = 3:
   A ─┐
   B ─┼─► D ─► F          step 1: A, B, C  (no deps, all launch)
   C ─┘                    step 2: D        (waits for A, B)
@@ -24,16 +39,16 @@ dependency graph:          with workers = 3:
   C ──► E                 step 4: F        (waits for D)
 ```
 
-Setting `workers` higher than the number of packages independent at any given point has no effect — the scheduler finds no additional ready work.
+Setting `dockyards` higher than the number of packages independent at any given point has no effect — the scheduler finds no additional ready work.
 
 Configure in `wright.toml`:
 
 ```toml
 [build]
-workers = 4   # default: 0 (auto-detect CPU count)
+dockyards = 4   # default: 0 (auto = total_cpus)
 ```
 
-Or per-invocation with `--workers` / `-w`:
+Or per-invocation with `--dockyards` / `-w`:
 
 ```bash
 wbuild run -w 4 @base
@@ -41,26 +56,26 @@ wbuild run -w 4 @base
 
 ## CPU Affinity Isolation
 
-Wright pins each sandboxed build process to its computed CPU share using `sched_setaffinity`. This means tools like `nproc` inside the sandbox return the correct count without any environment variable injection — the kernel enforces it.
+Wright pins each dockyard process to its computed CPU share using `sched_setaffinity`. Tools like `nproc` inside the dockyard return the correct count without any environment variable injection — the kernel enforces it.
 
-The CPU share for each worker is computed as:
+The CPU share for each dockyard is computed as:
 
 ```
-cpu_share = total_cpus / active_workers
+cpu_share = total_cpus / active_dockyards
 ```
 
-`active_workers` is the number of packages actually building at the moment a stage launches — not the workers ceiling. When the graph fans out, each package gets a smaller share; when it collapses to a single runnable package, that package gets the full CPU budget.
+`active_dockyards` is the number of packages actually building at the moment a stage launches — not the dockyards ceiling. When the graph fans out, each package gets a smaller share; when it collapses to a single runnable package, that package gets the full CPU budget.
 
-**CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another worker finishes mid-flight.
+**CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another dockyard finishes mid-flight.
 
 ### Static override
 
-If you want a fixed per-worker CPU count instead of the dynamic share, set `nproc_per_worker` in `wright.toml`:
+If you want a fixed per-dockyard CPU count instead of the dynamic share, set `nproc_per_dockyard` in `wright.toml`:
 
 ```toml
 [build]
-workers = 4
-nproc_per_worker = 4   # each worker always gets exactly 4 CPUs
+dockyards = 4
+nproc_per_dockyard = 4   # each dockyard always gets exactly 4 CPUs
 ```
 
 ### Per-plan control
@@ -88,16 +103,17 @@ env = { MAKEFLAGS = "-j4" }
 env = { GOFLAGS = "-p=$(nproc)", GOMAXPROCS = "$(nproc)" }
 ```
 
-## Example: 16-core machine
+## Example: 16-core machine (12 usable, OS reserve = 4)
 
-| `workers` | `nproc_per_worker` | Active workers | CPUs per worker |
-|-----------|-------------------|----------------|-----------------|
-| 0 (→16)  | unset             | 1              | 16              |
-| 0 (→16)  | unset             | 4              | 4               |
-| 0 (→16)  | unset             | 8              | 2               |
-| 4         | unset             | 4              | 4               |
-| 4         | 2                 | any            | 2 (fixed)       |
-| 1         | unset             | 1              | 16              |
+| `max_cpus` | `dockyards` | `nproc_per_dockyard` | Active dockyards | CPUs per dockyard |
+|------------|-------------|----------------------|------------------|-------------------|
+| unset      | 0 (→12)    | unset                | 1                | 12                |
+| unset      | 0 (→12)    | unset                | 4                | 3                 |
+| unset      | 0 (→12)    | unset                | 6                | 2                 |
+| 16         | 0 (→16)    | unset                | 4                | 4                 |
+| unset      | 4           | unset                | 4                | 3                 |
+| unset      | 4           | 2                    | any              | 2 (fixed)         |
+| unset      | 1           | unset                | 1                | 12                |
 
 ## Memory and Time Limits
 

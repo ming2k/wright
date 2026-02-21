@@ -34,7 +34,7 @@ src/
 │   └── rollback.rs                 # Journal-based rollback
 ├── query/
 │   └── mod.rs                      # Analysis tools (health checks, tree rendering)
-├── sandbox/                        # Isolation layers
+├── dockyard/                       # Isolation layers
 └── util/                           # Helpers (checksum, compress, download)
 ```
 

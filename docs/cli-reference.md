@@ -136,7 +136,7 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--only <STAGE>` | Run exactly one stage; all others are skipped (requires a previous full build) |
 | `--clean` | Clear the build cache entry and working directory before starting. The working directory is recreated at the start of every build anyway; the primary effect of `--clean` is invalidating the build cache so the next build must compile fully. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
-| `-w` / `--workers <N>` | Max concurrent build workers (0 = auto-detect CPU count). Only packages with no dependency relationship are scheduled simultaneously. Controls package-level concurrency only — compiler-level parallelism inside each package is controlled by `build_type` and `jobs` in `plan.toml`, exposed as `$NPROC`. See [Resource Allocation](resource-allocation.md) for how the two layers interact. |
+| `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = total_cpus). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 
@@ -216,10 +216,10 @@ By default `wbuild run` is quiet about subprocess I/O — build tool output (mak
 
 | Mode | Subprocess output | Construction Plan / done lines | Log level |
 |------|:-----------------:|:-----------------------------:|-----------:|
-| default, single worker | echoed to terminal (auto) | shown | info |
-| default, multiple workers | captured only | shown | info |
-| `--verbose` (`-v`), single worker | echoed to terminal | shown | debug |
-| `--verbose` (`-v`), multiple workers | echoed to terminal (may interleave) | shown | debug |
+| default, single dockyard | echoed to terminal (auto) | shown | info |
+| default, multiple dockyards | captured only | shown | info |
+| `--verbose` (`-v`), single dockyard | echoed to terminal | shown | debug |
+| `--verbose` (`-v`), multiple dockyards | echoed to terminal (may interleave) | shown | debug |
 | `--quiet` | captured only | hidden | warn |
 
 Before building, `wbuild run` displays a **Construction Plan** listing all packages to be built and the reason:

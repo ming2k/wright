@@ -4,7 +4,7 @@
 
 - **Rust** stable toolchain — [rustup.rs](https://rustup.rs/)
 - **Linux** x86_64, kernel 5.10+
-- **bubblewrap** >= 0.5.0 — for sandboxed builds
+- **bubblewrap** >= 0.5.0 — for isolated dockyard builds
 - **bash**
 
 ## Build and Install
@@ -37,7 +37,7 @@ arch = "x86_64"
 build = ["gcc"]
 
 [lifecycle.prepare]
-sandbox = "none"
+dockyard = "none"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -46,11 +46,11 @@ EOF
 """
 
 [lifecycle.compile]
-sandbox = "none"
+dockyard = "none"
 script = "gcc -o hello hello.c"
 
 [lifecycle.package]
-sandbox = "none"
+dockyard = "none"
 script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
 ```
 

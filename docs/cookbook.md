@@ -107,7 +107,7 @@ cp -a $MAIN_PKG_DIR/usr/lib/libz.a      $PKG_DIR/usr/lib/
 """
 ```
 
-`$MAIN_PKG_DIR` is mounted at `/main-pkg` inside the sandbox and points to the
+`$MAIN_PKG_DIR` is mounted at `/main-pkg` inside the dockyard and points to the
 main package's staging root. Split packages run their `package` stage after the
 main package stage completes.
 

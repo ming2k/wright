@@ -170,7 +170,7 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
-**CPU parallelism:** Wright pins each sandbox process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the sandbox already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific package, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
+**CPU parallelism:** Wright pins each dockyard process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the dockyard already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific package, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
 
 **Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
@@ -181,7 +181,7 @@ Each lifecycle stage is a TOML table under `lifecycle`:
 ```toml
 [lifecycle.compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd ${BUILD_DIR}
 make -j$(nproc)
@@ -191,7 +191,7 @@ make -j$(nproc)
 | Field      | Type              | Default    | Description                            |
 |------------|-------------------|------------|----------------------------------------|
 | `executor` | string            | `"shell"`  | Executor to run the script with        |
-| `sandbox`  | string            | `"strict"` | Sandbox isolation level                |
+| `dockyard` | string            | `"strict"` | Dockyard isolation level               |
 | `optional` | bool              | `false`    | If true, failure doesn't abort the build |
 | `env`      | map of strings    | `{}`       | Extra environment variables            |
 | `script`   | string            | `""`       | The script to execute                  |
@@ -307,7 +307,7 @@ echo "Compilation complete."
 """
 ```
 
-Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `sandbox`, `optional`, `env`, `script`).
+Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `dockyard`, `optional`, `env`, `script`).
 
 ## Phase-Based Cycles (MVP → Full)
 
@@ -456,9 +456,9 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${WRIGHT_BOOTSTRAP_BUILD}` | Set to `1` during the MVP pass (backward compatibility) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
-When running inside a sandbox, path variables are remapped to sandbox mount points:
+When running inside a dockyard, path variables are remapped to dockyard mount points:
 
-| Variable        | Host value             | Sandbox value          |
+| Variable        | Host value             | Dockyard value         |
 |-----------------|------------------------|------------------------|
 | `${SRC_DIR}`    | actual host path       | `/build`               |
 | `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
@@ -470,13 +470,13 @@ When running inside a sandbox, path variables are remapped to sandbox mount poin
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
-## Sandbox Levels
+## Dockyard Levels
 
-The `sandbox` field on each lifecycle stage controls process isolation:
+The `dockyard` field on each lifecycle stage controls process isolation:
 
 ### `none`
 
-No isolation. The script runs directly on the host. Use this only when sandbox support is unavailable or for stages that need full host access.
+No isolation. The script runs directly on the host. Use this only when dockyard support is unavailable or for stages that need full host access.
 
 ### `relaxed`
 
@@ -493,7 +493,7 @@ Full isolation. Includes everything in `relaxed` plus:
 - Network namespace (no network access)
 - IPC namespace (isolated System V IPC and POSIX message queues)
 
-In both `relaxed` and `strict` modes, the sandbox:
+In both `relaxed` and `strict` modes, the dockyard:
 - Pivots to a minimal root filesystem
 - Bind-mounts `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64` read-only
 - Bind-mounts essential `/etc` files (`resolv.conf`, `hosts`, `passwd`, `group`, `ld.so.conf`, `ld.so.cache`) read-only
@@ -502,9 +502,9 @@ In both `relaxed` and `strict` modes, the sandbox:
 - Mounts the files directory at `/files` (read-only, if present)
 - Provides `/dev` with basic devices (`null`, `zero`, `urandom`, `random`, `full`)
 - Mounts a fresh `/proc` and `/tmp`
-- Sets hostname to `wright-sandbox`
+- Sets hostname to `wright-dockyard`
 
-If the kernel does not support the required namespaces (e.g. inside a container), the sandbox falls back to direct execution with a warning.
+If the kernel does not support the required namespaces (e.g. inside a container), the dockyard falls back to direct execution with a warning.
 
 ## Executors
 
@@ -527,7 +527,7 @@ args = []
 delivery = "tempfile"
 tempfile_extension = ".py"
 required_paths = ["/usr/lib/python3"]
-default_sandbox = "strict"
+default_dockyard = "strict"
 ```
 
 | Field              | Type            | Default      | Description                          |
@@ -538,8 +538,8 @@ default_sandbox = "strict"
 | `args`             | list of strings | `[]`         | Arguments before the script path     |
 | `delivery`         | string          | `"tempfile"` | How the script is passed to the command |
 | `tempfile_extension`| string         | `".sh"`      | File extension for the temp script   |
-| `required_paths`   | list of strings | `[]`         | Extra paths to bind-mount in sandbox |
-| `default_sandbox`  | string          | `""`         | Default sandbox level for this executor |
+| `required_paths`   | list of strings | `[]`         | Extra paths to bind-mount in the dockyard |
+| `default_dockyard` | string          | `""`         | Default dockyard isolation level for this executor |
 
 Reference a custom executor by name:
 

@@ -20,7 +20,7 @@ src/
 ├── builder/        # Build pipeline, executors, variables
 ├── database/       # SQLite layer
 ├── transaction/    # Install/remove with rollback
-├── sandbox/        # Sandbox isolation (bubblewrap + native)
+├── dockyard/       # Dockyard isolation (bubblewrap + native)
 ├── repo/           # Repository index, sync, source resolution
 └── util/           # Download, checksum, compression
 tests/
