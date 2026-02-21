@@ -117,6 +117,36 @@ pub struct Sources {
     pub sha256: Vec<String>,
 }
 
+/// Identifies the resource profile of a build, controlling how the scheduler
+/// allocates `$NPROC` and which tool-specific env vars are auto-injected.
+///
+/// The global `[build] jobs` in `wright.toml` still acts as a system-wide cap.
+/// `build_type` is a *semantic* label rather than a numeric override.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildType {
+    /// Standard parallel build (autotools, make, cmake, meson, …).
+    /// `$NPROC` = dynamic scheduler share.  This is the default.
+    #[default]
+    Default,
+    /// Alias for `default`; use when the build is obviously make-based.
+    Make,
+    /// Cargo-based build.  Receives full scheduler share; `CARGO_BUILD_JOBS`
+    /// is already auto-injected from `$NPROC` by the executor.
+    Rust,
+    /// Go toolchain build.  Injects `GOFLAGS=-p=<N>` and `GOMAXPROCS=<N>`
+    /// in addition to `$NPROC` so the Go scheduler is properly bounded.
+    Go,
+    /// RAM-intensive build (Rust with LTO, JVM, etc.).
+    /// `$NPROC` = `scheduler_share / 2` (min 1) to cap memory pressure.
+    Heavy,
+    /// Inherently single-threaded build.  Forces `$NPROC` = 1.
+    Serial,
+    /// No nproc adjustment; useful when the build manages threads itself
+    /// through custom env vars supplied via `[options.env]`.
+    Custom,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct BuildOptions {
     #[serde(default = "default_true")]
@@ -127,8 +157,15 @@ pub struct BuildOptions {
     pub debug: bool,
     #[serde(default = "default_true")]
     pub ccache: bool,
+    /// Semantic resource profile for this build.  Controls `$NPROC` and
+    /// injects tool-specific parallelism env vars.  Replaces the old
+    /// numeric `jobs` field.
     #[serde(default)]
-    pub jobs: Option<u32>,
+    pub build_type: BuildType,
+    /// Package-wide environment variables injected into every lifecycle stage.
+    /// Per-stage `[lifecycle.<stage>.env]` takes precedence over these.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub memory_limit: Option<u64>,
     #[serde(default)]
@@ -144,7 +181,8 @@ impl Default for BuildOptions {
             static_: false,
             debug: false,
             ccache: true,
-            jobs: None,
+            build_type: BuildType::Default,
+            env: std::collections::HashMap::new(),
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,

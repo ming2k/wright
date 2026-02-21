@@ -46,8 +46,10 @@ pub struct BuildOptions {
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
     /// Per-worker NPROC hint: how many compiler threads each worker should use.
-    /// Computed by the scheduler as `total_cpus / actual_workers` when both are
-    /// auto-detected. None means let the builder fall back to its own logic.
+    /// The scheduler computes this per launched task from the currently active
+    /// worker count (`total_cpus / active_workers`) so resource share adapts as
+    /// dependency levels fan out or collapse. None means let the builder fall
+    /// back to its own logic.
     pub nproc_per_worker: Option<u32>,
 }
 
@@ -777,20 +779,9 @@ fn execute_builds(
     let total_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let actual_workers = if opts.workers == 0 { total_cpus } else { opts.workers };
 
-    // When both worker count and per-package jobs are auto-detected, divide
-    // CPU budget evenly across workers so we don't oversubscribe.
-    // If the user explicitly set jobs in wright.toml or plan.toml, we leave
-    // that value alone — they know their machine.
-    let per_worker_nproc = if opts.workers == 0 || actual_workers == 1 {
-        None // single worker or auto workers: let builder use full CPU count
-    } else {
-        Some((total_cpus / actual_workers).max(1) as u32)
-    };
-
     info!(
-        "Starting build with {} concurrent workers ({} compiler threads each)",
+        "Starting build with up to {} concurrent workers (dynamic compiler thread budget)",
         actual_workers,
-        per_worker_nproc.map_or_else(|| total_cpus as u32, |n| n),
     );
 
     loop {
@@ -814,11 +805,17 @@ fn execute_builds(
         }
 
         for name in ready_to_launch {
-            if in_progress.lock().unwrap().len() >= actual_workers {
-                break;
-            }
-
-            in_progress.lock().unwrap().insert(name.clone());
+            // Track active workers and derive a dynamic CPU budget per running
+            // package from the current fan-out level.
+            let active_workers = {
+                let mut in_progress_guard = in_progress.lock().unwrap();
+                if in_progress_guard.len() >= actual_workers {
+                    break;
+                }
+                in_progress_guard.insert(name.clone());
+                in_progress_guard.len()
+            };
+            let dynamic_nproc_cap = Some((total_cpus / active_workers).max(1) as u32);
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -851,7 +848,7 @@ fn execute_builds(
                 effective_opts.verbose = false;
             }
             // else: multi-worker + explicit -v → keep opts.verbose = true (user's choice)
-            effective_opts.nproc_per_worker = per_worker_nproc;
+            effective_opts.nproc_per_worker = dynamic_nproc_cap;
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {

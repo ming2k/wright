@@ -11,11 +11,11 @@ independently:
 | Layer | Controls | Configured by |
 |-------|----------|---------------|
 | **Worker concurrency** | How many packages build at the same time | `-w` / `--workers` on the CLI |
-| **Compiler parallelism** | How many threads each package's build tool spawns | `jobs` in `wright.toml` or `plan.toml`; exposed as `$NPROC` in build scripts |
+| **Compiler parallelism** | How many threads each package's build tool spawns | `build_type` in `plan.toml`; `jobs` cap in `wright.toml`; exposed as `$NPROC` in build scripts |
 
-These two values multiply. On a 16-core machine with `-w 4` and `jobs = 4`,
-up to 4 packages run concurrently, each using 4 compiler threads — 16 threads
-total, matching the CPU count.
+These two values multiply. On a 16-core machine with `-w 4` and the default
+`build_type`, up to 4 packages run concurrently, each receiving 4 compiler
+threads — 16 threads total, matching the CPU count.
 
 ## Worker Concurrency (`-w`)
 
@@ -49,43 +49,85 @@ tool-specific variables so build scripts don't need to hard-code thread counts:
 | `CMAKE_BUILD_PARALLEL_LEVEL=<N>` | CMake (`cmake --build`) |
 | `CARGO_BUILD_JOBS=<N>` | Cargo |
 
+## Build Types (`build_type`)
+
+Plans declare a semantic resource profile via `[options] build_type`.  This
+replaces the old numeric `jobs` field in `plan.toml` with a label that
+expresses *why* a limit is needed, letting the scheduler pick the right value
+automatically.
+
+| `build_type` | `$NPROC` | Extra env injected | Typical use |
+|--------------|----------|--------------------|-------------|
+| `"default"` *(default)* | scheduler share | — | autotools, make, meson, cmake |
+| `"make"` | scheduler share | — | explicit make-based builds |
+| `"rust"` | scheduler share | — | cargo (CARGO_BUILD_JOBS auto-injected from NPROC) |
+| `"go"` | scheduler share | `GOFLAGS=-p=<N>`, `GOMAXPROCS=<N>` | Go toolchain |
+| `"heavy"` | scheduler share ÷ 2 | — | Rust+LTO, JVM, large C++ (RAM-bound) |
+| `"serial"` | 1 | — | builds that cannot parallelize |
+| `"custom"` | scheduler share | — | use `[options.env]` to manage everything |
+
+```toml
+# plan.toml — declare the build profile
+[options]
+build_type = "heavy"
+```
+
+## Package-level Environment (`[options.env]`)
+
+Environment variables can be injected into every lifecycle stage of a plan
+without repeating them per-stage:
+
+```toml
+[options]
+build_type = "rust"
+env = { RUSTFLAGS = "-C target-cpu=native", RUST_BACKTRACE = "1" }
+```
+
+Per-stage `[lifecycle.<stage>.env]` overrides package-level env when both
+define the same key.
+
 ## NPROC Resolution
 
 When a build starts, the effective `$NPROC` for that worker is resolved in this
 order:
 
 ```
-1. plan.toml [options] jobs = N      → use N exactly
-2. wright.toml [build] jobs = N      → use N exactly
-3. both auto (jobs = 0 / unset)      → total_cpus / actual_workers
+1. build_type modifier              → serial → 1; heavy → base/2; others → base
+2. wright.toml [build] jobs = N     → system-wide ceiling (0 = no cap)
+3. scheduler dynamic share          → total_cpus / active_workers at launch time
+   final base = jobs cap applied to scheduler share (or scheduler share if jobs=0)
 ```
 
-Steps 1 and 2 are explicit overrides — the user has expressed intent, so Wright
-uses the value as-is. Step 3 is the fully-automatic path: Wright divides the
-total CPU count evenly across the active worker pool so that the aggregate
-compiler load matches the hardware.
+`active_workers` is the number of build workers currently running at launch
+time. This gives a dynamic isolation model: when only one package is runnable
+it can use more threads, and when the graph fans out each package receives a
+smaller share.
+
+Note: thread budgets are applied when each stage starts. Already-running stages
+are not dynamically re-threaded mid-flight.
 
 ### Example: 16-core machine
 
-| `-w` | `jobs` | NPROC per worker | Total threads |
-|------|--------|-----------------|---------------|
-| 0 (auto → 16) | 0 (auto) | 1 | 16 |
-| 4 | 0 (auto) | 4 | 16 |
-| 1 | 0 (auto) | 16 | 16 |
-| 4 | 8 (explicit) | 8 | up to 32 (oversubscribed — intentional) |
-
-The last row is oversubscribed. Wright allows it because an explicit `jobs`
-value is a deliberate choice, often used when builds are I/O-bound or when
-memory pressure matters more than raw throughput.
+| `-w` | `build_type` | `jobs` (wright.toml) | NPROC per worker at launch |
+|------|-------------|----------------------|---------------------------|
+| 0 (auto → 16) | `default` | 0 (auto) | dynamic: 16, 8, 5, … as workers start |
+| 4 | `default` | 0 (auto) | 4 |
+| 4 | `heavy` | 0 (auto) | 2 (halved) |
+| 4 | `serial` | 0 (auto) | 1 |
+| 1 | `default` | 0 (auto) | 16 |
+| 4 | `default` | 8 (explicit) | 4 (clamped by 16/4) |
 
 ## Tuning for Your Workload
 
-**Default (`-w 0`, `jobs = 0`)** works well for typical package builds. Wright
-auto-detects CPU count and divides it across workers.
+**Default (`-w 0`, `build_type = "default"`)** works well for typical package
+builds. Wright auto-detects CPU count and divides it across workers.
 
-**Memory-heavy packages** (Rust, JVM, Go, LTO builds) may require fewer
-concurrent compiler threads than CPUs to stay within available RAM. Lower
-`jobs` globally or per-plan:
+**Memory-heavy packages** (Rust with LTO, JVM, large C++ codebases) — declare
+`build_type = "heavy"` in the plan to halve the compiler thread count and
+avoid RAM exhaustion under parallel workers.
+
+**System-wide thread cap** — set `jobs` in `wright.toml` to impose a ceiling
+on all plans regardless of `build_type`:
 
 ```toml
 # wright.toml — limit compiler threads system-wide
@@ -93,14 +135,8 @@ concurrent compiler threads than CPUs to stay within available RAM. Lower
 jobs = 4
 ```
 
-```toml
-# plan.toml — limit for one heavy package only
-[options]
-jobs = 2
-```
-
-**I/O-bound builds** (e.g. packages that download at configure time) can often
-run more workers than CPUs without contention. Raise `-w` explicitly:
+**I/O-bound builds** (packages that download at configure time) can often run
+more workers than CPUs without contention. Raise `-w` explicitly:
 
 ```bash
 wbuild run -w 8 @base

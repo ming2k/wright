@@ -272,33 +272,24 @@ impl Builder {
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
-        // Per-plan jobs override global setting.
-        // When both plan and global config are auto (0), use the scheduler's
-        // per-worker hint to avoid oversubscribing CPUs across parallel workers.
+        // Resolve effective NPROC from build_type and scheduler share.
         //
-        // When multiple workers run simultaneously the scheduler passes a
-        // per_worker_nproc cap (= total_cpus / workers).  Explicit values in
-        // the plan or global config are honoured as an *upper bound* against
-        // this cap so that N workers × M jobs never blows past the CPU budget.
-        let nproc = {
-            let uncapped = match manifest.options.jobs {
-                Some(0) | None => {
-                    if self.config.build.jobs == 0 {
-                        // Both auto: respect the scheduler's budget split.
-                        nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs())
-                    } else {
-                        // Global config explicitly set.
-                        self.config.build.jobs
-                    }
-                }
-                Some(plan_jobs) => plan_jobs, // Plan explicitly set.
-            };
-            // Cap by the scheduler's per-worker budget when it is present
-            // (i.e. more than one explicit worker is running in parallel).
-            match nproc_per_worker {
-                Some(cap) => uncapped.min(cap),
-                None => uncapped,
-            }
+        // Priority chain:
+        //   1. scheduler's dynamic per-worker cap (total_cpus / active_workers)
+        //   2. global [build] jobs cap from wright.toml (if explicitly set)
+        //   3. build_type modifier (Heavy halves, Serial forces 1)
+        let build_type = manifest.options.build_type;
+        let scheduler_share = nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs());
+        let base = if self.config.build.jobs == 0 {
+            scheduler_share
+        } else {
+            // Global config sets a system-wide ceiling; still honour the scheduler share.
+            self.config.build.jobs.min(scheduler_share)
+        };
+        let nproc = match build_type {
+            crate::package::manifest::BuildType::Serial => 1,
+            crate::package::manifest::BuildType::Heavy => (base / 2).max(1),
+            _ => base, // Default, Make, Rust, Go, Custom all use the full base share.
         };
 
         let vars = variables::standard_variables(variables::VariableContext {
@@ -315,7 +306,24 @@ impl Builder {
         });
         let mut vars = vars;
         vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
-        // Inject bootstrap env vars (WRIGHT_BOOTSTRAP_BUILD, WRIGHT_BOOTSTRAP_WITHOUT_*)
+
+        // Package-level env from [options.env]: injected into all stages.
+        // Per-stage env takes precedence (it goes in env_vars, which the
+        // executor applies before vars).
+        for (k, v) in &manifest.options.env {
+            vars.insert(k.clone(), v.clone());
+        }
+
+        // Build-type-specific env: Go needs GOFLAGS / GOMAXPROCS so the
+        // runtime scheduler is properly bounded.  Other tool env vars
+        // (CARGO_BUILD_JOBS, MAKEFLAGS, CMAKE_BUILD_PARALLEL_LEVEL) are
+        // already auto-injected by the executor from $NPROC.
+        if build_type == crate::package::manifest::BuildType::Go {
+            vars.entry("GOFLAGS".to_string()).or_insert_with(|| format!("-p={}", nproc));
+            vars.entry("GOMAXPROCS".to_string()).or_insert_with(|| nproc.to_string());
+        }
+
+        // Bootstrap / MVP env (highest priority among injected vars).
         vars.extend(extra_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
         let vars_for_splits = vars.clone();

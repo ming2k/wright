@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0] - 2026-02-21
+
+### Features
+- Replace numeric `jobs` field in `plan.toml` with semantic `build_type` label (`default`, `make`, `rust`, `go`, `heavy`, `serial`, `custom`)
+- Add `[options.env]` for injecting package-wide environment variables into all lifecycle stages
+- Scheduler now dynamically derives `$NPROC` per active worker (`total_cpus / active_workers`) so compiler concurrency self-adjusts as the dependency graph fans out or collapses
+- `build_type = "go"` auto-injects `GOFLAGS` and `GOMAXPROCS`; `build_type = "heavy"` halves the thread share to cap RAM pressure; `build_type = "serial"` forces single-threaded builds
+
 ## [1.0.2] - 2026-02-20
 
 ### Fixes
