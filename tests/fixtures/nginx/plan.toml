@@ -74,7 +74,6 @@ make
 [lifecycle.check]
 executor = "shell"
 dockyard = "strict"
-optional = true
 script = """
 cd nginx-${PKG_VERSION}
 make test

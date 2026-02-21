@@ -167,8 +167,6 @@ pub struct LifecycleStage {
     #[serde(default = "default_dockyard_level")]
     pub dockyard: String,
     #[serde(default)]
-    pub optional: bool,
-    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub script: String,
@@ -521,7 +519,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         assert_eq!(manifest.sources.uris.len(), 2);
         assert!(manifest.options.strip);
         assert!(!manifest.options.static_);
-        assert!(manifest.lifecycle.get("check").unwrap().optional);
+        assert!(manifest.lifecycle.contains_key("check"));
 
         let scripts = manifest.install_scripts.as_ref().unwrap();
         assert!(scripts.post_install.is_some());

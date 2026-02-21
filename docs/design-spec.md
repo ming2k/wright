@@ -312,7 +312,6 @@ ccache = true           # Enable ccache if available (default: true)
 #   [lifecycle.<stage_name>]
 #   executor = "shell"           # Executor name (matches definition in /etc/wright/executors/)
 #   dockyard = "strict"           # Dockyard level: none / relaxed / strict
-#   optional = false             # Whether failure is non-fatal
 #   env = { KEY = "VALUE" }      # Additional environment variables
 #   script = """..."""           # Execution content
 #
@@ -346,7 +345,6 @@ make
 [lifecycle.check]
 executor = "shell"
 dockyard = "strict"
-optional = true
 script = """
 cd ${BUILD_DIR}
 make test
@@ -494,7 +492,7 @@ default_dockyard = "strict"
 5. Set environment variables (global + stage-level env overrides)
 6. Launch the process inside the dockyard environment
 7. Capture stdout/stderr, write to build log
-8. Check exit code; if non-zero, decide whether to abort based on the optional field
+8. Check exit code; abort the build if non-zero
 ```
 
 ### 5.3 Custom Executors

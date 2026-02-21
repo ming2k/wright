@@ -192,7 +192,6 @@ make -j$(nproc)
 |------------|-------------------|------------|----------------------------------------|
 | `executor` | string            | `"shell"`  | Executor to run the script with        |
 | `dockyard` | string            | `"strict"` | Dockyard isolation level               |
-| `optional` | bool              | `false`    | If true, failure doesn't abort the build |
 | `env`      | map of strings    | `{}`       | Extra environment variables            |
 | `script`   | string            | `""`       | The script to execute                  |
 
@@ -316,7 +315,7 @@ echo "Compilation complete."
 """
 ```
 
-Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `dockyard`, `optional`, `env`, `script`).
+Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `dockyard`, `env`, `script`).
 
 ## Phase-Based Cycles (MVP → Full)
 
@@ -679,7 +678,6 @@ make -j$(nproc)
 """
 
 [lifecycle.check]
-optional = true
 script = """
 cd ${BUILD_DIR}
 make test

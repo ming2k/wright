@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::error::{WrightError, Result};
 use crate::package::manifest::{LifecycleStage, PackageManifest};
@@ -204,34 +204,26 @@ impl<'a> LifecyclePipeline<'a> {
         let _ = std::fs::write(&log_path, &log_content);
 
         if result.exit_code != 0 {
-            if stage.optional {
-                warn!(
-                    "Optional stage '{}' failed (exit code {}), continuing",
-                    stage_name, result.exit_code
-                );
-            } else {
-                // Many build tools (meson, cmake, autoconf) write errors to stdout.
-                // Show stderr if non-empty, otherwise fall back to the tail of stdout.
-                let output_snippet = {
-                    let relevant = if !result.stderr.trim().is_empty() {
-                        result.stderr.trim()
-                    } else {
-                        result.stdout.trim()
-                    };
-                    // Limit to last 40 lines to keep the message readable.
-                    let lines: Vec<&str> = relevant.lines().collect();
-                    let tail = if lines.len() > 40 {
-                        format!("... ({} lines omitted) ...\n{}", lines.len() - 40, lines[lines.len() - 40..].join("\n"))
-                    } else {
-                        relevant.to_string()
-                    };
-                    tail
+            // Many build tools (meson, cmake, autoconf) write errors to stdout.
+            // Show stderr if non-empty, otherwise fall back to the tail of stdout.
+            let output_snippet = {
+                let relevant = if !result.stderr.trim().is_empty() {
+                    result.stderr.trim()
+                } else {
+                    result.stdout.trim()
                 };
-                return Err(WrightError::BuildError(format!(
-                    "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
-                    stage_name, result.exit_code, log_path.display(), output_snippet
-                )));
-            }
+                // Limit to last 40 lines to keep the message readable.
+                let lines: Vec<&str> = relevant.lines().collect();
+                if lines.len() > 40 {
+                    format!("... ({} lines omitted) ...\n{}", lines.len() - 40, lines[lines.len() - 40..].join("\n"))
+                } else {
+                    relevant.to_string()
+                }
+            };
+            return Err(WrightError::BuildError(format!(
+                "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
+                stage_name, result.exit_code, log_path.display(), output_snippet
+            )));
         }
 
         Ok(())
