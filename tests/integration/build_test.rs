@@ -22,7 +22,7 @@ fn test_build_hello_fixture() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, None, None, &std::collections::HashMap::new(), false, false, None).unwrap();
+    let result = builder.build(&manifest, hold_dir, &[], false, &std::collections::HashMap::new(), false, false, None).unwrap();
 
     // Verify the binary was built
     assert!(result.pkg_dir.join("usr/bin/hello").exists());
@@ -39,7 +39,7 @@ fn test_build_and_archive_hello() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, None, None, &std::collections::HashMap::new(), false, false, None).unwrap();
+    let result = builder.build(&manifest, hold_dir, &[], false, &std::collections::HashMap::new(), false, false, None).unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
@@ -84,7 +84,7 @@ fn test_lint_nginx_fixture() {
 }
 
 #[test]
-fn test_build_stop_after_stage() {
+fn test_build_single_stage() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     let hold_dir = manifest_path.parent().unwrap();
@@ -95,10 +95,10 @@ fn test_build_stop_after_stage() {
 
     let builder = Builder::new(config);
     let result = builder
-        .build(&manifest, hold_dir, Some("prepare".to_string()), None, &std::collections::HashMap::new(), false, false, None)
+        .build(&manifest, hold_dir, &["prepare".to_string()], false, &std::collections::HashMap::new(), false, false, None)
         .unwrap();
 
-    // After prepare, hello.c should exist but hello binary should not
+    // Running only prepare: hello.c should exist but hello binary should not
     assert!(result.src_dir.join("hello.c").exists());
     assert!(!result.pkg_dir.join("usr/bin/hello").exists());
 }

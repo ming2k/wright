@@ -172,8 +172,8 @@ impl Builder {
         &self,
         manifest: &PackageManifest,
         hold_dir: &Path,
-        stop_after: Option<String>,
-        only_stage: Option<String>,
+        stages: &[String],
+        fetch_only: bool,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
         force: bool,
@@ -188,7 +188,7 @@ impl Builder {
         let pkg_dir = build_root.join("pkg");
         let log_dir = build_root.join("log");
 
-        let single_stage = only_stage.is_some();
+        let partial = !stages.is_empty() || fetch_only;
         let is_bootstrap = extra_env.contains_key("WRIGHT_BOOTSTRAP_BUILD");
 
         // --- Caching Logic (Step 1: Check) ---
@@ -197,7 +197,7 @@ impl Builder {
         let cache_dir = self.config.general.cache_dir.join("builds");
         let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
 
-        if !force && !is_bootstrap && !single_stage && stop_after.is_none() && cache_file.exists() {
+        if !force && !is_bootstrap && !partial && cache_file.exists() {
             debug!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
             
             // Recreate directories
@@ -226,18 +226,17 @@ impl Builder {
             });
         }
 
-        if single_stage {
-            // When running a single stage, validate that a previous build exists
+        if !stages.is_empty() {
+            // When running specific stages, validate that a previous build exists
             if !src_dir.exists() {
                 return Err(WrightError::BuildError(
-                    "cannot use --only: no previous build found (src/ does not exist). Run a full build first.".to_string()
+                    "cannot use --stage: no previous build found (src/ does not exist). Run a full build first.".to_string()
                 ));
             }
             // Only recreate pkg_dir and log_dir for fresh output
             for dir in [&pkg_dir, &log_dir] {
                 ensure_clean_dir(dir)?;
             }
-            info!("Running only stage: {}", only_stage.as_deref().unwrap());
         } else {
             // Ensure clean build directories
             for dir in [&src_dir, &pkg_dir, &log_dir] {
@@ -249,7 +248,7 @@ impl Builder {
 
         let files_dir = build_root.join("files");
 
-        if !single_stage {
+        if stages.is_empty() {
             // Fetch sources (remote downloads + local file copies to cache)
             self.fetch(manifest, hold_dir)?;
 
@@ -258,6 +257,16 @@ impl Builder {
 
             // Extract archives and copy non-archive files to files_dir
             self.extract(manifest, &src_dir, &files_dir)?;
+        }
+
+        if fetch_only {
+            return Ok(BuildResult {
+                pkg_dir,
+                src_dir,
+                log_dir,
+                build_dir: build_root,
+                split_pkg_dirs: std::collections::HashMap::new(),
+            });
         }
 
         // Detect BUILD_DIR from extracted sources
@@ -317,8 +326,7 @@ impl Builder {
             src_dir: src_dir.clone(),
             pkg_dir: pkg_dir.clone(),
             files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
-            stop_after: stop_after.clone(),
-            only_stage: only_stage.clone(),
+            stages: stages.to_vec(),
             executors: &self.executors,
             rlimits: rlimits.clone(),
             verbose,
@@ -397,7 +405,7 @@ impl Builder {
 
         // --- Caching Logic (Step 2: Save) ---
         // Bootstrap builds are incomplete by design; skip saving to cache.
-        if !is_bootstrap && !single_stage && stop_after.is_none() {
+        if !is_bootstrap && !partial {
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 warn!("Failed to create build cache directory {}: {}", cache_dir.display(), e);
             }

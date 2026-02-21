@@ -21,8 +21,10 @@ use crate::package::manifest::PhaseDependencies;
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
-    pub stage: Option<String>,
-    pub only: Option<String>,
+    /// Run only the specified lifecycle stages (in pipeline order); empty = run all.
+    pub stages: Vec<String>,
+    /// Internal: used by the Fetch command to run fetch/verify/extract only.
+    pub fetch_only: bool,
     pub clean: bool,
     pub lint: bool,
     pub force: bool,
@@ -58,7 +60,7 @@ impl BuildOptions {
     /// Per-plan metadata operations (checksum, lint, fetch) skip all
     /// dependency cascade expansion.
     fn is_build_op(&self) -> bool {
-        !self.checksum && !self.lint && self.stage.as_deref() != Some("extract")
+        !self.checksum && !self.lint && !self.fetch_only
     }
 }
 
@@ -1093,8 +1095,8 @@ fn build_one(
         std::env::current_dir()?
     };
 
-    // Skip if archive already exists (unless --force or --only)
-    if !opts.force && opts.only.is_none() {
+    // Skip if archive already exists (unless --force or specific stages are requested)
+    if !opts.force && opts.stages.is_empty() && !opts.fetch_only {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
@@ -1142,10 +1144,12 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force, opts.nproc_per_dockyard)?;
+    let result = builder.build(manifest, &plan_dir, &opts.stages, opts.fetch_only, &extra_env, opts.verbose, opts.force, opts.nproc_per_dockyard)?;
 
-    // Skip archive creation when --only is used for non-package stages
-    if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {
+    // Skip archive creation when specific stages are requested and none of them produce output
+    let produces_output = opts.stages.is_empty()
+        || opts.stages.iter().any(|s| s == "package" || s == "post_package");
+    if produces_output && !opts.fetch_only {
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 

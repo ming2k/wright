@@ -25,8 +25,8 @@ pub struct LifecyclePipeline<'a> {
     src_dir: PathBuf,
     pkg_dir: PathBuf,
     files_dir: Option<PathBuf>,
-    stop_after: Option<String>,
-    only_stage: Option<String>,
+    /// Stages to run; empty = run all non-builtin stages in order.
+    stages: Vec<String>,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
@@ -41,8 +41,8 @@ pub struct LifecycleContext<'a> {
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
-    pub stop_after: Option<String>,
-    pub only_stage: Option<String>,
+    /// Stages to run; empty = run all non-builtin stages in order.
+    pub stages: Vec<String>,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
     pub verbose: bool,
@@ -59,8 +59,7 @@ impl<'a> LifecyclePipeline<'a> {
             src_dir: ctx.src_dir,
             pkg_dir: ctx.pkg_dir,
             files_dir: ctx.files_dir,
-            stop_after: ctx.stop_after,
-            only_stage: ctx.only_stage,
+            stages: ctx.stages,
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
@@ -69,41 +68,38 @@ impl<'a> LifecyclePipeline<'a> {
     }
 
     pub fn run(&self) -> Result<()> {
-        let stages = self.get_stage_order();
+        let pipeline = self.get_stage_order();
 
-        // --only: run exactly one stage
-        if let Some(ref only) = self.only_stage {
-            let found = stages.iter().any(|s| s == only);
-            if !found {
-                return Err(WrightError::BuildError(format!(
-                    "stage '{}' not found in lifecycle pipeline", only
-                )));
+        if !self.stages.is_empty() {
+            // Validate requested stages
+            for s in &self.stages {
+                if BUILTIN_STAGES.contains(&s.as_str()) {
+                    return Err(WrightError::BuildError(format!(
+                        "cannot use --stage with built-in stage '{}' (handled internally)", s
+                    )));
+                }
+                if !pipeline.iter().any(|p| p == s) {
+                    return Err(WrightError::BuildError(format!(
+                        "stage '{}' not found in lifecycle pipeline", s
+                    )));
+                }
             }
-            if BUILTIN_STAGES.contains(&only.as_str()) {
-                return Err(WrightError::BuildError(format!(
-                    "cannot use --only with built-in stage '{}' (handled internally)", only
-                )));
+            // Run only the requested stages, in pipeline order
+            for stage_name in &pipeline {
+                if self.stages.contains(stage_name) {
+                    self.run_stage_with_hooks(stage_name)?;
+                }
             }
-            self.run_stage_with_hooks(only)?;
             return Ok(());
         }
 
-        for stage_name in &stages {
+        for stage_name in &pipeline {
             // Skip built-in stages (handled by Builder)
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
                 debug!("Built-in stage {} is handled by Builder", stage_name);
                 continue;
             }
-
             self.run_stage_with_hooks(stage_name)?;
-
-            // Stop after the requested stage
-            if let Some(ref stop) = self.stop_after {
-                if stage_name == stop {
-                    info!("Stopping after stage: {}", stage_name);
-                    break;
-                }
-            }
         }
 
         Ok(())

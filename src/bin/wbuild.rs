@@ -44,13 +44,11 @@ enum Commands {
         /// Paths to plan directories, part names, or @assemblies
         targets: Vec<String>,
 
-        /// Run all stages up to and including this one, then stop (e.g. configure, compile)
+        /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
+        /// Skips fetch/verify/extract — requires a previous full build.
+        /// Example: --stage check --stage package
         #[arg(long)]
-        until: Option<String>,
-
-        /// Run exactly one lifecycle stage; all others are skipped (requires a previous full build)
-        #[arg(long)]
-        only: Option<String>,
+        stage: Vec<String>,
 
         /// Clear the build cache entry and working directory before starting.
         /// Use this when you want to force a full recompile bypassing the
@@ -166,14 +164,14 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run {
-            targets, until, only, clean, force, dockyards,
+            targets, stage, clean, force, dockyards,
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents, mvp,
         } => {
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
             let effective_dockyards = if dockyards != 0 { dockyards } else { config.build.dockyards };
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stage: until, only, clean, force,
+                stages: stage, fetch_only: false, clean, force,
                 dockyards: effective_dockyards,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
@@ -197,7 +195,7 @@ fn main() -> Result<()> {
         }
         Commands::Fetch { targets } => {
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stage: Some("extract".to_string()),
+                fetch_only: true,
                 ..Default::default()
             })?)
         }
