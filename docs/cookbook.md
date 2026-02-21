@@ -52,24 +52,41 @@ wbuild run zlib -i
 
 ## Iterating on a Build Script
 
-When tuning a stage without re-extracting sources every time, use `--only` to
-run a single stage against the existing build tree:
+When tuning a stage without re-extracting sources every time, use `--stage` to
+run specific stages against the existing build tree:
 
 ```bash
 # Full first build (extracts, configures, compiles, packages)
 wbuild run mypkg
 
 # Edit lifecycle.package in plan.toml, then re-run only packaging:
-wbuild run mypkg --only package
+wbuild run mypkg --stage package
 ```
 
-To iterate up to a specific stage and inspect the result:
+To iterate on a subset of stages and inspect the result:
 
 ```bash
-wbuild run mypkg --until configure
+wbuild run mypkg --stage configure
 # Inspect $SRC_DIR (e.g. /tmp/wright-build/mypkg-1.0/src/) manually
-wbuild run mypkg --only compile
-wbuild run mypkg --only package
+wbuild run mypkg --stage compile
+wbuild run mypkg --stage package
+
+# Or run compile and package together in one command:
+wbuild run mypkg --stage compile --stage package
+```
+
+To skip the `check` stage (e.g. tests are slow or broken upstream):
+
+```bash
+wbuild run mypkg --stage prepare --stage configure --stage compile --stage package --stage post_package
+```
+
+Or more concisely, run the full pipeline but skip `check` by doing a full build
+and using `--stage` to re-run only the stages you need after a prior full
+configure+compile:
+
+```bash
+wbuild run mypkg --stage compile --stage package
 ```
 
 ---

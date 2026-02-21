@@ -20,7 +20,7 @@ Each package gets its own working directory under `build_dir`
 ```
 
 `src/` is the dockyard's `/build` mount. `pkg/` is `/output`. The directory is
-recreated clean at the start of every full build run. `--only` recreates `pkg/`
+recreated clean at the start of every full build run. `--stage` recreates `pkg/`
 and `log/` but leaves `src/` intact so the previous extraction is reused.
 
 ### BUILD_DIR auto-detection
@@ -75,7 +75,7 @@ overwritten on the next build attempt.
 | Operation | `src/` | `pkg/` | `log/` |
 |-----------|:------:|:------:|:------:|
 | Full build | recreated | recreated | recreated |
-| `--only <stage>` | preserved | recreated | recreated |
+| `--stage <s>` | preserved | recreated | recreated |
 | `--clean` then build | deleted first | recreated | recreated |
 | Cache hit | recreated from cache | restored | restored |
 
@@ -135,8 +135,7 @@ restores these directories and skips the entire build pipeline.
 | `--force` | kept | ✗ | ✓ |
 | `--clean` | **deleted** | ✗ | ✓ |
 | `--clean --force` | **deleted** | ✗ | ✓ |
-| `--only <stage>` | kept | ✗ | ✗ |
-| `--until <stage>` | kept | ✗ | ✗ |
+| `--stage <s>` | kept | ✗ | ✗ |
 | Bootstrap (MVP first pass) | kept | ✗ | ✗ |
 
 Bootstrap passes are intentionally incomplete builds — caching them would
@@ -176,8 +175,7 @@ Split packages each get their own archive from their `pkg-<split>/` directory.
 | `--force` | reuse | bypass read, overwrite | overwrite | always recreated |
 | `--clean` | reuse | **delete + rebuild** | skip if exists | delete then recreated |
 | `--clean --force` | reuse | **delete + rebuild** | overwrite | delete then recreated |
-| `--only` | reuse | bypass | skip | keep `src/` |
-| `--until` | reuse | bypass | skip | always recreated |
+| `--stage <s>` | reuse | bypass | skip | keep `src/` |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
 - `--clean` — invalidate the build cache (force full recompile)

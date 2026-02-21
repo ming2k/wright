@@ -65,14 +65,20 @@ This command does the following:
 
 ### Staged Builds
 
-Use `--until` to stop the pipeline after a specific stage, and `--only` to run a single stage in isolation:
+Use `--stage` to run only specific lifecycle stages. Repeat it to run multiple stages. Requires a previous full build (fetch/verify/extract are skipped):
 
 ```bash
-wbuild run --until configure hello      # stop after configure
-wbuild run --only compile hello         # run only the compile stage
+wbuild run hello --stage compile         # re-run only compile
+wbuild run hello --stage compile --stage package   # re-run compile then package
 ```
 
-The build directory (`/tmp/wright-build/<name>-<version>/`) is preserved after a staged build for inspection.
+To skip the `check` stage — for example when tests are slow or broken upstream — run everything except `check`:
+
+```bash
+wbuild run hello --stage prepare --stage configure --stage compile --stage package --stage post_package
+```
+
+The build directory (`/tmp/wright-build/<name>-<version>/`) is preserved between staged runs for inspection.
 
 ### Validating and Updating
 
