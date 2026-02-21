@@ -141,6 +141,31 @@ restores these directories and skips the entire build pipeline.
 Bootstrap passes are intentionally incomplete builds — caching them would
 produce a broken archive that a later full pass would have to overwrite anyway.
 
+## FHS Validation
+
+After the `package` stage (and any split-package `package` stages) complete,
+Wright validates every file and symlink in `$PKG_DIR` against the distribution's
+FHS whitelist before creating the archive. This catches silent packaging mistakes
+— such as forgetting `--prefix=/usr` — at build time with a clear error:
+
+```
+validation error: package 'foo': file '/bin/foo' violates FHS — install to /usr/bin
+```
+
+Allowed install paths: `/usr/{bin,lib,lib64,share,include,libexec,libdata}`,
+`/etc/`, `/var/`, `/opt/`, `/boot/`.
+
+Absolute symlink targets are also validated. Relative symlink targets (the common
+case for versioned `.so` links) are not checked.
+
+To bypass the check for a package that intentionally deviates from the standard
+layout, set `skip_fhs_check = true` in `[options]`:
+
+```toml
+[options]
+skip_fhs_check = true
+```
+
 ## Output Archives (Components)
 
 After a successful build the package is packed into an archive and placed in

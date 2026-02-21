@@ -80,6 +80,37 @@ The hold tree and binary repository are organized into tiers with different stab
 - **Abandoned or unmaintained upstream software**: Packages must have active upstream maintenance or a clear fork/replacement path.
 - **Proprietary software**: The native repository is free/open-source only. Proprietary software can be installed via Flatpak or user-managed methods.
 
+#### Target FHS Layout (merged-usr)
+
+Wright targets a **merged-usr** Linux layout. All package files must be installed under one of the following paths:
+
+| Allowed path | Contents |
+|---|---|
+| `/usr/bin/` | Executables |
+| `/usr/lib/` | Libraries (ELF shared objects, static archives, modules) |
+| `/usr/lib64/` | 64-bit libraries on architectures that use a separate lib64 |
+| `/usr/share/` | Architecture-independent data (docs, man pages, locale, icons) |
+| `/usr/include/` | Development headers |
+| `/usr/libexec/` | Internal executables not meant to be invoked directly by users |
+| `/usr/libdata/` | Architecture-independent library data |
+| `/etc/` | System-wide configuration files |
+| `/var/` | Variable data (logs, spools, databases) |
+| `/opt/` | Self-contained third-party software trees |
+| `/boot/` | Bootloader and kernel images |
+
+The following **legacy paths are forbidden** — packages must not install files there:
+
+| Rejected path | Reason / correct destination |
+|---|---|
+| `/bin/`, `/sbin/` | Use `/usr/bin` |
+| `/usr/sbin/` | Use `/usr/bin` |
+| `/lib/`, `/lib64/` | Use `/usr/lib` or `/usr/lib64` |
+| `/usr/local/` | Packages install to `/usr` directly, not `/usr/local` |
+| `/home/`, `/root/` | User data — not for package files |
+| `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
+
+Wright enforces this layout automatically: after the `package` lifecycle stage completes, every file and symlink in `$PKG_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
+
 #### musl Compatibility Policy
 
 Since musl libc is the system C library, some upstream software will require patches or configuration changes. The policy is:
@@ -303,6 +334,7 @@ strip = true            # Strip binaries (default: true)
 static = false          # Static linking (default: false)
 debug = false           # Preserve debug symbols (default: false)
 ccache = true           # Enable ccache if available (default: true)
+skip_fhs_check = false  # Skip FHS path validation after package stage (default: false)
 
 # ---- Lifecycle definitions ----
 # Default pipeline order:

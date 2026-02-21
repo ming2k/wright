@@ -139,6 +139,11 @@ pub struct BuildOptions {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// Skip FHS validation after the `package` stage.
+    /// Set to `true` only for packages with a deliberate reason to install
+    /// outside the standard FHS paths (e.g. kernel modules, legacy compat layers).
+    #[serde(default)]
+    pub skip_fhs_check: bool,
 }
 
 impl Default for BuildOptions {
@@ -152,6 +157,7 @@ impl Default for BuildOptions {
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
+            skip_fhs_check: false,
         }
     }
 }
@@ -797,5 +803,24 @@ arch = "x86_64"
         assert!(manifest.lifecycle.is_empty());
         assert!(manifest.install_scripts.is_none());
         assert!(manifest.backup.is_none());
+        assert!(!manifest.options.skip_fhs_check);
+    }
+
+    #[test]
+    fn test_skip_fhs_check_option() {
+        let toml = r#"
+[plan]
+name = "kmod"
+version = "1.0.0"
+release = 1
+description = "kernel module"
+license = "GPL-2.0"
+arch = "x86_64"
+
+[options]
+skip_fhs_check = true
+"#;
+        let manifest = PackageManifest::parse(toml).unwrap();
+        assert!(manifest.options.skip_fhs_check);
     }
 }

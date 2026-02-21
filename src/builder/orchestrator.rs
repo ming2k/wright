@@ -1150,12 +1150,18 @@ fn build_one(
     let produces_output = opts.stages.is_empty()
         || opts.stages.iter().any(|s| s == "package" || s == "post_package");
     if produces_output && !opts.fetch_only {
+        if !manifest.options.skip_fhs_check {
+            crate::package::fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
+        }
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 
         for (split_name, split_pkg) in &manifest.split {
             let split_pkg_dir = result.split_pkg_dirs.get(split_name)
                 .ok_or_else(|| WrightError::BuildError(format!("missing split pkg_dir for '{}'", split_name)))?;
+            if !manifest.options.skip_fhs_check {
+                crate::package::fhs::validate(split_pkg_dir, split_name)?;
+            }
             let split_manifest = split_pkg.to_manifest(split_name, manifest);
             let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
             info!("Split part stored: {}", split_archive.display());
