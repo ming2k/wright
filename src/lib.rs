@@ -4,7 +4,7 @@ pub mod package;
 pub mod database;
 pub mod transaction;
 pub mod builder;
-pub mod sandbox;
+pub mod dockyard;
 pub mod repo;
 pub mod query;
 pub mod util;

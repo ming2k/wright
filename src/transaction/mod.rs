@@ -1064,14 +1064,14 @@ mod tests {
             .join("tests/fixtures/hello/plan.toml");
         let mut manifest = PackageManifest::from_file(&manifest_path).unwrap();
         for stage in manifest.lifecycle.values_mut() {
-            stage.sandbox = "none".to_string();
+            stage.dockyard = "none".to_string();
         }
         let hold_dir = manifest_path.parent().unwrap();
 
         let mut config = GlobalConfig::default();
         let build_tmp = tempfile::tempdir().unwrap();
         config.build.build_dir = build_tmp.path().to_path_buf();
-        config.build.default_sandbox = "none".to_string();
+        config.build.default_dockyard = "none".to_string();
 
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();

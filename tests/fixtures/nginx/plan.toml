@@ -41,7 +41,7 @@ ccache = true
 
 [lifecycle.prepare]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
@@ -50,7 +50,7 @@ patch -Np1 < ${FILES_DIR}/add-feature.patch
 
 [lifecycle.configure]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
 cd nginx-${PKG_VERSION}
@@ -64,7 +64,7 @@ cd nginx-${PKG_VERSION}
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
 cd nginx-${PKG_VERSION}
@@ -73,7 +73,7 @@ make
 
 [lifecycle.check]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 optional = true
 script = """
 cd nginx-${PKG_VERSION}
@@ -82,7 +82,7 @@ make test
 
 [lifecycle.package]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 make DESTDIR=${PKG_DIR} install
@@ -111,7 +111,7 @@ description = "Nginx documentation files"
 
 [split.nginx-doc.lifecycle.package]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 install -d ${PKG_DIR}/usr/share/doc/nginx

@@ -10,7 +10,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
 use tracing::{debug, info};
 
-use super::{ResourceLimits, SandboxConfig, SandboxLevel, SandboxOutput, spawn_tee_reader};
+use super::{ResourceLimits, DockyardConfig, DockyardLevel, DockyardOutput, spawn_tee_reader};
 use crate::error::{Result, WrightError};
 
 /// Route subprocess I/O based on `verbose`. When verbose, output is echoed to
@@ -36,11 +36,11 @@ use std::time::Duration;
 /// Spawn a watchdog thread that kills a process after `timeout` seconds.
 ///
 /// If `kill_pgroup` is true, kills the entire process group (`kill(-pid)`).
-/// Use this for unsandboxed Command-based paths where the child is a process
+/// Use this for undocked Command-based paths where the child is a process
 /// group leader (via `setpgid(0,0)` in pre_exec) — otherwise `make`/`gcc`
 /// children survive the kill and become orphans.
 ///
-/// For the fork-based sandboxed path, use `kill_pgroup = false` because the
+/// For the fork-based dockyard path, use `kill_pgroup = false` because the
 /// PID namespace already ensures all descendants are killed when the
 /// intermediate child exits.
 ///
@@ -85,7 +85,7 @@ fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Run a command inside a native Linux namespace sandbox.
+/// Run a command inside a native Linux namespace dockyard.
 ///
 /// Architecture (double-fork for PID namespace):
 ///
@@ -105,13 +105,13 @@ fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
 /// places *children* of the calling process into the new PID namespace.
 /// Mount setup and pivot_root are done in the grandchild so that /proc
 /// can be mounted before pivot_root changes the filesystem root.
-pub fn run_in_sandbox(
-    config: &SandboxConfig,
+pub fn run_in_dockyard(
+    config: &DockyardConfig,
     command: &str,
     args: &[String],
-) -> Result<SandboxOutput> {
-    if config.level == SandboxLevel::None {
-        info!("Sandbox disabled, running command directly");
+) -> Result<DockyardOutput> {
+    if config.level == DockyardLevel::None {
+        info!("Dockyard isolation disabled, running command directly");
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
@@ -130,16 +130,16 @@ pub fn run_in_sandbox(
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+            .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
         let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
-            .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+            .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
         let stdout_bytes = stdout_handle.join().unwrap_or_default();
         let stderr_bytes = stderr_handle.join().unwrap_or_default();
-        return Ok(SandboxOutput {
+        return Ok(DockyardOutput {
             status,
             stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
             stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
@@ -157,19 +157,19 @@ pub fn run_in_sandbox(
     let need_userns = !is_root;
 
     let mut clone_flags = match config.level {
-        SandboxLevel::Strict => {
+        DockyardLevel::Strict => {
             CloneFlags::CLONE_NEWNS
                 | CloneFlags::CLONE_NEWPID
                 | CloneFlags::CLONE_NEWUTS
                 | CloneFlags::CLONE_NEWIPC
                 | CloneFlags::CLONE_NEWNET
         }
-        SandboxLevel::Relaxed => {
+        DockyardLevel::Relaxed => {
             CloneFlags::CLONE_NEWNS
                 | CloneFlags::CLONE_NEWPID
                 | CloneFlags::CLONE_NEWUTS
         }
-        SandboxLevel::None => unreachable!(),
+        DockyardLevel::None => unreachable!(),
     };
 
     if need_userns {
@@ -199,16 +199,16 @@ pub fn run_in_sandbox(
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| WrightError::SandboxError(format!("failed to execute command: {e}")))?;
+            .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
         let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
-            .map_err(|e| WrightError::SandboxError(format!("failed to wait for command: {e}")))?;
+            .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
         let stdout_bytes = stdout_handle.join().unwrap_or_default();
         let stderr_bytes = stderr_handle.join().unwrap_or_default();
-        return Ok(SandboxOutput {
+        return Ok(DockyardOutput {
             status,
             stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
             stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
@@ -217,15 +217,15 @@ pub fn run_in_sandbox(
 
     // Error pipe: child/grandchild write error messages, parent reads.
     let (err_read, err_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
     let err_write_fd = err_write.as_raw_fd();
 
     // Stdout/stderr pipes: grandchild writes, parent reads + tees.
     let (out_read, out_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
     let out_write_fd = out_write.as_raw_fd();
     let (eout_read, eout_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::SandboxError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
     let eout_write_fd = eout_write.as_raw_fd();
 
     match unsafe { fork() } {
@@ -307,7 +307,7 @@ pub fn run_in_sandbox(
 
                     // --- Set up new root filesystem ---
 
-                    let newroot = PathBuf::from(format!("/tmp/.wright-sandbox-root-{}", config.task_id));
+                    let newroot = PathBuf::from(format!("/tmp/.wright-dockyard-root-{}", config.task_id));
                     if let Err(e) = std::fs::create_dir_all(&newroot) {
                         die(format!("mkdir newroot: {e}"));
                     }
@@ -332,7 +332,7 @@ pub fn run_in_sandbox(
                             Some(opts.as_str()),
                         ).is_ok() {
                             overlay_success = true;
-                            debug!("Using OverlayFS for sandbox root: {}", newroot.display());
+                            debug!("Using OverlayFS for dockyard root: {}", newroot.display());
                         }
                     }
 
@@ -355,7 +355,7 @@ pub fn run_in_sandbox(
                                 readonly: bool|
                      -> std::result::Result<(), String> {
                         let dest = newroot.join(dest_rel.trim_start_matches('/'));
-                        
+
                         // Fix: ALWAYS ensure the destination mount point exists.
                         // Even with overlay, we need to create the directory/file in the upperdir.
                         if src.is_dir() {
@@ -529,7 +529,7 @@ pub fn run_in_sandbox(
                     let _ = std::fs::remove_dir("/.old_root");
 
                     // --- Hostname ---
-                    let _ = sethostname("wright-sandbox");
+                    let _ = sethostname("wright-dockyard");
 
                     // --- Environment ---
                     for (key, _) in std::env::vars_os() {
@@ -584,7 +584,7 @@ pub fn run_in_sandbox(
                     }
 
                     // Pin this process to N CPUs so that `nproc` inside the
-                    // sandbox returns the scheduler's computed share rather than
+                    // dockyard returns the scheduler's computed share rather than
                     // the full host count. We use the first N CPUs in the set.
                     if let Some(n) = config.cpu_count {
                         unsafe {
@@ -599,8 +599,8 @@ pub fn run_in_sandbox(
                     }
 
                     // Retry loop for ETXTBSY (Text file busy).
-                    // This happens if an interpreter (like /bin/sh) is being overwritten 
-                    // by the host while we try to exec it in the sandbox.
+                    // This happens if an interpreter (like /bin/sh) is being overwritten
+                    // by the host while we try to exec it in the dockyard.
                     let mut retries = 0;
                     loop {
                         match execvp(&c_command, &c_args) {
@@ -649,8 +649,8 @@ pub fn run_in_sandbox(
             if n > 0 {
                 let msg = String::from_utf8_lossy(&err_buf[..n]).to_string();
                 let _ = waitpid(child, None);
-                return Err(WrightError::SandboxError(format!(
-                    "sandbox setup failed: {msg}"
+                return Err(WrightError::DockyardError(format!(
+                    "dockyard setup failed: {msg}"
                 )));
             }
 
@@ -673,14 +673,14 @@ pub fn run_in_sandbox(
             let stdout_bytes = stdout_handle.join().unwrap_or_default();
             let stderr_bytes = stderr_handle.join().unwrap_or_default();
 
-            debug!("Sandbox child exited with: {:?}", status);
-            Ok(SandboxOutput {
+            debug!("Dockyard child exited with: {:?}", status);
+            Ok(DockyardOutput {
                 status,
                 stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
                 stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
             })
         }
-        Err(e) => Err(WrightError::SandboxError(format!("fork: {e}"))),
+        Err(e) => Err(WrightError::DockyardError(format!("fork: {e}"))),
     }
 }
 
@@ -716,7 +716,7 @@ fn wait_for_child(pid: Pid) -> Result<ExitStatus> {
             Ok(_) => continue,
             Err(nix::errno::Errno::EINTR) => continue,
             Err(e) => {
-                return Err(WrightError::SandboxError(format!("waitpid: {e}")));
+                return Err(WrightError::DockyardError(format!("waitpid: {e}")));
             }
         }
     }

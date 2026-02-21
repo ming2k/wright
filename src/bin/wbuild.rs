@@ -63,12 +63,12 @@ enum Commands {
         #[arg(long, short)]
         force: bool,
 
-        /// Max number of concurrent build workers. Only packages with no
+        /// Max number of concurrent dockyards. Only packages with no
         /// direct or indirect dependency relationship run simultaneously;
         /// the scheduler enforces ordering automatically.
         /// 0 = auto-detect CPU count.
         #[arg(short = 'w', long, default_value = "0")]
-        workers: usize,
+        dockyards: usize,
 
         /// Force-rebuild ALL downstream dependents, not just link dependents
         /// (extends --dependents beyond link-only packages; use together with --dependents
@@ -166,15 +166,15 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run {
-            targets, until, only, clean, force, workers,
+            targets, until, only, clean, force, dockyards,
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents, mvp,
         } => {
-            // CLI --workers 0 means "use config default"; config workers 0 means auto-detect.
-            let effective_workers = if workers != 0 { workers } else { config.build.workers };
+            // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
+            let effective_dockyards = if dockyards != 0 { dockyards } else { config.build.dockyards };
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
                 stage: until, only, clean, force,
-                workers: effective_workers,
+                dockyards: effective_dockyards,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,
@@ -184,9 +184,9 @@ fn main() -> Result<()> {
                 include_deps,
                 include_dependents,
                 mvp,
-                // Config nproc_per_worker is a static override; None means the
-                // scheduler computes it dynamically as total_cpus / active_workers.
-                nproc_per_worker: config.build.nproc_per_worker,
+                // Config nproc_per_dockyard is a static override; None means the
+                // scheduler computes it dynamically as total_cpus / active_dockyards.
+                nproc_per_dockyard: config.build.nproc_per_dockyard,
             })?)
         }
         Commands::Check { targets } => {

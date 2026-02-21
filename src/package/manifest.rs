@@ -164,8 +164,8 @@ fn default_true() -> bool {
 pub struct LifecycleStage {
     #[serde(default = "default_executor")]
     pub executor: String,
-    #[serde(default = "default_sandbox_level")]
-    pub sandbox: String,
+    #[serde(default = "default_dockyard_level")]
+    pub dockyard: String,
     #[serde(default)]
     pub optional: bool,
     #[serde(default)]
@@ -178,7 +178,7 @@ fn default_executor() -> String {
     "shell".to_string()
 }
 
-fn default_sandbox_level() -> String {
+fn default_dockyard_level() -> String {
     "strict".to_string()
 }
 
@@ -391,7 +391,7 @@ sha256 = []
 
 [lifecycle.prepare]
 executor = "shell"
-sandbox = "none"
+dockyard = "none"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -401,14 +401,14 @@ EOF
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "none"
+dockyard = "none"
 script = """
 gcc -o hello hello.c
 """
 
 [lifecycle.package]
 executor = "shell"
-sandbox = "none"
+dockyard = "none"
 script = """
 install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 """
@@ -464,7 +464,7 @@ ccache = true
 
 [lifecycle.prepare]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
@@ -472,7 +472,7 @@ patch -Np1 < ${FILES_DIR}/fix-headers.patch
 
 [lifecycle.configure]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe" }
 script = """
 cd nginx-${PKG_VERSION}
@@ -481,7 +481,7 @@ cd nginx-${PKG_VERSION}
 
 [lifecycle.compile]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 make
@@ -489,7 +489,7 @@ make
 
 [lifecycle.check]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 optional = true
 script = """
 cd nginx-${PKG_VERSION}
@@ -498,7 +498,7 @@ make test
 
 [lifecycle.package]
 executor = "shell"
-sandbox = "strict"
+dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 make DESTDIR=${PKG_DIR} install

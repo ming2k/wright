@@ -37,8 +37,8 @@ pub struct GeneralConfig {
 pub struct BuildConfig {
     #[serde(default = "default_build_dir")]
     pub build_dir: PathBuf,
-    #[serde(default = "default_sandbox")]
-    pub default_sandbox: String,
+    #[serde(default = "default_dockyard")]
+    pub default_dockyard: String,
     #[serde(default)]
     pub jobs: u32,
     #[serde(default = "default_cflags")]
@@ -55,14 +55,19 @@ pub struct BuildConfig {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Max concurrent build workers. 0 = auto-detect (matches CPU count).
+    /// Max concurrent dockyards. 0 = auto-detect (matches CPU count).
     #[serde(default)]
-    pub workers: usize,
-    /// Static per-worker compiler thread budget. When set, overrides the
-    /// dynamic `total_cpus / active_workers` calculation in the scheduler.
-    /// When unset, the scheduler divides CPUs evenly across active workers.
+    pub dockyards: usize,
+    /// Static per-dockyard compiler thread budget. When set, overrides the
+    /// dynamic `total_cpus / active_dockyards` calculation in the scheduler.
+    /// When unset, the scheduler divides CPUs evenly across active dockyards.
     #[serde(default)]
-    pub nproc_per_worker: Option<u32>,
+    pub nproc_per_dockyard: Option<u32>,
+    /// Hard cap on the number of CPU cores wright will use in total.
+    /// Limits both the parallel dockyard count and the dynamic NPROC budget.
+    /// Unset = use all available CPUs.
+    #[serde(default)]
+    pub max_cpus: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -199,7 +204,7 @@ fn default_assemblies_dir() -> PathBuf {
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/tmp/wright-build")
 }
-fn default_sandbox() -> String {
+fn default_dockyard() -> String {
     "strict".to_string()
 }
 fn default_cflags() -> String {
@@ -232,7 +237,7 @@ impl Default for BuildConfig {
     fn default() -> Self {
         Self {
             build_dir: default_build_dir(),
-            default_sandbox: default_sandbox(),
+            default_dockyard: default_dockyard(),
             jobs: 0,
             cflags: default_cflags(),
             cxxflags: default_cxxflags(),
@@ -241,8 +246,9 @@ impl Default for BuildConfig {
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
-            workers: 0,
-            nproc_per_worker: None,
+            dockyards: 0,
+            nproc_per_dockyard: None,
+            max_cpus: None,
         }
     }
 }

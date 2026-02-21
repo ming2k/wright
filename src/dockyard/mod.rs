@@ -6,8 +6,8 @@ use std::process::ExitStatus;
 
 use crate::error::Result;
 
-/// Captured output from a sandboxed command execution.
-pub struct SandboxOutput {
+/// Captured output from a dockyard command execution.
+pub struct DockyardOutput {
     pub status: ExitStatus,
     pub stdout: String,
     pub stderr: String,
@@ -54,13 +54,13 @@ pub struct ResourceLimits {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxLevel {
+pub enum DockyardLevel {
     None,
     Relaxed,
     Strict,
 }
 
-impl std::str::FromStr for SandboxLevel {
+impl std::str::FromStr for DockyardLevel {
     type Err = std::convert::Infallible;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
@@ -72,8 +72,8 @@ impl std::str::FromStr for SandboxLevel {
     }
 }
 
-pub struct SandboxConfig {
-    pub level: SandboxLevel,
+pub struct DockyardConfig {
+    pub level: DockyardLevel,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
     pub task_id: String, // Unique identifier for this build task
@@ -82,14 +82,14 @@ pub struct SandboxConfig {
     pub env: Vec<(String, String)>,
     pub rlimits: ResourceLimits,
     pub verbose: bool, // Whether to echo subprocess output to the terminal
-    /// Pin the sandboxed process to this many CPUs via sched_setaffinity.
+    /// Pin the dockyard process to this many CPUs via sched_setaffinity.
     /// Tools like `nproc` will then return this count naturally without any
     /// env var injection. None means inherit the host's full CPU set.
     pub cpu_count: Option<u32>,
 }
 
-impl SandboxConfig {
-    pub fn new(level: SandboxLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
+impl DockyardConfig {
+    pub fn new(level: DockyardLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
         Self {
             level,
             src_dir,
@@ -105,7 +105,7 @@ impl SandboxConfig {
     }
 }
 
-/// Run a command inside a sandbox using the native Linux namespace implementation.
-pub fn run_in_sandbox(config: &SandboxConfig, command: &str, args: &[String]) -> Result<SandboxOutput> {
-    native::run_in_sandbox(config, command, args)
+/// Run a command inside a dockyard using the native Linux namespace implementation.
+pub fn run_in_dockyard(config: &DockyardConfig, command: &str, args: &[String]) -> Result<DockyardOutput> {
+    native::run_in_dockyard(config, command, args)
 }

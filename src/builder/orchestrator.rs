@@ -27,10 +27,10 @@ pub struct BuildOptions {
     pub lint: bool,
     pub force: bool,
     pub checksum: bool,
-    /// Max number of concurrently active build workers.
+    /// Max number of concurrently active dockyards.
     /// Only packages with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
-    pub workers: usize,
+    pub dockyards: usize,
     pub rebuild_dependents: bool,
     pub rebuild_dependencies: bool,
     pub install: bool,
@@ -45,12 +45,12 @@ pub struct BuildOptions {
     pub include_dependents: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
-    /// Per-worker NPROC hint: how many compiler threads each worker should use.
+    /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
     /// The scheduler computes this per launched task from the currently active
-    /// worker count (`total_cpus / active_workers`) so resource share adapts as
+    /// dockyard count (`total_cpus / active_dockyards`) so resource share adapts as
     /// dependency levels fan out or collapse. None means let the builder fall
     /// back to its own logic.
-    pub nproc_per_worker: Option<u32>,
+    pub nproc_per_dockyard: Option<u32>,
 }
 
 impl BuildOptions {
@@ -776,12 +776,32 @@ fn execute_builds(
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
 
-    let total_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let actual_workers = if opts.workers == 0 { total_cpus } else { opts.workers };
+    let total_cpus = {
+        let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        if let Some(cap) = config.build.max_cpus {
+            available.min(cap.max(1))
+        } else {
+            available
+        }
+    };
+    let available_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let actual_dockyards = if opts.dockyards == 0 { total_cpus } else { opts.dockyards.min(total_cpus) };
 
+    let cpu_cap_note = if let Some(cap) = config.build.max_cpus {
+        format!(" (capped at {} of {} available)", total_cpus, cap.max(1))
+    } else {
+        String::new()
+    };
+    eprintln!(
+        "Dockyards: {} active  |  CPUs: {}/{}{}",
+        actual_dockyards,
+        total_cpus,
+        available_cpus,
+        cpu_cap_note,
+    );
     info!(
-        "Starting build with up to {} concurrent workers (dynamic compiler thread budget)",
-        actual_workers,
+        "Starting build with up to {} concurrent dockyards (dynamic compiler thread budget)",
+        actual_dockyards,
     );
 
     loop {
@@ -805,20 +825,28 @@ fn execute_builds(
         }
 
         for name in ready_to_launch {
-            // Track active workers and derive a dynamic CPU budget per running
+            // Track active dockyards and derive a dynamic CPU budget per running
             // package from the current fan-out level.
-            let active_workers = {
+            let active_dockyards = {
                 let mut in_progress_guard = in_progress.lock().unwrap();
-                if in_progress_guard.len() >= actual_workers {
+                if in_progress_guard.len() >= actual_dockyards {
                     break;
                 }
                 in_progress_guard.insert(name.clone());
                 in_progress_guard.len()
             };
             // Use static config override if provided; otherwise divide CPUs
-            // evenly across however many workers are currently active.
-            let dynamic_nproc_cap = opts.nproc_per_worker
-                .or_else(|| Some((total_cpus / active_workers).max(1) as u32));
+            // evenly across however many dockyards are currently active.
+            let dynamic_nproc_cap = opts.nproc_per_dockyard
+                .or_else(|| Some((total_cpus / active_dockyards).max(1) as u32));
+
+            eprintln!(
+                "[dockyard {}] {}  ({} CPU{})",
+                active_dockyards,
+                name,
+                dynamic_nproc_cap.unwrap_or(1),
+                if dynamic_nproc_cap.unwrap_or(1) == 1 { "" } else { "s" },
+            );
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -842,16 +870,16 @@ fn execute_builds(
                 effective_opts.force = true;
             }
             // Output routing rules:
-            //   single worker + no --quiet  → stream subprocess output to terminal (like makepkg/emerge)
-            //   multi  worker + no --verbose → suppress to avoid interleaved terminal noise
-            //   multi  worker + --verbose   → user explicitly asked; show (may interleave)
-            if actual_workers == 1 && !opts.quiet {
+            //   single dockyard + no --quiet  → stream subprocess output to terminal (like makepkg/emerge)
+            //   multi  dockyard + no --verbose → suppress to avoid interleaved terminal noise
+            //   multi  dockyard + --verbose   → user explicitly asked; show (may interleave)
+            if actual_dockyards == 1 && !opts.quiet {
                 effective_opts.verbose = true;
-            } else if actual_workers > 1 && !opts.verbose {
+            } else if actual_dockyards > 1 && !opts.verbose {
                 effective_opts.verbose = false;
             }
-            // else: multi-worker + explicit -v → keep opts.verbose = true (user's choice)
-            effective_opts.nproc_per_worker = dynamic_nproc_cap;
+            // else: multi-dockyard + explicit -v → keep opts.verbose = true (user's choice)
+            effective_opts.nproc_per_dockyard = dynamic_nproc_cap;
 
             std::thread::spawn(move || {
                 let manifest = match PackageManifest::from_file(&path) {
@@ -943,7 +971,7 @@ fn execute_builds(
         match rx.recv() {
             Err(_) => {
                 return Err(WrightError::BuildError(
-                    "build worker thread disconnected unexpectedly".to_string()
+                    "dockyard thread disconnected unexpectedly".to_string()
                 ));
             }
             Ok(Ok(name)) => {
@@ -1115,7 +1143,7 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force, opts.nproc_per_worker)?;
+    let result = builder.build(manifest, &plan_dir, opts.stage.clone(), opts.only.clone(), &extra_env, opts.verbose, opts.force, opts.nproc_per_dockyard)?;
 
     // Skip archive creation when --only is used for non-package stages
     if opts.only.is_none() || opts.only.as_deref() == Some("package") || opts.only.as_deref() == Some("post_package") {

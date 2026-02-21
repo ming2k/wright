@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::error::{WrightError, Result};
 use crate::builder::variables;
-use crate::sandbox::{self, ResourceLimits, SandboxConfig, SandboxLevel};
+use crate::dockyard::{run_in_dockyard, ResourceLimits, DockyardConfig, DockyardLevel};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ExecutorConfig {
@@ -23,7 +23,7 @@ pub struct ExecutorConfig {
     #[serde(default)]
     pub required_paths: Vec<String>,
     #[serde(default)]
-    pub default_sandbox: String,
+    pub default_dockyard: String,
 }
 
 fn default_delivery() -> String {
@@ -44,7 +44,7 @@ impl Default for ExecutorConfig {
             delivery: "tempfile".to_string(),
             tempfile_extension: ".sh".to_string(),
             required_paths: vec![],
-            default_sandbox: "strict".to_string(),
+            default_dockyard: "strict".to_string(),
         }
     }
 }
@@ -99,7 +99,7 @@ struct ExecutorWrapper {
 
 #[derive(Debug, Clone)]
 pub struct ExecutorOptions {
-    pub level: SandboxLevel,
+    pub level: DockyardLevel,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
@@ -128,7 +128,7 @@ pub fn execute_script(
     options: &ExecutorOptions,
 ) -> Result<ExecutionResult> {
     // When running in a sandbox, remap path variables to sandbox mount points
-    let effective_vars = if options.level != SandboxLevel::None {
+    let effective_vars = if options.level != DockyardLevel::None {
         let mut v = vars.clone();
         // Remap BUILD_DIR: replace the host SRC_DIR prefix with /build
         if let (Some(host_build_dir), Some(host_src_dir)) = (vars.get("BUILD_DIR"), vars.get("SRC_DIR")) {
@@ -165,7 +165,7 @@ pub fn execute_script(
         vars.get("PKG_NAME").cloned().unwrap_or_else(|| "unknown".to_string()),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     );
-    let mut config = SandboxConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone(), task_id);
+    let mut config = DockyardConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone(), task_id);
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
@@ -211,7 +211,7 @@ pub fn execute_script(
     // Build arguments for the command
     let mut args = executor.args.clone();
     if executor.delivery == "tempfile" {
-        if options.level == SandboxLevel::None {
+        if options.level == DockyardLevel::None {
             // Running directly on the host: use the real path
             args.push(script_path.to_string_lossy().to_string());
         } else {
@@ -220,8 +220,8 @@ pub fn execute_script(
         }
     }
 
-    // Execute in sandbox
-    let output = sandbox::run_in_sandbox(&config, &executor.command, &args)?;
+    // Execute in dockyard
+    let output = run_in_dockyard(&config, &executor.command, &args)?;
 
     let exit_code = output.status.code().unwrap_or(-1);
 

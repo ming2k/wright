@@ -11,7 +11,7 @@ use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
 use crate::package::manifest::PackageManifest;
 use crate::repo::source::sanitize_cache_filename;
-use crate::sandbox::ResourceLimits;
+use crate::dockyard::ResourceLimits;
 use crate::util::{checksum, download, compress};
 
 pub struct BuildResult {
@@ -177,10 +177,10 @@ impl Builder {
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
         force: bool,
-        // Per-worker NPROC hint from the scheduler. Applied only when both the
+        // Per-dockyard NPROC hint from the scheduler. Applied only when both the
         // plan and global config leave jobs at 0 (auto-detect), preventing
-        // CPU oversubscription when multiple workers run simultaneously.
-        nproc_per_worker: Option<u32>,
+        // CPU oversubscription when multiple dockyards run simultaneously.
+        nproc_per_dockyard: Option<u32>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -272,11 +272,11 @@ impl Builder {
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
-        // Compute scheduler's CPU share for this worker and apply it as CPU
-        // affinity on the sandbox process. Tools like `nproc` inside the
-        // sandbox then return the correct count without any env var injection.
-        let cpu_count = nproc_per_worker
-            .or(self.config.build.nproc_per_worker)
+        // Compute scheduler's CPU share for this dockyard and apply it as CPU
+        // affinity on the dockyard process. Tools like `nproc` inside the
+        // dockyard then return the correct count without any env var injection.
+        let cpu_count = nproc_per_dockyard
+            .or(self.config.build.nproc_per_dockyard)
             .unwrap_or_else(|| self.config.effective_jobs());
 
         let vars = variables::standard_variables(variables::VariableContext {
@@ -347,7 +347,7 @@ impl Builder {
             debug!("Running package stage for split: {}", split_name);
 
             let split_options = executor::ExecutorOptions {
-                level: package_stage.sandbox.parse().unwrap(),
+                level: package_stage.dockyard.parse().unwrap(),
                 src_dir: src_dir.clone(),
                 pkg_dir: split_pkg_dir.clone(),
                 files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
