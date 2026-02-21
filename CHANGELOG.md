@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.2] - 2026-02-21
+
+### Fixes
+- Fix test call to `Builder::build` missing `force` and `nproc_per_worker` arguments introduced in 1.1.1
+
 ## [1.1.1] - 2026-02-21
 
 ### Fixes

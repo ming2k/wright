@@ -1076,7 +1076,7 @@ mod tests {
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let result = builder
-            .build(&manifest, hold_dir, None, None, &extra_env, false)
+            .build(&manifest, hold_dir, None, None, &extra_env, false, false, None)
             .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
