@@ -337,7 +337,7 @@ cd ${BUILD_DIR}
 [lifecycle.compile]
 executor = "shell"
 dockyard = "strict"
-env = { MAKEFLAGS = "-j${NPROC}" }
+# env line removed — nproc inside the dockyard already returns the correct count
 script = """
 cd ${BUILD_DIR}
 make
@@ -428,7 +428,6 @@ The `script` fields in package description files support the following variables
 | `${PKG_DIR}` | Package output directory (simulated install root) |
 | `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
 | `${MAIN_PKG_DIR}` | Main package's output directory (split package stages only) |
-| `${NPROC}` | Number of CPU cores (for parallel compilation) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |
 
@@ -576,7 +575,6 @@ bwrap \
     --setenv PKG_DIR "/output" \
     --setenv SRC_DIR "/build" \
     --setenv FILES_DIR "/files" \
-    --setenv NPROC "$(nproc)" \
     -- /bin/bash -e -o pipefail /tmp/_build_script.sh
 ```
 
@@ -871,7 +869,9 @@ log_dir = "/var/log/wright"
 [build]
 build_dir = "/tmp/wright-build"       # Build working directory (tmpfs recommended)
 default_dockyard = "strict"          # Default dockyard level
-jobs = 0                            # Parallel compilation count, 0 = auto-detect nproc
+dockyards = 0                        # Max concurrent dockyards (0 = auto = available_cpus − 4)
+# nproc_per_dockyard = 4            # Optional: fixed CPU share per dockyard
+# max_cpus = 8                      # Optional: hard cap on total CPUs used
 cflags = "-O2 -pipe -march=x86-64"
 cxxflags = "${cflags}"
 strip = true

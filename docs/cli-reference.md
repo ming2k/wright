@@ -136,7 +136,7 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--only <STAGE>` | Run exactly one stage; all others are skipped (requires a previous full build) |
 | `--clean` | Clear the build cache entry and working directory before starting. The working directory is recreated at the start of every build anyway; the primary effect of `--clean` is invalidating the build cache so the next build must compile fully. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
-| `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = total_cpus). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
+| `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
 | `--install` (`-i`) | Automatically install each package after a successful build |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 

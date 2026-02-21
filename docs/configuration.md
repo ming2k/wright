@@ -82,7 +82,7 @@ assemblies_dir = "/etc/wright/assemblies" # Assembly definitions (*.toml)
 [build]
 build_dir = "/tmp/wright-build"           # Build working directory
 default_dockyard = "strict"             # Default dockyard level: none / relaxed / strict
-dockyards = 0                           # Max concurrent dockyards (0 = auto = total_cpus)
+dockyards = 0                           # Max concurrent dockyards (0 = auto = available_cpus - 4, minimum 1)
 # nproc_per_dockyard = 4               # Fixed CPU count per dockyard (unset = dynamic share)
 # max_cpus = 16                        # Hard cap on CPU cores used (0 or unset = available - 4)
 cflags = "-O2 -pipe -march=x86-64"     # Default C compiler flags
@@ -117,7 +117,7 @@ retry_count = 3                         # Download retry attempts
 |-------|------|---------|-------------|
 | `build_dir` | path | `/tmp/wright-build` | Working directory for builds (tmpfs recommended) |
 | `default_dockyard` | string | `"strict"` | Dockyard isolation level when not specified per-stage (`none` / `relaxed` / `strict`) |
-| `dockyards` | integer | `0` | Max concurrent dockyard processes. `0` = auto (equals `total_cpus`). |
+| `dockyards` | integer | `0` | Max concurrent dockyard processes. `0` = auto (available_cpus − 4, minimum 1). |
 | `nproc_per_dockyard` | integer | — | Fixed CPU count per dockyard. Unset = dynamic (`total_cpus / active_dockyards`). |
 | `max_cpus` | integer | — | Hard cap on total CPU cores wright may use. Unset = `available_cpus - 4` (minimum 1). |
 | `cflags` | string | `"-O2 -pipe -march=x86-64"` | Global C compiler flags |

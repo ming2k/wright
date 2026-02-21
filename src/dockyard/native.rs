@@ -69,6 +69,25 @@ fn spawn_timeout_watchdog(pid: u32, timeout: u64, kill_pgroup: bool) -> Arc<Atom
     done
 }
 
+/// Pin the calling process to the first `n` CPUs via `sched_setaffinity`.
+///
+/// Called in `pre_exec` (for direct-execution paths) and inside the dockyard
+/// grandchild (for the sandboxed path) so that `nproc` — which reads
+/// `sched_getaffinity` on Linux — returns the scheduler's computed share
+/// rather than the full host count.  Errors are silently ignored: affinity is
+/// a best-effort resource hint, not a hard correctness requirement.
+fn apply_cpu_affinity(n: u32) {
+    unsafe {
+        let total = libc::sysconf(libc::_SC_NPROCESSORS_ONLN).max(1) as u32;
+        let count = n.min(total).max(1);
+        let mut set = std::mem::zeroed::<libc::cpu_set_t>();
+        for i in 0..count {
+            libc::CPU_SET(i as usize, &mut set);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+    }
+}
+
 /// Apply resource limits via `setrlimit`.
 fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
     use nix::sys::resource::{setrlimit, Resource};
@@ -121,10 +140,16 @@ pub fn run_in_dockyard(
             cmd.env(key, value);
         }
         let rlimits = config.rlimits.clone();
+        let cpu_count = config.cpu_count;
         unsafe {
             cmd.pre_exec(move || {
                 // New process group so timeout can kill all descendants.
                 libc::setpgid(0, 0);
+                // Pin to the scheduler's CPU share so `nproc` returns the
+                // correct count even without namespace isolation.
+                if let Some(n) = cpu_count {
+                    apply_cpu_affinity(n);
+                }
                 apply_rlimits(&rlimits).map_err(std::io::Error::other)
             });
         }
@@ -191,9 +216,13 @@ pub fn run_in_dockyard(
             cmd.env(key, value);
         }
         let rlimits = config.rlimits.clone();
+        let cpu_count = config.cpu_count;
         unsafe {
             cmd.pre_exec(move || {
                 libc::setpgid(0, 0);
+                if let Some(n) = cpu_count {
+                    apply_cpu_affinity(n);
+                }
                 apply_rlimits(&rlimits).map_err(std::io::Error::other)
             });
         }
@@ -585,17 +614,9 @@ pub fn run_in_dockyard(
 
                     // Pin this process to N CPUs so that `nproc` inside the
                     // dockyard returns the scheduler's computed share rather than
-                    // the full host count. We use the first N CPUs in the set.
+                    // the full host count.
                     if let Some(n) = config.cpu_count {
-                        unsafe {
-                            let mut set = std::mem::zeroed::<libc::cpu_set_t>();
-                            let total = libc::sysconf(libc::_SC_NPROCESSORS_ONLN).max(1) as u32;
-                            let count = n.min(total);
-                            for i in 0..count {
-                                libc::CPU_SET(i as usize, &mut set);
-                            }
-                            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-                        }
+                        apply_cpu_affinity(n);
                     }
 
                     // Retry loop for ETXTBSY (Text file busy).

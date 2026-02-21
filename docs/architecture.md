@@ -48,7 +48,7 @@ plan.toml → PackageManifest
       → expand transitive rebuilds (Downward, build ops only)
       → detect dependency cycles (Tarjan SCC)
           → if cycle found and [mvp.dependencies] declared:
-              inject two-pass plan ({pkg}:bootstrap → rest → {pkg}:full)
+              inject two-pass plan ({pkg}:bootstrap [MVP] → rest → {pkg}:full [FULL])
           → if cycle found and no [mvp.dependencies]: error with cycle description
       → display Construction Plan ([NEW] / [LINK-REBUILD] / [REV-REBUILD] / [MVP] / [FULL])
           (suppressed with --quiet; subprocess output echoed only with --verbose and single job)

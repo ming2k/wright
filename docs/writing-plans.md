@@ -506,6 +506,30 @@ In both `relaxed` and `strict` modes, the dockyard:
 
 If the kernel does not support the required namespaces (e.g. inside a container), the dockyard falls back to direct execution with a warning.
 
+### Choosing a level
+
+| Build tool / scenario | Level | Reason |
+|-----------------------|-------|--------|
+| C/C++ — autotools, CMake, meson | `strict` | No network needed at build time; default is correct |
+| Rust — `cargo build` | `relaxed` | Cargo fetches crates from crates.io during compilation unless vendored |
+| Go — `go build` / `go mod download` | `relaxed` | Go modules download from proxy.golang.org during build unless vendored |
+| Node.js — `npm install` / `yarn` | `relaxed` | Package manager downloads from npm registry during install |
+| Python — `pip install` / `python setup.py` | `relaxed` | pip fetches from PyPI during install |
+| Stage needs host IPC | `relaxed` | IPC namespace is not isolated, so System V / POSIX queues remain accessible |
+| Stage needs full host access | `none` | No namespace isolation at all — use only when unavoidable |
+
+The recommended pattern for network-fetching build tools (Cargo, Go, npm) is to
+pre-vendor dependencies and build fully offline under `strict`:
+
+- **Cargo**: include a `vendor/` directory and set `CARGO_NET_OFFLINE=true` plus a
+  `.cargo/config.toml` pointing at the vendor dir.
+- **Go**: run `go mod vendor` and pass `-mod=vendor` at build time.
+- **npm**: include `node_modules/` in the source archive or use `npm pack`/offline mirror.
+
+When vendoring is not practical (e.g. bootstrapping the toolchain itself), use
+`relaxed` so the build can reach the network while still keeping a private
+filesystem and process namespace.
+
 ## Executors
 
 Executors define how scripts are run. The `executor` field on a lifecycle stage selects which executor to use.

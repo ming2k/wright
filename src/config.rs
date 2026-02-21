@@ -39,8 +39,6 @@ pub struct BuildConfig {
     pub build_dir: PathBuf,
     #[serde(default = "default_dockyard")]
     pub default_dockyard: String,
-    #[serde(default)]
-    pub jobs: u32,
     #[serde(default = "default_cflags")]
     pub cflags: String,
     #[serde(default = "default_cxxflags")]
@@ -238,7 +236,6 @@ impl Default for BuildConfig {
         Self {
             build_dir: default_build_dir(),
             default_dockyard: default_dockyard(),
-            jobs: 0,
             cflags: default_cflags(),
             cxxflags: default_cxxflags(),
             strip: true,
@@ -372,14 +369,4 @@ impl GlobalConfig {
         Ok(config)
     }
 
-    /// Get effective number of build jobs (0 means auto-detect)
-    pub fn effective_jobs(&self) -> u32 {
-        if self.build.jobs == 0 {
-            std::thread::available_parallelism()
-                .map(|n| n.get() as u32)
-                .unwrap_or(1)
-        } else {
-            self.build.jobs
-        }
-    }
 }

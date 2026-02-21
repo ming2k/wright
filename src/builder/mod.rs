@@ -277,7 +277,11 @@ impl Builder {
         // dockyard then return the correct count without any env var injection.
         let cpu_count = nproc_per_dockyard
             .or(self.config.build.nproc_per_dockyard)
-            .unwrap_or_else(|| self.config.effective_jobs());
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get() as u32)
+                    .unwrap_or(1)
+            });
 
         let vars = variables::standard_variables(variables::VariableContext {
             pkg_name: &manifest.plan.name,
