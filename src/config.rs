@@ -331,42 +331,88 @@ impl AssembliesConfig {
     }
 }
 
-impl GlobalConfig {
-    pub fn load(path: Option<&Path>) -> Result<Self> {
-        let config_path = if let Some(p) = path {
-            PathBuf::from(p)
-        } else {
-            // Priority:
-            // 1. ./wright.toml
-            // 2. XDG_CONFIG_HOME/wright/wright.toml (if non-root)
-            // 3. /etc/wright/wright.toml
-            let local = PathBuf::from("./wright.toml");
-            if local.exists() {
-                local
-            } else {
-                let xdg = get_xdg_config();
-                if let Some(ref p) = xdg {
-                    if p.exists() {
-                        p.clone()
-                    } else {
-                        PathBuf::from("/etc/wright/wright.toml")
-                    }
+/// Recursively merge two TOML values. For tables, overlay keys win;
+/// missing keys are inherited from base. All other types (scalars, arrays)
+/// are replaced wholesale by the overlay value.
+fn merge_toml(base: toml::Value, overlay: toml::Value) -> toml::Value {
+    use toml::Value;
+    match (base, overlay) {
+        (Value::Table(mut base_map), Value::Table(overlay_map)) => {
+            for (k, v) in overlay_map {
+                let merged = if let Some(base_v) = base_map.remove(&k) {
+                    merge_toml(base_v, v)
                 } else {
-                    PathBuf::from("/etc/wright/wright.toml")
-                }
+                    v
+                };
+                base_map.insert(k, merged);
             }
-        };
+            Value::Table(base_map)
+        }
+        // Scalars and arrays: overlay wins unconditionally
+        (_, overlay) => overlay,
+    }
+}
 
-        if !config_path.exists() {
-            return Ok(Self::default());
+fn load_toml_file(path: &Path) -> Result<toml::Value> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
+    })?;
+    Ok(toml::from_str(&content)?)
+}
+
+impl GlobalConfig {
+    /// Load configuration with layered merging.
+    ///
+    /// When an explicit `path` is supplied (via `--config`), that single file
+    /// is loaded as-is with no layering.
+    ///
+    /// Otherwise configs are merged in ascending priority order so that
+    /// higher-priority files only need to specify the keys they want to
+    /// override — everything else is inherited from the layer below:
+    ///
+    ///   1. `/etc/wright/wright.toml`          (system-wide, lowest priority)
+    ///   2. `$XDG_CONFIG_HOME/wright/wright.toml` (per-user, non-root only)
+    ///   3. `./wright.toml`                    (project-local, highest priority)
+    ///
+    /// Any layer that does not exist is silently skipped. If no file is found
+    /// at any location, built-in defaults are used.
+    pub fn load(path: Option<&Path>) -> Result<Self> {
+        // Explicit path: single-file load, no layering.
+        if let Some(p) = path {
+            let config_path = PathBuf::from(p);
+            if !config_path.exists() {
+                return Ok(Self::default());
+            }
+            return Ok(toml::from_str(&std::fs::read_to_string(&config_path).map_err(|e| {
+                WrightError::ConfigError(format!("failed to read {}: {}", config_path.display(), e))
+            })?)?);
         }
 
-        let content = std::fs::read_to_string(&config_path).map_err(|e| {
-            WrightError::ConfigError(format!("failed to read {}: {}", config_path.display(), e))
-        })?;
+        // Layered load: accumulate from lowest to highest priority.
+        let mut layers: Vec<PathBuf> = vec![PathBuf::from("/etc/wright/wright.toml")];
+        if let Some(xdg) = get_xdg_config() {
+            layers.push(xdg);
+        }
+        layers.push(PathBuf::from("./wright.toml"));
 
-        let config: Self = toml::from_str(&content)?;
-        Ok(config)
+        let mut merged: Option<toml::Value> = None;
+        for layer_path in &layers {
+            if layer_path.exists() {
+                let val = load_toml_file(layer_path)?;
+                merged = Some(match merged {
+                    Some(base) => merge_toml(base, val),
+                    None => val,
+                });
+            }
+        }
+
+        match merged {
+            None => Ok(Self::default()),
+            Some(val) => {
+                use serde::Deserialize;
+                Ok(GlobalConfig::deserialize(val)?)
+            }
+        }
     }
 
 }

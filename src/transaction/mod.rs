@@ -305,12 +305,13 @@ pub fn install_package(
         WrightError::InstallError(format!("failed to create backup dir: {}", e))
     })?;
 
-    // Copy files to root_dir
+    // Copy files to root_dir (no config protection on fresh install)
     match copy_files_to_root(
         temp_dir.path(),
         root_dir,
         &mut rollback_state,
         Some(backup_dir.path()),
+        &HashSet::new(),
     ) {
         Ok(()) => {}
         Err(e) => {
@@ -638,8 +639,11 @@ pub fn upgrade_package(
         }
     }
 
-    // 7. Copy new files to root
-    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state, None) {
+    // 7. Copy new files to root.  Files declared in [backup] are written as
+    //    <path>.wnew so the user can review and merge them; all other files
+    //    are overwritten directly.
+    let config_paths = collect_config_paths(&new_entries);
+    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state, None, &config_paths) {
         Ok(()) => {}
         Err(e) => {
             warn!("Upgrade failed, rolling back: {}", e);
@@ -647,6 +651,12 @@ pub fn upgrade_package(
             db.update_transaction_status(tx_id, "rolled_back")?;
             return Err(e);
         }
+    }
+    for path in &config_paths {
+        warn!(
+            "Config file {} has been preserved. Review the new default at {}.wnew",
+            path, path
+        );
     }
 
     // 8. Remove old-only files (files in old but not in new)
@@ -903,12 +913,31 @@ fn backup_existing_path(
     Ok(())
 }
 
+/// Collect the absolute paths of all regular files declared as config files
+/// (`[backup]` in `plan.toml`) in the new package.  These will be written as
+/// `<path>.wnew` during upgrade rather than overwriting the live file.
+fn collect_config_paths(new_entries: &[crate::database::FileEntry]) -> HashSet<String> {
+    use crate::database::FileType;
+    new_entries
+        .iter()
+        .filter(|e| e.is_config && e.file_type == FileType::File)
+        .map(|e| e.path.clone())
+        .collect()
+}
+
 /// Copy files from extracted archive to root directory.
+///
+/// `config_paths` is the set of absolute paths declared as config files via
+/// `[backup]` in the package plan. During an upgrade those files are written
+/// as `<path>.wnew` instead of overwriting the live file, giving the user a
+/// chance to review and merge changes. On a fresh install this set is empty
+/// and every file is copied normally.
 fn copy_files_to_root(
     extract_dir: &Path,
     root_dir: &Path,
     rollback: &mut RollbackState,
     backup_dir: Option<&Path>,
+    config_paths: &HashSet<String>,
 ) -> Result<()> {
     for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
         let entry = entry.map_err(|e| {
@@ -1010,31 +1039,51 @@ fn copy_files_to_root(
                 }
             }
 
-            if let Some(backup_root) = backup_dir {
-                backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
-            }
+            let canonical_path = format!("/{}", relative_str);
+            if config_paths.contains(&canonical_path) {
+                // User-modified config: install the new version alongside as
+                // <path>.wnew and leave the live file untouched.
+                let mut new_name = dest_path.as_os_str().to_owned();
+                new_name.push(".wnew");
+                let side_path = PathBuf::from(new_name);
+                std::fs::copy(entry.path(), &side_path).map_err(|e| {
+                    WrightError::InstallError(format!(
+                        "failed to write {}: {}",
+                        side_path.display(),
+                        e
+                    ))
+                })?;
+                if let Err(e) = std::fs::set_permissions(&side_path, metadata.permissions()) {
+                    warn!("Failed to set permissions on {}: {}", side_path.display(), e);
+                }
+                rollback.record_file_created(side_path);
+            } else {
+                if let Some(backup_root) = backup_dir {
+                    backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
+                }
 
-            // Unlink the destination before copying so that replacing a
-            // running executable does not fail with ETXTBSY. The running
-            // process keeps its open file descriptor to the old inode.
-            if dest_path.exists() {
-                let _ = std::fs::remove_file(&dest_path);
-            }
-            std::fs::copy(entry.path(), &dest_path).map_err(|e| {
-                WrightError::InstallError(format!(
-                    "failed to copy {} to {}: {}",
-                    entry.path().display(),
-                    dest_path.display(),
-                    e
-                ))
-            })?;
+                // Unlink the destination before copying so that replacing a
+                // running executable does not fail with ETXTBSY. The running
+                // process keeps its open file descriptor to the old inode.
+                if dest_path.exists() {
+                    let _ = std::fs::remove_file(&dest_path);
+                }
+                std::fs::copy(entry.path(), &dest_path).map_err(|e| {
+                    WrightError::InstallError(format!(
+                        "failed to copy {} to {}: {}",
+                        entry.path().display(),
+                        dest_path.display(),
+                        e
+                    ))
+                })?;
 
-            // Preserve permissions
-            if let Err(e) = std::fs::set_permissions(&dest_path, metadata.permissions()) {
-                warn!("Failed to set permissions on {}: {}", dest_path.display(), e);
-            }
+                // Preserve permissions
+                if let Err(e) = std::fs::set_permissions(&dest_path, metadata.permissions()) {
+                    warn!("Failed to set permissions on {}: {}", dest_path.display(), e);
+                }
 
-            rollback.record_file_created(dest_path);
+                rollback.record_file_created(dest_path);
+            }
         }
     }
 
@@ -1545,5 +1594,94 @@ build_date = "1970-01-01T00:00:00Z"
 
         let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
         assert!(issues.iter().any(|i| i.contains("MODIFIED")));
+    }
+
+    /// Files declared in `[backup]` must always be written as `<path>.wnew`
+    /// during an upgrade, leaving the live file intact regardless of whether
+    /// the user modified it.
+    #[test]
+    fn test_upgrade_config_always_writes_wnew() {
+        let (db, root) = setup_test();
+
+        let conf_rel = "etc/myapp/myapp.conf";
+        let conf_v1 = b"setting = default\n";
+        let conf_v2 = b"setting = updated\n";
+
+        let make_archive = |dir: &std::path::Path, name: &str, ver: &str, content: &[u8], out: &std::path::Path| {
+            std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
+            std::fs::write(dir.join(conf_rel), content).unwrap();
+            let pkginfo = format!(
+                "[package]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
+                 description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
+                 install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n\
+                 [backup]\nfiles = [\"/etc/myapp/myapp.conf\"]\n"
+            );
+            std::fs::write(dir.join(".PKGINFO"), pkginfo).unwrap();
+            let archive = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
+            compress::create_tar_zst(dir, &archive).unwrap();
+            archive
+        };
+
+        let out_dir = tempfile::tempdir().unwrap();
+        let v1_dir = tempfile::tempdir().unwrap();
+        let v1 = make_archive(v1_dir.path(), "myapp", "1.0.0", conf_v1, out_dir.path());
+        install_package(&db, &v1, root.path(), false).unwrap();
+
+        let live_conf = root.path().join(conf_rel);
+        assert_eq!(std::fs::read(&live_conf).unwrap(), conf_v1);
+
+        let v2_dir = tempfile::tempdir().unwrap();
+        let v2 = make_archive(v2_dir.path(), "myapp", "2.0.0", conf_v2, out_dir.path());
+        upgrade_package(&db, &v2, root.path(), false).unwrap();
+
+        // Live file must be untouched
+        assert_eq!(
+            std::fs::read(&live_conf).unwrap(), conf_v1,
+            "live config must not be overwritten"
+        );
+        // New default deposited as .wnew
+        let wnew = root.path().join(format!("{conf_rel}.wnew"));
+        assert!(wnew.exists(), ".wnew must be created");
+        assert_eq!(
+            std::fs::read(&wnew).unwrap(), conf_v2,
+            ".wnew must contain the new default"
+        );
+    }
+
+    /// Files NOT declared in `[backup]` must be overwritten directly during
+    /// an upgrade — no .wnew sidecar is created.
+    #[test]
+    fn test_upgrade_non_config_overwritten_directly() {
+        let (db, root) = setup_test();
+
+        let out_dir = tempfile::tempdir().unwrap();
+
+        // v1: a regular (non-backup) file
+        let v1_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(v1_dir.path().join("usr/bin")).unwrap();
+        std::fs::write(v1_dir.path().join("usr/bin/mytool"), b"v1").unwrap();
+        let pkginfo_v1 = "[package]\nname = \"mypkg\"\nversion = \"1.0.0\"\nrelease = 1\n\
+             description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
+             install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
+        std::fs::write(v1_dir.path().join(".PKGINFO"), pkginfo_v1).unwrap();
+        let v1 = out_dir.path().join("mypkg-1.0.0-1.wright.tar.zst");
+        compress::create_tar_zst(v1_dir.path(), &v1).unwrap();
+        install_package(&db, &v1, root.path(), false).unwrap();
+
+        // v2: updated binary
+        let v2_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(v2_dir.path().join("usr/bin")).unwrap();
+        std::fs::write(v2_dir.path().join("usr/bin/mytool"), b"v2").unwrap();
+        let pkginfo_v2 = "[package]\nname = \"mypkg\"\nversion = \"2.0.0\"\nrelease = 1\n\
+             description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
+             install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
+        std::fs::write(v2_dir.path().join(".PKGINFO"), pkginfo_v2).unwrap();
+        let v2 = out_dir.path().join("mypkg-2.0.0-1.wright.tar.zst");
+        compress::create_tar_zst(v2_dir.path(), &v2).unwrap();
+        upgrade_package(&db, &v2, root.path(), false).unwrap();
+
+        let bin = root.path().join("usr/bin/mytool");
+        assert_eq!(std::fs::read(&bin).unwrap(), b"v2", "binary must be overwritten");
+        assert!(!root.path().join("usr/bin/mytool.wnew").exists(), "no .wnew for non-config file");
     }
 }

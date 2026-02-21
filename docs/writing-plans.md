@@ -266,6 +266,15 @@ List config files that should be preserved across upgrades:
 files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
+Files listed here are treated as **user-owned config files**:
+
+- **On upgrade:** the new default is always written alongside as `<path>.wnew`
+  (e.g. `/etc/nginx/nginx.conf.wnew`) and a warning is printed. The live file is
+  left intact so user customisations are never lost. The user can then diff the
+  two files and merge changes manually. Files **not** listed in `[backup]` are
+  overwritten directly.
+- **On remove:** config files are **not deleted**, even when the package is removed.
+
 ## Default Lifecycle Pipeline
 
 The default pipeline runs these stages in order:

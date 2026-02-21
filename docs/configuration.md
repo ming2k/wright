@@ -2,25 +2,28 @@
 
 ## Configuration Priority
 
-Wright uses a layered configuration system. Each config file is resolved
-using a **first-match-wins** strategy — the first file found in the search
-order is used, and remaining locations are ignored (they are NOT merged).
+Wright uses a **layered merge** strategy for `wright.toml`. All config files
+that exist are loaded and merged in priority order — a higher-priority file
+only needs to set the keys it wants to override; every other key is
+transparently inherited from the layer below it.
 
 If no file is found at any location, built-in defaults are applied.
 
-Any config file path can be overridden explicitly via the `--config` CLI flag,
-which bypasses the search order entirely.
+The `--config` CLI flag bypasses layering entirely and loads that single file
+with no merging.
 
 ### wright.toml (global config)
 
 | Priority | Path | When |
 |----------|------|------|
-| 1 (highest) | `--config <path>` | Explicit CLI override |
-| 2 | `./wright.toml` | Project-local config |
-| 3 | `$XDG_CONFIG_HOME/wright/wright.toml` | Per-user config (non-root only) |
-| 4 (lowest) | `/etc/wright/wright.toml` | System-wide config |
+| 1 (highest) | `--config <path>` | Explicit CLI override — no layering |
+| 2 | `./wright.toml` | Project-local overrides |
+| 3 | `$XDG_CONFIG_HOME/wright/wright.toml` | Per-user overrides (non-root only) |
+| 4 (lowest) | `/etc/wright/wright.toml` | System-wide base config |
 
-All fields have defaults, so this file is optional.
+All fields have defaults, so every config file is optional. A user config only
+needs to contain the keys it wants to change — the rest come from the system
+config or built-in defaults.
 
 ### repos.toml (repository sources)
 
@@ -52,12 +55,15 @@ priority since it is a `[general]` config field.
 ### Summary
 
 ```
-CLI flag (--config)          ← highest priority, explicit override
-  └─ ./wright.toml           ← project-local
-      └─ ~/.config/wright/   ← per-user (XDG, non-root)
-          └─ /etc/wright/    ← system-wide, lowest priority
-              └─ defaults    ← built-in fallback
+defaults                     ← built-in fallback (always present)
+  └─ /etc/wright/            ← system-wide base (merged on top)
+      └─ ~/.config/wright/   ← per-user overrides (merged on top, non-root)
+          └─ ./wright.toml   ← project-local overrides (merged on top)
+              └─ --config    ← explicit path, bypasses all layering
 ```
+
+Each layer only needs to contain the keys it wants to change. Keys absent
+from a layer are inherited from the layer below.
 
 ## wright.toml
 

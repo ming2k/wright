@@ -1,13 +1,14 @@
 # wright.toml — Wright build system configuration
 #
-# Config file search order (first found wins):
-#   1. --config <path>                        (CLI override)
-#   2. ./wright.toml                          (project-local)
-#   3. $XDG_CONFIG_HOME/wright/wright.toml    (per-user, non-root)
-#   4. /etc/wright/wright.toml               (system-wide)
+# Config files are merged in ascending priority order:
+#   1. /etc/wright/wright.toml               (system-wide base)
+#   2. $XDG_CONFIG_HOME/wright/wright.toml   (per-user overrides, non-root)
+#   3. ./wright.toml                         (project-local overrides)
+#   --config <path>                          (bypasses all layering)
 #
-# All fields are optional — built-in defaults are used for anything omitted.
-# Copy this file to one of the locations above and uncomment what you need.
+# Each file only needs to contain the keys it wants to override — missing
+# keys are inherited from the layer below, down to the built-in defaults.
+# Copy this file to any of the locations above and uncomment what you need.
 
 [general]
 # Target architecture for built packages.
