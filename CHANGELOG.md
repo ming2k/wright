@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-02-21
+
+### Features
+- Rename "sandbox" isolation environment to "dockyard" throughout codebase, config, TOML fields, and docs
+- Rename "worker" concurrency concept to "dockyard" for consistency (`workers` → `dockyards`, `nproc_per_worker` → `nproc_per_dockyard`)
+- Add `max_cpus` config field to hard-cap total CPU cores used; defaults to `available_cpus - 4` (minimum 1) to reserve headroom for the OS
+- Print resource info at build start: active dockyard count, total/available CPUs, and per-dockyard CPU share
+- Update all documentation for new terminology and CPU allocation model
+
 ## [1.1.2] - 2026-02-21
 
 ### Fixes
