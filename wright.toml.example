@@ -1,0 +1,99 @@
+# wright.toml — Wright build system configuration
+#
+# Config file search order (first found wins):
+#   1. --config <path>                        (CLI override)
+#   2. ./wright.toml                          (project-local)
+#   3. $XDG_CONFIG_HOME/wright/wright.toml    (per-user, non-root)
+#   4. /etc/wright/wright.toml               (system-wide)
+#
+# All fields are optional — built-in defaults are used for anything omitted.
+# Copy this file to one of the locations above and uncomment what you need.
+
+[general]
+# Target architecture for built packages.
+arch = "x86_64"
+
+# Root directory where plan definitions (plan.toml files) are stored.
+plans_dir = "/var/lib/wright/plans"
+
+# Directory where built package archives (.wright.tar.zst) are placed.
+components_dir = "/var/lib/wright/components"
+
+# Downloaded source tarballs are cached here to avoid re-downloading.
+# Non-root default: ~/.cache/wright
+cache_dir = "/var/lib/wright/cache"
+
+# SQLite database tracking installed packages.
+# Non-root default: ~/.local/state/wright/packages.db
+db_path = "/var/lib/wright/db/packages.db"
+
+# Operation and build logs are written here.
+# Non-root default: ~/.local/state/wright
+log_dir = "/var/log/wright"
+
+# Directory containing executor definition files (*.toml).
+executors_dir = "/etc/wright/executors"
+
+# Directory containing assembly definition files (*.toml).
+assemblies_dir = "/etc/wright/assemblies"
+
+[build]
+# Working directory for build trees. Using a tmpfs mount here is recommended
+# for faster builds and automatic cleanup on reboot.
+build_dir = "/tmp/wright-build"
+
+# Default sandbox level applied when a stage does not specify one.
+# Options: "none", "relaxed", "strict"
+default_sandbox = "strict"
+
+# Maximum number of packages built concurrently. Wright only runs packages
+# in parallel when they have no dependency relationship; ordering is always
+# enforced automatically. 0 (default) auto-detects from the host CPU count.
+# Can be overridden per-invocation with --workers / -w on the CLI.
+# workers = 4
+
+# Static per-worker CPU count. Wright pins each sandboxed build process to
+# its computed CPU share via sched_setaffinity, so `nproc` inside the sandbox
+# returns the correct count automatically. The default share is computed as
+# total_cpus / active_workers. Set this to fix the count regardless of how
+# many workers are active at any moment.
+# nproc_per_worker = 4
+
+# C compiler flags applied to every build. Per-plan $CFLAGS can append to or
+# override these via the plan's [options] or inline script logic.
+cflags = "-O2 -pipe -march=x86-64"
+
+# C++ compiler flags. Same semantics as cflags above.
+cxxflags = "-O2 -pipe -march=x86-64"
+
+# Strip debug symbols from installed binaries. Reduces package size.
+strip = true
+
+# Use ccache to speed up repeated compilations. Requires ccache installed.
+ccache = false
+
+# Maximum virtual address space (RLIMIT_AS) per build process, in megabytes.
+# Enforced by the kernel; a process that exceeds this receives ENOMEM.
+# Set generously — many build tools (rustc, clang, java) map large regions
+# even if they don't actively use them. 8–16 GB is a safe starting point.
+# Disabled by default (no limit).
+# memory_limit = 8192
+
+# Maximum CPU time (RLIMIT_CPU) consumed by a single build process, in seconds.
+# The kernel sends SIGXCPU when the limit is reached. Useful for catching
+# runaway builds. Note: this is CPU time, not wall-clock time.
+# Disabled by default (no limit).
+# cpu_time_limit = 7200
+
+# Wall-clock timeout per build stage, in seconds. Wright kills the entire
+# process group if a stage takes longer than this. Useful as a safety net
+# for builds that stall waiting on network or deadlock.
+# Disabled by default (no limit).
+# timeout = 14400
+
+[network]
+# HTTP download timeout in seconds. Applies per-request, not per-package.
+download_timeout = 300
+
+# Number of retry attempts for a failed download before giving up.
+retry_count = 3

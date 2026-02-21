@@ -107,6 +107,9 @@ pub struct ExecutorOptions {
     /// Main package's pkg_dir, mounted at /main-pkg for split package stages.
     pub main_pkg_dir: Option<PathBuf>,
     pub verbose: bool,
+    /// Number of CPUs to pin the sandboxed process to via sched_setaffinity.
+    /// `nproc` inside the sandbox then returns this count naturally.
+    pub cpu_count: Option<u32>,
 }
 
 pub struct ExecutionResult {
@@ -166,6 +169,7 @@ pub fn execute_script(
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
+    config.cpu_count = options.cpu_count;
 
     // Mount main package dir for split package stages
     if let Some(ref main_pkg) = options.main_pkg_dir {
@@ -183,24 +187,6 @@ pub fn execute_script(
     for (key, value) in &effective_vars {
         if !config.env.iter().any(|(k, _)| k == key) {
             config.env.push((key.clone(), value.clone()));
-        }
-    }
-
-    // Auto-inject parallel job limits so build tools respect `jobs` without
-    // the user having to manually pass `-j${NPROC}` in every script.
-    if let Some(nproc) = effective_vars.get("NPROC") {
-        let nproc_val = nproc.clone();
-        // cmake --build (controls Ninja/Make spawned by cmake)
-        if !config.env.iter().any(|(k, _)| k == "CMAKE_BUILD_PARALLEL_LEVEL") {
-            config.env.push(("CMAKE_BUILD_PARALLEL_LEVEL".to_string(), nproc_val.clone()));
-        }
-        // make
-        if !config.env.iter().any(|(k, _)| k == "MAKEFLAGS") {
-            config.env.push(("MAKEFLAGS".to_string(), format!("-j{}", nproc_val)));
-        }
-        // cargo
-        if !config.env.iter().any(|(k, _)| k == "CARGO_BUILD_JOBS") {
-            config.env.push(("CARGO_BUILD_JOBS".to_string(), nproc_val.clone()));
         }
     }
 

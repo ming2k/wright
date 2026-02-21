@@ -1,30 +1,22 @@
 # Resource Allocation
 
-This page explains how `wbuild` allocates CPU time across builds and how to
-tune each layer.
+This page explains how `wbuild` allocates CPU time across builds and how to tune each layer.
 
-## Three Layers of Parallelism
+## Two Layers of Parallelism
 
 | Layer | Controls | Where to configure |
 |-------|----------|--------------------|
-| **Worker concurrency** | How many packages build simultaneously | `-w` / `--workers` on the CLI |
-| **NPROC modifier** | Per-plan thread profile (halve, force serial, …) | `build_type` in `plan.toml` |
-| **NPROC cap** | Hard ceiling on compiler threads | `jobs` in `plan.toml` (per-plan) or `wright.toml` (global) |
+| **Worker concurrency** | How many packages build simultaneously | `build.workers` in `wright.toml`, overridden by `-w` / `--workers` |
+| **CPU affinity** | How many CPUs each sandboxed process can use | Computed as `total_cpus / active_workers`; overridden by `build.nproc_per_worker` in `wright.toml` |
 
-The layers compose. On a 16-core machine with `-w 4` and the default profile,
-4 packages run concurrently each with 4 compiler threads — 16 threads total.
-A plan declaring `build_type = "heavy"` in that same run receives 2 threads
-instead of 4.
+The layers compose. On a 16-core machine with 4 concurrent workers, each sandboxed build process is pinned to 4 CPUs — so `nproc` inside the sandbox returns 4, and `make -j$(nproc)` uses 4 threads. 16 threads total.
 
-## Worker Concurrency (`-w`)
+## Worker Concurrency
 
-The scheduler runs as many workers as `-w` allows, but only launches a package
-when **all of its dependencies in the current build set have finished**.
-Dependency ordering is enforced automatically; `-w` is a ceiling, not a
-guarantee.
+The scheduler runs as many workers as the limit allows, but only launches a package when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the worker count is a ceiling, not a guarantee.
 
 ```
-dependency graph:          with -w 3:
+dependency graph:          with workers = 3:
   A ─┐
   B ─┼─► D ─► F          step 1: A, B, C  (no deps, all launch)
   C ─┘                    step 2: D        (waits for A, B)
@@ -32,153 +24,84 @@ dependency graph:          with -w 3:
   C ──► E                 step 4: F        (waits for D)
 ```
 
-Setting `-w` higher than the number of packages independent at any given point
-has no effect — the scheduler finds no additional ready work.
+Setting `workers` higher than the number of packages independent at any given point has no effect — the scheduler finds no additional ready work.
 
-## Compiler Parallelism (`$NPROC`)
-
-Wright injects `$NPROC` and tool-specific equivalents into every sandboxed
-build stage so scripts do not need to hard-code thread counts:
-
-| Variable | Picked up by |
-|----------|-------------|
-| `$NPROC` | Shell scripts (`make -j${NPROC}`, `ninja -j${NPROC}`) |
-| `MAKEFLAGS=-j<N>` | GNU Make (automatic) |
-| `CMAKE_BUILD_PARALLEL_LEVEL=<N>` | CMake (`cmake --build`) |
-| `CARGO_BUILD_JOBS=<N>` | Cargo |
-
-These are always injected from the resolved `$NPROC` value, regardless of
-`build_type`.
-
-## Build Types (`build_type`)
-
-`build_type` declares the resource profile of a plan.  It tells the scheduler
-*why* a thread limit is needed so it can choose the right value automatically,
-rather than forcing plan authors to hard-code a number.
-
-| `build_type` | `$NPROC` | Extra env injected | Notes |
-|--------------|----------|--------------------|-------|
-| `"default"` *(default)* | scheduler share | — | Standard parallel builds |
-| `"make"` | scheduler share | — | Semantic alias for `default`; use to signal a make-based build |
-| `"rust"` | scheduler share | — | Semantic alias for `default`; `CARGO_BUILD_JOBS` is already injected from NPROC |
-| `"go"` | scheduler share | `GOFLAGS=-p=<N>`, `GOMAXPROCS=<N>` | Bounds Go's runtime and build parallelism |
-| `"heavy"` | scheduler share ÷ 2 (min 1) | — | RAM-bound builds: Rust+LTO, JVM, large C++ |
-| `"serial"` | 1 | — | Builds that cannot parallelize at all |
-| `"custom"` | scheduler share | — | Semantic alias for `default`; pair with `[options.env]` |
-
-`"make"`, `"rust"`, and `"custom"` are **semantic aliases** — they carry the
-same NPROC behaviour as `"default"` and exist to communicate intent in the
-plan file, not to change scheduling.
-
-```toml
-[options]
-build_type = "heavy"
-jobs = 4          # additional hard cap: never exceed 4 threads
-```
-
-## Per-plan Thread Cap (`jobs`)
-
-`jobs` in `plan.toml` is a per-plan absolute ceiling applied *after* the
-`build_type` modifier:
-
-```
-effective NPROC = min(after_type_modifier, plan_jobs)
-```
-
-It is independent of the global `[build] jobs` in `wright.toml`.  Leave it
-unset (or set to 0) for no extra cap.
-
-Example: `build_type = "heavy"` + `jobs = 4` on a 16-core machine with
-`-w 4` → `min(16/4 / 2, 4)` = `min(2, 4)` = **2**.
-
-## Package-level Environment (`[options.env]`)
-
-Environment variables declared here are injected into **every** lifecycle stage
-of the plan:
-
-```toml
-[options]
-build_type = "rust"
-env = { RUSTFLAGS = "-C target-cpu=native", RUST_BACKTRACE = "1" }
-```
-
-**Priority and substitution behaviour:**
-
-- Package-level `env` is available as both **process environment** and
-  **`${VAR}` script substitution**.
-- Per-stage `[lifecycle.<stage>.env]` overrides package-level env in the
-  **process environment**, but does NOT affect `${VAR}` substitution in the
-  script body.  If a script uses `${CFLAGS}` literally, it gets the
-  package-level value even when the stage env also sets `CFLAGS`.  Use
-  package-level env for vars referenced via `${}`, and per-stage env for
-  vars consumed directly by the build tool from its environment.
-
-## NPROC Resolution
-
-NPROC is computed in four steps at the moment each worker stage launches:
-
-```
-1. scheduler share  =  total_cpus / active_workers
-2. base             =  global_jobs > 0  ?  min(global_jobs, share)  :  share
-3. after_type       =  serial → 1  |  heavy → max(base/2, 1)  |  others → base
-4. final NPROC      =  plan_jobs > 0  ?  min(after_type, plan_jobs)  :  after_type
-```
-
-`active_workers` is the count of packages currently building at the moment
-this stage is launched — not the `-w` ceiling.  When the graph fans out, each
-package gets a smaller share; when it collapses to a single runnable package,
-that package gets the full CPU budget.
-
-Thread budgets are **locked when a stage starts**.  A stage that is already
-running is not re-threaded if another worker finishes mid-flight.
-
-### Example: 16-core machine
-
-| `-w` | `build_type` | global `jobs` | plan `jobs` | NPROC |
-|------|-------------|---------------|-------------|-------|
-| 0 (→16) | `default` | 0 | — | dynamic: 16 → 8 → 4 … as workers launch |
-| 4 | `default` | 0 | — | 4 |
-| 4 | `heavy` | 0 | — | 2 |
-| 4 | `heavy` | 0 | 4 | 2 (heavy wins; plan cap not binding) |
-| 4 | `heavy` | 0 | 1 | 1 (plan cap wins) |
-| 4 | `serial` | 0 | — | 1 |
-| 1 | `default` | 0 | — | 16 |
-| 4 | `default` | 8 | — | 4 (scheduler share is already ≤ global cap) |
-| 4 | `default` | 0 | 2 | 2 (plan cap) |
-
-## Tuning for Your Workload
-
-**Default** — works well for typical packages.  Wright auto-detects the CPU
-count and divides it across concurrent workers.
-
-**RAM-bound packages** — use `build_type = "heavy"` to halve the thread share
-per package.  For a tighter absolute limit, add `jobs = N`.
-
-**Fully sequential builds** — use `build_type = "serial"`.
-
-**System-wide ceiling** — set `[build] jobs` in `wright.toml` to cap all
-plans regardless of `build_type`:
+Configure in `wright.toml`:
 
 ```toml
 [build]
-jobs = 4
+workers = 4   # default: 0 (auto-detect CPU count)
 ```
 
-**I/O-bound builds** (packages that download at configure time) tolerate more
-workers than CPUs.  Raise `-w` explicitly — but note that each worker's `$NPROC`
-will decrease proportionally since `NPROC = total_cpus / active_workers`:
+Or per-invocation with `--workers` / `-w`:
 
 ```bash
-wbuild run -w 8 @base   # 8 workers; each gets ~2 threads on a 16-core machine
+wbuild run -w 4 @base
 ```
 
-**Single package, maximum throughput** — `-w 0` with one target gives that
-one worker all CPU threads as its `$NPROC`.
+## CPU Affinity Isolation
+
+Wright pins each sandboxed build process to its computed CPU share using `sched_setaffinity`. This means tools like `nproc` inside the sandbox return the correct count without any environment variable injection — the kernel enforces it.
+
+The CPU share for each worker is computed as:
+
+```
+cpu_share = total_cpus / active_workers
+```
+
+`active_workers` is the number of packages actually building at the moment a stage launches — not the workers ceiling. When the graph fans out, each package gets a smaller share; when it collapses to a single runnable package, that package gets the full CPU budget.
+
+**CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another worker finishes mid-flight.
+
+### Static override
+
+If you want a fixed per-worker CPU count instead of the dynamic share, set `nproc_per_worker` in `wright.toml`:
+
+```toml
+[build]
+workers = 4
+nproc_per_worker = 4   # each worker always gets exactly 4 CPUs
+```
+
+### Per-plan control
+
+Scripts own their parallelism entirely. Since `nproc` returns the correct CPU count (enforced by affinity), scripts should use it directly:
+
+```bash
+make -j$(nproc)
+ninja -j$(nproc)
+```
+
+For builds that need a different strategy — serial, half the cores, a fixed number — use `[options.env]` to set `MAKEFLAGS` (or whatever the tool reads) explicitly:
+
+```toml
+# Serial build
+[options]
+env = { MAKEFLAGS = "-j1" }
+
+# Fixed thread count
+[options]
+env = { MAKEFLAGS = "-j4" }
+
+# Go: bound runtime and build parallelism
+[options]
+env = { GOFLAGS = "-p=$(nproc)", GOMAXPROCS = "$(nproc)" }
+```
+
+## Example: 16-core machine
+
+| `workers` | `nproc_per_worker` | Active workers | CPUs per worker |
+|-----------|-------------------|----------------|-----------------|
+| 0 (→16)  | unset             | 1              | 16              |
+| 0 (→16)  | unset             | 4              | 4               |
+| 0 (→16)  | unset             | 8              | 2               |
+| 4         | unset             | 4              | 4               |
+| 4         | 2                 | any            | 2 (fixed)       |
+| 1         | unset             | 1              | 16              |
 
 ## Memory and Time Limits
 
-Wright can enforce hard resource limits per build stage via the kernel's
-`rlimit` interface.  Off by default.
+Wright can enforce hard resource limits per build stage via the kernel's `rlimit` interface. Off by default.
 
 | Setting | Where | Effect |
 |---------|-------|--------|

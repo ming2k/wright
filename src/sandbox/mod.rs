@@ -82,6 +82,10 @@ pub struct SandboxConfig {
     pub env: Vec<(String, String)>,
     pub rlimits: ResourceLimits,
     pub verbose: bool, // Whether to echo subprocess output to the terminal
+    /// Pin the sandboxed process to this many CPUs via sched_setaffinity.
+    /// Tools like `nproc` will then return this count naturally without any
+    /// env var injection. None means inherit the host's full CPU set.
+    pub cpu_count: Option<u32>,
 }
 
 impl SandboxConfig {
@@ -96,6 +100,7 @@ impl SandboxConfig {
             env: Vec::new(),
             rlimits: ResourceLimits::default(),
             verbose: false,
+            cpu_count: None,
         }
     }
 }

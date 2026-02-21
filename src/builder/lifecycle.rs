@@ -30,6 +30,7 @@ pub struct LifecyclePipeline<'a> {
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
+    cpu_count: Option<u32>,
 }
 
 pub struct LifecycleContext<'a> {
@@ -45,6 +46,7 @@ pub struct LifecycleContext<'a> {
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
     pub verbose: bool,
+    pub cpu_count: Option<u32>,
 }
 
 impl<'a> LifecyclePipeline<'a> {
@@ -62,6 +64,7 @@ impl<'a> LifecyclePipeline<'a> {
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
+            cpu_count: ctx.cpu_count,
         }
     }
 
@@ -180,6 +183,7 @@ impl<'a> LifecyclePipeline<'a> {
             rlimits: self.rlimits.clone(),
             main_pkg_dir: None,
             verbose: self.verbose,
+            cpu_count: self.cpu_count,
         };
 
         let t0 = std::time::Instant::now();

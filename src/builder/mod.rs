@@ -272,32 +272,12 @@ impl Builder {
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
-        // Resolve effective NPROC from build_type and scheduler share.
-        //
-        // Priority chain:
-        //   1. scheduler's dynamic per-worker cap (total_cpus / active_workers)
-        //   2. global [build] jobs cap from wright.toml (if explicitly set)
-        //   3. build_type modifier (Heavy halves, Serial forces 1)
-        let build_type = manifest.options.build_type;
-        let scheduler_share = nproc_per_worker.unwrap_or_else(|| self.config.effective_jobs());
-        let base = if self.config.build.jobs == 0 {
-            scheduler_share
-        } else {
-            // Global config sets a system-wide ceiling; still honour the scheduler share.
-            self.config.build.jobs.min(scheduler_share)
-        };
-        let nproc = {
-            let after_type = match build_type {
-                crate::package::manifest::BuildType::Serial => 1,
-                crate::package::manifest::BuildType::Heavy => (base / 2).max(1),
-                _ => base.max(1), // defensive: scheduler_share is always ≥ 1, but guard anyway
-            };
-            // Per-plan hard cap: applied last, after build_type and global config.
-            match manifest.options.jobs {
-                Some(plan_cap) if plan_cap > 0 => after_type.min(plan_cap),
-                _ => after_type,
-            }
-        };
+        // Compute scheduler's CPU share for this worker and apply it as CPU
+        // affinity on the sandbox process. Tools like `nproc` inside the
+        // sandbox then return the correct count without any env var injection.
+        let cpu_count = nproc_per_worker
+            .or(self.config.build.nproc_per_worker)
+            .unwrap_or_else(|| self.config.effective_jobs());
 
         let vars = variables::standard_variables(variables::VariableContext {
             pkg_name: &manifest.plan.name,
@@ -307,7 +287,6 @@ impl Builder {
             src_dir: &src_dir.to_string_lossy(),
             pkg_dir: &pkg_dir.to_string_lossy(),
             files_dir: &files_dir_str,
-            nproc,
             cflags: &self.config.build.cflags,
             cxxflags: &self.config.build.cxxflags,
         });
@@ -319,15 +298,6 @@ impl Builder {
         // executor applies before vars).
         for (k, v) in &manifest.options.env {
             vars.insert(k.clone(), v.clone());
-        }
-
-        // Build-type-specific env: Go needs GOFLAGS / GOMAXPROCS so the
-        // runtime scheduler is properly bounded.  Other tool env vars
-        // (CARGO_BUILD_JOBS, MAKEFLAGS, CMAKE_BUILD_PARALLEL_LEVEL) are
-        // already auto-injected by the executor from $NPROC.
-        if build_type == crate::package::manifest::BuildType::Go {
-            vars.entry("GOFLAGS".to_string()).or_insert_with(|| format!("-p={}", nproc));
-            vars.entry("GOMAXPROCS".to_string()).or_insert_with(|| nproc.to_string());
         }
 
         // Bootstrap / MVP env (highest priority among injected vars).
@@ -348,6 +318,7 @@ impl Builder {
             executors: &self.executors,
             rlimits: rlimits.clone(),
             verbose,
+            cpu_count: Some(cpu_count),
         });
 
         pipeline.run()?;
@@ -383,6 +354,7 @@ impl Builder {
                 rlimits: rlimits.clone(),
                 main_pkg_dir: Some(pkg_dir.clone()),
                 verbose,
+                cpu_count: Some(cpu_count),
             };
 
             let split_executor = self.executors.get(&package_stage.executor)

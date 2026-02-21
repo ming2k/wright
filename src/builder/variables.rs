@@ -19,7 +19,6 @@ pub struct VariableContext<'a> {
     pub src_dir: &'a str,
     pub pkg_dir: &'a str,
     pub files_dir: &'a str,
-    pub nproc: u32,
     pub cflags: &'a str,
     pub cxxflags: &'a str,
 }
@@ -34,7 +33,6 @@ pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     vars.insert("SRC_DIR".to_string(), ctx.src_dir.to_string());
     vars.insert("PKG_DIR".to_string(), ctx.pkg_dir.to_string());
     vars.insert("FILES_DIR".to_string(), ctx.files_dir.to_string());
-    vars.insert("NPROC".to_string(), ctx.nproc.to_string());
     vars.insert("CFLAGS".to_string(), ctx.cflags.to_string());
     vars.insert("CXXFLAGS".to_string(), ctx.cxxflags.to_string());
     vars
@@ -84,7 +82,6 @@ mod tests {
             src_dir: "/tmp/src",
             pkg_dir: "/tmp/pkg",
             files_dir: "/tmp/patches",
-            nproc: 4,
             cflags: "-O2",
             cxxflags: "-O2",
         };
@@ -92,7 +89,7 @@ mod tests {
         assert_eq!(vars["PKG_NAME"], "hello");
         assert_eq!(vars["PKG_VERSION"], "1.0.0");
         assert_eq!(vars["PKG_RELEASE"], "1");
-        assert_eq!(vars["NPROC"], "4");
+        assert!(!vars.contains_key("NPROC"));
         assert!(!vars.contains_key("version"));
     }
 }

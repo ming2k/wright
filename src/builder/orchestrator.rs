@@ -815,7 +815,10 @@ fn execute_builds(
                 in_progress_guard.insert(name.clone());
                 in_progress_guard.len()
             };
-            let dynamic_nproc_cap = Some((total_cpus / active_workers).max(1) as u32);
+            // Use static config override if provided; otherwise divide CPUs
+            // evenly across however many workers are currently active.
+            let dynamic_nproc_cap = opts.nproc_per_worker
+                .or_else(|| Some((total_cpus / active_workers).max(1) as u32));
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();

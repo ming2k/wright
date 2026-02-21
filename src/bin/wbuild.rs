@@ -170,8 +170,11 @@ fn main() -> Result<()> {
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents, mvp,
         } => {
+            // CLI --workers 0 means "use config default"; config workers 0 means auto-detect.
+            let effective_workers = if workers != 0 { workers } else { config.build.workers };
             Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stage: until, only, clean, force, workers,
+                stage: until, only, clean, force,
+                workers: effective_workers,
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,
@@ -181,7 +184,9 @@ fn main() -> Result<()> {
                 include_deps,
                 include_dependents,
                 mvp,
-                nproc_per_worker: None, // computed by the scheduler in execute_builds
+                // Config nproc_per_worker is a static override; None means the
+                // scheduler computes it dynamically as total_cpus / active_workers.
+                nproc_per_worker: config.build.nproc_per_worker,
             })?)
         }
         Commands::Check { targets } => {

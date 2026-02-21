@@ -163,14 +163,16 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `static`            | bool            | `false` | Build statically linked binaries         |
 | `debug`             | bool            | `false` | Build with debug info                    |
 | `ccache`            | bool            | `true`  | Use ccache for compilation if available  |
-| `jobs`              | integer         | —       | Override global parallel jobs for this package |
+| `env`               | map of strings  | `{}`    | Environment variables injected into every lifecycle stage |
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
-**Practical guidance:** `jobs` is the most effective way to control memory usage — fewer parallel compiler processes means less total memory consumption. `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
+**CPU parallelism:** Wright pins each sandbox process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the sandbox already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific package, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
+
+**Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
 ### `[lifecycle.<stage>]`
 
@@ -182,7 +184,7 @@ executor = "shell"
 sandbox = "strict"
 script = """
 cd ${BUILD_DIR}
-make -j${NPROC}
+make -j$(nproc)
 """
 ```
 
@@ -296,7 +298,7 @@ echo "About to compile..."
 
 [lifecycle.compile]
 script = """
-make -j${NPROC}
+make -j$(nproc)
 """
 
 [lifecycle.post_compile]
@@ -448,7 +450,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${PKG_DIR}`    | Package output directory (install files here) |
 | `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
 | `${MAIN_PKG_DIR}` | Main package's output directory (only available in split package stages) |
-| `${NPROC}`      | Number of available CPUs                   |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
@@ -641,7 +642,7 @@ cd ${BUILD_DIR}
 [lifecycle.compile]
 script = """
 cd ${BUILD_DIR}
-make -j${NPROC}
+make -j$(nproc)
 """
 
 [lifecycle.check]
@@ -680,7 +681,7 @@ license = "GPL-3.0-or-later"
 arch = "x86_64"
 
 [lifecycle.compile]
-script = "make -j${NPROC}"
+script = "make -j$(nproc)"
 
 [lifecycle.package]
 script = """

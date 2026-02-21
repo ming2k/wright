@@ -55,6 +55,14 @@ pub struct BuildConfig {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// Max concurrent build workers. 0 = auto-detect (matches CPU count).
+    #[serde(default)]
+    pub workers: usize,
+    /// Static per-worker compiler thread budget. When set, overrides the
+    /// dynamic `total_cpus / active_workers` calculation in the scheduler.
+    /// When unset, the scheduler divides CPUs evenly across active workers.
+    #[serde(default)]
+    pub nproc_per_worker: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -233,6 +241,8 @@ impl Default for BuildConfig {
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
+            workers: 0,
+            nproc_per_worker: None,
         }
     }
 }

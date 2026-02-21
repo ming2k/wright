@@ -583,6 +583,21 @@ pub fn run_in_sandbox(
                         unsafe { libc::_exit(1) }
                     }
 
+                    // Pin this process to N CPUs so that `nproc` inside the
+                    // sandbox returns the scheduler's computed share rather than
+                    // the full host count. We use the first N CPUs in the set.
+                    if let Some(n) = config.cpu_count {
+                        unsafe {
+                            let mut set = std::mem::zeroed::<libc::cpu_set_t>();
+                            let total = libc::sysconf(libc::_SC_NPROCESSORS_ONLN).max(1) as u32;
+                            let count = n.min(total);
+                            for i in 0..count {
+                                libc::CPU_SET(i as usize, &mut set);
+                            }
+                            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+                        }
+                    }
+
                     // Retry loop for ETXTBSY (Text file busy).
                     // This happens if an interpreter (like /bin/sh) is being overwritten 
                     // by the host while we try to exec it in the sandbox.
