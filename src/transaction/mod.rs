@@ -313,7 +313,7 @@ pub fn install_package(
         Some(backup_dir.path()),
         &HashSet::new(),
     ) {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
             rollback_state.rollback();
@@ -639,20 +639,26 @@ pub fn upgrade_package(
         }
     }
 
-    // 7. Copy new files to root.  Files declared in [backup] are written as
-    //    <path>.wnew so the user can review and merge them; all other files
-    //    are overwritten directly.
+    // 7. Copy new files to root. Files declared in [backup] are written as
+    //    <path>.wnew only when a live file already exists; otherwise the new
+    //    file is installed directly.
     let config_paths = collect_config_paths(&new_entries);
-    match copy_files_to_root(temp_dir.path(), root_dir, &mut rollback_state, None, &config_paths) {
-        Ok(()) => {}
+    let preserved_configs = match copy_files_to_root(
+        temp_dir.path(),
+        root_dir,
+        &mut rollback_state,
+        None,
+        &config_paths,
+    ) {
+        Ok(paths) => paths,
         Err(e) => {
             warn!("Upgrade failed, rolling back: {}", e);
             rollback_state.rollback();
             db.update_transaction_status(tx_id, "rolled_back")?;
             return Err(e);
         }
-    }
-    for path in &config_paths {
+    };
+    for path in preserved_configs {
         warn!(
             "Config file {} has been preserved. Review the new default at {}.wnew",
             path, path
@@ -929,16 +935,18 @@ fn collect_config_paths(new_entries: &[crate::database::FileEntry]) -> HashSet<S
 ///
 /// `config_paths` is the set of absolute paths declared as config files via
 /// `[backup]` in the package plan. During an upgrade those files are written
-/// as `<path>.wnew` instead of overwriting the live file, giving the user a
-/// chance to review and merge changes. On a fresh install this set is empty
-/// and every file is copied normally.
+/// as `<path>.wnew` only when a live path already exists, giving the user a
+/// chance to review and merge changes. If the path does not exist yet, the new
+/// file is installed directly. On a fresh install this set is empty and every
+/// file is copied normally.
 fn copy_files_to_root(
     extract_dir: &Path,
     root_dir: &Path,
     rollback: &mut RollbackState,
     backup_dir: Option<&Path>,
     config_paths: &HashSet<String>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
+    let mut preserved_configs = Vec::new();
     for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
         let entry = entry.map_err(|e| {
             WrightError::InstallError(format!("failed to walk directory: {}", e))
@@ -1040,8 +1048,8 @@ fn copy_files_to_root(
             }
 
             let canonical_path = format!("/{}", relative_str);
-            if config_paths.contains(&canonical_path) {
-                // User-modified config: install the new version alongside as
+            if config_paths.contains(&canonical_path) && dest_path.symlink_metadata().is_ok() {
+                // Existing config path: install the new version alongside as
                 // <path>.wnew and leave the live file untouched.
                 let mut new_name = dest_path.as_os_str().to_owned();
                 new_name.push(".wnew");
@@ -1057,6 +1065,7 @@ fn copy_files_to_root(
                     warn!("Failed to set permissions on {}: {}", side_path.display(), e);
                 }
                 rollback.record_file_created(side_path);
+                preserved_configs.push(canonical_path);
             } else {
                 if let Some(backup_root) = backup_dir {
                     backup_existing_path(&dest_path, &relative_str, backup_root, rollback)?;
@@ -1087,7 +1096,7 @@ fn copy_files_to_root(
         }
     }
 
-    Ok(())
+    Ok(preserved_configs)
 }
 
 #[cfg(test)]
@@ -1596,11 +1605,10 @@ build_date = "1970-01-01T00:00:00Z"
         assert!(issues.iter().any(|i| i.contains("MODIFIED")));
     }
 
-    /// Files declared in `[backup]` must always be written as `<path>.wnew`
-    /// during an upgrade, leaving the live file intact regardless of whether
-    /// the user modified it.
+    /// Files declared in `[backup]` are written as `<path>.wnew` during an
+    /// upgrade when the live path already exists, leaving the live file intact.
     #[test]
-    fn test_upgrade_config_always_writes_wnew() {
+    fn test_upgrade_config_existing_file_writes_wnew() {
         let (db, root) = setup_test();
 
         let conf_rel = "etc/myapp/myapp.conf";
@@ -1645,6 +1653,61 @@ build_date = "1970-01-01T00:00:00Z"
         assert_eq!(
             std::fs::read(&wnew).unwrap(), conf_v2,
             ".wnew must contain the new default"
+        );
+    }
+
+    /// If a `[backup]` config path is introduced on upgrade and does not
+    /// already exist on disk, install it directly and do not create `.wnew`.
+    #[test]
+    fn test_upgrade_config_missing_file_installs_directly() {
+        let (db, root) = setup_test();
+
+        let conf_rel = "etc/myapp/myapp.conf";
+        let conf_v2 = b"setting = updated\n";
+
+        let make_archive = |dir: &std::path::Path, name: &str, ver: &str, include_conf: bool, content: &[u8], out: &std::path::Path| {
+            if include_conf {
+                std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
+                std::fs::write(dir.join(conf_rel), content).unwrap();
+            }
+            let backup_section = if include_conf {
+                "[backup]\nfiles = [\"/etc/myapp/myapp.conf\"]\n"
+            } else {
+                ""
+            };
+            let pkginfo = format!(
+                "[package]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
+                 description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
+                 install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{backup_section}"
+            );
+            std::fs::write(dir.join(".PKGINFO"), pkginfo).unwrap();
+            let archive = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
+            compress::create_tar_zst(dir, &archive).unwrap();
+            archive
+        };
+
+        let out_dir = tempfile::tempdir().unwrap();
+
+        // v1 does not contain the config path at all.
+        let v1_dir = tempfile::tempdir().unwrap();
+        let v1 = make_archive(v1_dir.path(), "myapp", "1.0.0", false, b"", out_dir.path());
+        install_package(&db, &v1, root.path(), false).unwrap();
+
+        let live_conf = root.path().join(conf_rel);
+        assert!(!live_conf.exists(), "config should be absent before upgrade");
+
+        // v2 introduces the config file and marks it as [backup].
+        let v2_dir = tempfile::tempdir().unwrap();
+        let v2 = make_archive(v2_dir.path(), "myapp", "2.0.0", true, conf_v2, out_dir.path());
+        upgrade_package(&db, &v2, root.path(), false).unwrap();
+
+        assert_eq!(
+            std::fs::read(&live_conf).unwrap(), conf_v2,
+            "missing config should be installed directly"
+        );
+        assert!(
+            !root.path().join(format!("{conf_rel}.wnew")).exists(),
+            "no .wnew sidecar when config did not previously exist"
         );
     }
 
