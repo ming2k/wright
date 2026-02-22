@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-02-22
+
+### Features
+- Add `wbuild run --skip-check` to skip only the lifecycle `check` stage while still running a full build pipeline (including fetch/verify/extract), without requiring `--stage` partial-build mode.
+
+### Fixes
+- Config files declared in `[backup]` now create `<path>.wnew` only when the live file already exists during upgrade. If the config path does not exist yet, the new file is installed directly to `<path>`.
+- Dockyard CPU budgets are now partitioned fairly across each launch wave, avoiding misleading same-wave allocations like `16`, `8`, `5` that summed above the host CPU count.
+
 ## [1.2.5] - 2026-02-22
 
 ### Changes
