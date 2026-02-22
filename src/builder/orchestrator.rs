@@ -823,21 +823,39 @@ fn execute_builds(
             }
         }
 
-        for name in ready_to_launch {
-            // Track active dockyards and derive a dynamic CPU budget per running
-            // package from the current fan-out level.
+        // Launch a bounded batch and compute a fair CPU share for the entire
+        // wave up front. This avoids sequential allocations like 16/1, 16/2,
+        // 16/3 in the same wave, which makes the displayed shares additive
+        // beyond the machine capacity.
+        let base_active = in_progress.lock().unwrap().len();
+        let free_slots = actual_dockyards.saturating_sub(base_active);
+        let launch_batch: Vec<_> = ready_to_launch.into_iter().take(free_slots).collect();
+        let planned_active = base_active + launch_batch.len();
+
+        for (launch_idx, name) in launch_batch.into_iter().enumerate() {
+            // Track active dockyards and derive a CPU budget for this launch.
             let active_dockyards = {
                 let mut in_progress_guard = in_progress.lock().unwrap();
-                if in_progress_guard.len() >= actual_dockyards {
-                    break;
-                }
                 in_progress_guard.insert(name.clone());
                 in_progress_guard.len()
             };
-            // Use static config override if provided; otherwise divide CPUs
-            // evenly across however many dockyards are currently active.
-            let dynamic_nproc_cap = opts.nproc_per_dockyard
-                .or_else(|| Some((total_cpus / active_dockyards).max(1) as u32));
+
+            // Use static config override if provided; otherwise partition CPUs
+            // across the active set size planned for this launch wave. Remainder
+            // CPUs are handed to the earliest positions in that wave.
+            let dynamic_nproc_cap = if let Some(n) = opts.nproc_per_dockyard {
+                Some(n)
+            } else {
+                let base_share = (total_cpus / planned_active.max(1)).max(1);
+                let remainder = total_cpus % planned_active.max(1);
+                let active_position = base_active + launch_idx + 1;
+                let share = if active_position <= remainder {
+                    base_share + 1
+                } else {
+                    base_share
+                };
+                Some(share as u32)
+            };
 
             eprintln!(
                 "[dockyard {}] {}  ({} CPU{})",
