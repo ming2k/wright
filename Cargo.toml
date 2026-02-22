@@ -1,6 +1,6 @@
 [package]
 name = "wright"
-version = "1.2.4"
+version = "1.2.5"
 edition = "2021"
 description = "Declarative, extensible, sandboxed Linux package manager"
 license = "MIT"

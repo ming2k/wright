@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-02-22
+
+### Changes
+- CPU scheduling default now uses all available CPUs when `[build].max_cpus` is unset (instead of implicitly reserving 4 cores for the OS). The dockyard status line no longer prints the "reserved 4 for OS" note.
+
+### Features
+- Add git fetch progress logging for `git+` sources: long fetches now emit transfer milestones (10% increments) so builds do not appear stalled during remote object downloads.
+
 ## [1.2.4] - 2026-02-22
 
 ### Features
