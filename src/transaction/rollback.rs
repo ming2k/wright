@@ -205,6 +205,8 @@ impl RollbackState {
 
         let lines: Vec<&str> = content.lines().collect();
 
+        let mut restore_failures: usize = 0;
+
         // Process in reverse order
         for line in lines.iter().rev() {
             let parts: Vec<&str> = line.splitn(3, DELIM).collect();
@@ -223,11 +225,14 @@ impl RollbackState {
                     let original = Self::unescape_field(parts[1]);
                     let backup = Self::unescape_field(parts[2]);
                     let _ = std::fs::remove_file(&original);
-                    if let Err(e) = std::fs::copy(&backup, &original) {
-                        warn!("Journal replay: failed to restore {} from {}: {}", original, backup, e);
-                    }
-                    if let Err(e) = std::fs::remove_file(&backup) {
-                        warn!("Journal replay: failed to remove backup {}: {}", backup, e);
+                    match std::fs::copy(&backup, &original) {
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(&backup);
+                        }
+                        Err(e) => {
+                            tracing::debug!("Journal replay: failed to restore {} from {}: {}", original, backup, e);
+                            restore_failures += 1;
+                        }
                     }
                 }
                 Some("SYMLINK_BACKUP") if parts.len() == 3 => {
@@ -247,6 +252,13 @@ impl RollbackState {
                     warn!("Journal replay: unrecognized line: {}", line);
                 }
             }
+        }
+
+        if restore_failures > 0 {
+            warn!(
+                "Journal replay: {} file(s) could not be restored (backups missing, likely lost after reboot)",
+                restore_failures
+            );
         }
 
         if let Err(e) = std::fs::remove_file(path) {

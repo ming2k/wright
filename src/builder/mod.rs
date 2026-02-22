@@ -45,6 +45,26 @@ fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
     sanitize_cache_filename(&format!("{}-{}", pkg_name, basename))
 }
 
+/// Compute a stable, collision-free cache directory name for a git URI.
+///
+/// Uses `<stem>-<8-char hash>` where the hash is a short SHA256 of the
+/// bare URL (prefix and ref fragment stripped). Two repos that share the
+/// same last path segment but come from different remotes (e.g.
+/// `org-a/mylib.git` vs `org-b/mylib.git`) will therefore never collide.
+fn git_cache_dir_name(uri: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let url = uri.strip_prefix("git+").unwrap_or(uri);
+    let url = url.split('#').next().unwrap_or(url);
+    let last_segment = url.split('/').next_back().unwrap_or("repo");
+    let stem = sanitize_cache_filename(
+        last_segment.strip_suffix(".git").unwrap_or(last_segment)
+    );
+    let mut h = Sha256::new();
+    h.update(url.as_bytes());
+    let hash = format!("{:x}", h.finalize());
+    format!("{}-{}", stem, &hash[..8])
+}
+
 /// Check whether a filename looks like a supported archive format.
 fn is_archive(filename: &str) -> bool {
     filename.ends_with(".tar.gz")
@@ -536,15 +556,7 @@ impl Builder {
             let processed_uri = self.process_uri(uri, manifest);
 
             if is_git_uri(&processed_uri) {
-                let base_uri = processed_uri.split('#').next().unwrap_or(&processed_uri);
-                let last_segment = base_uri.split('/').next_back()
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| WrightError::BuildError(
-                        format!("cannot derive directory name from git URI: {}", processed_uri)
-                    ))?;
-                let git_dir_name = sanitize_cache_filename(
-                    last_segment.strip_suffix(".git").unwrap_or(last_segment)
-                );
+                let git_dir_name = git_cache_dir_name(&processed_uri);
                 let cache_path = cache_dir.join("git").join(&git_dir_name);
                 
                 // Parse the ref
@@ -658,6 +670,12 @@ impl Builder {
                 continue;
             }
 
+            if is_git_uri(&processed_uri) {
+                // Git sources have no downloadable file to hash — use SKIP
+                new_hashes.push("SKIP".to_string());
+                continue;
+            }
+
             let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let cache_path = cache_dir.join(&cache_filename);
 
@@ -763,11 +781,7 @@ impl Builder {
 
             if is_git_uri(&processed_uri) {
                 // Git repository handling
-                let git_dir_name = sanitize_cache_filename(
-                    processed_uri.split('#').next().unwrap()
-                        .split('/').next_back().unwrap()
-                        .strip_suffix(".git").unwrap_or(processed_uri.split('/').next_back().unwrap())
-                );
+                let git_dir_name = git_cache_dir_name(&processed_uri);
                 let git_cache_dir = cache_dir.join("git");
                 if !git_cache_dir.exists() { std::fs::create_dir_all(&git_cache_dir).ok(); }
                 let dest = git_cache_dir.join(&git_dir_name);
