@@ -753,11 +753,33 @@ impl Builder {
         let mut remote = repo.remote_anonymous(&git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
-        // Configure fetch options (e.g. proxy support can be added here)
+        // Progress callbacks: log transfer stats so long fetches aren't silent.
+        let display_url = git_url.clone();
+        let mut last_pct = 0u32;
+        let mut callbacks = git2::RemoteCallbacks::new();
+        callbacks.transfer_progress(move |stats| {
+            let total = stats.total_objects();
+            if total == 0 { return true; }
+            let pct = (stats.received_objects() * 100 / total) as u32;
+            // Log at every 10% milestone to avoid flooding the log.
+            if pct / 10 > last_pct / 10 {
+                last_pct = pct;
+                info!(
+                    "git fetch {}: {}/{} objects ({} KiB)",
+                    display_url,
+                    stats.received_objects(),
+                    total,
+                    stats.received_bytes() / 1024,
+                );
+            }
+            true
+        });
+
         let mut fetch_opts = git2::FetchOptions::new();
+        fetch_opts.remote_callbacks(callbacks);
         fetch_opts.download_tags(git2::AutotagOption::All);
 
-        debug!("Fetching from remote: {}", git_url);
+        info!("Fetching from remote: {}", git_url);
         remote.fetch(&["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"], Some(&mut fetch_opts), None)
             .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)))?;
 
