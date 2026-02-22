@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-02-22
+
 ### Features
 - Layered config merging: all `wright.toml` files that exist (system `/etc/wright/`, user XDG, project-local `./`) are now merged in ascending priority order. Higher-priority files only need to set the keys they want to override; remaining keys are inherited from the layer below. The `--config` flag continues to bypass layering and load a single file as-is.
 - Config file protection on upgrade: files declared in `[backup]` are never overwritten during an upgrade. The new package default is always written alongside as `<path>.wnew` with a warning so the user can diff and merge at their own pace. Files not declared in `[backup]` are overwritten directly as before.
+
+### Fixes
+- Fix `update_hashes` crash when a `git+` URI is listed in sources: the URI was passed directly to reqwest (which doesn't understand the `git+` scheme) instead of being skipped with `SKIP`.
+- Fix git source cache directory name collision: repos sharing the same last URL path segment (e.g. `org-a/mylib.git` and `org-b/mylib.git`) now get distinct cache directories via a `<stem>-<8char-url-hash>` naming scheme.
 
 ## [1.2.3] - 2026-02-22
 
