@@ -782,16 +782,14 @@ fn execute_builds(
     let total_cpus = if let Some(cap) = config.build.max_cpus {
         available_cpus.min(cap.max(1))
     } else {
-        // Reserve 4 CPUs for the OS by default so the system stays responsive
-        // during heavy parallel builds. Set max_cpus explicitly to override.
-        available_cpus.saturating_sub(4).max(1)
+        available_cpus
     };
     let actual_dockyards = if opts.dockyards == 0 { total_cpus } else { opts.dockyards.min(total_cpus) };
 
     let cpu_cap_note = if let Some(cap) = config.build.max_cpus {
         format!(" (max_cpus={})", cap.max(1))
     } else {
-        format!(" (reserved 4 for OS)")
+        String::new()
     };
     eprintln!(
         "Dockyards: {} active  |  CPUs: {}/{}{}",
