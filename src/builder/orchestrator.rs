@@ -29,6 +29,9 @@ pub struct BuildOptions {
     pub lint: bool,
     pub force: bool,
     pub checksum: bool,
+    /// Skip the lifecycle `check` stage during a full build.
+    /// Ignored for metadata-only operations and when explicit `--stage` selection is used.
+    pub skip_check: bool,
     /// Max number of concurrently active dockyards.
     /// Only packages with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
@@ -1160,7 +1163,17 @@ fn build_one(
     }
     info!("Manufacturing part {}...", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
-    let result = builder.build(manifest, &plan_dir, &opts.stages, opts.fetch_only, &extra_env, opts.verbose, opts.force, opts.nproc_per_dockyard)?;
+    let result = builder.build(
+        manifest,
+        &plan_dir,
+        &opts.stages,
+        opts.fetch_only,
+        opts.skip_check,
+        &extra_env,
+        opts.verbose,
+        opts.force,
+        opts.nproc_per_dockyard,
+    )?;
 
     // Skip archive creation when specific stages are requested and none of them produce output
     let produces_output = opts.stages.is_empty()

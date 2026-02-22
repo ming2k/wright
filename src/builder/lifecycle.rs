@@ -27,6 +27,8 @@ pub struct LifecyclePipeline<'a> {
     files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     stages: Vec<String>,
+    /// Skip the `check` stage when running the default full pipeline.
+    skip_check: bool,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
@@ -43,6 +45,8 @@ pub struct LifecycleContext<'a> {
     pub files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     pub stages: Vec<String>,
+    /// Skip the `check` stage when running the default full pipeline.
+    pub skip_check: bool,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
     pub verbose: bool,
@@ -60,6 +64,7 @@ impl<'a> LifecyclePipeline<'a> {
             pkg_dir: ctx.pkg_dir,
             files_dir: ctx.files_dir,
             stages: ctx.stages,
+            skip_check: ctx.skip_check,
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
@@ -97,6 +102,10 @@ impl<'a> LifecyclePipeline<'a> {
             // Skip built-in stages (handled by Builder)
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
                 debug!("Built-in stage {} is handled by Builder", stage_name);
+                continue;
+            }
+            if self.skip_check && stage_name == "check" {
+                debug!("Skipping check stage due to --skip-check");
                 continue;
             }
             self.run_stage_with_hooks(stage_name)?;

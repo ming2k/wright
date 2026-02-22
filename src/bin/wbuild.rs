@@ -50,6 +50,11 @@ enum Commands {
         #[arg(long)]
         stage: Vec<String>,
 
+        /// Skip the lifecycle `check` stage during a normal full build.
+        /// Unlike `--stage`, this still runs the full pipeline (including fetch/verify/extract).
+        #[arg(long, conflicts_with = "stage")]
+        skip_check: bool,
+
         /// Clear the build cache entry and working directory before starting.
         /// Use this when you want to force a full recompile bypassing the
         /// build cache. Composable with --force: --clean clears the cache,
@@ -164,7 +169,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run {
-            targets, stage, clean, force, dockyards,
+            targets, stage, skip_check, clean, force, dockyards,
             rebuild_dependents, rebuild_dependencies, install, depth,
             include_self, include_deps, include_dependents, mvp,
         } => {
@@ -176,6 +181,7 @@ fn main() -> Result<()> {
                 rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
                 checksum: false,
                 lint: false,
+                skip_check,
                 verbose: cli.verbose > 0,
                 quiet: cli.quiet,
                 include_self,
