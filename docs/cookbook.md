@@ -2,6 +2,57 @@
 
 Practical recipes for common build scenarios.
 
+## Bootstrapping a New System (First Import)
+
+When deploying wright onto a fresh LFS-based system, the core packages (glibc,
+gcc, binutils, linux, etc.) are already installed but unknown to wright's
+database. Any package whose `plan.toml` lists them as dependencies will fail
+with an unresolved dependency error until they are registered.
+
+Use `wright assume` to seed the database with the packages that already exist:
+
+```sh
+wright assume glibc 2.41
+wright assume gcc 14.2.0
+wright assume binutils 2.43
+wright assume linux 6.12.0
+wright assume bash 5.2
+wright assume coreutils 9.5
+```
+
+After seeding, install packages normally — dependency checks will pass:
+
+```sh
+wright install man-db-2.12.1-1.wright.tar.zst
+wright install python-3.13.0-1.wright.tar.zst
+```
+
+Assumed packages appear with an `[external]` tag in `wright list`:
+
+```
+bash 5.2 [external]
+binutils 2.43 [external]
+coreutils 9.5 [external]
+gcc 14.2.0 [external]
+glibc 2.41 [external]
+linux 6.12.0 [external]
+man-db 2.12.1-1 (x86_64)
+python 3.13.0-1 (x86_64)
+```
+
+Once you have a wright-built package ready to replace a stub, remove the
+assumed entry first and then install the real archive:
+
+```sh
+wright remove glibc
+wright install glibc-2.41-1.wright.tar.zst
+```
+
+After that, `wright list` will show the fully managed package entry and
+`wright verify glibc` will check its file integrity as normal.
+
+---
+
 ## Building a Simple Package
 
 Minimal `plan.toml` for a C library (`zlib`):

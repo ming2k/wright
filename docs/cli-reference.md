@@ -102,6 +102,23 @@ List files owned by a package.
 
 Find which package owns a file.
 
+#### `wright assume <NAME> <VERSION>`
+
+Register an externally-provided package so that dependency checks treat it as satisfied. No files are tracked — wright will not manage, verify, or remove any files for an assumed package.
+
+This is intended for **bootstrapping scenarios** where core system packages (glibc, gcc, binutils, etc.) already exist on the target but were not installed through wright. Without assuming them, installing any package that lists them as dependencies would fail with an unresolved dependency error.
+
+Assuming a package is **idempotent** — running it again with a different version simply updates the recorded version.
+
+Assumed packages are shown with an `[external]` tag in `wright list`.
+
+To replace an assumed package with a real wright-managed one, remove the stub first:
+
+```sh
+wright remove glibc
+wright install glibc-2.41-1.wright.tar.zst
+```
+
 #### `wright verify [PACKAGE]`
 
 Verify installed file integrity (SHA-256 checksums). Omit the package name to verify all installed packages. For a full dependency and integrity health check, use `wright doctor`.

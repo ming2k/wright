@@ -1,2 +1,6 @@
-[target.x86_64-unknown-linux-musl]
-linker = "x86_64-linux-musl-gcc"
+[build]
+rustflags = ["-C", "link-arg=-static-libgcc"]
+
+[env]
+LZMA_API_STATIC = "1"
+LIBZ_SYS_STATIC = "1"

@@ -96,6 +96,7 @@ pub struct PackageInfo {
     pub install_size: u64,
     pub pkg_hash: Option<String>,
     pub install_scripts: Option<String>,
+    pub assumed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +138,7 @@ pub struct Database {
 
 /// Column list shared by all queries returning PackageInfo.
 const PKG_COLUMNS: &str =
-    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts";
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed";
 
 /// Map a row (with PKG_COLUMNS order) to PackageInfo.
 fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
@@ -154,6 +155,7 @@ fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
         install_size: row.get::<_, u64>(9)?,
         pkg_hash: row.get(10)?,
         install_scripts: row.get(11)?,
+        assumed: row.get::<_, bool>(12)?,
     })
 }
 
@@ -298,6 +300,18 @@ impl Database {
                 WrightError::DatabaseError(format!("failed to insert package: {}", e))
             })?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Register an externally-provided package so dependency checks treat it as satisfied.
+    /// If the package is already assumed, updates its version. Idempotent.
+    pub fn assume_package(&self, name: &str, version: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO packages (name, version, release, description, arch, license, install_size, assumed)
+             VALUES (?1, ?2, 0, 'externally provided', 'any', 'unknown', 0, 1)
+             ON CONFLICT(name) DO UPDATE SET version=excluded.version, assumed=1",
+            params![name, version],
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to assume package: {}", e)))?;
+        Ok(())
     }
 
     pub fn update_package(&self, pkg: NewPackage) -> Result<()> {

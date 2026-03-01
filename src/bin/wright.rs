@@ -151,6 +151,13 @@ enum Commands {
     },
     /// Perform a full system health check (integrity, dependencies, file conflicts, shadows)
     Doctor,
+    /// Mark a package as externally provided to satisfy dependency checks
+    Assume {
+        /// Package name
+        name: String,
+        /// Package version
+        version: String,
+    },
     /// Upgrade all installed packages to latest available versions
     Sysupgrade {
         /// Preview what would be upgraded without actually doing it
@@ -323,8 +330,12 @@ fn main() -> Result<()> {
                 println!("no packages installed");
             } else {
                 for pkg in &packages {
-                    println!("{} {}-{} ({})",
-                        pkg.name, pkg.version, pkg.release, pkg.arch);
+                    if pkg.assumed {
+                        println!("{} {} [external]", pkg.name, pkg.version);
+                    } else {
+                        println!("{} {}-{} ({})",
+                            pkg.name, pkg.version, pkg.release, pkg.arch);
+                    }
                 }
             }
         }
@@ -476,6 +487,15 @@ fn main() -> Result<()> {
             } else {
                 println!("\nupgraded {}, {} up to date, {} not found",
                     upgraded, up_to_date, not_found);
+            }
+        }
+        Commands::Assume { name, version } => {
+            match db.assume_package(&name, &version) {
+                Ok(()) => println!("assumed: {} {}", name, version),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Doctor => {

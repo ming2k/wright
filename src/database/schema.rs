@@ -17,7 +17,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             install_size INTEGER,
             pkg_hash TEXT,
-            install_scripts TEXT
+            install_scripts TEXT,
+            assumed INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS files (
@@ -68,6 +69,16 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_shadowed_path ON shadowed_files(path);
+        ",
+    )
+    .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
+
+    // Migration: add assumed column to databases created before this feature.
+    let _ = conn.execute_batch(
+        "ALTER TABLE packages ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;",
+    );
+
+    conn.execute_batch("
 
         -- Optional (informational) dependencies, not enforced
         CREATE TABLE IF NOT EXISTS optional_dependencies (
