@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-03-02
+
+### Features
+- Add `wright assume <name> <version>` to register externally-provided packages so dependency checks treat them as satisfied. Intended for bootstrapping scenarios where core packages (glibc, gcc, etc.) already exist but were not installed through wright. Assumed packages display with an `[external]` tag in `wright list` and are automatically replaced when a real package is installed via `wright install`.
+- Add `wright unassume <name>` to remove an assumed package record.
+- Add `wright list --assumed` (`-a`) to filter the package list to assumed packages only.
+- Compile-stage serialization: when multiple dockyards run in parallel, compile stages are now serialized behind a semaphore so only one dockyard compiles at a time with access to all CPU cores. Non-compile stages (configure, package, etc.) remain fully parallel. This eliminates the "long-tail effect" where light packages finish quickly and leave cores idle while heavy compiles continue with a fraction of available cores.
+
+### Fixes
+- Dockyard `pivot_root` now falls back to `chroot` when running inside a chroot environment (e.g. LFS-style builds) where `pivot_root(2)` returns `EINVAL` due to the current root not being a real mount point.
+- Lifecycle stage log messages now include the package name (e.g. `python: running stage: compile`) so concurrent dockyard output can be attributed to the correct package.
+- Remove dead code: unused `compress_zstd`, `decompress_zstd`, and `sha256_bytes` functions.
+
 ## [1.2.6] - 2026-02-22
 
 ### Features
