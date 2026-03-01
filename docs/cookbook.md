@@ -40,16 +40,21 @@ man-db 2.12.1-1 (x86_64)
 python 3.13.0-1 (x86_64)
 ```
 
-Once you have a wright-built package ready to replace a stub, remove the
-assumed entry first and then install the real archive:
+Once you have a wright-built package ready to replace a stub, simply install
+it — the assumed record is replaced automatically:
 
 ```sh
-wright remove glibc
 wright install glibc-2.41-1.wright.tar.zst
 ```
 
 After that, `wright list` will show the fully managed package entry and
 `wright verify glibc` will check its file integrity as normal.
+
+To remove an assumed record without installing a replacement, use `unassume`:
+
+```sh
+wright unassume glibc
+```
 
 ---
 

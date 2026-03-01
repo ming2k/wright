@@ -85,6 +85,7 @@ List installed packages.
 | Flag | Description |
 |------|-------------|
 | `--roots` (`-r`) | Show only top-level packages with no installed dependents |
+| `--assumed` (`-a`) | Show only assumed (externally provided) packages |
 
 #### `wright query <PACKAGE>`
 
@@ -112,11 +113,14 @@ Assuming a package is **idempotent** — running it again with a different versi
 
 Assumed packages are shown with an `[external]` tag in `wright list`.
 
-To replace an assumed package with a real wright-managed one, remove the stub first:
+When a real package is installed via `wright install`, any existing assumed record for that package is **automatically replaced** — no manual removal is needed.
+
+#### `wright unassume <NAME>`
+
+Remove an assumed package record. This only works on packages marked as assumed (i.e. registered via `wright assume`); it will not remove normally installed packages.
 
 ```sh
-wright remove glibc
-wright install glibc-2.41-1.wright.tar.zst
+wright unassume glibc
 ```
 
 #### `wright verify [PACKAGE]`
@@ -225,6 +229,14 @@ wbuild run freetype --mvp
 # MVP build, run only up to the configure stage
 wbuild run freetype --mvp --stage configure
 ```
+
+##### Compile-stage serialization
+
+When multiple dockyards run in parallel, non-compile stages (configure, package, etc.) execute concurrently with CPU cores partitioned across active builds. However, **compile stages are serialized** behind a semaphore — only one dockyard compiles at a time, and the active compile gets access to all available CPU cores.
+
+This eliminates the "long-tail effect" where light packages finish quickly and leave their allocated cores idle while heavy compiles (python, perl, gcc) continue with only a fraction of available cores. The result is better CPU utilization and faster wall-clock times for multi-package builds.
+
+The behavior is automatic and requires no configuration.
 
 ##### Output control
 

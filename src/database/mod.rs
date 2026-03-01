@@ -274,6 +274,20 @@ impl Database {
     }
 
     pub fn insert_package(&self, pkg: NewPackage) -> Result<i64> {
+        // If an assumed record exists for this package, replace it with the real one.
+        let was_assumed: bool = self.conn
+            .query_row(
+                "SELECT assumed FROM packages WHERE name = ?1",
+                params![pkg.name],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if was_assumed {
+            self.conn.execute("DELETE FROM packages WHERE name = ?1 AND assumed = 1", params![pkg.name])
+                .map_err(|e| WrightError::DatabaseError(format!("failed to remove assumed record: {}", e)))?;
+        }
+
         self.conn
             .execute(
                 "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts)
@@ -311,6 +325,19 @@ impl Database {
              ON CONFLICT(name) DO UPDATE SET version=excluded.version, assumed=1",
             params![name, version],
         ).map_err(|e| WrightError::DatabaseError(format!("failed to assume package: {}", e)))?;
+        Ok(())
+    }
+
+    /// Remove an assumed package record. Returns an error if the package does not exist
+    /// or is not assumed (i.e. was installed normally).
+    pub fn unassume_package(&self, name: &str) -> Result<()> {
+        let rows = self.conn.execute(
+            "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
+            params![name],
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to unassume package: {}", e)))?;
+        if rows == 0 {
+            return Err(WrightError::PackageNotFound(name.to_string()));
+        }
         Ok(())
     }
 

@@ -779,6 +779,7 @@ fn execute_builds(
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
+    let compile_lock = Arc::new(Mutex::new(())); // Serializes compile stages
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
 
     let available_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
@@ -795,7 +796,7 @@ fn execute_builds(
         String::new()
     };
     eprintln!(
-        "Dockyards: {} active  |  CPUs: {}/{}{}",
+        "Dockyards: {} active  |  CPUs: {}/{}{}  |  compile: serialized",
         actual_dockyards,
         total_cpus,
         available_cpus,
@@ -874,6 +875,7 @@ fn execute_builds(
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
             let install_lock_clone = install_lock.clone();
+            let compile_lock_clone = compile_lock.clone();
             let bootstrap_excluded_clone = bootstrap_excluded.clone();
 
             // Bootstrap tasks: build without cyclic deps, set env vars.
@@ -911,7 +913,7 @@ fn execute_builds(
                 };
                 let res = build_one(
                     &builder_clone, &manifest, &path, &config_clone,
-                    &effective_opts, &bootstrap_excl,
+                    &effective_opts, &bootstrap_excl, compile_lock_clone.clone(),
                 );
 
                 match res {
@@ -1087,6 +1089,7 @@ fn build_one(
     config: &GlobalConfig,
     opts: &BuildOptions,
     bootstrap_excl: &[String],
+    compile_lock: Arc<Mutex<()>>,
 ) -> Result<()> {
     if opts.checksum {
         builder.update_hashes(manifest, manifest_path).context("failed to update hashes")?;
@@ -1173,6 +1176,7 @@ fn build_one(
         opts.verbose,
         opts.force,
         opts.nproc_per_dockyard,
+        Some(compile_lock),
     )?;
 
     // Skip archive creation when specific stages are requested and none of them produce output

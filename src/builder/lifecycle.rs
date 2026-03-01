@@ -1,5 +1,7 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
 
@@ -32,7 +34,13 @@ pub struct LifecyclePipeline<'a> {
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
-    cpu_count: Option<u32>,
+    /// CPU count for non-compile stages (partitioned across active dockyards).
+    /// Uses `Cell` so the compile stage can temporarily override it to `None`
+    /// (= all cores) while holding the compile lock.
+    cpu_count: Cell<Option<u32>>,
+    /// When set, the compile stage acquires this lock so only one dockyard
+    /// compiles at a time, giving the active compile access to all CPU cores.
+    compile_lock: Option<Arc<Mutex<()>>>,
 }
 
 pub struct LifecycleContext<'a> {
@@ -51,6 +59,9 @@ pub struct LifecycleContext<'a> {
     pub rlimits: ResourceLimits,
     pub verbose: bool,
     pub cpu_count: Option<u32>,
+    /// Compile-stage semaphore: serializes compile stages across dockyards
+    /// so the active compile gets exclusive access to all CPU cores.
+    pub compile_lock: Option<Arc<Mutex<()>>>,
 }
 
 impl<'a> LifecyclePipeline<'a> {
@@ -68,7 +79,8 @@ impl<'a> LifecyclePipeline<'a> {
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
-            cpu_count: ctx.cpu_count,
+            cpu_count: Cell::new(ctx.cpu_count),
+            compile_lock: ctx.compile_lock,
         }
     }
 
@@ -108,7 +120,20 @@ impl<'a> LifecyclePipeline<'a> {
                 debug!("Skipping check stage due to --skip-check");
                 continue;
             }
-            self.run_stage_with_hooks(stage_name)?;
+
+            // Compile stages are serialized behind a semaphore so only one
+            // dockyard compiles at a time, getting exclusive access to all
+            // CPU cores. Non-compile stages remain fully parallel.
+            if stage_name == "compile" {
+                let _guard = self.compile_lock.as_ref().map(|l| l.lock().unwrap());
+                let saved_cpu = self.cpu_count.get();
+                self.cpu_count.set(None); // all cores while we hold the lock
+                let result = self.run_stage_with_hooks(stage_name);
+                self.cpu_count.set(saved_cpu);
+                result?;
+            } else {
+                self.run_stage_with_hooks(stage_name)?;
+            }
         }
 
         Ok(())
@@ -125,9 +150,10 @@ impl<'a> LifecyclePipeline<'a> {
         // Run the actual stage
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            info!("Running stage: {}", stage_name);
+            let pkg = &self.manifest.plan.name;
+            info!("{}: running stage: {}", pkg, stage_name);
             self.run_stage(stage_name, stage)?;
-            info!("Stage {} finished in {:.1}s", stage_name, t0.elapsed().as_secs_f64());
+            info!("{}: stage {} finished in {:.1}s", pkg, stage_name, t0.elapsed().as_secs_f64());
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
         }
@@ -188,7 +214,7 @@ impl<'a> LifecyclePipeline<'a> {
             rlimits: self.rlimits.clone(),
             main_pkg_dir: None,
             verbose: self.verbose,
-            cpu_count: self.cpu_count,
+            cpu_count: self.cpu_count.get(),
         };
 
         let t0 = std::time::Instant::now();

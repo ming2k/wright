@@ -7,43 +7,6 @@ use tracing::warn;
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
-pub fn compress_zstd(input: &Path, output: &Path) -> Result<()> {
-    let input_data = std::fs::read(input).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read {}: {}", input.display(), e))
-    })?;
-
-    let compressed = zstd::encode_all(input_data.as_slice(), 19).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd compression failed: {}", e))
-    })?;
-
-    std::fs::write(output, compressed).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to write {}: {}", output.display(), e))
-    })?;
-
-    Ok(())
-}
-
-pub fn decompress_zstd(input: &Path, output: &Path) -> Result<()> {
-    let input_data = std::fs::read(input).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read {}: {}", input.display(), e))
-    })?;
-
-    let mut decoder = zstd::Decoder::new(input_data.as_slice()).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd decompression init failed: {}", e))
-    })?;
-
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd decompression failed: {}", e))
-    })?;
-
-    std::fs::write(output, decompressed).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to write {}: {}", output.display(), e))
-    })?;
-
-    Ok(())
-}
-
 /// Create a tar.zst archive from a directory.
 /// Handles symlinks by archiving them as symlinks (not following them).
 pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {

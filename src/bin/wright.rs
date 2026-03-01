@@ -123,6 +123,9 @@ enum Commands {
         /// Show only top-level (root) packages with no installed dependents
         #[arg(long, short)]
         roots: bool,
+        /// Show only assumed (externally provided) packages
+        #[arg(long, short)]
+        assumed: bool,
     },
     /// Show detailed package information
     Query {
@@ -157,6 +160,11 @@ enum Commands {
         name: String,
         /// Package version
         version: String,
+    },
+    /// Remove an assumed (externally provided) package record
+    Unassume {
+        /// Package name
+        name: String,
     },
     /// Upgrade all installed packages to latest available versions
     Sysupgrade {
@@ -319,7 +327,7 @@ fn main() -> Result<()> {
 
             print_paged(&String::from_utf8_lossy(&buf));
         }
-        Commands::List { roots, .. } => {
+        Commands::List { roots, assumed, .. } => {
             let packages = if roots {
                 db.get_root_packages()
             } else {
@@ -330,6 +338,9 @@ fn main() -> Result<()> {
                 println!("no packages installed");
             } else {
                 for pkg in &packages {
+                    if assumed && !pkg.assumed {
+                        continue;
+                    }
                     if pkg.assumed {
                         println!("{} {} [external]", pkg.name, pkg.version);
                     } else {
@@ -492,6 +503,15 @@ fn main() -> Result<()> {
         Commands::Assume { name, version } => {
             match db.assume_package(&name, &version) {
                 Ok(()) => println!("assumed: {} {}", name, version),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Unassume { name } => {
+            match db.unassume_package(&name) {
+                Ok(()) => println!("unassumed: {}", name),
                 Err(e) => {
                     eprintln!("error: {}", e);
                     std::process::exit(1);

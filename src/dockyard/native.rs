@@ -542,20 +542,36 @@ pub fn run_in_dockyard(
                         None::<&str>,
                     );
 
-                    // --- pivot_root ---
+                    // --- pivot_root (with chroot fallback for chroot environments) ---
+                    //
+                    // pivot_root(2) requires the current root to be a real mount
+                    // point. Inside an LFS-style chroot this condition is not met
+                    // and the syscall returns EINVAL. Fall back to chroot(2)+chdir
+                    // in that case — it provides the same filesystem isolation when
+                    // we already have a private mount namespace.
 
                     let old_root = newroot.join(".old_root");
                     std::fs::create_dir_all(&old_root).ok();
 
-                    if let Err(e) = pivot_root(&newroot, &old_root) {
-                        die(format!("pivot_root: {e}"));
+                    match pivot_root(&newroot, &old_root) {
+                        Ok(()) => {
+                            if let Err(e) = chdir("/") {
+                                die(format!("chdir /: {e}"));
+                            }
+                            let _ = umount2("/.old_root", MntFlags::MNT_DETACH);
+                            let _ = std::fs::remove_dir("/.old_root");
+                        }
+                        Err(nix::errno::Errno::EINVAL) => {
+                            let _ = std::fs::remove_dir(&old_root);
+                            if let Err(e) = nix::unistd::chroot(&newroot) {
+                                die(format!("chroot fallback: {e}"));
+                            }
+                            if let Err(e) = chdir("/") {
+                                die(format!("chdir / (chroot fallback): {e}"));
+                            }
+                        }
+                        Err(e) => die(format!("pivot_root: {e}")),
                     }
-
-                    if let Err(e) = chdir("/") {
-                        die(format!("chdir /: {e}"));
-                    }
-                    let _ = umount2("/.old_root", MntFlags::MNT_DETACH);
-                    let _ = std::fs::remove_dir("/.old_root");
 
                     // --- Hostname ---
                     let _ = sethostname("wright-dockyard");

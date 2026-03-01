@@ -1134,7 +1134,7 @@ mod tests {
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let result = builder
-            .build(&manifest, hold_dir, &[], false, &extra_env, false, false, None)
+            .build(&manifest, hold_dir, &[], false, false, &extra_env, false, false, None, None)
             .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();

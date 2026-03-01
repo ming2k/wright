@@ -4,6 +4,7 @@ pub mod variables;
 pub mod orchestrator;
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use tracing::{info, warn, debug};
 
@@ -202,6 +203,9 @@ impl Builder {
         // plan and global config leave jobs at 0 (auto-detect), preventing
         // CPU oversubscription when multiple dockyards run simultaneously.
         nproc_per_dockyard: Option<u32>,
+        // Compile-stage semaphore: when set, compile stages acquire this lock
+        // so only one dockyard compiles at a time with full CPU access.
+        compile_lock: Option<Arc<Mutex<()>>>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -353,6 +357,7 @@ impl Builder {
             rlimits: rlimits.clone(),
             verbose,
             cpu_count: Some(cpu_count),
+            compile_lock,
         });
 
         pipeline.run()?;
