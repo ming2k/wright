@@ -130,6 +130,27 @@ pub struct Dependency {
     pub dep_type: DepType,
 }
 
+#[derive(Debug, Clone)]
+pub struct TransactionRecord {
+    pub timestamp: String,
+    pub operation: String,
+    pub package_name: String,
+    pub old_version: Option<String>,
+    pub new_version: Option<String>,
+    pub status: String,
+}
+
+fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<TransactionRecord> {
+    Ok(TransactionRecord {
+        timestamp: row.get(0)?,
+        operation: row.get(1)?,
+        package_name: row.get(2)?,
+        old_version: row.get(3)?,
+        new_version: row.get(4)?,
+        status: row.get(5)?,
+    })
+}
+
 pub struct Database {
     conn: Connection,
     _lock_file: Option<File>,
@@ -683,6 +704,27 @@ impl Database {
             params![operation, package_name, old_version, new_version, status, backup_path],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Query transaction history, optionally filtered by package name.
+    pub fn get_history(&self, package: Option<&str>) -> Result<Vec<TransactionRecord>> {
+        let mut records = Vec::new();
+        if let Some(name) = package {
+            let mut stmt = self.conn.prepare(
+                "SELECT timestamp, operation, package_name, old_version, new_version, status
+                 FROM transactions WHERE package_name = ?1 ORDER BY timestamp"
+            )?;
+            let rows = stmt.query_map(params![name], row_to_transaction)?;
+            for row in rows { records.push(row?); }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT timestamp, operation, package_name, old_version, new_version, status
+                 FROM transactions ORDER BY timestamp"
+            )?;
+            let rows = stmt.query_map([], row_to_transaction)?;
+            for row in rows { records.push(row?); }
+        }
+        Ok(records)
     }
 
     pub fn update_transaction_status(&self, id: i64, status: &str) -> Result<()> {

@@ -154,10 +154,14 @@ fn main() -> Result<()> {
 
     if cli.verbose > 0 {
         // Verbose: show full format with timestamps and module paths for debugging
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        tracing_subscriber::fmt()
+            .with_writer(wright::util::progress::MultiProgressWriter)
+            .with_env_filter(filter)
+            .init();
     } else {
         // Default/quiet: clean format without timestamps or module paths
         tracing_subscriber::fmt()
+            .with_writer(wright::util::progress::MultiProgressWriter)
             .without_time()
             .with_target(false)
             .with_level(true)

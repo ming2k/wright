@@ -166,6 +166,11 @@ enum Commands {
         /// Package name
         name: String,
     },
+    /// Show package transaction history (install, upgrade, remove)
+    History {
+        /// Package name; omit to show all history
+        package: Option<String>,
+    },
     /// Upgrade all installed packages to latest available versions
     Sysupgrade {
         /// Preview what would be upgraded without actually doing it
@@ -188,9 +193,13 @@ fn main() -> Result<()> {
     };
 
     if cli.verbose > 0 {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        tracing_subscriber::fmt()
+            .with_writer(wright::util::progress::MultiProgressWriter)
+            .with_env_filter(filter)
+            .init();
     } else {
         tracing_subscriber::fmt()
+            .with_writer(wright::util::progress::MultiProgressWriter)
             .without_time()
             .with_target(false)
             .with_level(true)
@@ -515,6 +524,27 @@ fn main() -> Result<()> {
                 Err(e) => {
                     eprintln!("error: {}", e);
                     std::process::exit(1);
+                }
+            }
+        }
+        Commands::History { package } => {
+            let records = db.get_history(package.as_deref())?;
+            if records.is_empty() {
+                println!("no transaction history");
+            } else {
+                for r in &records {
+                    let version = match (&r.old_version, &r.new_version) {
+                        (None, Some(v)) => v.clone(),
+                        (Some(v), None) => v.clone(),
+                        (Some(old), Some(new)) => format!("{} -> {}", old, new),
+                        (None, None) => String::new(),
+                    };
+                    let status = if r.status != "completed" {
+                        format!(" ({})", r.status)
+                    } else {
+                        String::new()
+                    };
+                    println!("{}  {:<9} {} {}{}", r.timestamp, r.operation, r.package_name, version, status);
                 }
             }
         }

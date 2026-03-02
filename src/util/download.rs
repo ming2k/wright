@@ -6,6 +6,7 @@ use tracing::info;
 
 use crate::error::{WrightError, Result};
 use crate::util::compress;
+use crate::util::progress;
 
 /// Download a file from `url` to `dest` atomically.
 ///
@@ -73,11 +74,13 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         .content_length()
         .unwrap_or(0);
 
-    let pb = ProgressBar::new(total_size);
+    let filename = url.split('/').next_back().unwrap_or(url);
+    let pb = progress::MULTI.add(ProgressBar::new(total_size));
     pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
         .unwrap()
         .progress_chars("#>-"));
+    pb.set_prefix(filename.to_string());
 
     // Write to a temporary file in the same directory, then rename on success.
     let dest_dir = dest.parent().unwrap_or(Path::new("."));

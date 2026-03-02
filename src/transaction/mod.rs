@@ -272,7 +272,7 @@ pub fn install_package(
                 if force {
                     // Don't record self-shadowing (upgrade case)
                     if owner_name != pkginfo.name {
-                        warn!("overwriting {} (owned by {})", entry.path, owner_name);
+                        warn!("{}: overwriting {} (owned by {})", pkginfo.name, entry.path, owner_name);
                         shadows.push((entry.path.clone(), owner_name));
                     }
                 } else {
@@ -563,7 +563,7 @@ pub fn upgrade_package(
             if let Some(owner) = db.find_owner(&entry.path)? {
                 if owner != pkginfo.name {
                     if force {
-                        warn!("overwriting {} (owned by {})", entry.path, owner);
+                        warn!("{}: overwriting {} (owned by {})", pkginfo.name, entry.path, owner);
                     } else {
                         return Err(WrightError::FileConflict {
                             path: PathBuf::from(&entry.path),

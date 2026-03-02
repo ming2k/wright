@@ -795,16 +795,12 @@ fn execute_builds(
     } else {
         String::new()
     };
-    eprintln!(
+    info!(
         "Dockyards: {} active  |  CPUs: {}/{}{}  |  compile: serialized",
         actual_dockyards,
         total_cpus,
         available_cpus,
         cpu_cap_note,
-    );
-    info!(
-        "Starting build with up to {} concurrent dockyards (dynamic compiler thread budget)",
-        actual_dockyards,
     );
 
     loop {
@@ -861,13 +857,7 @@ fn execute_builds(
                 Some(share as u32)
             };
 
-            eprintln!(
-                "[dockyard {}] {}  ({} CPU{})",
-                active_dockyards,
-                name,
-                dynamic_nproc_cap.unwrap_or(1),
-                if dynamic_nproc_cap.unwrap_or(1) == 1 { "" } else { "s" },
-            );
+            info!("[dockyard {}] {}", active_dockyards, name);
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -1000,7 +990,7 @@ fn execute_builds(
                 in_progress.lock().unwrap().remove(&name);
                 completed.lock().unwrap().insert(name.clone());
                 if !opts.quiet {
-                    eprintln!("[done] {}", name);
+                    info!("[done] {}", name);
                 }
             }
             Ok(Err((name, _))) => {
