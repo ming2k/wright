@@ -309,13 +309,17 @@ impl Builder {
         // Compute scheduler's CPU share for this dockyard and apply it as CPU
         // affinity on the dockyard process. Tools like `nproc` inside the
         // dockyard then return the correct count without any env var injection.
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1);
+        let total_cpus = if let Some(cap) = self.config.build.max_cpus {
+            available.min(cap.max(1) as u32)
+        } else {
+            available
+        };
         let cpu_count = nproc_per_dockyard
             .or(self.config.build.nproc_per_dockyard)
-            .unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get() as u32)
-                    .unwrap_or(1)
-            });
+            .unwrap_or(total_cpus);
 
         let vars = variables::standard_variables(variables::VariableContext {
             pkg_name: &manifest.plan.name,
@@ -357,6 +361,7 @@ impl Builder {
             rlimits: rlimits.clone(),
             verbose,
             cpu_count: Some(cpu_count),
+            compile_cpu_count: Some(total_cpus),
             compile_lock,
         });
 

@@ -790,18 +790,7 @@ fn execute_builds(
     };
     let actual_dockyards = if opts.dockyards == 0 { total_cpus } else { opts.dockyards.min(total_cpus) };
 
-    let cpu_cap_note = if let Some(cap) = config.build.max_cpus {
-        format!(" (max_cpus={})", cap.max(1))
-    } else {
-        String::new()
-    };
-    info!(
-        "Dockyards: {} active  |  CPUs: {}/{}{}  |  compile: serialized",
-        actual_dockyards,
-        total_cpus,
-        available_cpus,
-        cpu_cap_note,
-    );
+    info!("CPUs: {}  |  compile: serialized", total_cpus);
 
     loop {
         let mut ready_to_launch = Vec::new();

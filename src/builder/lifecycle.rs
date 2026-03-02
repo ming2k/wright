@@ -35,11 +35,15 @@ pub struct LifecyclePipeline<'a> {
     rlimits: ResourceLimits,
     verbose: bool,
     /// CPU count for non-compile stages (partitioned across active dockyards).
-    /// Uses `Cell` so the compile stage can temporarily override it to `None`
-    /// (= all cores) while holding the compile lock.
+    /// Uses `Cell` so the compile stage can temporarily override it while
+    /// holding the compile lock.
     cpu_count: Cell<Option<u32>>,
+    /// CPU count used during the compile stage (= total_cpus, respecting
+    /// max_cpus). `None` means inherit the partitioned cpu_count as-is.
+    compile_cpu_count: Option<u32>,
     /// When set, the compile stage acquires this lock so only one dockyard
-    /// compiles at a time, giving the active compile access to all CPU cores.
+    /// compiles at a time, giving the active compile access to all capped
+    /// CPU cores.
     compile_lock: Option<Arc<Mutex<()>>>,
 }
 
@@ -59,8 +63,11 @@ pub struct LifecycleContext<'a> {
     pub rlimits: ResourceLimits,
     pub verbose: bool,
     pub cpu_count: Option<u32>,
+    /// CPU count for the compile stage (= total_cpus, respecting max_cpus).
+    /// When `None`, the compile stage inherits the partitioned `cpu_count`.
+    pub compile_cpu_count: Option<u32>,
     /// Compile-stage semaphore: serializes compile stages across dockyards
-    /// so the active compile gets exclusive access to all CPU cores.
+    /// so the active compile gets exclusive access to all capped CPU cores.
     pub compile_lock: Option<Arc<Mutex<()>>>,
 }
 
@@ -80,6 +87,7 @@ impl<'a> LifecyclePipeline<'a> {
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
             cpu_count: Cell::new(ctx.cpu_count),
+            compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
         }
     }
@@ -122,12 +130,12 @@ impl<'a> LifecyclePipeline<'a> {
             }
 
             // Compile stages are serialized behind a semaphore so only one
-            // dockyard compiles at a time, getting exclusive access to all
-            // CPU cores. Non-compile stages remain fully parallel.
+            // dockyard compiles at a time, getting access to all capped CPU
+            // cores (total_cpus, respecting max_cpus).
             if stage_name == "compile" {
                 let _guard = self.compile_lock.as_ref().map(|l| l.lock().unwrap());
                 let saved_cpu = self.cpu_count.get();
-                self.cpu_count.set(None); // all cores while we hold the lock
+                self.cpu_count.set(self.compile_cpu_count);
                 let result = self.run_stage_with_hooks(stage_name);
                 self.cpu_count.set(saved_cpu);
                 result?;
