@@ -9,14 +9,18 @@ use wright::config::GlobalConfig;
 use wright::database::Database;
 use wright::transaction;
 use wright::query;
+use wright::query::PrefixMode;
 
 /// Write `content` to `$PAGER` (default: `less`) when stdout is a TTY,
 /// otherwise print directly. Falls back to plain print if the pager fails.
 fn print_paged(content: &str) {
     use std::io::IsTerminal;
     if std::io::stdout().is_terminal() {
-        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
-        if let Ok(mut child) = std::process::Command::new(&pager)
+        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".to_string());
+        let parts: Vec<&str> = pager.split_whitespace().collect();
+        let (cmd, args) = parts.split_first().unwrap_or((&"less", &[][..]));
+        if let Ok(mut child) = std::process::Command::new(cmd)
+            .args(args)
             .stdin(std::process::Stdio::piped())
             .spawn()
         {
@@ -117,6 +121,14 @@ enum Commands {
         /// Show dependency tree for all installed packages
         #[arg(long, short)]
         all: bool,
+
+        /// Output prefix style: indent (tree), depth (flat + depth number), none (bare names)
+        #[arg(long, default_value = "indent", value_parser = parse_prefix_mode)]
+        prefix: PrefixMode,
+
+        /// Hide the subtree of the named package (can be repeated)
+        #[arg(long, action = clap::ArgAction::Append)]
+        prune: Vec<String>,
     },
     /// List installed packages
     List {
@@ -177,6 +189,15 @@ enum Commands {
         #[arg(long, short = 'n')]
         dry_run: bool,
     },
+}
+
+fn parse_prefix_mode(s: &str) -> std::result::Result<PrefixMode, String> {
+    match s {
+        "indent" => Ok(PrefixMode::Indent),
+        "depth" => Ok(PrefixMode::Depth),
+        "none" => Ok(PrefixMode::None),
+        _ => Err(format!("invalid prefix mode '{}': expected indent, depth, or none", s)),
+    }
 }
 
 fn main() -> Result<()> {
@@ -307,11 +328,22 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Deps { package, reverse, depth, filter, all } => {
+        Commands::Deps { package, reverse, depth, filter, all, prefix: prefix_mode, prune } => {
+            use std::io::IsTerminal;
+            let color = std::io::stdout().is_terminal();
             let mut buf = Vec::new();
 
-            if all {
-                query::write_system_tree(&db, &mut buf)?;
+            let max_depth = if depth == 0 { usize::MAX } else { depth };
+            let opts = query::TreeOptions {
+                max_depth,
+                filter: filter.as_deref(),
+                prefix_mode,
+                prune: &prune,
+                color,
+            };
+
+            let stats = if all {
+                query::write_system_tree(&db, &opts, &mut buf)?
             } else {
                 let package_name = package.ok_or_else(|| {
                     anyhow::anyhow!("package name is required unless using --all")
@@ -324,16 +356,15 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
 
-                let max_depth = if depth == 0 { usize::MAX } else { depth };
-
                 writeln!(buf, "{}", package_name)?;
                 if reverse {
-                    query::write_reverse_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref(), &mut buf)?;
+                    query::write_reverse_dep_tree(&db, &package_name, &opts, &mut buf)?
                 } else {
-                    query::write_dep_tree(&db, &package_name, "", 1, max_depth, filter.as_deref(), &mut buf)?;
+                    query::write_dep_tree(&db, &package_name, &opts, &mut buf)?
                 }
-            }
+            };
 
+            stats.write_summary(&mut buf, color).ok();
             print_paged(&String::from_utf8_lossy(&buf));
         }
         Commands::List { roots, assumed, .. } => {
