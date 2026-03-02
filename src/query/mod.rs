@@ -403,7 +403,9 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
     for pkg in all_packages {
         let deps = db.get_dependencies(pkg.id)?;
         for dep in deps {
-            if db.get_package(&dep.name)?.is_none() {
+            if db.get_package(&dep.name)?.is_none()
+                && db.find_providers(&dep.name)?.is_empty()
+            {
                 let constraint_str = dep.constraint.map(|c| format!(" ({})", c)).unwrap_or_default();
                 broken.push(format!(
                     "Package '{}' has a broken dependency: '{}'{} not found",

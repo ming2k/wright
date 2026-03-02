@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
+use rusqlite::params;
+
 use crate::database::{Database, Dependency, DepType, FileEntry, FileType, NewPackage};
 use crate::error::{WrightError, Result};
 use crate::package::archive::{self, PkgInfo};
@@ -82,6 +84,23 @@ fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))
 }
 
+/// Replace provides and conflicts rows for a package (used during upgrade).
+fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PkgInfo) -> Result<()> {
+    // Delete old rows
+    db.connection().execute("DELETE FROM provides WHERE package_id = ?1", params![pkg_id])
+        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
+    db.connection().execute("DELETE FROM conflicts WHERE package_id = ?1", params![pkg_id])
+        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e)))?;
+    // Insert new
+    if !pkginfo.provides.is_empty() {
+        db.insert_provides(pkg_id, &pkginfo.provides)?;
+    }
+    if !pkginfo.conflicts.is_empty() {
+        db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Install flow
 // ---------------------------------------------------------------------------
@@ -137,6 +156,11 @@ pub fn install_packages(
                                 )));
                             }
                         }
+                        continue;
+                    }
+
+                    // Check if satisfied by a virtual provider
+                    if !db.find_providers(&dep_name)?.is_empty() {
                         continue;
                     }
 
@@ -237,14 +261,44 @@ pub fn install_package(
         }
     }
 
-    // --- Handle Conflicts ---
+    // --- Handle Conflicts (bidirectional) ---
     if !force {
+        // 1. New package declares conflicts → check if those are installed (or provided)
         for conflict_name in &pkginfo.conflicts {
             if db.get_package(conflict_name)?.is_some() {
                 return Err(WrightError::DependencyError(format!(
                     "package conflict detected: '{}' conflicts with installed package '{}'. \
                      Please remove it first or use --force.",
                     pkginfo.name, conflict_name
+                )));
+            }
+            // Check if any installed package provides the conflicted name
+            let providers = db.find_providers(conflict_name)?;
+            if !providers.is_empty() {
+                return Err(WrightError::DependencyError(format!(
+                    "package conflict detected: '{}' conflicts with '{}' (provided by {}). \
+                     Please remove it first or use --force.",
+                    pkginfo.name, conflict_name, providers.join(", ")
+                )));
+            }
+        }
+        // 2. Already-installed packages declare conflicts against this new package name
+        let reverse_conflicts = db.find_conflicting_packages(&pkginfo.name)?;
+        if !reverse_conflicts.is_empty() {
+            return Err(WrightError::DependencyError(format!(
+                "package conflict detected: installed package(s) {} conflict with '{}'. \
+                 Please remove them first or use --force.",
+                reverse_conflicts.join(", "), pkginfo.name
+            )));
+        }
+        // 3. Already-installed packages declare conflicts against names this package provides
+        for prov in &pkginfo.provides {
+            let reverse = db.find_conflicting_packages(prov)?;
+            if !reverse.is_empty() {
+                return Err(WrightError::DependencyError(format!(
+                    "package conflict detected: installed package(s) {} conflict with '{}' (provided by '{}'). \
+                     Please remove them first or use --force.",
+                    reverse.join(", "), prov, pkginfo.name
                 )));
             }
         }
@@ -367,6 +421,13 @@ pub fn install_package(
         db.insert_optional_dependencies(pkg_id, &pkginfo.optional_deps)?;
     }
 
+    if !pkginfo.provides.is_empty() {
+        db.insert_provides(pkg_id, &pkginfo.provides)?;
+    }
+    if !pkginfo.conflicts.is_empty() {
+        db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    }
+
     db.update_transaction_status(tx_id, "completed")?;
 
     // Run post_install hook
@@ -403,8 +464,29 @@ pub fn remove_package(
         WrightError::PackageNotFound(name.to_string())
     })?;
 
-    // Check if other packages depend on this one
-    let dependents = db.get_dependents(name)?;
+    // Check if other packages depend on this one (by name or via provides)
+    let mut dependents = db.get_dependents(name)?;
+
+    // Also check virtual provides: if this package provides "foo" and someone
+    // depends on "foo", we need to block removal unless another provider exists.
+    let provides_list = db.get_provides(pkg.id)?;
+    for virtual_name in &provides_list {
+        let virtual_dependents = db.get_dependents(virtual_name)?;
+        for (dep_name, dep_type) in virtual_dependents {
+            // Check if another package also provides this virtual name
+            let other_providers: Vec<String> = db.find_providers(virtual_name)?
+                .into_iter()
+                .filter(|p| p != name)
+                .collect();
+            if other_providers.is_empty() {
+                // This package is the last provider — block removal
+                if !dependents.iter().any(|(n, _)| n == &dep_name) {
+                    dependents.push((dep_name, dep_type));
+                }
+            }
+        }
+    }
+
     if !dependents.is_empty() {
         let mut link_dependents = Vec::new();
         let mut other_dependents = Vec::new();
@@ -730,6 +812,10 @@ pub fn upgrade_package(
     }
     db.replace_dependencies(updated_pkg.id, &deps)?;
     db.replace_optional_dependencies(updated_pkg.id, &pkginfo.optional_deps)?;
+
+    // Replace provides/conflicts (delete old + insert new via ON DELETE CASCADE
+    // won't fire for update_package, so manually clear and re-insert)
+    self_replace_provides_conflicts(db, updated_pkg.id, &pkginfo)?;
 
     db.update_transaction_status(tx_id, "completed")?;
 

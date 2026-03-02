@@ -597,7 +597,15 @@ impl Database {
             "SELECT COUNT(*) FROM packages WHERE name = ?1",
         )?;
         let count: i64 = stmt.query_row(params![name], |row| row.get(0))?;
-        Ok(count > 0)
+        if count > 0 {
+            return Ok(true);
+        }
+        // Also check if any installed package provides this name
+        let mut stmt2 = self.conn.prepare(
+            "SELECT COUNT(*) FROM provides WHERE name = ?1",
+        )?;
+        let prov_count: i64 = stmt2.query_row(params![name], |row| row.get(0))?;
+        Ok(prov_count > 0)
     }
 
     pub fn get_dependents(&self, name: &str) -> Result<Vec<(String, String)>> {
@@ -771,6 +779,80 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get optional deps: {}", e)))?;
+        Ok(rows)
+    }
+
+    // ── provides ─────────────────────────────────────────────────────────
+
+    pub fn insert_provides(&self, package_id: i64, names: &[String]) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO provides (package_id, name) VALUES (?1, ?2)",
+        )?;
+        for name in names {
+            stmt.execute(params![package_id, name])?;
+        }
+        Ok(())
+    }
+
+    pub fn get_provides(&self, package_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM provides WHERE package_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map(params![package_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get provides: {}", e)))?;
+        Ok(rows)
+    }
+
+    /// Return names of all installed packages that provide `virtual_name`.
+    pub fn find_providers(&self, virtual_name: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.name FROM packages p
+             JOIN provides pv ON p.id = pv.package_id
+             WHERE pv.name = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![virtual_name], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to find providers: {}", e)))?;
+        Ok(rows)
+    }
+
+    // ── conflicts ────────────────────────────────────────────────────────
+
+    pub fn insert_conflicts(&self, package_id: i64, names: &[String]) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO conflicts (package_id, name) VALUES (?1, ?2)",
+        )?;
+        for name in names {
+            stmt.execute(params![package_id, name])?;
+        }
+        Ok(())
+    }
+
+    pub fn get_conflicts(&self, package_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM conflicts WHERE package_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map(params![package_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
+        Ok(rows)
+    }
+
+    /// Return names of installed packages whose `conflicts` list includes `name`.
+    pub fn find_conflicting_packages(&self, name: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.name FROM packages p
+             JOIN conflicts c ON p.id = c.package_id
+             WHERE c.name = ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![name], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to find conflicting packages: {}", e)))?;
         Ok(rows)
     }
 }

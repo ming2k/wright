@@ -22,6 +22,7 @@ pub struct PkgInfo {
     pub link_deps: Vec<String>,
     pub replaces: Vec<String>,
     pub conflicts: Vec<String>,
+    pub provides: Vec<String>,
     pub backup_files: Vec<String>,
     pub optional_deps: Vec<(String, String)>,
 }
@@ -145,6 +146,7 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
         || !manifest.dependencies.link.is_empty()
         || !manifest.dependencies.replaces.is_empty()
         || !manifest.dependencies.conflicts.is_empty()
+        || !manifest.dependencies.provides.is_empty()
         || !manifest.dependencies.optional.is_empty()
     {
         deps_toml.push_str("\n[dependencies]\n");
@@ -175,6 +177,14 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
         if !manifest.dependencies.conflicts.is_empty() {
             deps_toml.push_str("conflicts = [");
             for (i, dep) in manifest.dependencies.conflicts.iter().enumerate() {
+                if i > 0 { deps_toml.push_str(", "); }
+                deps_toml.push_str(&format!("\"{}\"", dep));
+            }
+            deps_toml.push_str("]\n");
+        }
+        if !manifest.dependencies.provides.is_empty() {
+            deps_toml.push_str("provides = [");
+            for (i, dep) in manifest.dependencies.provides.iter().enumerate() {
                 if i > 0 { deps_toml.push_str(", "); }
                 deps_toml.push_str(&format!("\"{}\"", dep));
             }
@@ -338,6 +348,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         #[serde(default)]
         conflicts: Vec<String>,
         #[serde(default)]
+        provides: Vec<String>,
+        #[serde(default)]
         optional: Vec<PkgInfoOptDep>,
     }
 
@@ -351,11 +363,11 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
     })?;
 
-    let (runtime_deps, link_deps, replaces, conflicts, optional_deps) = parsed
+    let (runtime_deps, link_deps, replaces, conflicts, provides, optional_deps) = parsed
         .dependencies
         .map(|d| {
             let opt = d.optional.into_iter().map(|o| (o.name, o.description)).collect();
-            (d.runtime, d.link, d.replaces, d.conflicts, opt)
+            (d.runtime, d.link, d.replaces, d.conflicts, d.provides, opt)
         })
         .unwrap_or_default();
 
@@ -372,6 +384,7 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         link_deps,
         replaces,
         conflicts,
+        provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
         optional_deps,
     })

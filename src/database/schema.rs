@@ -90,6 +90,26 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_opt_deps_package ON optional_dependencies(package_id);
+
+        -- Virtual provides (e.g. http-server provided by nginx)
+        CREATE TABLE IF NOT EXISTS provides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_provides_name ON provides(name);
+        CREATE INDEX IF NOT EXISTS idx_provides_package ON provides(package_id);
+
+        -- Package conflicts
+        CREATE TABLE IF NOT EXISTS conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_conflicts_name ON conflicts(name);
+        CREATE INDEX IF NOT EXISTS idx_conflicts_package ON conflicts(package_id);
         ",
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
