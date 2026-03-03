@@ -18,7 +18,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             install_size INTEGER,
             pkg_hash TEXT,
             install_scripts TEXT,
-            assumed INTEGER NOT NULL DEFAULT 0
+            assumed INTEGER NOT NULL DEFAULT 0,
+            install_reason TEXT NOT NULL DEFAULT 'explicit'
         );
 
         CREATE TABLE IF NOT EXISTS files (
@@ -76,6 +77,11 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     // Migration: add assumed column to databases created before this feature.
     let _ = conn.execute_batch(
         "ALTER TABLE packages ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;",
+    );
+
+    // Migration: add install_reason column (existing packages default to 'explicit').
+    let _ = conn.execute_batch(
+        "ALTER TABLE packages ADD COLUMN install_reason TEXT NOT NULL DEFAULT 'explicit';",
     );
 
     conn.execute_batch("

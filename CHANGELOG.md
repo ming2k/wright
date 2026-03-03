@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Features
+- Track install reason (`explicit` vs `dependency`) for each package. User-specified packages are marked `explicit`; dependencies resolved automatically during `wright install` are marked `dependency`. Existing packages default to `explicit` after migration.
+- Add `wright remove --cascade` (`-c`) to automatically remove orphan dependencies — auto-installed packages that are no longer needed by any other installed package. Orphans are removed in leaf-first order.
+- Add `wright list --orphans` (`-o`) to show auto-installed dependencies that no longer have any installed dependents.
+- Explicitly installing a package that was previously pulled in as a dependency promotes it to `explicit`, protecting it from cascade removal.
+
 ## [1.2.7] - 2026-03-02
 
 ### Features

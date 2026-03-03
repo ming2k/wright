@@ -57,6 +57,7 @@ Remove installed packages by name. Refuses to remove a package if other installe
 |------|-------------|
 | `--force` | Remove even if other packages depend on this one (bypasses safety) |
 | `--recursive` (`-r`) | Also remove all packages that depend on the target (leaf-first order) |
+| `--cascade` (`-c`) | Also remove orphan dependencies — auto-installed packages that are no longer needed by anything else |
 
 #### `wright deps [PACKAGE]`
 
@@ -86,6 +87,7 @@ List installed packages.
 |------|-------------|
 | `--roots` (`-r`) | Show only top-level packages with no installed dependents |
 | `--assumed` (`-a`) | Show only assumed (externally provided) packages |
+| `--orphans` (`-o`) | Show only orphan packages — auto-installed dependencies no longer needed by any package |
 
 #### `wright query <PACKAGE>`
 

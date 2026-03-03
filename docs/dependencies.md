@@ -95,4 +95,17 @@ Example: Rebuild all reverse dependents (ABI-sensitive).
 wbuild run -R zlib
 ```
 
+**Install Reason Tracking**
+Wright tracks why each package was installed:
+
+- `explicit`: The user directly requested this package via `wright install`.
+- `dependency`: Automatically pulled in to satisfy another package's dependencies.
+
+This distinction powers two features:
+
+- `wright remove --cascade`: When removing a package, also remove its dependencies that were auto-installed and are no longer needed by any other package.
+- `wright list --orphans`: Show auto-installed dependencies that are no longer needed.
+
+If you explicitly install a package that was previously pulled in as a dependency, wright promotes it to `explicit` so it won't be affected by cascade removal. Existing packages (installed before this feature) default to `explicit`.
+
 If you want a deeper view that maps these steps to code paths, see `docs/architecture.md`.

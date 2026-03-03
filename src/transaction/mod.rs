@@ -188,9 +188,19 @@ pub fn install_packages(
         visit_resolved(name, &resolved_map, &mut visited, &mut visiting, &mut sorted_names)?;
     }
 
+    // Build set of user-specified target names for install_reason tracking
+    let target_set: HashSet<String> = targets.iter().cloned().collect();
+
     // 4. Install in order
     for name in sorted_names {
-        if db.get_package(&name)?.is_some() {
+        let is_target = target_set.contains(&name);
+
+        if let Some(existing) = db.get_package(&name)? {
+            if is_target && existing.install_reason == "dependency" {
+                // User explicitly installing a package that was previously pulled as a dep
+                info!("Promoting {} from dependency to explicit", name);
+                db.set_install_reason(&name, "explicit")?;
+            }
             if force {
                 // Force reinstall via upgrade path (atomic — keeps old if new fails)
                 info!("Force reinstalling {}", name);
@@ -200,9 +210,10 @@ pub fn install_packages(
             continue;
         }
 
+        let reason = if is_target { "explicit" } else { "dependency" };
         let pkg = resolved_map.get(&name).unwrap();
-        info!("Installing {} from {}", name, pkg.path.display());
-        install_package(db, &pkg.path, root_dir, force)?;
+        info!("Installing {} from {} (reason: {})", name, pkg.path.display(), reason);
+        install_package_with_reason(db, &pkg.path, root_dir, force, reason)?;
     }
 
     Ok(())
@@ -245,6 +256,17 @@ pub fn install_package(
     archive_path: &Path,
     root_dir: &Path,
     force: bool,
+) -> Result<()> {
+    install_package_with_reason(db, archive_path, root_dir, force, "explicit")
+}
+
+/// Install a package with a specified install reason.
+fn install_package_with_reason(
+    db: &Database,
+    archive_path: &Path,
+    root_dir: &Path,
+    force: bool,
+    install_reason: &str,
 ) -> Result<()> {
     // Extract to temp dir
     let temp_dir = tempfile::tempdir().map_err(|e| {
@@ -389,6 +411,7 @@ pub fn install_package(
         install_size: pkginfo.install_size,
         pkg_hash: pkg_hash.as_deref(),
         install_scripts: install_content.as_deref(),
+        install_reason,
     })?;
 
     // Record shadows
@@ -595,6 +618,39 @@ pub fn remove_package(
 }
 
 // ---------------------------------------------------------------------------
+// Cascade remove
+// ---------------------------------------------------------------------------
+
+/// Compute the full list of packages that would be cascade-removed when removing `name`.
+/// Returns orphan dependency names in leaf-first order (safe removal order).
+pub fn cascade_remove_list(db: &Database, name: &str) -> Result<Vec<String>> {
+    let mut result = Vec::new();
+    let mut visited = HashSet::new();
+    visited.insert(name.to_string());
+    cascade_collect(db, name, &mut visited, &mut result)?;
+    Ok(result)
+}
+
+fn cascade_collect(
+    db: &Database,
+    name: &str,
+    visited: &mut HashSet<String>,
+    result: &mut Vec<String>,
+) -> Result<()> {
+    let orphans = db.get_orphan_dependencies(name)?;
+    for orphan in orphans {
+        if visited.contains(&orphan) {
+            continue;
+        }
+        visited.insert(orphan.clone());
+        // Recurse first so leaves come before parents
+        cascade_collect(db, &orphan, visited, result)?;
+        result.push(orphan);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Upgrade flow (Step 5g)
 // ---------------------------------------------------------------------------
 
@@ -794,6 +850,7 @@ pub fn upgrade_package(
         install_size: pkginfo.install_size,
         pkg_hash: pkg_hash.as_deref(),
         install_scripts: install_content.as_deref(),
+        ..Default::default()
     })?;
 
     let updated_pkg = db.get_package(&pkginfo.name)?.unwrap();

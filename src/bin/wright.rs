@@ -100,6 +100,10 @@ enum Commands {
         /// Recursively remove all packages that depend on the target
         #[arg(long, short)]
         recursive: bool,
+
+        /// Also remove orphan dependencies (auto-installed deps no longer needed)
+        #[arg(long, short = 'c')]
+        cascade: bool,
     },
     /// Analyze installed package dependency relationships
     Deps {
@@ -138,6 +142,9 @@ enum Commands {
         /// Show only assumed (externally provided) packages
         #[arg(long, short)]
         assumed: bool,
+        /// Show only orphan packages (auto-installed deps no longer needed)
+        #[arg(long, short)]
+        orphans: bool,
     },
     /// Show detailed package information
     Query {
@@ -298,7 +305,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Remove { packages, force, recursive } => {
+        Commands::Remove { packages, force, recursive, cascade } => {
             for name in &packages {
                 if recursive {
                     let dependents = db.get_recursive_dependents(name)
@@ -319,11 +326,34 @@ fn main() -> Result<()> {
                     }
                 }
 
+                // Compute cascade list before removing the target
+                let cascade_list = if cascade {
+                    let list = transaction::cascade_remove_list(&db, name)
+                        .context(format!("failed to compute cascade list for {}", name))?;
+                    if !list.is_empty() {
+                        println!("will also remove orphan dependencies of {}: {}", name, list.join(", "));
+                    }
+                    list
+                } else {
+                    Vec::new()
+                };
+
                 match transaction::remove_package(&db, name, &root_dir, force || recursive) {
                     Ok(()) => println!("removed: {}", name),
                     Err(e) => {
                         eprintln!("error removing {}: {}", name, e);
                         std::process::exit(1);
+                    }
+                }
+
+                // Remove orphan dependencies (leaf-first order)
+                for orphan in &cascade_list {
+                    match transaction::remove_package(&db, orphan, &root_dir, true) {
+                        Ok(()) => println!("removed: {}", orphan),
+                        Err(e) => {
+                            eprintln!("error removing {}: {}", orphan, e);
+                            std::process::exit(1);
+                        }
                     }
                 }
             }
@@ -367,15 +397,21 @@ fn main() -> Result<()> {
             stats.write_summary(&mut buf, color).ok();
             print_paged(&String::from_utf8_lossy(&buf));
         }
-        Commands::List { roots, assumed, .. } => {
-            let packages = if roots {
+        Commands::List { roots, assumed, orphans } => {
+            let packages = if orphans {
+                db.get_orphan_packages()
+            } else if roots {
                 db.get_root_packages()
             } else {
                 db.list_packages()
             }.context("failed to list packages")?;
 
             if packages.is_empty() {
-                println!("no packages installed");
+                if orphans {
+                    println!("no orphan packages");
+                } else {
+                    println!("no packages installed");
+                }
             } else {
                 for pkg in &packages {
                     if assumed && !pkg.assumed {
@@ -405,6 +441,7 @@ fn main() -> Result<()> {
                         println!("URL         : {}", url);
                     }
                     println!("Install Size: {} bytes", info.install_size);
+                    println!("Reason      : {}", info.install_reason);
                     println!("Installed At: {}", info.installed_at);
                     if let Some(ref hash) = info.pkg_hash {
                         println!("Package Hash: {}", hash);

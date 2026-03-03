@@ -97,6 +97,7 @@ pub struct PackageInfo {
     pub pkg_hash: Option<String>,
     pub install_scripts: Option<String>,
     pub assumed: bool,
+    pub install_reason: String,
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +110,7 @@ pub struct FileEntry {
     pub is_config: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct NewPackage<'a> {
     pub name: &'a str,
     pub version: &'a str,
@@ -121,6 +122,25 @@ pub struct NewPackage<'a> {
     pub install_size: u64,
     pub pkg_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
+    pub install_reason: &'a str,
+}
+
+impl<'a> Default for NewPackage<'a> {
+    fn default() -> Self {
+        Self {
+            name: "",
+            version: "",
+            release: 0,
+            description: "",
+            arch: "",
+            license: "",
+            url: None,
+            install_size: 0,
+            pkg_hash: None,
+            install_scripts: None,
+            install_reason: "explicit",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -159,7 +179,7 @@ pub struct Database {
 
 /// Column list shared by all queries returning PackageInfo.
 const PKG_COLUMNS: &str =
-    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed";
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason";
 
 /// Map a row (with PKG_COLUMNS order) to PackageInfo.
 fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
@@ -177,6 +197,7 @@ fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
         pkg_hash: row.get(10)?,
         install_scripts: row.get(11)?,
         assumed: row.get::<_, bool>(12)?,
+        install_reason: row.get::<_, String>(13)?,
     })
 }
 
@@ -311,8 +332,8 @@ impl Database {
 
         self.conn
             .execute(
-                "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     pkg.name,
                     pkg.version,
@@ -323,7 +344,8 @@ impl Database {
                     pkg.url,
                     pkg.install_size,
                     pkg.pkg_hash,
-                    pkg.install_scripts
+                    pkg.install_scripts,
+                    pkg.install_reason
                 ],
             )
             .map_err(|e| {
@@ -695,6 +717,58 @@ impl Database {
             result.push(dep_name.to_string());
         }
         Ok(())
+    }
+
+    /// Update the install_reason of a package (e.g. promote dependency → explicit).
+    pub fn set_install_reason(&self, name: &str, reason: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE packages SET install_reason = ?1 WHERE name = ?2",
+            params![reason, name],
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to set install_reason: {}", e)))?;
+        Ok(())
+    }
+
+    /// Get orphan dependencies of a specific package: dependencies that were auto-installed
+    /// (`install_reason = 'dependency'`) and are not depended on by any other installed package.
+    pub fn get_orphan_dependencies(&self, name: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.depends_on FROM dependencies d
+             JOIN packages p ON d.package_id = p.id
+             WHERE p.name = ?1
+               AND EXISTS (
+                   SELECT 1 FROM packages dep WHERE dep.name = d.depends_on AND dep.install_reason = 'dependency'
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM dependencies d2
+                   JOIN packages p2 ON d2.package_id = p2.id
+                   WHERE d2.depends_on = d.depends_on AND p2.name != ?1
+               )"
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to prepare orphan deps query: {}", e)))?;
+
+        let rows = stmt.query_map(params![name], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan deps: {}", e)))?;
+
+        Ok(rows)
+    }
+
+    /// Get globally orphan packages: `install_reason = 'dependency'` and not depended on
+    /// by any installed package.
+    pub fn get_orphan_packages(&self) -> Result<Vec<PackageInfo>> {
+        let sql = format!(
+            "SELECT {} FROM packages WHERE install_reason = 'dependency' AND name NOT IN (
+                SELECT depends_on FROM dependencies
+            )",
+            PKG_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)
+            .map_err(|e| WrightError::DatabaseError(format!("failed to prepare orphan query: {}", e)))?;
+
+        let rows = stmt.query_map([], row_to_package_info)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan packages: {}", e)))?;
+
+        Ok(rows)
     }
 
     pub fn record_transaction(

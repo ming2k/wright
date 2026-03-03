@@ -307,6 +307,31 @@ package in the set.
 
 ---
 
+## Removing Packages and Cleaning Up Dependencies
+
+Remove a package and its orphan dependencies (auto-installed deps no longer needed):
+
+```bash
+wright remove --cascade nginx
+```
+
+List orphan packages (auto-installed dependencies that nothing depends on anymore):
+
+```bash
+wright list --orphans
+```
+
+If you explicitly install a package that was previously pulled in as a dependency,
+it gets promoted to "explicit" and won't be removed by `--cascade`:
+
+```bash
+# pcre was auto-installed as a dependency of nginx
+wright install pcre-8.45-1-x86_64.wright.tar.zst
+# pcre is now "explicit" — cascade won't touch it
+```
+
+---
+
 ## Inspecting a Package's Dependency Tree
 
 Print the full build-time dependency tree for a plan:

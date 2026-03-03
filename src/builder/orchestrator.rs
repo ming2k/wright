@@ -290,6 +290,7 @@ fn collect_phase_deps(
     manifest: &PackageManifest,
     pkg_to_plan: &HashMap<String, String>,
     is_mvp: bool,
+    all_plans: Option<&HashMap<String, PathBuf>>,
 ) -> Vec<String> {
     let base = &manifest.dependencies;
     let overrides: Option<&PhaseDependencies> = if is_mvp {
@@ -310,12 +311,12 @@ fn collect_phase_deps(
 
     let mut deps = Vec::new();
     let mut raw_deps = Vec::new();
-    raw_deps.extend(build);
+    raw_deps.extend(build.clone());
     raw_deps.extend(runtime);
     raw_deps.extend(link);
 
-    for dep in raw_deps {
-        let dep_pkg_name = version::parse_dependency(&dep)
+    for dep in &raw_deps {
+        let dep_pkg_name = version::parse_dependency(dep)
             .unwrap_or_else(|_| (dep.clone(), None)).0;
 
         if let Some(parent_plan) = pkg_to_plan.get(&dep_pkg_name) {
@@ -324,6 +325,39 @@ fn collect_phase_deps(
             }
         } else {
             deps.push(dep_pkg_name);
+        }
+    }
+
+    // A build dependency is useless unless its full transitive runtime dep tree is
+    // installed first.  Use BFS to add ordering edges for the entire closure.
+    if let Some(plans) = all_plans {
+        for build_dep in &build {
+            let build_dep_name = version::parse_dependency(build_dep)
+                .unwrap_or_else(|_| (build_dep.clone(), None)).0;
+            let build_dep_plan = pkg_to_plan.get(&build_dep_name).cloned().unwrap_or(build_dep_name);
+
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(build_dep_plan);
+            let mut visited = HashSet::new();
+
+            while let Some(cur) = queue.pop_front() {
+                if !visited.insert(cur.clone()) {
+                    continue;
+                }
+                if let Some(plan_path) = plans.get(&cur) {
+                    if let Ok(dep_manifest) = PackageManifest::from_file(plan_path) {
+                        for rdep in &dep_manifest.dependencies.runtime {
+                            let rdep_name = version::parse_dependency(rdep)
+                                .unwrap_or_else(|_| (rdep.clone(), None)).0;
+                            let rdep_plan = pkg_to_plan.get(&rdep_name).cloned().unwrap_or(rdep_name);
+                            if rdep_plan != manifest.plan.name {
+                                deps.push(rdep_plan.clone());
+                            }
+                            queue.push_back(rdep_plan);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -355,8 +389,8 @@ fn cycle_candidates_for(
             continue;
         }
 
-        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, false);
-        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, true);
+        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, false, None);
+        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, true, None);
 
         let cycle_edges: Vec<String> = full_deps
             .iter()
@@ -461,6 +495,50 @@ fn tarjan_visit(v: &str, graph: &HashMap<String, Vec<String>>, s: &mut SccState)
     }
 }
 
+/// Given an SCC (unordered set of nodes) and the full dependency graph,
+/// trace an actual cycle path via DFS and return a display string like
+/// "A → B → C → A".  Falls back to joining members if no path is found.
+fn format_cycle_path(
+    scc: &[String],
+    graph: &HashMap<String, Vec<String>>,
+) -> String {
+    let scc_set: HashSet<&str> = scc.iter().map(|s| s.as_str()).collect();
+
+    // DFS from scc[0] following only intra-SCC edges to find a cycle back.
+    let start = &scc[0];
+    let mut stack: Vec<(&str, Vec<String>)> = vec![(start.as_str(), vec![start.clone()])];
+    let mut visited: HashSet<&str> = HashSet::new();
+
+    while let Some((node, path)) = stack.pop() {
+        let neighbors = match graph.get(node) {
+            Some(n) => n,
+            None => continue,
+        };
+        for neighbor in neighbors {
+            if !scc_set.contains(neighbor.as_str()) {
+                continue;
+            }
+            if neighbor == start && path.len() > 1 {
+                // Found the cycle — close the loop and return
+                let mut display = path.clone();
+                display.push(start.clone());
+                return display.join(" → ");
+            }
+            if !visited.contains(neighbor.as_str()) {
+                visited.insert(neighbor.as_str());
+                let mut new_path = path.clone();
+                new_path.push(neighbor.clone());
+                stack.push((neighbor.as_str(), new_path));
+            }
+        }
+    }
+
+    // Fallback: just list members (shouldn't happen for a valid SCC)
+    let mut members = scc.to_vec();
+    members.push(scc[0].clone());
+    members.join(" → ")
+}
+
 /// For each dependency cycle in the graph, find a package with
 /// `[phase.mvp].without` that breaks the cycle and insert a two-pass
 /// build plan: `{pkg}:bootstrap` runs first (no cyclic dep), then
@@ -473,7 +551,8 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
     }
 
     for cycle in &cycles {
-        info!("Dependency cycle detected: {}", cycle.join(" → "));
+        let cycle_display = format_cycle_path(cycle, &graph.deps_map);
+        info!("Dependency cycle detected: {}", cycle_display);
 
         let candidates = cycle_candidates_for(cycle, graph);
         let chosen = pick_candidate(candidates.clone());
@@ -486,7 +565,7 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
                      Cycle: {}\n\
                      Add '[mvp.dependencies]' in one of these plans to declare \
                      an acyclic MVP dependency set.",
-                    cycle.join(" → ")
+                    cycle_display
                 )));
             }
         };
@@ -495,7 +574,7 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
 
         // Bootstrap task: same deps as full, minus the cycle-breaking edges.
         let mvp_manifest = PackageManifest::from_file(&graph.name_to_path[&pkg])?;
-        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, true);
+        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, true, None);
 
         graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
         graph.build_set.insert(bootstrap_key.clone());
@@ -562,7 +641,7 @@ fn expand_missing_dependencies(
 
         for path in plans_to_build.iter() {
             let manifest = PackageManifest::from_file(path)?;
-            
+
             // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
             // For auto-resolving missing deps, we prioritize build and link as they are required for compilation.
             let deps_to_check = if force_all {
@@ -588,12 +667,62 @@ fn expand_missing_dependencies(
                 if !build_set.contains(&dep_name) {
                     if force_all || db.get_package(&dep_name)?.is_none() {
                         if let Some(plan_path) = all_plans.get(&dep_name) {
-                            info!("{} dependency (depth {}): {}", 
-                                if force_all { "Forcing rebuild of" } else { "Auto-resolving missing" }, 
+                            info!("{} dependency (depth {}): {}",
+                                if force_all { "Forcing rebuild of" } else { "Auto-resolving missing" },
                                 current_depth + 1, dep_name);
                             to_add_paths.push(plan_path.clone());
                             build_set.insert(dep_name.clone());
                             added_any = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ensure the full transitive runtime dependency closure of every build
+        // dependency is present.  A build dep like python-sphinx is useless if
+        // any package in its runtime dep tree (python-requests → python-urllib3 …)
+        // is missing.  We use BFS to expand the complete closure.
+        if !force_all {
+            let snapshot: Vec<PathBuf> = plans_to_build.iter().chain(to_add_paths.iter()).cloned().collect();
+            for path in &snapshot {
+                let manifest = match PackageManifest::from_file(path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                for build_dep in &manifest.dependencies.build {
+                    let build_dep_name = version::parse_dependency(build_dep)
+                        .unwrap_or_else(|_| (build_dep.clone(), None)).0;
+
+                    // BFS over the runtime dep tree of this build dependency
+                    let mut queue = std::collections::VecDeque::new();
+                    queue.push_back(build_dep_name.clone());
+                    let mut visited = HashSet::new();
+                    visited.insert(build_dep_name.clone());
+
+                    while let Some(cur) = queue.pop_front() {
+                        if let Some(cur_plan_path) = all_plans.get(&cur) {
+                            if let Ok(cur_manifest) = PackageManifest::from_file(cur_plan_path) {
+                                for rdep in &cur_manifest.dependencies.runtime {
+                                    let rdep_name = version::parse_dependency(rdep)
+                                        .unwrap_or_else(|_| (rdep.clone(), None)).0;
+                                    if !visited.insert(rdep_name.clone()) {
+                                        continue;
+                                    }
+                                    if !build_set.contains(&rdep_name) && db.get_package(&rdep_name)?.is_none() {
+                                        if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
+                                            info!("Auto-resolving missing transitive runtime dep of build dep {} (depth {}): {}",
+                                                build_dep_name, current_depth + 1, rdep_name);
+                                            to_add_paths.push(rdep_plan_path.clone());
+                                            build_set.insert(rdep_name.clone());
+                                            added_any = true;
+                                        }
+                                    }
+                                    // Continue BFS regardless of whether rdep was missing,
+                                    // since its own runtime deps may still be missing.
+                                    queue.push_back(rdep_name);
+                                }
+                            }
                         }
                     }
                 }
@@ -729,13 +858,13 @@ fn build_dep_map(
 
         let mut deps = Vec::new();
         if !checksum {
-            deps = collect_phase_deps(&manifest, &pkg_to_plan, is_mvp);
+            deps = collect_phase_deps(&manifest, &pkg_to_plan, is_mvp, Some(all_plans));
 
             // For explicit --mvp builds, compute which deps are excluded vs. full
             // so build_one can pass the right WRIGHT_BOOTSTRAP_WITHOUT_* env vars.
             if is_mvp {
-                let full_deps = collect_phase_deps(&manifest, &pkg_to_plan, false);
-                let mvp_deps = collect_phase_deps(&manifest, &pkg_to_plan, true);
+                let full_deps = collect_phase_deps(&manifest, &pkg_to_plan, false, Some(all_plans));
+                let mvp_deps = collect_phase_deps(&manifest, &pkg_to_plan, true, Some(all_plans));
                 let excluded: Vec<String> = full_deps
                     .into_iter()
                     .filter(|d| !mvp_deps.contains(d))
@@ -1025,7 +1154,7 @@ fn lint_dependency_graph(
     println!();
     println!("Cycles ({}):", cycles.len());
     for (idx, cycle) in cycles.iter().enumerate() {
-        println!("{}: {}", idx + 1, cycle.join(" → "));
+        println!("{}: {}", idx + 1, format_cycle_path(cycle, &graph.deps_map));
     }
 
     println!();

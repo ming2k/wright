@@ -76,4 +76,8 @@ See [dependencies.md](dependencies.md) for the conceptual model and [cli-referen
 wright remove
   → check link-dependents → block if CRITICAL
   → check file shadows → preserve files if shared by other packages
+
+wright remove --cascade
+  → compute orphan dependencies (install_reason = 'dependency', not needed by others)
+  → remove target → remove orphan deps leaf-first
 ```

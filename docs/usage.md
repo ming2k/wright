@@ -15,6 +15,18 @@ wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst
 
 Wright handles dependencies, conflicts, and package replacements (renames) automatically during installation.
 
+### Removing Packages
+
+```bash
+wright remove nginx                # Remove a single package
+wright remove --cascade nginx      # Remove nginx and its orphan dependencies
+wright list --orphans              # Show auto-installed deps no longer needed
+```
+
+When packages are installed, wright tracks whether each was explicitly requested or pulled in automatically as a dependency. `--cascade` uses this information to clean up dependencies that are no longer needed — similar to `apt autoremove` or `pacman -Rsu`.
+
+If you later explicitly install a package that was previously pulled in as a dependency, wright promotes it to "explicit" so it won't be removed by cascade operations.
+
 ### Querying and Analysis
 
 ```bash
