@@ -18,20 +18,22 @@ build = ["perl", "gcc", "make"]
 optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
+
+[relations]
 conflicts = ["apache"]
 provides = ["http-server"]
 
-[sources]
-uris = [
-    "https://nginx.org/download/nginx-1.25.3.tar.gz",
-    "patches/fix-headers.patch",
-    "patches/add-feature.patch",
-]
-sha256 = [
-    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-    "SKIP",
-    "SKIP",
-]
+[[sources]]
+uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"
+sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
+
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
+
+[[sources]]
+uri = "patches/add-feature.patch"
+sha256 = "SKIP"
 
 [options]
 strip = true
@@ -88,7 +90,10 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-[lifecycle.package.nginx]
+[package.nginx]
+hooks.pre_install = """
+echo "Preparing nginx installation..."
+"""
 hooks.post_install = """
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
 """
@@ -103,7 +108,7 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-[lifecycle.package.nginx-doc]
+[package.nginx-doc]
 description = "Nginx documentation files"
 script = """
 cd nginx-${PKG_VERSION}

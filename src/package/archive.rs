@@ -13,6 +13,7 @@ pub struct PkgInfo {
     pub name: String,
     pub version: String,
     pub release: u32,
+    pub epoch: u32,
     pub description: String,
     pub arch: String,
     pub license: String,
@@ -144,9 +145,6 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
     let mut deps_toml = String::new();
     if !manifest.dependencies.runtime.is_empty()
         || !manifest.dependencies.link.is_empty()
-        || !manifest.dependencies.replaces.is_empty()
-        || !manifest.dependencies.conflicts.is_empty()
-        || !manifest.dependencies.provides.is_empty()
         || !manifest.dependencies.optional.is_empty()
     {
         deps_toml.push_str("\n[dependencies]\n");
@@ -166,30 +164,6 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
             }
             deps_toml.push_str("]\n");
         }
-        if !manifest.dependencies.replaces.is_empty() {
-            deps_toml.push_str("replaces = [");
-            for (i, dep) in manifest.dependencies.replaces.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
-                deps_toml.push_str(&format!("\"{}\"", dep));
-            }
-            deps_toml.push_str("]\n");
-        }
-        if !manifest.dependencies.conflicts.is_empty() {
-            deps_toml.push_str("conflicts = [");
-            for (i, dep) in manifest.dependencies.conflicts.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
-                deps_toml.push_str(&format!("\"{}\"", dep));
-            }
-            deps_toml.push_str("]\n");
-        }
-        if !manifest.dependencies.provides.is_empty() {
-            deps_toml.push_str("provides = [");
-            for (i, dep) in manifest.dependencies.provides.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
-                deps_toml.push_str(&format!("\"{}\"", dep));
-            }
-            deps_toml.push_str("]\n");
-        }
         if !manifest.dependencies.optional.is_empty() {
             deps_toml.push_str("optional = [");
             for (i, dep) in manifest.dependencies.optional.iter().enumerate() {
@@ -200,6 +174,38 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
                 ));
             }
             deps_toml.push_str("]\n");
+        }
+    }
+
+    let mut relations_toml = String::new();
+    if !manifest.relations.replaces.is_empty()
+        || !manifest.relations.conflicts.is_empty()
+        || !manifest.relations.provides.is_empty()
+    {
+        relations_toml.push_str("\n[relations]\n");
+        if !manifest.relations.replaces.is_empty() {
+            relations_toml.push_str("replaces = [");
+            for (i, dep) in manifest.relations.replaces.iter().enumerate() {
+                if i > 0 { relations_toml.push_str(", "); }
+                relations_toml.push_str(&format!("\"{}\"", dep));
+            }
+            relations_toml.push_str("]\n");
+        }
+        if !manifest.relations.conflicts.is_empty() {
+            relations_toml.push_str("conflicts = [");
+            for (i, dep) in manifest.relations.conflicts.iter().enumerate() {
+                if i > 0 { relations_toml.push_str(", "); }
+                relations_toml.push_str(&format!("\"{}\"", dep));
+            }
+            relations_toml.push_str("]\n");
+        }
+        if !manifest.relations.provides.is_empty() {
+            relations_toml.push_str("provides = [");
+            for (i, dep) in manifest.relations.provides.iter().enumerate() {
+                if i > 0 { relations_toml.push_str(", "); }
+                relations_toml.push_str(&format!("\"{}\"", dep));
+            }
+            relations_toml.push_str("]\n");
         }
     }
 
@@ -217,22 +223,29 @@ fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
         }
     }
 
+    let epoch_line = if manifest.plan.epoch > 0 {
+        format!("epoch = {}\n", manifest.plan.epoch)
+    } else {
+        String::new()
+    };
+
     format!(
         r#"[package]
 name = "{name}"
 version = "{version}"
 release = {release}
-description = "{description}"
+{epoch}description = "{description}"
 arch = "{arch}"
 license = "{license}"
 install_size = {install_size}
 build_date = "{build_date}"
 packager = "wright {wright_version}"
-{deps}{backup}
+{deps}{relations}{backup}
 "#,
         name = manifest.plan.name,
         version = manifest.plan.version,
         release = manifest.plan.release,
+        epoch = epoch_line,
         description = manifest.plan.description,
         arch = manifest.plan.arch,
         license = manifest.plan.license,
@@ -240,6 +253,7 @@ packager = "wright {wright_version}"
         build_date = build_date,
         wright_version = env!("CARGO_PKG_VERSION"),
         deps = deps_toml,
+        relations = relations_toml,
         backup = backup_toml,
     )
 }
@@ -278,7 +292,8 @@ fn generate_filelist(pkg_dir: &Path) -> Result<String> {
 fn generate_hooks_toml(
     scripts: &crate::package::manifest::InstallScripts,
 ) -> String {
-    let has_any = scripts.post_install.is_some()
+    let has_any = scripts.pre_install.is_some()
+        || scripts.post_install.is_some()
         || scripts.post_upgrade.is_some()
         || scripts.pre_remove.is_some()
         || scripts.post_remove.is_some();
@@ -288,6 +303,7 @@ fn generate_hooks_toml(
 
     let mut content = String::from("[hooks]\n");
     for (key, value) in [
+        ("pre_install", &scripts.pre_install),
         ("post_install", &scripts.post_install),
         ("post_upgrade", &scripts.post_upgrade),
         ("pre_remove", &scripts.pre_remove),
@@ -296,10 +312,8 @@ fn generate_hooks_toml(
         if let Some(ref s) = value {
             let trimmed = s.trim();
             if trimmed.contains('\n') {
-                // Multi-line: use TOML triple-quoted string
                 content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
             } else {
-                // Single line: use basic string, escaping inner quotes
                 content.push_str(&format!("{} = \"{}\"\n", key, trimmed.replace('\\', "\\\\").replace('"', "\\\"")));
             }
         }
@@ -334,6 +348,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         #[serde(default)]
         dependencies: Option<PkgInfoDeps>,
         #[serde(default)]
+        relations: Option<PkgInfoRelations>,
+        #[serde(default)]
         backup: Option<PkgInfoBackup>,
     }
 
@@ -342,6 +358,8 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         name: String,
         version: String,
         release: u32,
+        #[serde(default)]
+        epoch: u32,
         description: String,
         arch: String,
         license: String,
@@ -363,6 +381,7 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         runtime: Vec<String>,
         #[serde(default)]
         link: Vec<String>,
+        // Backward compat: old archives store these under [dependencies]
         #[serde(default)]
         replaces: Vec<String>,
         #[serde(default)]
@@ -371,6 +390,16 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         provides: Vec<String>,
         #[serde(default)]
         optional: Vec<PkgInfoOptDep>,
+    }
+
+    #[derive(serde::Deserialize, Default)]
+    struct PkgInfoRelations {
+        #[serde(default)]
+        replaces: Vec<String>,
+        #[serde(default)]
+        conflicts: Vec<String>,
+        #[serde(default)]
+        provides: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -383,7 +412,7 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
     })?;
 
-    let (runtime_deps, link_deps, replaces, conflicts, provides, optional_deps) = parsed
+    let (runtime_deps, link_deps, old_replaces, old_conflicts, old_provides, optional_deps) = parsed
         .dependencies
         .map(|d| {
             let opt = d.optional.into_iter().map(|o| (o.name, o.description)).collect();
@@ -391,10 +420,17 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         })
         .unwrap_or_default();
 
+    // Prefer [relations] section; fall back to old [dependencies] fields for backward compat
+    let relations = parsed.relations.unwrap_or_default();
+    let replaces = if relations.replaces.is_empty() { old_replaces } else { relations.replaces };
+    let conflicts = if relations.conflicts.is_empty() { old_conflicts } else { relations.conflicts };
+    let provides = if relations.provides.is_empty() { old_provides } else { relations.provides };
+
     Ok(PkgInfo {
         name: parsed.package.name,
         version: parsed.package.version,
         release: parsed.package.release,
+        epoch: parsed.package.epoch,
         description: parsed.package.description,
         arch: parsed.package.arch,
         license: parsed.package.license,

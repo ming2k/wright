@@ -32,6 +32,8 @@ struct HooksFile {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 struct Hooks {
     #[serde(default)]
+    pre_install: Option<String>,
+    #[serde(default)]
     post_install: Option<String>,
     #[serde(default)]
     post_upgrade: Option<String>,
@@ -80,6 +82,7 @@ fn parse_hooks_from_db(content: &str) -> Hooks {
 pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
     let hooks = parse_hooks_from_db(content);
     match hook_name {
+        "pre_install" => hooks.pre_install,
         "post_install" => hooks.post_install,
         "post_upgrade" => hooks.post_upgrade,
         "pre_remove" => hooks.pre_remove,
@@ -91,6 +94,7 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
 /// Parse legacy `.INSTALL` ini format into Hooks.
 fn parse_legacy_install(content: &str) -> Hooks {
     Hooks {
+        pre_install: parse_ini_section(content, "pre_install"),
         post_install: parse_ini_section(content, "post_install"),
         post_upgrade: parse_ini_section(content, "post_upgrade"),
         pre_remove: parse_ini_section(content, "pre_remove"),
@@ -102,6 +106,7 @@ fn parse_legacy_install(content: &str) -> Hooks {
 fn legacy_hooks_to_toml(hooks: &Hooks) -> String {
     let mut content = String::from("[hooks]\n");
     for (key, value) in [
+        ("pre_install", &hooks.pre_install),
         ("post_install", &hooks.post_install),
         ("post_upgrade", &hooks.post_upgrade),
         ("pre_remove", &hooks.pre_remove),
@@ -472,6 +477,14 @@ fn install_package_with_reason(
         WrightError::InstallError(format!("failed to create backup dir: {}", e))
     })?;
 
+    // Run pre_install hook before file extraction
+    if let Some(ref script) = hooks.pre_install {
+        debug!("Running pre_install hook for {}", pkginfo.name);
+        if let Err(e) = run_install_script(script, root_dir) {
+            warn!("pre_install script failed: {}", e);
+        }
+    }
+
     // Copy files to root_dir (no config protection on fresh install)
     match copy_files_to_root(
         temp_dir.path(),
@@ -495,6 +508,7 @@ fn install_package_with_reason(
         name: &pkginfo.name,
         version: &pkginfo.version,
         release: pkginfo.release,
+        epoch: pkginfo.epoch,
         description: &pkginfo.description,
         arch: &pkginfo.arch,
         license: &pkginfo.license,
@@ -774,18 +788,29 @@ pub fn upgrade_package(
         ))
     })?;
 
-    // 3. Version check: new > old (unless force)
+    // 3. Version check: epoch first, then version, then release (unless force)
     let old_ver = Version::parse(&old_pkg.version)?;
     let new_ver = Version::parse(&pkginfo.version)?;
-    if !force && (new_ver < old_ver || (new_ver == old_ver && pkginfo.release <= old_pkg.release)) {
-        return Err(WrightError::UpgradeError(format!(
-            "{} {}-{} is not newer than installed {}-{}",
-            pkginfo.name,
-            pkginfo.version,
-            pkginfo.release,
-            old_pkg.version,
-            old_pkg.release,
-        )));
+    let old_epoch = old_pkg.epoch;
+    let new_epoch = pkginfo.epoch;
+    if !force {
+        let is_newer = if new_epoch != old_epoch {
+            new_epoch > old_epoch
+        } else if new_ver != old_ver {
+            new_ver > old_ver
+        } else {
+            pkginfo.release > old_pkg.release
+        };
+        if !is_newer {
+            return Err(WrightError::UpgradeError(format!(
+                "{} {}-{} is not newer than installed {}-{}",
+                pkginfo.name,
+                pkginfo.version,
+                pkginfo.release,
+                old_pkg.version,
+                old_pkg.release,
+            )));
+        }
     }
 
     // Read hooks from .HOOKS (TOML) or legacy .INSTALL
@@ -876,6 +901,14 @@ pub fn upgrade_package(
         }
     }
 
+    // Run pre_install hook before file extraction (upgrade)
+    if let Some(ref script) = hooks.pre_install {
+        debug!("Running pre_install hook for {} (upgrade)", pkginfo.name);
+        if let Err(e) = run_install_script(script, root_dir) {
+            warn!("pre_install script failed: {}", e);
+        }
+    }
+
     // 7. Copy new files to root. Files declared in [backup] are written as
     //    <path>.wnew only when a live file already exists; otherwise the new
     //    file is installed directly.
@@ -942,6 +975,7 @@ pub fn upgrade_package(
         name: &pkginfo.name,
         version: &pkginfo.version,
         release: pkginfo.release,
+        epoch: pkginfo.epoch,
         description: &pkginfo.description,
         arch: &pkginfo.arch,
         license: &pkginfo.license,

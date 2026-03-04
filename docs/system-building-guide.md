@@ -123,33 +123,33 @@ gcc (source)
 
 ```toml
 # gcc/plan.toml multi-package example
-[lifecycle.package."libstdc++"]
+[package."libstdc++"]
 description = "GNU C++ standard library runtime"
 script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PKG_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 
-[lifecycle.package."libstdc++".dependencies]
+[package."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.libgcc]
+[package.libgcc]
 description = "GCC low-level runtime library"
 script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PKG_DIR}/usr/lib/"
 
-[lifecycle.package.libgomp]
+[package.libgomp]
 description = "GNU OpenMP runtime"
 script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PKG_DIR}/usr/lib/"
 
-[lifecycle.package.libgomp.dependencies]
+[package.libgomp.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.libatomic]
+[package.libatomic]
 description = "GNU atomic operations library"
 script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PKG_DIR}/usr/lib/"
 
-[lifecycle.package.libatomic.dependencies]
+[package.libatomic.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.doc]
+[package.doc]
 description = "GCC documentation"
 script = """
 install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
@@ -180,15 +180,15 @@ linux-firmware (source, ~800MB+)
 
 ```toml
 # linux-firmware/plan.toml multi-package example
-[lifecycle.package.amdgpu]
+[package.amdgpu]
 description = "AMD GPU firmware"
 script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PKG_DIR}/usr/lib/firmware/amdgpu/"
 
-[lifecycle.package.iwlwifi]
+[package.iwlwifi]
 description = "Intel wireless firmware"
 script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PKG_DIR}/usr/lib/firmware/"
 
-[lifecycle.package.realtek]
+[package.realtek]
 description = "Realtek firmware"
 script = """
 install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PKG_DIR}/usr/lib/firmware/rtl_nic/
@@ -238,18 +238,18 @@ However, for Wright's target users (personal or small team maintained custom dis
 
 ### 2.6 Multi-Package Practice
 
-Use `[lifecycle.package.<name>]` sub-tables in `plan.toml` to define sub-packages:
+Use `[package.<name>]` sub-tables in `plan.toml` to define sub-packages:
 
 ```toml
 # Example: Splitting large documentation only
-[lifecycle.package.doc]
+[package.doc]
 description = "GCC documentation"
 script = """
 install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
 """
 
 # Example: Library and daemon split
-[lifecycle.package.libs]
+[package.libs]
 description = "D-Bus shared libraries"
 script = "install -Dm755 ${BUILD_DIR}/libdbus-1.so* ${PKG_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
@@ -355,10 +355,10 @@ ln -s /etc/sv/nginx /var/service/
 
 ### 4.4 Configuration File Protection
 
-Declare configuration files to be protected in the `backup` field of `[lifecycle.package]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
+Declare configuration files to be protected in the `backup` field of `[package]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
 
 ```toml
-[lifecycle.package]
+[package]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 

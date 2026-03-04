@@ -304,29 +304,26 @@ optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
 
+# ---- Package relations (separate from dependencies) ----
+[relations]
 # Conflicts: cannot coexist with these packages
 conflicts = ["apache"]
 
 # Provides: this package can substitute for these virtual packages
 provides = ["http-server"]
 
-# ---- Source definitions ----
-[sources]
-# Source URIs — remote URLs or local paths relative to the plan directory.
-# Archives are extracted; non-archive files are copied to ${FILES_DIR}.
-uris = [
-    "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
-    "patches/fix-headers.patch",
-    "patches/add-feature.patch",
-]
+# ---- Source definitions (array-of-tables) ----
+[[sources]]
+uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
-# SHA-256 checksum for each URI (order corresponds to uris).
-# Use "SKIP" for local files.
-sha256 = [
-    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-    "SKIP",
-    "SKIP",
-]
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
+
+[[sources]]
+uri = "patches/add-feature.patch"
+sha256 = "SKIP"
 
 # ---- Build options ----
 [options]
@@ -392,11 +389,12 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-# ---- Package output declaration ----
+# ---- Package output declaration (top-level, NOT under lifecycle) ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
-# Single-package mode (bare [lifecycle.package]):
-[lifecycle.package]
+# Single-package mode (bare [package]):
+[package]
+hooks.pre_install = "echo 'Preparing nginx...'"
 hooks.post_install = """
 # Create nginx user
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
@@ -414,16 +412,14 @@ backup = [
 ]
 
 # ---- Multi-package mode (mutually exclusive with single-package) ----
-# Each sub-table under [lifecycle.package] declares a separate output package.
+# Each sub-table under [package] declares a separate output package.
 # Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
 #
-# [lifecycle.package.libfoo]
+# [package.libfoo]
 # description = "libfoo shared library"
 # script = "install -Dm755 libfoo.so ${PKG_DIR}/usr/lib/libfoo.so"
 # hooks.post_install = "ldconfig"
-#
-# [lifecycle.package.libfoo.dependencies]
-# runtime = ["libbar"]
+# dependencies.runtime = ["libbar"]
 
 # ---- Custom lifecycle order (optional, overrides default) ----
 # [lifecycle_order]
@@ -598,7 +594,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `hooks` in `[lifecycle.package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `hooks` in `[package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -1133,7 +1129,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- Package hooks (`hooks.post_install`, etc. in `[lifecycle.package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`hooks.post_install`, etc. in `[package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode

@@ -84,6 +84,11 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         "ALTER TABLE packages ADD COLUMN install_reason TEXT NOT NULL DEFAULT 'explicit';",
     );
 
+    // Migration: add epoch column (default 0 for existing packages).
+    let _ = conn.execute_batch(
+        "ALTER TABLE packages ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
+    );
+
     conn.execute_batch("
 
         -- Optional (informational) dependencies, not enforced

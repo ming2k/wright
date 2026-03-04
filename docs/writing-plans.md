@@ -21,7 +21,7 @@ plans/
         └── 002-no-rpath.patch
 ```
 
-The directory name should match the `name` field in `plan.toml`. Local files referenced in `[sources].uris` are relative to the plan directory and must not escape it.
+The directory name should match the `name` field in `plan.toml`. Local files referenced in `[[sources]]` URIs are relative to the plan directory and must not escape it.
 
 ## `plan.toml` Reference
 
@@ -32,11 +32,25 @@ The directory name should match the `name` field in `plan.toml`. Local files ref
 | `name`        | string   | yes      | —       | Package name                       |
 | `version`     | string   | yes      | —       | Upstream version (free-form)       |
 | `release`     | integer  | yes      | —       | Build revision (must be >= 1)      |
+| `epoch`       | integer  | no       | `0`     | Version epoch — overrides version comparison (see below) |
 | `description` | string   | yes      | —       | Short description (must not be empty) |
 | `license`     | string   | yes      | —       | SPDX license identifier           |
 | `arch`        | string   | yes      | —       | Target architecture (e.g. `x86_64`) |
 | `url`         | string   | no       | —       | Upstream project URL               |
 | `maintainer`  | string   | no       | —       | Maintainer name and email          |
+
+#### Epoch
+
+The `epoch` field forces a package to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
+
+```toml
+[plan]
+name = "example"
+version = "1.0.0"
+epoch = 1       # This will upgrade over any epoch=0 package, even "9999.0"
+```
+
+Epoch defaults to `0` and is omitted from archive filenames and `.PKGINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
 
 ### `[dependencies]`
 
@@ -47,24 +61,16 @@ All fields default to empty lists if omitted.
 | `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
 | `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
 | `link`      | list of strings                 | Shared library dependencies. Triggers rebuild on update. |
-| `replaces`  | list of strings                 | Packages that this one replaces (automatically uninstalled) |
 | `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
-| `conflicts` | list of strings                 | Packages that cannot be installed alongside this one |
-| `provides`  | list of strings                 | Virtual packages this one provides   |
 
 #### `link` dependencies vs `runtime`
 
 - **`link`**: Use this for shared libraries (`.so`) that your program links against. Wright will **automatically rebuild** your package whenever a `link` dependency is updated, ensuring ABI compatibility. It also provides CRITICAL protection against removal.
 - **`runtime`**: Use this for tools or scripts called at runtime (e.g. a Python script needing `python`). Updating a `runtime` dependency does not trigger a rebuild.
 
-#### `replaces` vs `conflicts`
-
-- **`replaces`**: Use this for package renames or merges. If a package in this list is already installed, Wright will **automatically uninstall** it before installing the current package.
-- **`conflicts`**: Use this when two packages provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the package if a conflicting one is already present.
-
 #### Version constraints
 
-Runtime, build, link, conflicts, and provides entries can include a version constraint:
+Runtime, build, link entries can include a version constraint:
 
 ```toml
 link = ["openssl >= 3.0"]
@@ -83,35 +89,53 @@ optional = [
 ]
 ```
 
-### `[sources]`
+### `[relations]`
 
-| Field     | Type            | Default | Description                              |
-|-----------|-----------------|---------|------------------------------------------|
-| `uris`    | list of strings | `[]`    | Source URIs — remote URLs (`http://`/`https://`) or local paths relative to the plan directory |
-| `sha256`  | list of strings | `[]`    | SHA-256 checksums (one per URI, in order). Use `"SKIP"` for local files. |
+Package relations describe how this package interacts with other packages. All fields default to empty lists if omitted.
+
+| Field       | Type            | Description                          |
+|-------------|-----------------|--------------------------------------|
+| `replaces`  | list of strings | Packages that this one replaces (automatically uninstalled) |
+| `conflicts` | list of strings | Packages that cannot be installed alongside this one |
+| `provides`  | list of strings | Virtual packages this one provides   |
+
+```toml
+[relations]
+replaces = ["old-nginx"]
+conflicts = ["apache"]
+provides = ["http-server"]
+```
+
+#### `replaces` vs `conflicts`
+
+- **`replaces`**: Use this for package renames or merges. If a package in this list is already installed, Wright will **automatically uninstall** it before installing the current package.
+- **`conflicts`**: Use this when two packages provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the package if a conflicting one is already present.
+
+### `[[sources]]`
+
+Sources use TOML's array-of-tables syntax. Each `[[sources]]` entry declares a single source with its URI and checksum:
+
+| Field     | Type   | Default  | Description                              |
+|-----------|--------|----------|------------------------------------------|
+| `uri`     | string | required | Source URI — remote URL (`http://`/`https://`/`git+https://`) or local path relative to the plan directory |
+| `sha256`  | string | `"SKIP"` | SHA-256 checksum. Use `"SKIP"` for local files or git sources. |
 
 URIs support variable substitution (see [Variable Substitution](#variable-substitution)):
 
 ```toml
-uris = ["https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"]
-```
+[[sources]]
+uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
-Use `"SKIP"` as a sha256 entry to skip verification for a specific source (required for local paths):
-
-```toml
-uris = [
-    "https://example.com/foo-${PKG_VERSION}.tar.gz",
-    "patches/fix-headers.patch",
-]
-sha256 = [
-    "abc123...",
-    "SKIP",
-]
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
 ```
 
 #### URI classification
 
 - **Remote URIs** (starting with `http://` or `https://`) are downloaded to the source cache.
+- **Git URIs** (starting with `git+https://`) clone a git repository. Use a fragment to specify a branch or tag: `git+https://github.com/foo/bar.git#v1.0`. Always use `sha256 = "SKIP"` for git sources.
 - **Local URIs** (everything else) are resolved relative to the plan directory. They must not escape the plan directory (path traversal is blocked).
 
 #### Archive vs non-archive URIs
@@ -119,22 +143,34 @@ sha256 = [
 - URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`) are extracted to the source directory during the `extract` stage.
 - Non-archive URIs (patches, config files, scripts, etc.) are copied to `${FILES_DIR}` where lifecycle scripts can access them.
 
-#### Applying patches
+#### Git sources
 
-Patches are **not** auto-applied. Include them in `uris` and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
+Clone a specific tag or branch from a git repository:
 
 ```toml
-[sources]
-uris = [
-    "https://example.com/foo-${PKG_VERSION}.tar.gz",
-    "patches/fix-headers.patch",
-    "patches/add-feature.patch",
-]
-sha256 = [
-    "abc123...",
-    "SKIP",
-    "SKIP",
-]
+[[sources]]
+uri = "git+https://github.com/example/repo.git#v1.2.3"
+sha256 = "SKIP"
+```
+
+The fragment after `#` specifies the branch, tag, or commit to check out. Git sources are always cloned fresh and extracted like archives.
+
+#### Applying patches
+
+Patches are **not** auto-applied. Include them as `[[sources]]` entries and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
+
+```toml
+[[sources]]
+uri = "https://example.com/foo-${PKG_VERSION}.tar.gz"
+sha256 = "abc123..."
+
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
+
+[[sources]]
+uri = "patches/add-feature.patch"
+sha256 = "SKIP"
 
 [lifecycle.prepare]
 script = """
@@ -240,14 +276,15 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[lifecycle.package]` — Package Output Declaration
+### `[package]` — Package Output Declaration
 
-The `[lifecycle.package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section.
+The `[package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a top-level package declaration section.
 
 **Single-package mode** (no sub-packages):
 
 ```toml
-[lifecycle.package]
+[package]
+hooks.pre_install = "echo 'Preparing installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
@@ -257,25 +294,27 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 **Multi-package mode** (all packages explicitly declared, mutually exclusive with single-package mode):
 
 ```toml
-[lifecycle.package.nginx]
+[package.nginx]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[lifecycle.package."nginx-doc"]
+[package."nginx-doc"]
 description = "Nginx documentation"
 script = "..."
 ```
 
-| Field              | Type            | Description                              |
-|--------------------|-----------------|------------------------------------------|
-| `hooks.post_install` | string        | Run after first install                  |
-| `hooks.post_upgrade` | string        | Run after upgrade                        |
-| `hooks.pre_remove`   | string        | Run before package removal               |
-| `backup`           | list of strings | Config files preserved across upgrades   |
-| `description`      | string          | Sub-package description (multi-package mode) |
-| `script`           | string          | Script to select/install files into the sub-package (multi-package mode) |
-| `dependencies`     | table           | Sub-package dependencies (multi-package mode) |
+| Field                | Type            | Description                              |
+|----------------------|-----------------|------------------------------------------|
+| `hooks.pre_install`  | string          | Run before first install                 |
+| `hooks.post_install` | string          | Run after first install                  |
+| `hooks.post_upgrade` | string          | Run after upgrade                        |
+| `hooks.pre_remove`   | string          | Run before package removal               |
+| `hooks.post_remove`  | string          | Run after package removal                |
+| `backup`             | list of strings | Config files preserved across upgrades   |
+| `description`        | string          | Sub-package description (multi-package mode) |
+| `script`             | string          | Script to select/install files into the sub-package (multi-package mode) |
+| `dependencies`       | table           | Sub-package dependencies (multi-package mode) |
 
 #### Backup files
 
@@ -303,7 +342,7 @@ The default pipeline runs these stages in order:
 | `check`        | user     | Run test suites                          |
 | `staging`      | user     | Install files into `${PKG_DIR}`          |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `package` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.package]`](#lifecyclepackage--package-output-declaration)).
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[package]` is not a lifecycle stage — it is a top-level package output declaration section (see [`[package]`](#package--package-output-declaration)).
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -649,18 +688,18 @@ build = ["perl", "gcc", "make"]
 optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
+
+[relations]
 conflicts = ["apache"]
 provides = ["http-server"]
 
-[sources]
-uris = [
-    "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz",
-    "patches/fix-headers.patch",
-]
-sha256 = [
-    "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83",
-    "SKIP",
-]
+[[sources]]
+uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
+
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
 
 [options]
 strip = true
@@ -700,7 +739,8 @@ cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 
-[lifecycle.package]
+[package]
+hooks.pre_install = "echo 'Preparing nginx installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
@@ -711,7 +751,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
-In multi-package mode, all packages are declared as sub-tables of `[lifecycle.package]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.package]`).
+In multi-package mode, all packages are declared as sub-tables of `[package]`. This mode is mutually exclusive with single-package mode (bare `[package]`).
 
 ```toml
 [plan]
@@ -731,27 +771,25 @@ cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 
-[lifecycle.package.gcc]
+[package.gcc]
 hooks.post_install = "..."
 
-[lifecycle.package."libstdc++"]
+[package."libstdc++"]
 description = "GNU C++ standard library"
 script = "install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so"
 hooks.post_install = "ldconfig"
-
-[lifecycle.package."libstdc++".dependencies]
-runtime = ["libgcc"]
+dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[package."libstdc++"]`).
 
-Sub-package dependencies use a `[lifecycle.package.<name>.dependencies]` table with a `runtime` list for packages that must be installed when this sub-package is installed independently.
+Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[package.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
 
 ```toml
 [lifecycle.staging]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
 
-[lifecycle.package."libfoo-dev"]
+[package."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
 install -Dm644 ${BUILD_DIR}/include/* ${PKG_DIR}/usr/include/libfoo/
@@ -769,7 +807,7 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[lifecycle.package.linux-firmware-amd]
+[package.linux-firmware-amd]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
@@ -779,7 +817,7 @@ In this pattern the parent package itself may contain no files — it exists onl
 For a `-doc` sub-package that overrides the architecture:
 
 ```toml
-[lifecycle.package.mypackage-doc]
+[package.mypackage-doc]
 description = "Documentation for mypackage"
 arch = "any"
 script = """
@@ -793,12 +831,13 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[package."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
+| **epoch** | Must be >= 0 (default 0) |
 | **description** | Must not be empty |
 | **license** | Must not be empty |
 | **arch** | Must not be empty |
-| **sha256 count** | Must exactly match the number of `uris` entries (use `"SKIP"` for local paths) |
+| **sha256** | Each `[[sources]]` entry has its own `sha256` (use `"SKIP"` for local paths and git sources) |
 
-The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`.
+The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`. When `epoch` > 0, the filename includes it: `{name}-{epoch}:{version}-{release}-{arch}.wright.tar.zst`.

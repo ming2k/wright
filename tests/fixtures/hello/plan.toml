@@ -10,10 +10,6 @@ arch = "x86_64"
 runtime = []
 build = ["gcc"]
 
-[sources]
-uris = []
-sha256 = []
-
 [lifecycle.prepare]
 executor = "shell"
 dockyard = "strict"

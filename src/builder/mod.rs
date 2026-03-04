@@ -132,11 +132,9 @@ impl Builder {
         hasher.update(manifest.plan.release.to_string().as_bytes());
 
         // 2. Hash source URIs and their expected hashes
-        for (i, uri) in manifest.sources.uris.iter().enumerate() {
-            hasher.update(uri.as_bytes());
-            if let Some(h) = manifest.sources.sha256.get(i) {
-                hasher.update(h.as_bytes());
-            }
+        for source in &manifest.sources.entries {
+            hasher.update(source.uri.as_bytes());
+            hasher.update(source.sha256.as_bytes());
         }
 
         // 3. Hash build instructions (lifecycle scripts)
@@ -534,16 +532,13 @@ impl Builder {
     pub fn verify(&self, manifest: &PackageManifest) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
-        for (i, uri) in manifest.sources.uris.iter().enumerate() {
-            let expected_hash = manifest.sources.sha256.get(i)
-                .ok_or_else(|| WrightError::ValidationError(format!("no sha256 hash provided for source {}", i)))?;
-
-            if expected_hash == "SKIP" {
+        for (i, source) in manifest.sources.entries.iter().enumerate() {
+            if source.sha256 == "SKIP" {
                 debug!("Skipping verification for source {}", i);
                 continue;
             }
 
-            let processed_uri = self.process_uri(uri, manifest);
+            let processed_uri = self.process_uri(&source.uri, manifest);
             let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let path = cache_dir.join(&filename);
 
@@ -552,10 +547,10 @@ impl Builder {
             }
 
             let actual_hash = checksum::sha256_file(&path)?;
-            if &actual_hash != expected_hash {
+            if actual_hash != source.sha256 {
                 return Err(WrightError::ValidationError(format!(
                     "SHA256 mismatch for {}:\n  expected: {}\n  actual:   {}",
-                    filename, expected_hash, actual_hash
+                    filename, source.sha256, actual_hash
                 )));
             }
             debug!("Verified source: {}", filename);
@@ -569,8 +564,8 @@ impl Builder {
     pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path, files_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
-        for uri in &manifest.sources.uris {
-            let processed_uri = self.process_uri(uri, manifest);
+        for source in &manifest.sources.entries {
+            let processed_uri = self.process_uri(&source.uri, manifest);
 
             if is_git_uri(&processed_uri) {
                 let git_dir_name = git_cache_dir_name(&processed_uri);
@@ -678,8 +673,8 @@ impl Builder {
             std::fs::create_dir_all(&cache_dir).map_err(WrightError::IoError)?;
         }
 
-        for uri in manifest.sources.uris.iter() {
-            let processed_uri = self.process_uri(uri, manifest);
+        for source in manifest.sources.entries.iter() {
+            let processed_uri = self.process_uri(&source.uri, manifest);
 
             if !is_remote_uri(&processed_uri) {
                 // Local path — use SKIP
@@ -715,28 +710,51 @@ impl Builder {
             return Ok(());
         }
 
-        // Surgical update of plan.toml using regex to preserve comments/formatting
+        // Surgical update of plan.toml
         let content = std::fs::read_to_string(manifest_path).map_err(WrightError::IoError)?;
 
-        let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
-        let hashes_str = new_hashes.iter()
-            .map(|h| format!("    \"{}\"", h))
-            .collect::<Vec<_>>()
-            .join(",\n");
-        let replacement = format!("sha256 = [\n{},\n]", hashes_str);
+        // Detect format: [[sources]] (array-of-tables) vs old [sources] with sha256 = [...]
+        let has_array_of_tables = content.contains("[[sources]]");
 
-        let new_content = if re.is_match(&content) {
-            re.replace(&content, &replacement).to_string()
+        let new_content = if has_array_of_tables {
+            // New format: update sha256 in each [[sources]] block
+            let sha256_re = regex::Regex::new(r#"(?m)^(sha256\s*=\s*)"[^"]*""#).unwrap();
+            let mut result = content.clone();
+            let mut hash_idx = 0;
+            // Replace each sha256 = "..." occurrence in order
+            while let Some(m) = sha256_re.find(&result[..]) {
+                if hash_idx < new_hashes.len() {
+                    let replacement = format!("{}\"{}\"",
+                        &result[m.start()..m.start() + result[m.start()..].find('"').unwrap()],
+                        new_hashes[hash_idx]);
+                    result = format!("{}{}{}", &result[..m.start()], replacement, &result[m.end()..]);
+                    hash_idx += 1;
+                } else {
+                    break;
+                }
+            }
+            result
         } else {
-            // If sha256 field is missing, try to insert it after uris
-            let uris_re = regex::Regex::new(r"(?m)^uris\s*=\s*\[[\s\S]*?\]").unwrap();
-            if uris_re.is_match(&content) {
-                let uris_match = uris_re.find(&content).unwrap();
-                let mut c = content.clone();
-                c.insert_str(uris_match.end(), &format!("\n{}", replacement));
-                c
+            // Old format: update sha256 = [...] array
+            let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
+            let hashes_str = new_hashes.iter()
+                .map(|h| format!("    \"{}\"", h))
+                .collect::<Vec<_>>()
+                .join(",\n");
+            let replacement = format!("sha256 = [\n{},\n]", hashes_str);
+
+            if re.is_match(&content) {
+                re.replace(&content, &replacement).to_string()
             } else {
-                return Err(WrightError::BuildError("could not find uris or sha256 field in plan.toml".to_string()));
+                let uris_re = regex::Regex::new(r"(?m)^uris\s*=\s*\[[\s\S]*?\]").unwrap();
+                if uris_re.is_match(&content) {
+                    let uris_match = uris_re.find(&content).unwrap();
+                    let mut c = content.clone();
+                    c.insert_str(uris_match.end(), &format!("\n{}", replacement));
+                    c
+                } else {
+                    return Err(WrightError::BuildError("could not find sources or sha256 field in plan.toml".to_string()));
+                }
             }
         };
 
@@ -815,8 +833,8 @@ impl Builder {
             std::fs::create_dir_all(cache_dir).map_err(WrightError::IoError)?;
         }
 
-        for (i, uri) in manifest.sources.uris.iter().enumerate() {
-            let processed_uri = self.process_uri(uri, manifest);
+        for source in &manifest.sources.entries {
+            let processed_uri = self.process_uri(&source.uri, manifest);
 
             if is_git_uri(&processed_uri) {
                 // Git repository handling
@@ -835,8 +853,8 @@ impl Builder {
                 let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
                 let dest = cache_dir.join(&filename);
 
-                let expected_hash = manifest.sources.sha256.get(i).map(|s| s.as_str());
-                let skip_verify = expected_hash == Some("SKIP");
+                let expected_hash = Some(source.sha256.as_str());
+                let skip_verify = source.sha256 == "SKIP";
 
                 let mut needs_download = true;
 

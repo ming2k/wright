@@ -88,6 +88,7 @@ pub struct PackageInfo {
     pub name: String,
     pub version: String,
     pub release: u32,
+    pub epoch: u32,
     pub description: String,
     pub arch: String,
     pub license: String,
@@ -115,6 +116,7 @@ pub struct NewPackage<'a> {
     pub name: &'a str,
     pub version: &'a str,
     pub release: u32,
+    pub epoch: u32,
     pub description: &'a str,
     pub arch: &'a str,
     pub license: &'a str,
@@ -131,6 +133,7 @@ impl<'a> Default for NewPackage<'a> {
             name: "",
             version: "",
             release: 0,
+            epoch: 0,
             description: "",
             arch: "",
             license: "",
@@ -179,7 +182,7 @@ pub struct Database {
 
 /// Column list shared by all queries returning PackageInfo.
 const PKG_COLUMNS: &str =
-    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason";
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason, epoch";
 
 /// Map a row (with PKG_COLUMNS order) to PackageInfo.
 fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
@@ -198,6 +201,7 @@ fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
         install_scripts: row.get(11)?,
         assumed: row.get::<_, bool>(12)?,
         install_reason: row.get::<_, String>(13)?,
+        epoch: row.get::<_, u32>(14).unwrap_or(0),
     })
 }
 
@@ -332,12 +336,13 @@ impl Database {
 
         self.conn
             .execute(
-                "INSERT INTO packages (name, version, release, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO packages (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     pkg.name,
                     pkg.version,
                     pkg.release,
+                    pkg.epoch,
                     pkg.description,
                     pkg.arch,
                     pkg.license,
@@ -386,11 +391,12 @@ impl Database {
 
     pub fn update_package(&self, pkg: NewPackage) -> Result<()> {
         let rows = self.conn.execute(
-            "UPDATE packages SET version = ?1, release = ?2, description = ?3, arch = ?4, license = ?5, url = ?6, install_size = ?7, pkg_hash = ?8, install_scripts = ?9
-             WHERE name = ?10",
+            "UPDATE packages SET version = ?1, release = ?2, epoch = ?3, description = ?4, arch = ?5, license = ?6, url = ?7, install_size = ?8, pkg_hash = ?9, install_scripts = ?10
+             WHERE name = ?11",
             params![
                 pkg.version,
                 pkg.release,
+                pkg.epoch,
                 pkg.description,
                 pkg.arch,
                 pkg.license,
