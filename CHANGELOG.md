@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-03-04
+
+### Features
+- Restructure `[sources]` from positional `uris`/`sha256` arrays to `[[sources]]` array-of-tables. Each source entry is now self-contained with `uri` and `sha256` fields.
+- New `[relations]` section for `replaces`, `conflicts`, and `provides` — moved out of `[dependencies]` where they did not belong.
+- Move `[lifecycle.package]` to top-level `[package]` section. Package output declarations no longer pollute the lifecycle namespace.
+- Add `epoch` field to `[plan]` metadata (default 0). Epoch overrides version comparison for version scheme changes. Included in archive filename only when non-zero.
+- Add `pre_install` hook — executed before file extraction during install and upgrade.
+- Document `git+` URI format for cloning git repositories as sources (`git+https://...#tag`).
+- Backward compatibility: old `[sources]`/`[dependencies]` relations/`[lifecycle.package]` syntax auto-converts with deprecation warnings. Mixing old and new syntax in the same file is rejected with a clear error.
+- Migration script (`scripts/migrate-plans.py`) for batch-converting plan.toml files to the new schema.
+
 ## [1.3.0] - 2026-03-04
 
 ### Breaking Changes
