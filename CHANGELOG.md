@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-04
+
+### Breaking Changes
+- `[lifecycle.package]` (file install stage) renamed to `[lifecycle.staging]`. The default pipeline is now: `fetch → verify → extract → prepare → configure → compile → check → staging`.
+- `[split.<name>]` replaced by `[lifecycle.package.<name>]` (multi-package mode). All sub-packages including the main package must be explicitly declared.
+- `[install_scripts]` and `[backup]` top-level sections replaced by `[lifecycle.package]` with `hooks.*` fields and `backup = [...]` (single-package mode), or per-sub-package fields in multi-package mode.
+- `post_package` lifecycle stage removed.
+- Package hook metadata file changed from `.INSTALL` (ini) to `.HOOKS` (TOML) inside `.wright.tar.zst` archives.
+
+### Features
+- New `[lifecycle.package]` section for single-package output declarations (hooks + backup).
+- New `[lifecycle.package.<name>]` syntax for multi-package output, replacing `[split]`. Sub-packages support `description`, `version`, `release`, `arch`, `license`, `dependencies`, `script`, `hooks`, and `backup` fields.
+- Single-package and multi-package modes are mutually exclusive with a clear error on conflict.
+- Add `post_remove` hook support — executed after file removal during `wright remove`.
+- Structured `.HOOKS` TOML format for hook storage in archives and database, replacing the `.INSTALL` ini format.
+- Backward compatibility: old `[split]`/`[install_scripts]`/`[backup]` syntax auto-converts with deprecation warnings. Old `.INSTALL` ini in archives and database is transparently parsed via fallback.
+
 ## [1.2.8] - 2026-03-03
 
 ### Features
