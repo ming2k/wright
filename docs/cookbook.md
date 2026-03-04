@@ -162,7 +162,7 @@ release = 1
 [lifecycle.staging]
 script = "make DESTDIR=$PKG_DIR install"
 
-[package.zlib-devel]
+[lifecycle.package.zlib-devel]
 description = "Development files for zlib"
 script = """
 install -Dm644 ${BUILD_DIR}/zlib.h ${PKG_DIR}/usr/include/zlib.h
@@ -172,7 +172,7 @@ install -Dm644 ${BUILD_DIR}/zlib.pc ${PKG_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-Each sub-package declared via `[package.<name>]` produces its own
+Each sub-package declared via `[lifecycle.package.<name>]` produces its own
 archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
 and `dependencies`.
 

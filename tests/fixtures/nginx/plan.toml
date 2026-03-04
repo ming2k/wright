@@ -90,7 +90,7 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-[package.nginx]
+[lifecycle.package.nginx]
 hooks.pre_install = """
 echo "Preparing nginx installation..."
 """
@@ -108,7 +108,7 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-[package.nginx-doc]
+[lifecycle.package.nginx-doc]
 description = "Nginx documentation files"
 script = """
 cd nginx-${PKG_VERSION}

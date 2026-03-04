@@ -276,14 +276,14 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[package]` — Package Output Declaration
+### `[lifecycle.package]` — Package Output Declaration
 
-The `[package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a top-level package declaration section.
+The `[lifecycle.package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section under `[lifecycle]`.
 
 **Single-package mode** (no sub-packages):
 
 ```toml
-[package]
+[lifecycle.package]
 hooks.pre_install = "echo 'Preparing installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -294,12 +294,12 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 **Multi-package mode** (all packages explicitly declared, mutually exclusive with single-package mode):
 
 ```toml
-[package.nginx]
+[lifecycle.package.nginx]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[package."nginx-doc"]
+[lifecycle.package."nginx-doc"]
 description = "Nginx documentation"
 script = "..."
 ```
@@ -342,7 +342,7 @@ The default pipeline runs these stages in order:
 | `check`        | user     | Run test suites                          |
 | `staging`      | user     | Install files into `${PKG_DIR}`          |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[package]` is not a lifecycle stage — it is a top-level package output declaration section (see [`[package]`](#package--package-output-declaration)).
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[lifecycle.package]` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.package]`](#lifecyclepackage--package-output-declaration)).
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -739,7 +739,7 @@ cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 
-[package]
+[lifecycle.package]
 hooks.pre_install = "echo 'Preparing nginx installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -751,7 +751,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
-In multi-package mode, all packages are declared as sub-tables of `[package]`. This mode is mutually exclusive with single-package mode (bare `[package]`).
+In multi-package mode, all packages are declared as sub-tables of `[lifecycle.package]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.package]`).
 
 ```toml
 [plan]
@@ -771,25 +771,25 @@ cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 
-[package.gcc]
+[lifecycle.package.gcc]
 hooks.post_install = "..."
 
-[package."libstdc++"]
+[lifecycle.package."libstdc++"]
 description = "GNU C++ standard library"
 script = "install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so"
 hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[package."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`).
 
-Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[package.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
+Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.package.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
 
 ```toml
 [lifecycle.staging]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
 
-[package."libfoo-dev"]
+[lifecycle.package."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
 install -Dm644 ${BUILD_DIR}/include/* ${PKG_DIR}/usr/include/libfoo/
@@ -807,7 +807,7 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[package.linux-firmware-amd]
+[lifecycle.package.linux-firmware-amd]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
@@ -817,7 +817,7 @@ In this pattern the parent package itself may contain no files — it exists onl
 For a `-doc` sub-package that overrides the architecture:
 
 ```toml
-[package.mypackage-doc]
+[lifecycle.package.mypackage-doc]
 description = "Documentation for mypackage"
 arch = "any"
 script = """
@@ -831,7 +831,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[package."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |

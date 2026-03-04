@@ -389,11 +389,11 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-# ---- Package output declaration (top-level, NOT under lifecycle) ----
+# ---- Package output declaration (under lifecycle) ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
-# Single-package mode (bare [package]):
-[package]
+# Single-package mode (bare [lifecycle.package]):
+[lifecycle.package]
 hooks.pre_install = "echo 'Preparing nginx...'"
 hooks.post_install = """
 # Create nginx user
@@ -412,10 +412,10 @@ backup = [
 ]
 
 # ---- Multi-package mode (mutually exclusive with single-package) ----
-# Each sub-table under [package] declares a separate output package.
+# Each sub-table under [lifecycle.package] declares a separate output package.
 # Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
 #
-# [package.libfoo]
+# [lifecycle.package.libfoo]
 # description = "libfoo shared library"
 # script = "install -Dm755 libfoo.so ${PKG_DIR}/usr/lib/libfoo.so"
 # hooks.post_install = "ldconfig"
@@ -594,7 +594,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `hooks` in `[package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `hooks` in `[lifecycle.package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -1129,7 +1129,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- Package hooks (`hooks.post_install`, etc. in `[package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`hooks.post_install`, etc. in `[lifecycle.package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode

@@ -23,7 +23,7 @@ pub struct PackageHooks {
     pub post_remove: Option<String>,
 }
 
-/// Single-package mode: `[package]`
+/// Single-package mode: `[lifecycle.package]`
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct PackageOutput {
     #[serde(default)]
@@ -32,7 +32,7 @@ pub struct PackageOutput {
     pub backup: Option<Vec<String>>,
 }
 
-/// Multi-package mode: `[package.<name>]`
+/// Multi-package mode: `[lifecycle.package.<name>]`
 #[derive(Debug, Deserialize, Clone)]
 pub struct SubPackageOutput {
     #[serde(default)]
@@ -324,9 +324,6 @@ struct RawManifest {
     lifecycle_order: Option<LifecycleOrder>,
     #[serde(default)]
     mvp: Option<PhaseConfig>,
-    /// Top-level [package] (new-style v1.3.1)
-    #[serde(default)]
-    package: Option<toml::Value>,
     // Backward compat (deprecated)
     #[serde(default)]
     install_scripts: Option<InstallScripts>,
@@ -513,33 +510,13 @@ impl PackageManifest {
             }
         }
 
-        // --- Parse [package] (top-level) vs old [lifecycle.package] ---
-        let has_toplevel_package = raw.package.is_some();
-        let has_lifecycle_package = lifecycle_package_value.is_some();
-
-        if has_toplevel_package && has_lifecycle_package {
-            return Err(WrightError::ParseError(
-                "cannot have both top-level [package] and [lifecycle.package]; \
-                 migrate to top-level [package]".to_string()
-            ));
-        }
-
-        // Use top-level [package] if present, fall back to deprecated [lifecycle.package]
-        let package_value = if has_toplevel_package {
-            raw.package
-        } else if has_lifecycle_package {
-            tracing::warn!("[lifecycle.package] is deprecated; use top-level [package] instead");
-            lifecycle_package_value
-        } else {
-            None
-        };
-
-        let new_package = if let Some(pkg_val) = package_value {
+        // --- Parse [lifecycle.package] ---
+        let new_package = if let Some(pkg_val) = lifecycle_package_value {
             match pkg_val {
                 toml::Value::Table(ref table) if is_single_package_table(table) => {
                     let output: PackageOutput = pkg_val.try_into().map_err(|e: toml::de::Error| {
                         WrightError::ParseError(format!(
-                            "failed to parse [package]: {}", e
+                            "failed to parse [lifecycle.package]: {}", e
                         ))
                     })?;
                     Some(PackageConfig::Single(output))
@@ -548,14 +525,14 @@ impl PackageManifest {
                     let multi: HashMap<String, SubPackageOutput> = pkg_val.try_into()
                         .map_err(|e: toml::de::Error| {
                             WrightError::ParseError(format!(
-                                "failed to parse [package.*]: {}", e
+                                "failed to parse [lifecycle.package.*]: {}", e
                             ))
                         })?;
                     Some(PackageConfig::Multi(multi))
                 }
                 _ => {
                     return Err(WrightError::ParseError(
-                        "[package] must be a table".to_string()
+                        "[lifecycle.package] must be a table".to_string()
                     ));
                 }
             }
@@ -571,20 +548,20 @@ impl PackageManifest {
 
         if has_old_style && new_package.is_some() {
             return Err(WrightError::ParseError(
-                "cannot mix old-style [split]/[install_scripts]/[backup] with [package]; \
+                "cannot mix old-style [split]/[install_scripts]/[backup] with [lifecycle.package]; \
                  migrate to the new syntax".to_string()
             ));
         }
 
         let (package, install_scripts, backup) = if has_old_style {
             if has_old_scripts {
-                tracing::warn!("[install_scripts] is deprecated; use [package] hooks instead");
+                tracing::warn!("[install_scripts] is deprecated; use [lifecycle.package] hooks instead");
             }
             if has_old_backup {
-                tracing::warn!("[backup] is deprecated; use [package] backup instead");
+                tracing::warn!("[backup] is deprecated; use [lifecycle.package] backup instead");
             }
             if has_old_split {
-                tracing::warn!("[split] is deprecated; use [package.<name>] instead");
+                tracing::warn!("[split] is deprecated; use [lifecycle.package.<name>] instead");
             }
 
             if has_old_split {
@@ -996,7 +973,7 @@ cd nginx-${PKG_VERSION}
 make DESTDIR=${PKG_DIR} install
 """
 
-[package]
+[lifecycle.package]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
@@ -1108,16 +1085,16 @@ script = "make -j4"
 [lifecycle.staging]
 script = "make DESTDIR=${PKG_DIR} install"
 
-[package.gcc]
+[lifecycle.package.gcc]
 # main package, no script needed
 
-[package."libstdc++"]
+[lifecycle.package."libstdc++"]
 description = "GNU C++ standard library"
 script = """
 install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
 """
 
-[package."libstdc++".dependencies]
+[lifecycle.package."libstdc++".dependencies]
 runtime = ["libgcc"]
 "#;
         let manifest = PackageManifest::parse(toml_str).unwrap();
@@ -1160,9 +1137,9 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "true"
 
-[package.test]
+[lifecycle.package.test]
 
-[package.test-doc]
+[lifecycle.package.test-doc]
 description = "Documentation for test"
 version = "1.0.0-doc"
 arch = "any"
@@ -1192,7 +1169,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[package.test-lib]
+[lifecycle.package.test-lib]
 script = "true"
 "#;
         let err = PackageManifest::parse(toml_str).unwrap_err();
@@ -1210,7 +1187,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[package.BadName]
+[lifecycle.package.BadName]
 description = "bad"
 script = "true"
 "#;
@@ -1232,7 +1209,7 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "make DESTDIR=${PKG_DIR} install"
 
-[package]
+[lifecycle.package]
 hooks.pre_install = "echo pre"
 hooks.post_install = "ldconfig"
 hooks.pre_remove = "systemctl stop test"
@@ -1265,7 +1242,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[package]
+[lifecycle.package]
 hooks.post_install = "ldconfig"
 
 [install_scripts]
@@ -1359,10 +1336,10 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "make DESTDIR=${PKG_DIR} install"
 
-[package.gcc]
+[lifecycle.package.gcc]
 hooks.post_install = "ldconfig"
 
-[package."gcc-doc"]
+[lifecycle.package."gcc-doc"]
 description = "GCC documentation"
 script = "true"
 "#;
@@ -1560,7 +1537,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[package]
+[lifecycle.package]
 hooks.pre_install = "echo preparing"
 hooks.post_install = "ldconfig"
 "#;
@@ -1623,7 +1600,7 @@ provides = ["test-provider"]
     }
 
     #[test]
-    fn test_backward_compat_lifecycle_package() {
+    fn test_parse_lifecycle_package() {
         let toml_str = r#"
 [plan]
 name = "test"
@@ -1647,7 +1624,7 @@ backup = ["/etc/test.conf"]
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
                 assert_eq!(output.backup.as_ref().unwrap(), &["/etc/test.conf"]);
             }
-            _ => panic!("expected Single from deprecated [lifecycle.package]"),
+            _ => panic!("expected Single from [lifecycle.package]"),
         }
     }
 
@@ -1672,24 +1649,4 @@ replaces = ["old"]
         assert!(err.to_string().contains("cannot have replaces/conflicts/provides in both"));
     }
 
-    #[test]
-    fn test_mixed_toplevel_and_lifecycle_package_rejected() {
-        let toml_str = r#"
-[plan]
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[package]
-hooks.post_install = "ldconfig"
-
-[lifecycle.package]
-hooks.post_install = "ldconfig"
-"#;
-        let err = PackageManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("cannot have both"));
-    }
 }

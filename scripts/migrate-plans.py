@@ -68,9 +68,15 @@ def migrate_plan(data: dict) -> dict:
         if lc:
             out["lifecycle"] = lc
 
-        # Convert [lifecycle.package] -> [package]
+        # Preserve [lifecycle.package] as package output
         if pkg_section is not None:
             _merge_lifecycle_package(out, pkg_section, data)
+
+    # 6b. Handle top-level [package] (from previous migration) -> keep as package output
+    if "package" in data and "package" not in out:
+        pkg = data["package"]
+        if isinstance(pkg, dict):
+            out["package"] = pkg
 
     # 7. [install_scripts] -> merge into [package] hooks
     if "install_scripts" in data:
@@ -212,22 +218,19 @@ def emit_toml(data: dict) -> str:
                 lines.extend(_emit_lifecycle_fields(val))
                 lines.append("")
 
-    # [package] or [package.<name>]
+    # [lifecycle.package] or [lifecycle.package.<name>]
     if "package" in data:
         pkg = data["package"]
         if _is_single_package(pkg):
-            lines.append("[package]")
+            lines.append("[lifecycle.package]")
             lines.extend(_emit_package_fields(pkg))
             lines.append("")
         else:
             for name, sub in pkg.items():
                 if isinstance(sub, dict):
-                    lines.append(f"[package.{_quote_key(name)}]")
+                    lines.append(f"[lifecycle.package.{_quote_key(name)}]")
                     lines.extend(_emit_package_fields(sub))
                     lines.append("")
-                else:
-                    # Top-level package field (like script, hooks, backup)
-                    pass
 
     # Remove trailing blank lines, ensure single trailing newline
     while lines and lines[-1] == "":
@@ -353,8 +356,12 @@ def process_file(filepath: str, dry_run: bool = False) -> tuple[bool, str]:
     with open(filepath, "r") as f:
         content = f.read()
 
-    # Already migrated?
-    if "[[sources]]" in content:
+    # Already fully migrated? (has [[sources]] AND no top-level [package] without lifecycle prefix)
+    has_new_sources = "[[sources]]" in content
+    import re
+    has_toplevel_package = bool(re.search(r'^\[package[\].]', content, re.MULTILINE))
+    has_lifecycle_package = "[lifecycle.package]" in content or "[lifecycle.package." in content
+    if has_new_sources and not has_toplevel_package and (has_lifecycle_package or "[package" not in content):
         return False, "already migrated"
 
     try:
