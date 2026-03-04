@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::package::archive;
-use wright::package::manifest::PackageManifest;
+use wright::package::manifest::{PackageManifest, PackageConfig};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -79,8 +79,17 @@ fn test_lint_nginx_fixture() {
     let manifest = PackageManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "nginx");
     assert_eq!(manifest.dependencies.runtime.len(), 3);
-    assert!(manifest.install_scripts.is_some());
-    assert!(manifest.backup.is_some());
+    // Nginx uses multi-package mode with hooks/backup on the main sub-package
+    match manifest.package {
+        Some(PackageConfig::Multi(ref pkgs)) => {
+            assert!(pkgs.contains_key("nginx"));
+            assert!(pkgs.contains_key("nginx-doc"));
+            let main = pkgs.get("nginx").unwrap();
+            assert!(main.hooks.is_some());
+            assert!(main.backup.is_some());
+        }
+        _ => panic!("expected Multi package config for nginx"),
+    }
 }
 
 #[test]
@@ -94,11 +103,19 @@ fn test_build_single_stage() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
+
+    // First do a full build so src/ directory exists
+    builder
+        .build(&manifest, hold_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None)
+        .unwrap();
+
+    // Now run a single stage on the existing build tree
     let result = builder
         .build(&manifest, hold_dir, &["prepare".to_string()], false, false, &std::collections::HashMap::new(), false, false, None, None)
         .unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not
+    // (pkg_dir is recreated fresh for single-stage runs)
     assert!(result.src_dir.join("hello.c").exists());
     assert!(!result.pkg_dir.join("usr/bin/hello").exists());
 }

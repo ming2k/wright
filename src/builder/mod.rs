@@ -10,7 +10,7 @@ use tracing::{info, warn, debug};
 
 use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
-use crate::package::manifest::PackageManifest;
+use crate::package::manifest::{PackageManifest, PackageConfig};
 use crate::repo::source::sanitize_cache_filename;
 use crate::dockyard::ResourceLimits;
 use crate::util::{checksum, download, compress};
@@ -233,12 +233,15 @@ impl Builder {
             // Extract cache into build_root
             compress::extract_archive(&cache_file, &build_root)?;
             
-            // Re-detect split package directories from the cached build_root
+            // Re-detect sub-package directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
-            for split_name in manifest.split.keys() {
-                let split_dir = build_root.join(format!("pkg-{}", split_name));
-                if split_dir.exists() {
-                    split_pkg_dirs.insert(split_name.clone(), split_dir);
+            if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+                for sub_name in pkgs.keys() {
+                    if sub_name == &manifest.plan.name { continue; }
+                    let sub_dir = build_root.join(format!("pkg-{}", sub_name));
+                    if sub_dir.exists() {
+                        split_pkg_dirs.insert(sub_name.clone(), sub_dir);
+                    }
                 }
             }
 
@@ -367,72 +370,74 @@ impl Builder {
 
         pipeline.run()?;
 
-        // Run split package stages
+        // Run sub-package stages (multi-package mode)
         let mut split_pkg_dirs = std::collections::HashMap::new();
-        for (split_name, split_pkg) in &manifest.split {
-            let split_pkg_dir = build_root.join(format!("pkg-{}", split_name));
-            std::fs::create_dir_all(&split_pkg_dir).map_err(|e| {
-                WrightError::BuildError(format!(
-                    "failed to create split package directory {}: {}",
-                    split_pkg_dir.display(), e
-                ))
-            })?;
+        if let Some(PackageConfig::Multi(ref packages)) = manifest.package {
+            for (sub_name, sub_pkg) in packages {
+                // Main package uses PKG_DIR directly, skip
+                if sub_name == &manifest.plan.name { continue; }
+                // Sub-packages with empty script use the main PKG_DIR (no separate stage)
+                if sub_pkg.script.is_empty() { continue; }
 
-            let package_stage = split_pkg.lifecycle.get("package")
-                .ok_or_else(|| WrightError::ValidationError(format!(
-                    "split package '{}': lifecycle.package stage is required", split_name
-                )))?;
+                let sub_pkg_dir = build_root.join(format!("pkg-{}", sub_name));
+                std::fs::create_dir_all(&sub_pkg_dir).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to create sub-package directory {}: {}",
+                        sub_pkg_dir.display(), e
+                    ))
+                })?;
 
-            let mut split_vars = vars_for_splits.clone();
-            split_vars.insert("PKG_DIR".to_string(), split_pkg_dir.to_string_lossy().to_string());
-            split_vars.insert("PKG_NAME".to_string(), split_name.clone());
-            split_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
+                let mut sub_vars = vars_for_splits.clone();
+                sub_vars.insert("PKG_DIR".to_string(), sub_pkg_dir.to_string_lossy().to_string());
+                sub_vars.insert("PKG_NAME".to_string(), sub_name.clone());
+                sub_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
 
-            debug!("Running package stage for split: {}", split_name);
+                debug!("Running package stage for sub-package: {}", sub_name);
 
-            let split_options = executor::ExecutorOptions {
-                level: package_stage.dockyard.parse().unwrap(),
-                src_dir: src_dir.clone(),
-                pkg_dir: split_pkg_dir.clone(),
-                files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
-                rlimits: rlimits.clone(),
-                main_pkg_dir: Some(pkg_dir.clone()),
-                verbose,
-                cpu_count: Some(cpu_count),
-            };
+                let sub_options = executor::ExecutorOptions {
+                    level: sub_pkg.dockyard.parse().unwrap(),
+                    src_dir: src_dir.clone(),
+                    pkg_dir: sub_pkg_dir.clone(),
+                    files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+                    rlimits: rlimits.clone(),
+                    main_pkg_dir: Some(pkg_dir.clone()),
+                    verbose,
+                    cpu_count: Some(cpu_count),
+                };
 
-            let split_executor = self.executors.get(&package_stage.executor)
-                .ok_or_else(|| WrightError::BuildError(format!(
-                    "executor not found: {}", package_stage.executor
-                )))?;
+                let sub_executor = self.executors.get(&sub_pkg.executor)
+                    .ok_or_else(|| WrightError::BuildError(format!(
+                        "executor not found: {}", sub_pkg.executor
+                    )))?;
 
-            let result = executor::execute_script(
-                split_executor,
-                &package_stage.script,
-                &src_dir,
-                &package_stage.env,
-                &split_vars,
-                &split_options,
-            )?;
+                let result = executor::execute_script(
+                    sub_executor,
+                    &sub_pkg.script,
+                    &src_dir,
+                    &sub_pkg.env,
+                    &sub_vars,
+                    &sub_options,
+                )?;
 
-            // Write log
-            let log_path = log_dir.join(format!("package-{}.log", split_name));
-            let log_content = format!(
-                "=== Split package: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-                split_name, result.exit_code, result.stdout, result.stderr
-            );
-            if let Err(e) = std::fs::write(&log_path, &log_content) {
-                warn!("Failed to write build log {}: {}", log_path.display(), e);
+                // Write log
+                let log_path = log_dir.join(format!("package-{}.log", sub_name));
+                let log_content = format!(
+                    "=== Sub-package: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+                    sub_name, result.exit_code, result.stdout, result.stderr
+                );
+                if let Err(e) = std::fs::write(&log_path, &log_content) {
+                    warn!("Failed to write build log {}: {}", log_path.display(), e);
+                }
+
+                if result.exit_code != 0 {
+                    return Err(WrightError::BuildError(format!(
+                        "sub-package '{}' packaging stage failed with exit code {}\nstderr: {}",
+                        sub_name, result.exit_code, result.stderr
+                    )));
+                }
+
+                split_pkg_dirs.insert(sub_name.clone(), sub_pkg_dir);
             }
-
-            if result.exit_code != 0 {
-                return Err(WrightError::BuildError(format!(
-                    "split package '{}' packaging stage failed with exit code {}\nstderr: {}",
-                    split_name, result.exit_code, result.stderr
-                )));
-            }
-
-            split_pkg_dirs.insert(split_name.clone(), split_pkg_dir);
         }
 
         // --- Caching Logic (Step 2: Save) ---

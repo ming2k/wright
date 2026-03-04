@@ -49,7 +49,7 @@ EOF
 dockyard = "none"
 script = "gcc -o hello hello.c"
 
-[lifecycle.package]
+[lifecycle.staging]
 dockyard = "none"
 script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
 ```

@@ -46,7 +46,7 @@ enum Commands {
 
         /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
         /// Skips fetch/verify/extract — requires a previous full build.
-        /// Example: --stage check --stage package
+        /// Example: --stage check --stage staging
         #[arg(long)]
         stage: Vec<String>,
 

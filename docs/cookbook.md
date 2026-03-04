@@ -82,7 +82,7 @@ script = "./configure --prefix=/usr"
 [lifecycle.compile]
 script = "make"
 
-[lifecycle.package]
+[lifecycle.staging]
 script = "make DESTDIR=$PKG_DIR install"
 ```
 
@@ -115,8 +115,8 @@ run specific stages against the existing build tree:
 # Full first build (extracts, configures, compiles, packages)
 wbuild run mypkg
 
-# Edit lifecycle.package in plan.toml, then re-run only packaging:
-wbuild run mypkg --stage package
+# Edit lifecycle.staging in plan.toml, then re-run only staging:
+wbuild run mypkg --stage staging
 ```
 
 To iterate on a subset of stages and inspect the result:
@@ -125,16 +125,16 @@ To iterate on a subset of stages and inspect the result:
 wbuild run mypkg --stage configure
 # Inspect $SRC_DIR (e.g. /tmp/wright-build/mypkg-1.0/src/) manually
 wbuild run mypkg --stage compile
-wbuild run mypkg --stage package
+wbuild run mypkg --stage staging
 
-# Or run compile and package together in one command:
-wbuild run mypkg --stage compile --stage package
+# Or run compile and staging together in one command:
+wbuild run mypkg --stage compile --stage staging
 ```
 
 To skip the `check` stage (e.g. tests are slow or broken upstream):
 
 ```bash
-wbuild run mypkg --stage prepare --stage configure --stage compile --stage package --stage post_package
+wbuild run mypkg --stage prepare --stage configure --stage compile --stage staging
 ```
 
 Or more concisely, run the full pipeline but skip `check` by doing a full build
@@ -142,12 +142,12 @@ and using `--stage` to re-run only the stages you need after a prior full
 configure+compile:
 
 ```bash
-wbuild run mypkg --stage compile --stage package
+wbuild run mypkg --stage compile --stage staging
 ```
 
 ---
 
-## Splitting a Package
+## Multi-Package Output
 
 A common pattern: build produces both runtime files and development headers.
 Separate them so users who only need the library don't pull in headers.
@@ -159,30 +159,22 @@ version = "1.3.1"
 release = 1
 # ...
 
-[lifecycle.package]
-script = """
-make DESTDIR=$PKG_DIR install
-# Strip headers and static lib; they go into zlib-devel
-rm -rf $PKG_DIR/usr/include
-rm -f  $PKG_DIR/usr/lib/libz.a
-"""
+[lifecycle.staging]
+script = "make DESTDIR=$PKG_DIR install"
 
-[split.zlib-devel]
+[lifecycle.package.zlib-devel]
 description = "Development files for zlib"
-
-[split.zlib-devel.lifecycle.package]
 script = """
-make DESTDIR=$MAIN_PKG_DIR install
-# Copy only the devel files into this split's PKG_DIR
-install -dm755 $PKG_DIR/usr/include $PKG_DIR/usr/lib
-cp -a $MAIN_PKG_DIR/usr/include/zlib*.h $PKG_DIR/usr/include/
-cp -a $MAIN_PKG_DIR/usr/lib/libz.a      $PKG_DIR/usr/lib/
+install -Dm644 ${BUILD_DIR}/zlib.h ${PKG_DIR}/usr/include/zlib.h
+install -Dm644 ${BUILD_DIR}/zconf.h ${PKG_DIR}/usr/include/zconf.h
+install -Dm644 ${BUILD_DIR}/libz.a ${PKG_DIR}/usr/lib/libz.a
+install -Dm644 ${BUILD_DIR}/zlib.pc ${PKG_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-`$MAIN_PKG_DIR` is mounted at `/main-pkg` inside the dockyard and points to the
-main package's staging root. Split packages run their `package` stage after the
-main package stage completes.
+Each sub-package declared via `[lifecycle.package.<name>]` produces its own
+archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
+and `dependencies`.
 
 ---
 
@@ -399,7 +391,7 @@ EOF
 cargo build --release --offline
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 install -Dm755 ${SRC_DIR}/target/release/rg ${PKG_DIR}/usr/bin/rg
 """
@@ -429,7 +421,7 @@ export CARGO_HOME=${SRC_DIR}/.cargo-home
 cargo build --release
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 install -Dm755 ${SRC_DIR}/target/release/rg ${PKG_DIR}/usr/bin/rg
 """
@@ -463,7 +455,7 @@ cd ${BUILD_DIR}
 go build -mod=vendor -o hugo .
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 install -Dm755 ${BUILD_DIR}/hugo ${PKG_DIR}/usr/bin/hugo
 """
@@ -486,6 +478,6 @@ export GOMODCACHE=${SRC_DIR}/.gopath/pkg/mod
 go build -o hugo .
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = "install -Dm755 ${BUILD_DIR}/hugo ${PKG_DIR}/usr/bin/hugo"
 ```

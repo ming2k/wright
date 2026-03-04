@@ -81,13 +81,13 @@ Use `--stage` to run only specific lifecycle stages. Repeat it to run multiple s
 
 ```bash
 wbuild run hello --stage compile         # re-run only compile
-wbuild run hello --stage compile --stage package   # re-run compile then package
+wbuild run hello --stage compile --stage staging   # re-run compile then staging
 ```
 
 To skip the `check` stage — for example when tests are slow or broken upstream — run everything except `check`:
 
 ```bash
-wbuild run hello --stage prepare --stage configure --stage compile --stage package --stage post_package
+wbuild run hello --stage prepare --stage configure --stage compile --stage staging
 ```
 
 The build directory (`/tmp/wright-build/<name>-<version>/`) is preserved between staged runs for inspection.

@@ -14,7 +14,6 @@ Each package gets its own working directory under `build_dir`
 <build_dir>/<name>-<version>/
 ├── src/            # Extracted source tree (BUILD_DIR points here or a subdir)
 ├── pkg/            # Main package staging root ($PKG_DIR)
-├── pkg-<split>/    # One directory per split package
 ├── log/            # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
@@ -37,8 +36,7 @@ Every lifecycle stage writes a log file under `log/`:
 <build_dir>/<name>-<version>/log/
 ├── configure.log
 ├── compile.log
-├── package.log
-├── package-<split>.log   # one per split package
+├── staging.log
 └── ...
 ```
 
@@ -123,7 +121,7 @@ rebuilds from scratch.
 
 ### What the build cache stores
 
-The cache archive contains `pkg/`, `log/`, and any `pkg-<split>/` directories.
+The cache archive contains `pkg/` and `log/` directories.
 `src/` is **not** cached to keep the archive compact. On a cache hit, Wright
 restores these directories and skips the entire build pipeline.
 
@@ -143,7 +141,7 @@ produce a broken archive that a later full pass would have to overwrite anyway.
 
 ## FHS Validation
 
-After the `package` stage (and any split-package `package` stages) complete,
+After the `staging` stage completes,
 Wright validates every file and symlink in `$PKG_DIR` against the distribution's
 FHS whitelist before creating the archive. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
@@ -174,7 +172,7 @@ After a successful build the package is packed into an archive and placed in
 ```
 <components_dir>/
 ├── zlib-1.3.1-1-x86_64.wright.tar.zst
-├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst   # split package
+├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst   # sub-package
 └── ...
 ```
 
@@ -182,7 +180,7 @@ Archive filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
 
 ### Skip condition
 
-If the archive (and all split archives) already exist in `components_dir`,
+If the archive (and all sub-package archives) already exist in `components_dir`,
 the build is skipped entirely — the source cache and build cache are not even
 consulted. Use `--force` to override this and rebuild regardless.
 
@@ -190,7 +188,7 @@ consulted. Use `--force` to override this and rebuild regardless.
 
 The archive is created from the staging root (`pkg/`) and records the full
 package metadata (name, version, dependencies, file list) for the installer.
-Split packages each get their own archive from their `pkg-<split>/` directory.
+Sub-packages each get their own archive produced by their `script`.
 
 ## Flag Quick Reference
 

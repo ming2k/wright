@@ -122,30 +122,38 @@ gcc (source)
 - The same applies to small runtime libraries like `libgomp` and `libatomic`—they are needed for execution, not for compilation.
 
 ```toml
-# gcc/plan.toml splitting example
-[split.libstdc++]
+# gcc/plan.toml multi-package example
+[lifecycle.package."libstdc++"]
 description = "GNU C++ standard library runtime"
-files = ["/usr/lib/libstdc++.so*"]
-dependencies = ["libgcc"]
+script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PKG_DIR}/usr/lib/"
+hooks.post_install = "ldconfig"
 
-[split.libgcc]
+[lifecycle.package."libstdc++".dependencies]
+runtime = ["libgcc"]
+
+[lifecycle.package.libgcc]
 description = "GCC low-level runtime library"
-files = ["/usr/lib/libgcc_s.so*"]
-dependencies = []
+script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PKG_DIR}/usr/lib/"
 
-[split.libgomp]
+[lifecycle.package.libgomp]
 description = "GNU OpenMP runtime"
-files = ["/usr/lib/libgomp.so*"]
-dependencies = ["libgcc"]
+script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PKG_DIR}/usr/lib/"
 
-[split.libatomic]
+[lifecycle.package.libgomp.dependencies]
+runtime = ["libgcc"]
+
+[lifecycle.package.libatomic]
 description = "GNU atomic operations library"
-files = ["/usr/lib/libatomic.so*"]
-dependencies = ["libgcc"]
+script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PKG_DIR}/usr/lib/"
 
-[split.doc]
+[lifecycle.package.libatomic.dependencies]
+runtime = ["libgcc"]
+
+[lifecycle.package.doc]
 description = "GCC documentation"
-files = ["/usr/share/doc/gcc/*", "/usr/share/man/man7/*", "/usr/share/info/gcc*"]
+script = """
+install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
+"""
 ```
 
 #### linux-firmware: Split by Hardware
@@ -171,21 +179,23 @@ linux-firmware (source, ~800MB+)
 - By splitting by hardware vendor/type, users only install the firmware their hardware requires.
 
 ```toml
-# linux-firmware/plan.toml splitting example
-[split.amdgpu]
+# linux-firmware/plan.toml multi-package example
+[lifecycle.package.amdgpu]
 description = "AMD GPU firmware"
-files = ["/usr/lib/firmware/amdgpu/*"]
-dependencies = []
+script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PKG_DIR}/usr/lib/firmware/amdgpu/"
 
-[split.iwlwifi]
+[lifecycle.package.iwlwifi]
 description = "Intel wireless firmware"
-files = ["/usr/lib/firmware/iwlwifi-*"]
-dependencies = []
+script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PKG_DIR}/usr/lib/firmware/"
 
-[split.realtek]
+[lifecycle.package.realtek]
 description = "Realtek firmware"
-files = ["/usr/lib/firmware/rtl_nic/*", "/usr/lib/firmware/rtlwifi/*", "/usr/lib/firmware/rtw88/*", "/usr/lib/firmware/rtw89/*"]
-dependencies = []
+script = """
+install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PKG_DIR}/usr/lib/firmware/rtl_nic/
+install -Dm644 ${BUILD_DIR}/rtlwifi/* ${PKG_DIR}/usr/lib/firmware/rtlwifi/
+install -Dm644 ${BUILD_DIR}/rtw88/* ${PKG_DIR}/usr/lib/firmware/rtw88/
+install -Dm644 ${BUILD_DIR}/rtw89/* ${PKG_DIR}/usr/lib/firmware/rtw89/
+"""
 ```
 
 #### More Quick Reference Cases
@@ -226,21 +236,23 @@ However, for Wright's target users (personal or small team maintained custom dis
 
 **Exception**: If a package's development files are exceptionally large (e.g., Qt, LLVM headers over 50MB), consider splitting.
 
-### 2.6 Splitting Practice
+### 2.6 Multi-Package Practice
 
-Use the `[split]` section in `plan.toml` to define subpackages:
+Use `[lifecycle.package.<name>]` sub-tables in `plan.toml` to define sub-packages:
 
 ```toml
 # Example: Splitting large documentation only
-[split.doc]
+[lifecycle.package.doc]
 description = "GCC documentation"
-files = ["/usr/share/doc/gcc/*", "/usr/share/man/man7/*", "/usr/share/info/gcc*"]
+script = """
+install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
+"""
 
 # Example: Library and daemon split
-[split.libs]
+[lifecycle.package.libs]
 description = "D-Bus shared libraries"
-files = ["/usr/lib/libdbus-1.so*"]
-dependencies = []
+script = "install -Dm755 ${BUILD_DIR}/libdbus-1.so* ${PKG_DIR}/usr/lib/"
+hooks.post_install = "ldconfig"
 ```
 
 ### 2.7 Decision Summary Table
@@ -343,11 +355,11 @@ ln -s /etc/sv/nginx /var/service/
 
 ### 4.4 Configuration File Protection
 
-Declare configuration files to be protected in the `[backup]` section of `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
+Declare configuration files to be protected in the `backup` field of `[lifecycle.package]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
 
 ```toml
-[backup]
-files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+[lifecycle.package]
+backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
 ---

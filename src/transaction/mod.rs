@@ -19,17 +19,108 @@ use crate::repo::source::{SimpleResolver, ResolvedPackage};
 use rollback::RollbackState;
 
 // ---------------------------------------------------------------------------
-// Install script helpers (Step 5a)
+// Hook helpers
 // ---------------------------------------------------------------------------
 
-/// Read the .INSTALL file from an extracted archive directory.
-fn read_install_file(extract_dir: &Path) -> Option<String> {
-    let path = extract_dir.join(".INSTALL");
-    std::fs::read_to_string(&path).ok()
+/// Structured hooks parsed from `.HOOKS` TOML or legacy `.INSTALL` ini.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct HooksFile {
+    #[serde(default)]
+    hooks: Hooks,
 }
 
-/// Parse a `[section]` from .INSTALL content, returning the body text.
-pub fn parse_install_section(content: &str, section: &str) -> Option<String> {
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct Hooks {
+    #[serde(default)]
+    post_install: Option<String>,
+    #[serde(default)]
+    post_upgrade: Option<String>,
+    #[serde(default)]
+    pre_remove: Option<String>,
+    #[serde(default)]
+    post_remove: Option<String>,
+}
+
+/// Read hooks from an extracted archive directory.
+/// Prefers `.HOOKS` (TOML), falls back to legacy `.INSTALL` (ini).
+/// Returns the raw file content (for DB storage) and parsed hooks.
+fn read_hooks(extract_dir: &Path) -> (Option<String>, Hooks) {
+    // Try new .HOOKS TOML first
+    let hooks_path = extract_dir.join(".HOOKS");
+    if let Ok(content) = std::fs::read_to_string(&hooks_path) {
+        if let Ok(parsed) = toml::from_str::<HooksFile>(&content) {
+            return (Some(content), parsed.hooks);
+        }
+        warn!("Failed to parse .HOOKS as TOML, trying legacy format");
+    }
+
+    // Fall back to legacy .INSTALL ini
+    let install_path = extract_dir.join(".INSTALL");
+    if let Ok(content) = std::fs::read_to_string(&install_path) {
+        let hooks = parse_legacy_install(&content);
+        // Convert to TOML for DB storage
+        let toml_content = legacy_hooks_to_toml(&hooks);
+        return (Some(toml_content), hooks);
+    }
+
+    (None, Hooks::default())
+}
+
+/// Parse hooks stored in DB (TOML format, or legacy ini from old installs).
+fn parse_hooks_from_db(content: &str) -> Hooks {
+    // Try TOML first
+    if let Ok(parsed) = toml::from_str::<HooksFile>(content) {
+        return parsed.hooks;
+    }
+    // Fall back to legacy ini
+    parse_legacy_install(content)
+}
+
+/// Get a specific hook script from DB-stored content.
+pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
+    let hooks = parse_hooks_from_db(content);
+    match hook_name {
+        "post_install" => hooks.post_install,
+        "post_upgrade" => hooks.post_upgrade,
+        "pre_remove" => hooks.pre_remove,
+        "post_remove" => hooks.post_remove,
+        _ => None,
+    }
+}
+
+/// Parse legacy `.INSTALL` ini format into Hooks.
+fn parse_legacy_install(content: &str) -> Hooks {
+    Hooks {
+        post_install: parse_ini_section(content, "post_install"),
+        post_upgrade: parse_ini_section(content, "post_upgrade"),
+        pre_remove: parse_ini_section(content, "pre_remove"),
+        post_remove: parse_ini_section(content, "post_remove"),
+    }
+}
+
+/// Convert Hooks to TOML string (for DB storage when migrating from legacy).
+fn legacy_hooks_to_toml(hooks: &Hooks) -> String {
+    let mut content = String::from("[hooks]\n");
+    for (key, value) in [
+        ("post_install", &hooks.post_install),
+        ("post_upgrade", &hooks.post_upgrade),
+        ("pre_remove", &hooks.pre_remove),
+        ("post_remove", &hooks.post_remove),
+    ] {
+        if let Some(ref s) = value {
+            let trimmed = s.trim();
+            if trimmed.contains('\n') {
+                content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
+            } else {
+                content.push_str(&format!("{} = \"{}\"\n", key, trimmed.replace('\\', "\\\\").replace('"', "\\\"")));
+            }
+        }
+    }
+    content
+}
+
+/// Parse a `[section]` from legacy `.INSTALL` ini content.
+fn parse_ini_section(content: &str, section: &str) -> Option<String> {
     let header = format!("[{}]", section);
     let mut lines = content.lines();
     // Find section header
@@ -335,8 +426,8 @@ fn install_package_with_reason(
         return Err(WrightError::PackageAlreadyInstalled(pkginfo.name.clone()));
     }
 
-    // Read .INSTALL content
-    let install_content = read_install_file(temp_dir.path());
+    // Read hooks from .HOOKS (TOML) or legacy .INSTALL
+    let (hooks_content, hooks) = read_hooks(temp_dir.path());
 
     // Collect file list and check for conflicts
     let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
@@ -410,7 +501,7 @@ fn install_package_with_reason(
         url: None,
         install_size: pkginfo.install_size,
         pkg_hash: pkg_hash.as_deref(),
-        install_scripts: install_content.as_deref(),
+        install_scripts: hooks_content.as_deref(),
         install_reason,
     })?;
 
@@ -454,12 +545,10 @@ fn install_package_with_reason(
     db.update_transaction_status(tx_id, "completed")?;
 
     // Run post_install hook
-    if let Some(ref content) = install_content {
-        if let Some(script) = parse_install_section(content, "post_install") {
-            debug!("Running post_install hook for {}", pkginfo.name);
-            if let Err(e) = run_install_script(&script, root_dir) {
-                warn!("post_install script failed: {}", e);
-            }
+    if let Some(ref script) = hooks.post_install {
+        debug!("Running post_install hook for {}", pkginfo.name);
+        if let Err(e) = run_install_script(script, root_dir) {
+            warn!("post_install script failed: {}", e);
         }
     }
 
@@ -549,7 +638,7 @@ pub fn remove_package(
 
     // Run pre_remove hook
     if let Some(ref content) = pkg.install_scripts {
-        if let Some(script) = parse_install_section(content, "pre_remove") {
+        if let Some(script) = get_hook(content, "pre_remove") {
             debug!("Running pre_remove hook for {}", name);
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("pre_remove script failed (continuing removal): {}", e);
@@ -605,6 +694,16 @@ pub fn remove_package(
                 if full_path.is_dir() {
                     let _ = std::fs::remove_dir(&full_path);
                 }
+            }
+        }
+    }
+
+    // Run post_remove hook
+    if let Some(ref content) = pkg.install_scripts {
+        if let Some(script) = get_hook(content, "post_remove") {
+            debug!("Running post_remove hook for {}", name);
+            if let Err(e) = run_install_script(&script, root_dir) {
+                warn!("post_remove script failed (continuing removal): {}", e);
             }
         }
     }
@@ -689,8 +788,8 @@ pub fn upgrade_package(
         )));
     }
 
-    // Read .INSTALL content
-    let install_content = read_install_file(temp_dir.path());
+    // Read hooks from .HOOKS (TOML) or legacy .INSTALL
+    let (hooks_content, hooks) = read_hooks(temp_dir.path());
 
     // 4. Collect new file entries
     let new_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
@@ -849,7 +948,7 @@ pub fn upgrade_package(
         url: None,
         install_size: pkginfo.install_size,
         pkg_hash: pkg_hash.as_deref(),
-        install_scripts: install_content.as_deref(),
+        install_scripts: hooks_content.as_deref(),
         ..Default::default()
     })?;
 
@@ -877,12 +976,10 @@ pub fn upgrade_package(
     db.update_transaction_status(tx_id, "completed")?;
 
     // 10. Run post_upgrade hook
-    if let Some(ref content) = install_content {
-        if let Some(script) = parse_install_section(content, "post_upgrade") {
-            debug!("Running post_upgrade hook for {}", pkginfo.name);
-            if let Err(e) = run_install_script(&script, root_dir) {
-                warn!("post_upgrade script failed: {}", e);
-            }
+    if let Some(ref script) = hooks.post_upgrade {
+        debug!("Running post_upgrade hook for {}", pkginfo.name);
+        if let Err(e) = run_install_script(script, root_dir) {
+            warn!("post_upgrade script failed: {}", e);
         }
     }
 
@@ -981,6 +1078,7 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<Fil
         if relative_str.is_empty()
             || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
+            || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".INSTALL")
         {
             continue;
@@ -1105,6 +1203,7 @@ fn copy_files_to_root(
         if relative_str.is_empty()
             || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
+            || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".INSTALL")
         {
             continue;
@@ -1411,17 +1510,42 @@ build_date = "1970-01-01T00:00:00Z"
     }
 
     #[test]
-    fn test_parse_install_section_basic() {
+    fn test_parse_hooks_toml() {
+        let content = "[hooks]\npost_install = \"echo hello\"\npre_remove = \"echo bye\"\n";
+        let hooks = parse_hooks_from_db(content);
+        assert_eq!(hooks.post_install.as_deref(), Some("echo hello"));
+        assert_eq!(hooks.pre_remove.as_deref(), Some("echo bye"));
+        assert!(hooks.post_upgrade.is_none());
+        assert!(hooks.post_remove.is_none());
+    }
+
+    #[test]
+    fn test_parse_hooks_toml_multiline() {
+        let content = "[hooks]\npost_install = \"\"\"\necho hello\necho world\n\"\"\"\n";
+        let hooks = parse_hooks_from_db(content);
+        let script = hooks.post_install.unwrap();
+        assert!(script.contains("echo hello"));
+        assert!(script.contains("echo world"));
+    }
+
+    #[test]
+    fn test_parse_hooks_legacy_ini_fallback() {
+        // Legacy .INSTALL ini format should still work
         let content = "[post_install]\necho hello\necho world\n[pre_remove]\necho bye\n";
-        let post = parse_install_section(content, "post_install").unwrap();
-        assert!(post.contains("echo hello"));
-        assert!(post.contains("echo world"));
-        assert!(!post.contains("echo bye"));
+        let hooks = parse_hooks_from_db(content);
+        assert!(hooks.post_install.as_ref().unwrap().contains("echo hello"));
+        assert!(hooks.post_install.as_ref().unwrap().contains("echo world"));
+        assert!(hooks.pre_remove.as_ref().unwrap().contains("echo bye"));
+        assert!(hooks.post_upgrade.is_none());
+    }
 
-        let pre = parse_install_section(content, "pre_remove").unwrap();
-        assert!(pre.contains("echo bye"));
-
-        assert!(parse_install_section(content, "nonexistent").is_none());
+    #[test]
+    fn test_get_hook() {
+        let content = "[hooks]\npost_install = \"ldconfig\"\npre_remove = \"systemctl stop foo\"\n";
+        assert_eq!(get_hook(content, "post_install").as_deref(), Some("ldconfig"));
+        assert_eq!(get_hook(content, "pre_remove").as_deref(), Some("systemctl stop foo"));
+        assert!(get_hook(content, "post_upgrade").is_none());
+        assert!(get_hook(content, "nonexistent").is_none());
     }
 
     #[test]

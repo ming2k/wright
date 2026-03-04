@@ -167,7 +167,7 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the `package` stage. Use only for packages with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the `staging` stage. Use only for packages with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -212,7 +212,7 @@ Override the default pipeline order:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "configure", "compile", "package"]
+stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 ```
 
 ### `[mvp]` — MVP Phase Overrides
@@ -240,38 +240,51 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[install_scripts]`
+### `[lifecycle.package]` — Package Output Declaration
 
-Scripts run by the package manager on the target system during install/upgrade/removal:
+The `[lifecycle.package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section.
 
-| Field          | Type   | Description                              |
-|----------------|--------|------------------------------------------|
-| `post_install` | string | Run after first install                  |
-| `post_upgrade` | string | Run after upgrade                        |
-| `pre_remove`   | string | Run before package removal               |
+**Single-package mode** (no sub-packages):
 
 ```toml
-[install_scripts]
-post_install = "useradd -r nginx 2>/dev/null || true"
-post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-pre_remove = "systemctl stop nginx 2>/dev/null || true"
+[lifecycle.package]
+hooks.post_install = "useradd -r nginx 2>/dev/null || true"
+hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
-### `[backup]`
-
-List config files that should be preserved across upgrades:
+**Multi-package mode** (all packages explicitly declared, mutually exclusive with single-package mode):
 
 ```toml
-[backup]
-files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+[lifecycle.package.nginx]
+hooks.post_install = "useradd -r nginx 2>/dev/null || true"
+hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+
+[lifecycle.package."nginx-doc"]
+description = "Nginx documentation"
+script = "..."
 ```
 
-Files listed here are treated as **user-owned config files**:
+| Field              | Type            | Description                              |
+|--------------------|-----------------|------------------------------------------|
+| `hooks.post_install` | string        | Run after first install                  |
+| `hooks.post_upgrade` | string        | Run after upgrade                        |
+| `hooks.pre_remove`   | string        | Run before package removal               |
+| `backup`           | list of strings | Config files preserved across upgrades   |
+| `description`      | string          | Sub-package description (multi-package mode) |
+| `script`           | string          | Script to select/install files into the sub-package (multi-package mode) |
+| `dependencies`     | table           | Sub-package dependencies (multi-package mode) |
+
+#### Backup files
+
+Files listed in `backup` are treated as **user-owned config files**:
 
 - **On upgrade:** the new default is always written alongside as `<path>.wnew`
   (e.g. `/etc/nginx/nginx.conf.wnew`) and a warning is printed. The live file is
   left intact so user customisations are never lost. The user can then diff the
-  two files and merge changes manually. Files **not** listed in `[backup]` are
+  two files and merge changes manually. Files **not** listed in `backup` are
   overwritten directly.
 - **On remove:** config files are **not deleted**, even when the package is removed.
 
@@ -288,10 +301,9 @@ The default pipeline runs these stages in order:
 | `configure`    | user     | Run configure scripts                    |
 | `compile`      | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
-| `package`      | user     | Install files into `${PKG_DIR}`          |
-| `post_package` | user     | Post-packaging steps                     |
+| `staging`      | user     | Install files into `${PKG_DIR}`          |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped.
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `package` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.package]`](#lifecyclepackage--package-output-declaration)).
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -458,7 +470,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
 | `${PKG_DIR}`    | Package output directory (install files here) |
 | `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
-| `${MAIN_PKG_DIR}` | Main package's output directory (only available in split package stages) |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
@@ -473,7 +484,6 @@ When running inside a dockyard, path variables are remapped to dockyard mount po
 | `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
 | `${PKG_DIR}`    | actual host path       | `/output`              |
 | `${FILES_DIR}`  | actual host path       | `/files`               |
-| `${MAIN_PKG_DIR}` | actual host path    | `/main-pkg`            |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
@@ -614,7 +624,7 @@ script = """
 gcc -o hello hello.c
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 install -Dm755 hello ${PKG_DIR}/usr/bin/hello
 """
@@ -684,24 +694,24 @@ cd ${BUILD_DIR}
 make test
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
 """
 
-[install_scripts]
-post_install = "useradd -r nginx 2>/dev/null || true"
-post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-pre_remove = "systemctl stop nginx 2>/dev/null || true"
-
-[backup]
-files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+[lifecycle.package]
+hooks.post_install = "useradd -r nginx 2>/dev/null || true"
+hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
-### Split Packages
+### Multi-Package Mode
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
+
+In multi-package mode, all packages are declared as sub-tables of `[lifecycle.package]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.package]`).
 
 ```toml
 [plan]
@@ -715,47 +725,41 @@ arch = "x86_64"
 [lifecycle.compile]
 script = "make -j$(nproc)"
 
-[lifecycle.package]
+[lifecycle.staging]
 script = """
 cd ${BUILD_DIR}
 make DESTDIR=${PKG_DIR} install
-rm -rf ${PKG_DIR}/usr/lib/libstdc++*
 """
 
-[split."libstdc++"]
+[lifecycle.package.gcc]
+hooks.post_install = "..."
+
+[lifecycle.package."libstdc++"]
 description = "GNU C++ standard library"
+script = "install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so"
+hooks.post_install = "ldconfig"
 
-[split."libstdc++".dependencies]
+[lifecycle.package."libstdc++".dependencies]
 runtime = ["libgcc"]
-
-[split."libstdc++".lifecycle.package]
-script = """
-cd ${BUILD_DIR}
-install -Dm755 libstdc++.so.6.0.33 ${PKG_DIR}/usr/lib/libstdc++.so.6.0.33
-ln -sf libstdc++.so.6.0.33 ${PKG_DIR}/usr/lib/libstdc++.so.6
-ln -sf libstdc++.so.6 ${PKG_DIR}/usr/lib/libstdc++.so
-"""
 ```
 
-Split packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each split must have a `description` and a `[split.<name>.lifecycle.package]` stage. The shared build stages (`prepare`, `configure`, `compile`, etc.) run only once — each split's `package` stage runs afterward with its own `${PKG_DIR}`. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[split."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`).
 
-The `${MAIN_PKG_DIR}` variable is available in split package stages and points to the main package's output directory. Use it to move files from the main package into the split:
+Sub-package dependencies use a `[lifecycle.package.<name>.dependencies]` table with a `runtime` list for packages that must be installed when this sub-package is installed independently.
 
 ```toml
-[lifecycle.package]
+[lifecycle.staging]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
 
-[split."libfoo-dev"]
+[lifecycle.package."libfoo-dev"]
 description = "Development headers for libfoo"
-
-[split."libfoo-dev".lifecycle.package]
 script = """
-mv ${MAIN_PKG_DIR}/usr/include ${PKG_DIR}/usr/include
-mv ${MAIN_PKG_DIR}/usr/lib/pkgconfig ${PKG_DIR}/usr/lib/pkgconfig
+install -Dm644 ${BUILD_DIR}/include/* ${PKG_DIR}/usr/include/libfoo/
+install -Dm644 ${BUILD_DIR}/libfoo.pc ${PKG_DIR}/usr/lib/pkgconfig/libfoo.pc
 """
 ```
 
-Split packages are independent archives — installing the parent does **not** automatically install its splits. To create a meta-package that pulls in all splits, list them as `runtime` dependencies on the parent:
+Sub-packages are independent archives — installing the parent does **not** automatically install its sub-packages. To create a meta-package that pulls in all sub-packages, list them as `runtime` dependencies on the parent:
 
 ```toml
 [plan]
@@ -765,25 +769,21 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[split.linux-firmware-amd]
+[lifecycle.package.linux-firmware-amd]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
 
-In this pattern the parent package itself may contain no files — it exists only to group the splits.
+In this pattern the parent package itself may contain no files — it exists only to group the sub-packages.
 
-For a `-doc` split that overrides the architecture:
+For a `-doc` sub-package that overrides the architecture:
 
 ```toml
-[split.mypackage-doc]
+[lifecycle.package.mypackage-doc]
 description = "Documentation for mypackage"
 arch = "any"
-
-[split.mypackage-doc.lifecycle.package]
 script = """
-cd ${BUILD_DIR}
-install -d ${PKG_DIR}/usr/share/doc/mypackage
-cp -r docs/* ${PKG_DIR}/usr/share/doc/mypackage/
+install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/mypackage/
 """
 ```
 
@@ -793,7 +793,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[split."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **description** | Must not be empty |

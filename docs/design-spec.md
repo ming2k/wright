@@ -109,7 +109,7 @@ The following **legacy paths are forbidden** — packages must not install files
 | `/home/`, `/root/` | User data — not for package files |
 | `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
 
-Wright enforces this layout automatically: after the `package` lifecycle stage completes, every file and symlink in `$PKG_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
+Wright enforces this layout automatically: after the `staging` lifecycle stage completes, every file and symlink in `$PKG_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
 
 #### musl Compatibility Policy
 
@@ -334,11 +334,11 @@ strip = true            # Strip binaries (default: true)
 static = false          # Static linking (default: false)
 debug = false           # Preserve debug symbols (default: false)
 ccache = true           # Enable ccache if available (default: true)
-skip_fhs_check = false  # Skip FHS path validation after package stage (default: false)
+skip_fhs_check = false  # Skip FHS path validation after staging stage (default: false)
 
 # ---- Lifecycle definitions ----
 # Default pipeline order:
-#   fetch → verify → extract → prepare → configure → build → check → package → post_package
+#   fetch → verify → extract → prepare → configure → build → check → staging
 #
 # Each stage format:
 #   [lifecycle.<stage_name>]
@@ -382,7 +382,7 @@ cd ${BUILD_DIR}
 make test
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 executor = "shell"
 dockyard = "strict"
 script = """
@@ -392,56 +392,42 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-# ---- Custom stage example ----
-[lifecycle.post_package]
-executor = "python"
-dockyard = "strict"
-script = """
-import os, glob
-
-pkg_dir = os.environ['PKG_DIR']
-
-# Remove .la files
-for la in glob.glob(os.path.join(pkg_dir, '**/*.la'), recursive=True):
-    os.remove(la)
-    print(f"Removed: {la}")
-
-# Remove empty directories
-for root, dirs, files in os.walk(pkg_dir, topdown=False):
-    for d in dirs:
-        path = os.path.join(root, d)
-        if not os.listdir(path):
-            os.rmdir(path)
-"""
-
-# ---- Install scripts (optional) ----
-# Scripts executed after the package is installed to the real system (NOT sandboxed)
-[install_scripts]
-post_install = """
+# ---- Package output declaration ----
+# Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
+# backup lists config files preserved across upgrades.
+# Single-package mode (bare [lifecycle.package]):
+[lifecycle.package]
+hooks.post_install = """
 # Create nginx user
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
 """
-
-post_upgrade = """
+hooks.post_upgrade = """
 # Reload configuration
 systemctl reload nginx 2>/dev/null || true
 """
-
-pre_remove = """
+hooks.pre_remove = """
 systemctl stop nginx 2>/dev/null || true
 """
-
-# ---- Backup files ----
-# Configuration files preserved on uninstall and not overwritten on upgrade
-[backup]
-files = [
+backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
 ]
 
+# ---- Multi-package mode (mutually exclusive with single-package) ----
+# Each sub-table under [lifecycle.package] declares a separate output package.
+# Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
+#
+# [lifecycle.package.libfoo]
+# description = "libfoo shared library"
+# script = "install -Dm755 libfoo.so ${PKG_DIR}/usr/lib/libfoo.so"
+# hooks.post_install = "ldconfig"
+#
+# [lifecycle.package.libfoo.dependencies]
+# runtime = ["libbar"]
+
 # ---- Custom lifecycle order (optional, overrides default) ----
 # [lifecycle_order]
-# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "check", "package", "post_package"]
+# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "check", "staging"]
 ```
 
 ### 4.2 Variable Substitution Rules
@@ -457,7 +443,6 @@ The `script` fields in package description files support the following variables
 | `${SRC_DIR}` | Source directory after extraction (build working directory) |
 | `${PKG_DIR}` | Package output directory (simulated install root) |
 | `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
-| `${MAIN_PKG_DIR}` | Main package's output directory (split package stages only) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |
 
@@ -613,7 +598,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `install_scripts` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `hooks` in `[lifecycle.package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -622,7 +607,7 @@ bwrap \
 ### 7.1 Default Pipeline
 
 ```
-fetch → verify → extract → prepare → configure → build → check → package → post_package
+fetch → verify → extract → prepare → configure → build → check → staging
 ```
 
 ### 7.2 Stage Descriptions
@@ -636,8 +621,7 @@ fetch → verify → extract → prepare → configure → build → check → p
 | `configure` | User script | Yes | ./configure and similar configuration steps |
 | `build` | User script | Yes | Compilation (make, etc.) |
 | `check` | User script | Yes | Run tests (optional stage) |
-| `package` | User script | Yes | make install to PKG_DIR |
-| `post_package` | User script | Yes | Cleanup, metadata generation, etc. |
+| `staging` | User script | Yes | make install to PKG_DIR |
 
 ### 7.3 Hook System
 
@@ -678,7 +662,7 @@ Packages can override the default pipeline via `[lifecycle_order]`:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "package"]
+stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "staging"]
 ```
 
 Stages without a defined script are automatically skipped (except fetch/verify/extract, which are handled internally by the build tool).
@@ -830,7 +814,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 5.  fetch: Download source to cache, symlink to src/
 6.  verify: Validate SHA-256 checksums
 7.  extract: Unpack source archive into src/
-8.  For each user-defined stage (prepare → ... → post_package):
+8.  For each user-defined stage (prepare → ... → staging):
     a. Load executor definition
     b. Perform variable substitution on script content
     c. Generate bwrap command
@@ -876,8 +860,7 @@ packager = "wright 0.1.0"
 runtime = ["pcre2 >= 10.42"]
 link = ["openssl >= 3.0", "zlib >= 1.2"]
 
-[backup]
-files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
 ---
@@ -1150,7 +1133,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- `install_scripts` (post_install, etc.) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`hooks.post_install`, etc. in `[lifecycle.package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode

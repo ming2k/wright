@@ -70,12 +70,12 @@ pub fn create_archive(
         WrightError::ArchiveError(format!("failed to write .FILELIST: {}", e))
     })?;
 
-    // Write .INSTALL if install scripts exist
+    // Write .HOOKS (TOML) if install scripts exist
     if let Some(ref scripts) = manifest.install_scripts {
-        let install_content = generate_install_scripts(scripts);
-        if !install_content.is_empty() {
-            std::fs::write(pkg_dir.join(".INSTALL"), &install_content).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to write .INSTALL: {}", e))
+        let hooks_content = generate_hooks_toml(scripts);
+        if !hooks_content.is_empty() {
+            std::fs::write(pkg_dir.join(".HOOKS"), &hooks_content).map_err(|e| {
+                WrightError::ArchiveError(format!("failed to write .HOOKS: {}", e))
             })?;
         }
     }
@@ -89,7 +89,7 @@ pub fn create_archive(
     // Clean up metadata files from pkg_dir
     let _ = std::fs::remove_file(pkg_dir.join(".PKGINFO"));
     let _ = std::fs::remove_file(pkg_dir.join(".FILELIST"));
-    let _ = std::fs::remove_file(pkg_dir.join(".INSTALL"));
+    let _ = std::fs::remove_file(pkg_dir.join(".HOOKS"));
 
     Ok(archive_path)
 }
@@ -256,6 +256,7 @@ fn generate_filelist(pkg_dir: &Path) -> Result<String> {
         if relative_str.is_empty()
             || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
+            || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".INSTALL")
         {
             continue;
@@ -265,24 +266,43 @@ fn generate_filelist(pkg_dir: &Path) -> Result<String> {
     Ok(files.join("\n"))
 }
 
-fn generate_install_scripts(
+/// Generate `.HOOKS` content in TOML format.
+///
+/// ```toml
+/// [hooks]
+/// post_install = "ldconfig"
+/// post_upgrade = "systemctl reload nginx"
+/// pre_remove = "systemctl stop nginx"
+/// post_remove = "userdel nginx"
+/// ```
+fn generate_hooks_toml(
     scripts: &crate::package::manifest::InstallScripts,
 ) -> String {
-    let mut content = String::new();
-    if let Some(ref s) = scripts.post_install {
-        content.push_str("[post_install]\n");
-        content.push_str(s);
-        content.push('\n');
+    let has_any = scripts.post_install.is_some()
+        || scripts.post_upgrade.is_some()
+        || scripts.pre_remove.is_some()
+        || scripts.post_remove.is_some();
+    if !has_any {
+        return String::new();
     }
-    if let Some(ref s) = scripts.post_upgrade {
-        content.push_str("[post_upgrade]\n");
-        content.push_str(s);
-        content.push('\n');
-    }
-    if let Some(ref s) = scripts.pre_remove {
-        content.push_str("[pre_remove]\n");
-        content.push_str(s);
-        content.push('\n');
+
+    let mut content = String::from("[hooks]\n");
+    for (key, value) in [
+        ("post_install", &scripts.post_install),
+        ("post_upgrade", &scripts.post_upgrade),
+        ("pre_remove", &scripts.pre_remove),
+        ("post_remove", &scripts.post_remove),
+    ] {
+        if let Some(ref s) = value {
+            let trimmed = s.trim();
+            if trimmed.contains('\n') {
+                // Multi-line: use TOML triple-quoted string
+                content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
+            } else {
+                // Single line: use basic string, escaping inner quotes
+                content.push_str(&format!("{} = \"{}\"\n", key, trimmed.replace('\\', "\\\\").replace('"', "\\\"")));
+            }
+        }
     }
     content
 }

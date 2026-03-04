@@ -13,7 +13,7 @@ use crate::builder::Builder;
 use crate::config::{GlobalConfig, AssembliesConfig};
 use crate::database::Database;
 use crate::package::archive;
-use crate::package::manifest::PackageManifest;
+use crate::package::manifest::{PackageManifest, PackageConfig};
 use crate::package::version;
 use crate::repo::source::SimpleResolver;
 use crate::package::manifest::PhaseDependencies;
@@ -105,7 +105,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
         // 1b. Upward expansion: resolve missing upstream deps.
         if opts.is_build_op() && do_deps {
-            expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, actual_max)?;
+            expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, opts.install, actual_max)?;
         }
     }
 
@@ -624,6 +624,7 @@ fn expand_missing_dependencies(
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
     force_all: bool,
+    include_runtime: bool,
     max_depth: usize,
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
@@ -643,8 +644,9 @@ fn expand_missing_dependencies(
             let manifest = PackageManifest::from_file(path)?;
 
             // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
+            // With --install (-i), we also resolve missing runtime deps since they're needed post-install.
             // For auto-resolving missing deps, we prioritize build and link as they are required for compilation.
-            let deps_to_check = if force_all {
+            let deps_to_check = if force_all || include_runtime {
                 manifest.dependencies.build.iter()
                     .chain(manifest.dependencies.link.iter())
                     .chain(manifest.dependencies.runtime.iter())
@@ -844,8 +846,12 @@ fn build_dep_map(
     for (plan_name, path) in all_plans {
         pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
         if let Ok(m) = PackageManifest::from_file(path) {
-            for split_name in m.split.keys() {
-                pkg_to_plan.insert(split_name.clone(), plan_name.clone());
+            if let Some(PackageConfig::Multi(ref pkgs)) = m.package {
+                for sub_name in pkgs.keys() {
+                    if sub_name != &m.plan.name {
+                        pkg_to_plan.insert(sub_name.clone(), plan_name.clone());
+                    }
+                }
             }
         }
     }
@@ -1045,15 +1051,18 @@ fn execute_builds(
                                         return;
                                     }
 
-                                    // 2. Install all split packages
-                                    for split_name in manifest.split.keys() {
-                                        let split_manifest = manifest.split.get(split_name).unwrap().to_manifest(split_name, &manifest);
-                                        let split_archive_path = output_dir.join(split_manifest.archive_filename());
-                                        debug!("Automatically installing split package: {}", split_name);
-                                        if let Err(e) = crate::transaction::install_package(
-                                            &db, &split_archive_path, &PathBuf::from("/"), true
-                                        ) {
-                                            warn!("Automatic installation of split package '{}' failed: {:#}", split_name, e);
+                                    // 2. Install all sub-packages
+                                    if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+                                        for (sub_name, sub_pkg) in pkgs {
+                                            if sub_name == &manifest.plan.name { continue; }
+                                            let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
+                                            let sub_archive_path = output_dir.join(sub_manifest.archive_filename());
+                                            debug!("Automatically installing sub-package: {}", sub_name);
+                                            if let Err(e) = crate::transaction::install_package(
+                                                &db, &sub_archive_path, &PathBuf::from("/"), true
+                                            ) {
+                                                warn!("Automatic installation of sub-package '{}' failed: {:#}", sub_name, e);
+                                            }
                                         }
                                     }
                                 }
@@ -1207,8 +1216,12 @@ fn build_one(
 
     if opts.lint {
         println!("valid plan: {} {}-{}", manifest.plan.name, manifest.plan.version, manifest.plan.release);
-        for split_name in manifest.split.keys() {
-            println!("  split: {}", split_name);
+        if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+            for sub_name in pkgs.keys() {
+                if sub_name != &manifest.plan.name {
+                    println!("  sub-package: {}", sub_name);
+                }
+            }
         }
         return Ok(());
     }
@@ -1229,10 +1242,15 @@ fn build_one(
     if !opts.force && opts.stages.is_empty() && !opts.fetch_only {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
-        let all_exist = existing.exists() && manifest.split.iter().all(|(split_name, split_pkg)| {
-            let split_manifest = split_pkg.to_manifest(split_name, manifest);
-            output_dir.join(split_manifest.archive_filename()).exists()
-        });
+        let all_exist = existing.exists() && match manifest.package {
+            Some(PackageConfig::Multi(ref pkgs)) => pkgs.iter()
+                .filter(|(name, _)| *name != &manifest.plan.name)
+                .all(|(sub_name, sub_pkg)| {
+                    let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
+                    output_dir.join(sub_manifest.archive_filename()).exists()
+                }),
+            _ => true,
+        };
         if all_exist && existing.exists() {
             info!("Skipping {} (all archives already exist, use --force to rebuild)", manifest.plan.name);
             return Ok(());
@@ -1289,7 +1307,7 @@ fn build_one(
 
     // Skip archive creation when specific stages are requested and none of them produce output
     let produces_output = opts.stages.is_empty()
-        || opts.stages.iter().any(|s| s == "package" || s == "post_package");
+        || opts.stages.iter().any(|s| s == "staging" || s == "post_staging");
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
             crate::package::fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
@@ -1297,15 +1315,18 @@ fn build_one(
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 
-        for (split_name, split_pkg) in &manifest.split {
-            let split_pkg_dir = result.split_pkg_dirs.get(split_name)
-                .ok_or_else(|| WrightError::BuildError(format!("missing split pkg_dir for '{}'", split_name)))?;
-            if !manifest.options.skip_fhs_check {
-                crate::package::fhs::validate(split_pkg_dir, split_name)?;
+        if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+            for (sub_name, sub_pkg) in pkgs {
+                if sub_name == &manifest.plan.name { continue; }
+                let sub_pkg_dir = result.split_pkg_dirs.get(sub_name)
+                    .ok_or_else(|| WrightError::BuildError(format!("missing sub-package pkg_dir for '{}'", sub_name)))?;
+                if !manifest.options.skip_fhs_check {
+                    crate::package::fhs::validate(sub_pkg_dir, sub_name)?;
+                }
+                let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
+                let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
+                info!("Sub-package part stored: {}", sub_archive.display());
             }
-            let split_manifest = split_pkg.to_manifest(split_name, manifest);
-            let split_archive = archive::create_archive(split_pkg_dir, &split_manifest, &output_dir)?;
-            info!("Split part stored: {}", split_archive.display());
         }
     }
 

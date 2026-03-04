@@ -79,7 +79,7 @@ cd nginx-${PKG_VERSION}
 make test
 """
 
-[lifecycle.package]
+[lifecycle.staging]
 executor = "shell"
 dockyard = "strict"
 script = """
@@ -88,29 +88,23 @@ make DESTDIR=${PKG_DIR} install
 install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
 """
 
-[install_scripts]
-post_install = """
+[lifecycle.package.nginx]
+hooks.post_install = """
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
 """
-post_upgrade = """
+hooks.post_upgrade = """
 systemctl reload nginx 2>/dev/null || true
 """
-pre_remove = """
+hooks.pre_remove = """
 systemctl stop nginx 2>/dev/null || true
 """
-
-[backup]
-files = [
+backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
 ]
 
-[split.nginx-doc]
+[lifecycle.package.nginx-doc]
 description = "Nginx documentation files"
-
-[split.nginx-doc.lifecycle.package]
-executor = "shell"
-dockyard = "strict"
 script = """
 cd nginx-${PKG_VERSION}
 install -d ${PKG_DIR}/usr/share/doc/nginx

@@ -12,8 +12,7 @@ use crate::dockyard::ResourceLimits;
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
-    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "package",
-    "post_package",
+    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging",
 ];
 
 /// Built-in stages handled by the build tool itself (not user scripts)

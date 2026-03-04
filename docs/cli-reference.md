@@ -155,7 +155,7 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 
 | Flag | Description |
 |------|-------------|
-| `--stage <STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage check --stage package`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
+| `--stage <STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage check --stage staging`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
 | `--clean` | Clear the build cache entry and working directory before starting. The working directory is recreated at the start of every build anyway; the primary effect of `--clean` is invalidating the build cache so the next build must compile fully. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
@@ -234,7 +234,7 @@ wbuild run freetype --mvp --stage configure
 
 ##### Compile-stage serialization
 
-When multiple dockyards run in parallel, non-compile stages (configure, package, etc.) execute concurrently with CPU cores partitioned across active builds. However, **compile stages are serialized** behind a semaphore — only one dockyard compiles at a time, and the active compile gets access to all available CPU cores.
+When multiple dockyards run in parallel, non-compile stages (configure, staging, etc.) execute concurrently with CPU cores partitioned across active builds. However, **compile stages are serialized** behind a semaphore — only one dockyard compiles at a time, and the active compile gets access to all available CPU cores.
 
 This eliminates the "long-tail effect" where light packages finish quickly and leave their allocated cores idle while heavy compiles (python, perl, gcc) continue with only a fraction of available cores. The result is better CPU utilization and faster wall-clock times for multi-package builds.
 
