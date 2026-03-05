@@ -25,6 +25,7 @@ pub struct PackageHooks {
 
 /// Single-package mode: `[lifecycle.package]`
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PackageOutput {
     #[serde(default)]
     pub hooks: Option<PackageHooks>,
