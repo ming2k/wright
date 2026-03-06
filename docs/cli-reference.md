@@ -26,7 +26,7 @@ wright [OPTIONS] <COMMAND>
 
 #### `wright install <PACKAGES...>`
 
-Install from local `.wright.tar.zst` files. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
+Install packages. Each argument can be a `.wright.tar.zst` file path, a package name (resolved from configured sources), or a `@container` reference (expands to all packages in the named container). Multiple containers can be combined freely — they are non-dependent, combinatory groupings and overlapping packages are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
 
 | Flag | Description |
 |------|-------------|
@@ -93,9 +93,40 @@ List installed packages.
 
 Show detailed info for an installed package.
 
+#### `wright source add <NAME> --path <PATH>`
+
+Add a new local repository source to `/etc/wright/repos.toml`.
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Source type: `local` or `hold` (default: `local`) |
+| `--path <PATH>` | Local directory path (required) |
+| `--priority <N>` | Priority — higher number is preferred (default: `100`) |
+
+```bash
+wright source add myrepo --path /var/lib/wright/myrepo
+wright source add myrepo --path /var/lib/wright/myrepo --priority 300
+```
+
+#### `wright source remove <NAME>`
+
+Remove a repository source from `/etc/wright/repos.toml`.
+
+#### `wright source list`
+
+List all configured repository sources with their type, priority, and path.
+
+#### `wright sync`
+
+Refresh repository indices from configured sources. Reports how many packages are available in each indexed source directory. For local repos, the index must be generated first with `wbuild index`.
+
 #### `wright search <KEYWORD>`
 
-Search installed packages by keyword (name and description).
+Search packages by keyword (name and description).
+
+| Flag | Description |
+|------|-------------|
+| `--available` (`-a`) | Search available (indexed) packages instead of installed ones |
 
 #### `wright files <PACKAGE>`
 
@@ -151,7 +182,7 @@ wbuild [OPTIONS] <COMMAND> [TARGETS]...
 
 #### `wbuild run [TARGETS]...`
 
-Build packages from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`.
+Build packages from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. When used with `--install` (`-i`), packages already installed on the system are automatically skipped.
 
 | Flag | Description |
 |------|-------------|
@@ -279,6 +310,17 @@ Analyze the **static** dependency tree of a plan in the hold tree. Shows what *w
 | Flag | Description |
 |------|-------------|
 | `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
+
+#### `wbuild index [PATH]`
+
+Generate a repository index (`wright.index.toml`) from all `.wright.tar.zst` packages in a directory. Defaults to `components_dir` if no path is given.
+
+The index records each package's name, version, architecture, dependencies, and SHA-256 checksum. Once generated, the resolver uses it for fast lookups instead of scanning every archive.
+
+```bash
+wbuild index                              # index the default components dir
+wbuild index /var/lib/wright/components   # index a specific directory
+```
 
 #### `wbuild checksum [TARGETS]...`
 

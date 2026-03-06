@@ -137,6 +137,11 @@ enum Commands {
         /// Plans to checksum
         targets: Vec<String>,
     },
+    /// Generate a repository index from built packages in a directory
+    Index {
+        /// Directory containing .wright.tar.zst packages (default: components_dir)
+        path: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -214,6 +219,16 @@ fn main() -> Result<()> {
                 checksum: true,
                 ..Default::default()
             })?)
+        }
+        Commands::Index { path } => {
+            let repo_dir = path.unwrap_or_else(|| config.general.components_dir.clone());
+            println!("Indexing packages in {}...", repo_dir.display());
+            let index = wright::repo::index::generate_index(&repo_dir)?;
+            let count = index.packages.len();
+            wright::repo::index::write_index(&index, &repo_dir)?;
+            println!("Indexed {} package(s) -> {}", count,
+                wright::repo::index::index_path(&repo_dir).display());
+            Ok(())
         }
         Commands::Deps { target, depth } => {
             // Static analysis of plans in hold tree

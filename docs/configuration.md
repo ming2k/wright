@@ -34,17 +34,49 @@ config or built-in defaults.
 Repository configuration is system-wide only. Within a single `repos.toml`,
 sources are ranked by the `priority` field (higher number = preferred).
 
-### assembly.toml (assembly definitions)
+### assembly definitions
 
-| Priority | Path | When |
-|----------|------|------|
-| 1 (highest) | Explicit path argument | Passed programmatically |
-| 2 | `./assembly.toml` | Project-local assembly |
-| 3 | `{plans_dir}/assembly.toml` | Co-located with plans |
-| 4 (lowest) | `/etc/wright/assembly.toml` | System-wide assembly |
+Assemblies group **plans** for batch building with `wbuild run @name`.
+Containers group **packages** for batch installation with `wright install @name`.
 
-Assemblies can also be loaded in bulk from a directory (all `*.toml` files),
-where entries from later files with the same name overwrite earlier ones.
+Both are **non-dependent, combinatory groupings** — membership in an assembly or
+container implies no dependency relationship between the items. The items are
+independent units that happen to be bundled together for convenience (like cargo
+containers on a ship). Actual dependency resolution is handled separately by the
+build system and package manager.
+
+This means assemblies and containers are freely composable: you can combine
+multiple groups in one command (`wbuild run @core @devel`, `wright install @base @gui`),
+and overlapping members are simply deduplicated.
+
+Assembly definitions are loaded from all `*.toml` files in `assemblies_dir`
+(default: `/var/lib/wright/assemblies/`). Each file defines one assembly; the
+filename (minus `.toml`) is the assembly name.
+
+```toml
+# /var/lib/wright/assemblies/qemu.toml
+description = "Minimal headless QEMU system emulator stack."
+plans = ["pkgconf", "ninja", "meson", "libffi", "glib", "zlib", "pixman", "qemu"]
+```
+
+### containers (package groups)
+
+Container definitions are loaded from all `*.toml` files in `containers_dir`
+(default: `/var/lib/wright/containers/`). Each file defines one container; the
+filename (minus `.toml`) is the container name.
+
+```toml
+# /var/lib/wright/containers/base.toml
+description = "Base system packages"
+packages = ["glibc", "coreutils", "bash", "libgcc", "libstdc++"]
+```
+
+```toml
+# /var/lib/wright/containers/devel.toml
+description = "Development tools"
+packages = ["gcc", "binutils", "make"]
+includes = ["base"]   # inherit all packages from @base
+```
 
 ### executor definitions
 
@@ -83,7 +115,8 @@ cache_dir = "/var/lib/wright/cache"       # Downloaded sources cache
 db_path = "/var/lib/wright/db/packages.db" # Installed package database
 log_dir = "/var/log/wright"               # Operation logs (build logs are under build_dir/<name>-<version>/log)
 executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
-assemblies_dir = "/etc/wright/assemblies" # Assembly definitions (*.toml)
+assemblies_dir = "/var/lib/wright/assemblies" # Assembly definitions (*.toml)
+containers_dir = "/var/lib/wright/containers" # Container (package group) definitions (*.toml)
 
 [build]
 build_dir = "/tmp/wright-build"           # Build working directory
@@ -115,7 +148,8 @@ retry_count = 3                         # Download retry attempts
 | `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database (SQLite) |
 | `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |
 | `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
-| `assemblies_dir` | path | `/etc/wright/assemblies` | Assembly definition files (`*.toml`) |
+| `assemblies_dir` | path | `/var/lib/wright/assemblies` | Assembly definition files (`*.toml`) |
+| `containers_dir` | path | `/var/lib/wright/containers` | Container (package group) definition files (`*.toml`) |
 
 ### `[build]` section
 

@@ -31,6 +31,8 @@ pub struct GeneralConfig {
     pub executors_dir: PathBuf,
     #[serde(default = "default_assemblies_dir")]
     pub assemblies_dir: PathBuf,
+    #[serde(default = "default_containers_dir")]
+    pub containers_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -98,6 +100,21 @@ pub struct Assembly {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ContainersConfig {
+    #[serde(default)]
+    pub containers: std::collections::HashMap<String, Container>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Container {
+    pub description: Option<String>,
+    #[serde(default)]
+    pub packages: Vec<String>,
+    #[serde(default)]
+    pub includes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct SourceConfig {
     pub name: String,
     #[serde(rename = "type")]
@@ -132,6 +149,7 @@ fn default_general() -> GeneralConfig {
         },
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
+        containers_dir: default_containers_dir(),
     }
 }
 
@@ -197,7 +215,10 @@ fn default_executors_dir() -> PathBuf {
     PathBuf::from("/etc/wright/executors")
 }
 fn default_assemblies_dir() -> PathBuf {
-    PathBuf::from("/etc/wright/assemblies")
+    PathBuf::from("/var/lib/wright/assemblies")
+}
+fn default_containers_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/containers")
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/tmp/wright-build")
@@ -292,42 +313,69 @@ impl AssembliesConfig {
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
                 })?;
-                let part: AssembliesConfig = toml::from_str(&content)?;
-                for (name, assembly) in part.assemblies {
-                    config.assemblies.insert(name, assembly);
-                }
+                let name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| WrightError::ConfigError(
+                        format!("invalid assembly filename: {}", path.display())
+                    ))?
+                    .to_string();
+                let assembly: Assembly = toml::from_str(&content)?;
+                config.assemblies.insert(name, assembly);
             }
         }
         Ok(config)
     }
 
-    pub fn load(path: Option<&Path>, plans_dir: &Path) -> Result<Self> {
-        let config_path = if let Some(p) = path {
-            PathBuf::from(p)
-        } else {
-            let local = PathBuf::from("./assembly.toml");
-            if local.exists() {
-                local
-            } else {
-                let plan_assembly = plans_dir.join("assembly.toml");
-                if plan_assembly.exists() {
-                    plan_assembly
-                } else {
-                    PathBuf::from("/etc/wright/assembly.toml")
-                }
-            }
-        };
+}
 
-        if !config_path.exists() {
-            return Ok(AssembliesConfig { assemblies: std::collections::HashMap::new() });
+impl ContainersConfig {
+    pub fn load_all(dir: &Path) -> Result<Self> {
+        let mut config = ContainersConfig { containers: std::collections::HashMap::new() };
+        if !dir.exists() {
+            return Ok(config);
         }
 
-        let content = std::fs::read_to_string(&config_path).map_err(|e| {
-            WrightError::ConfigError(format!("failed to read {}: {}", config_path.display(), e))
-        })?;
-
-        let config: Self = toml::from_str(&content)?;
+        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
+            let entry = entry.map_err(WrightError::IoError)?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                let name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| WrightError::ConfigError(
+                        format!("invalid container filename: {}", path.display())
+                    ))?
+                    .to_string();
+                let content = std::fs::read_to_string(&path).map_err(|e| {
+                    WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
+                })?;
+                let container: Container = toml::from_str(&content)?;
+                config.containers.insert(name, container);
+            }
+        }
         Ok(config)
+    }
+
+    pub fn resolve(&self, name: &str) -> Vec<String> {
+        let mut packages = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        self.collect(name, &mut packages, &mut visited);
+        packages
+    }
+
+    fn collect(&self, name: &str, packages: &mut Vec<String>, visited: &mut std::collections::HashSet<String>) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+        if let Some(container) = self.containers.get(name) {
+            for pkg in &container.packages {
+                if !packages.contains(pkg) {
+                    packages.push(pkg.clone());
+                }
+            }
+            for include in &container.includes {
+                self.collect(include, packages, visited);
+            }
+        }
     }
 }
 

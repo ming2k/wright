@@ -271,16 +271,16 @@ wbuild run libfoo --self --dependents --depth 2
 
 ## Building an Assembly
 
-Assemblies are named groups of packages. Build all packages in `@base`:
+Assemblies are non-dependent, combinatory groupings of plans — items are
+independent units bundled for convenience, not a dependency chain. Build
+ordering comes from each plan's own dependency graph, not from assembly
+membership. Multiple assemblies can be freely combined and overlapping
+plans are deduplicated.
 
 ```bash
-wbuild run @base
-```
-
-Build multiple assemblies and extra individual packages in one invocation:
-
-```bash
-wbuild run @base @devel mypackage
+wbuild run @base                    # build all plans in the "base" assembly
+wbuild run @base @devel mypackage   # combine assemblies and individual plans
+wbuild run -ic @base                # build and install, skip already-installed
 ```
 
 ---

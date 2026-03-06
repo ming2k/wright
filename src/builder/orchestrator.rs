@@ -103,6 +103,29 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         let db_path = config.general.db_path.clone();
         let db = Database::open(&db_path).context("failed to open database for dependency resolution")?;
 
+        // 1a2. When --install is used without --force, skip packages that are
+        //      already installed at the same version+release.
+        if opts.is_build_op() && opts.install && !opts.force {
+            plans_to_build.retain(|path| {
+                if let Ok(manifest) = PackageManifest::from_file(path) {
+                    match db.get_package(&manifest.plan.name) {
+                        Ok(Some(pkg)) => {
+                            info!("Skipping {} (already installed at {}-{})",
+                                manifest.plan.name, pkg.version, pkg.release);
+                            false
+                        }
+                        _ => true,
+                    }
+                } else {
+                    true
+                }
+            });
+            if plans_to_build.is_empty() {
+                info!("Nothing to build: all packages are already installed.");
+                return Ok(());
+            }
+        }
+
         // 1b. Upward expansion: resolve missing upstream deps.
         if opts.is_build_op() && do_deps {
             expand_missing_dependencies(&mut plans_to_build, &all_plans, &db, opts.rebuild_dependencies, opts.install, actual_max)?;

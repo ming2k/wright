@@ -36,7 +36,10 @@ log_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 
 # Directory containing assembly definition files (*.toml).
-assemblies_dir = "/etc/wright/assemblies"
+assemblies_dir = "/var/lib/wright/assemblies"
+
+# Directory containing container (package group) definition files (*.toml).
+containers_dir = "/var/lib/wright/containers"
 
 [build]
 # Working directory for build trees. Using a tmpfs mount here is recommended

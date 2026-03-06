@@ -104,6 +104,22 @@ impl SimpleResolver {
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPackage>> {
         for dir in &self.search_dirs {
             if !dir.exists() { continue; }
+
+            // Try index first (fast path)
+            if let Some(index) = crate::repo::index::read_index(dir)? {
+                if let Some(entry) = index.packages.iter().find(|e| e.name == name) {
+                    let path = dir.join(&entry.filename);
+                    if path.exists() {
+                        return Ok(Some(ResolvedPackage {
+                            name: entry.name.clone(),
+                            path,
+                            dependencies: entry.runtime_deps.clone(),
+                        }));
+                    }
+                }
+            }
+
+            // Fallback: scan archives directly
             for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
                 let entry = entry.map_err(WrightError::IoError)?;
                 let path = entry.path();

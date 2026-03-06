@@ -5,8 +5,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use wright::config::GlobalConfig;
+use wright::config::{GlobalConfig, ContainersConfig};
 use wright::database::Database;
+use wright::repo;
 use wright::transaction;
 use wright::query;
 use wright::query::PrefixMode;
@@ -63,11 +64,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Install packages from local .wright.tar.zst files
+    /// Install packages from .wright.tar.zst files, package names, or @containers
     Install {
-        /// Package archive files to install
+        /// Package files, package names, or @container names
         #[arg(required = true)]
-        packages: Vec<PathBuf>,
+        packages: Vec<String>,
 
         /// Force reinstall even if already installed
         #[arg(long)]
@@ -151,10 +152,14 @@ enum Commands {
         /// Package name
         package: String,
     },
-    /// Search installed packages by keyword
+    /// Search packages by keyword
     Search {
         /// Search keyword
         keyword: String,
+
+        /// Search available (indexed) packages, not just installed ones
+        #[arg(long, short)]
+        available: bool,
     },
     /// List files owned by a package
     Files {
@@ -185,6 +190,13 @@ enum Commands {
         /// Package name
         name: String,
     },
+    /// Manage repository sources
+    Source {
+        #[command(subcommand)]
+        action: SourceAction,
+    },
+    /// Refresh repository indices from configured sources
+    Sync,
     /// Show package transaction history (install, upgrade, remove)
     History {
         /// Package name; omit to show all history
@@ -196,6 +208,34 @@ enum Commands {
         #[arg(long, short = 'n')]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum SourceAction {
+    /// Add a new repository source
+    Add {
+        /// Unique source name
+        name: String,
+
+        /// Source type: local or hold
+        #[arg(long, default_value = "local")]
+        r#type: String,
+
+        /// Local directory path
+        #[arg(long)]
+        path: PathBuf,
+
+        /// Priority (higher = preferred)
+        #[arg(long, default_value = "100")]
+        priority: i32,
+    },
+    /// Remove a repository source
+    Remove {
+        /// Source name to remove
+        name: String,
+    },
+    /// List configured repository sources
+    List,
 }
 
 fn parse_prefix_mode(s: &str) -> std::result::Result<PrefixMode, String> {
@@ -256,18 +296,49 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Install { packages, force, nodeps } => {
-            let pkg_paths: Vec<PathBuf> = packages.iter().map(|p| {
-                if p.exists() {
-                    p.clone()
-                } else {
-                    std::env::current_dir().unwrap().join(p)
-                }
-            }).collect();
+            let containers = ContainersConfig::load_all(&config.general.containers_dir)
+                .context("failed to load containers config")?;
 
-            for path in &pkg_paths {
-                if !path.exists() {
-                    eprintln!("error: file not found: {}", path.display());
-                    std::process::exit(1);
+            // Expand @container references and resolve package names to paths
+            let mut pkg_paths: Vec<PathBuf> = Vec::new();
+            for arg in &packages {
+                if let Some(container_name) = arg.strip_prefix('@') {
+                    let members = containers.resolve(container_name);
+                    if members.is_empty() {
+                        eprintln!("error: container '{}' not found or empty", container_name);
+                        std::process::exit(1);
+                    }
+                    for name in &members {
+                        match resolver.resolve(name) {
+                            Ok(Some(resolved)) => pkg_paths.push(resolved.path),
+                            Ok(None) => {
+                                eprintln!("error: package '{}' (from @{}) not found", name, container_name);
+                                std::process::exit(1);
+                            }
+                            Err(e) => {
+                                eprintln!("error: failed to resolve '{}': {}", name, e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                } else {
+                    let path = PathBuf::from(arg);
+                    if path.exists() {
+                        pkg_paths.push(path);
+                    } else {
+                        // Try resolving as a package name
+                        match resolver.resolve(arg) {
+                            Ok(Some(resolved)) => pkg_paths.push(resolved.path),
+                            Ok(None) => {
+                                eprintln!("error: '{}' is not a file and could not be resolved as a package name", arg);
+                                std::process::exit(1);
+                            }
+                            Err(e) => {
+                                eprintln!("error: failed to resolve '{}': {}", arg, e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -461,15 +532,41 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Search { keyword } => {
-            let results = db.search_packages(&keyword)
-                .context("failed to search packages")?;
-            if results.is_empty() {
-                println!("no packages found matching '{}'", keyword);
+        Commands::Search { keyword, available } => {
+            if available {
+                let mut found = false;
+                for dir in &resolver.search_dirs {
+                    if let Some(index) = repo::index::read_index(dir)
+                        .context("failed to read repo index")?
+                    {
+                        for entry in &index.packages {
+                            if entry.name.contains(&keyword)
+                                || entry.description.to_lowercase().contains(&keyword.to_lowercase())
+                            {
+                                let installed = db.get_package(&entry.name)
+                                    .ok().flatten();
+                                let tag = if installed.is_some() { " [installed]" } else { "" };
+                                println!("{} {}-{} - {}{}",
+                                    entry.name, entry.version, entry.release,
+                                    entry.description, tag);
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                if !found {
+                    println!("no available packages found matching '{}' (run 'wright sync' first?)", keyword);
+                }
             } else {
-                for pkg in &results {
-                    println!("{} {}-{} - {}",
-                        pkg.name, pkg.version, pkg.release, pkg.description);
+                let results = db.search_packages(&keyword)
+                    .context("failed to search packages")?;
+                if results.is_empty() {
+                    println!("no packages found matching '{}'", keyword);
+                } else {
+                    for pkg in &results {
+                        println!("{} {}-{} - {}",
+                            pkg.name, pkg.version, pkg.release, pkg.description);
+                    }
                 }
             }
         }
@@ -576,6 +673,136 @@ fn main() -> Result<()> {
                 println!("\nupgraded {}, {} up to date, {} not found",
                     upgraded, up_to_date, not_found);
             }
+        }
+        Commands::Source { action } => {
+            let repos_path = PathBuf::from("/etc/wright/repos.toml");
+            match action {
+                SourceAction::List => {
+                    if !repos_path.exists() {
+                        println!("no sources configured ({})", repos_path.display());
+                    } else {
+                        let rc = wright::config::RepoConfig::load(Some(&repos_path))
+                            .context("failed to load repos.toml")?;
+                        if rc.source.is_empty() {
+                            println!("no sources configured");
+                        } else {
+                            for s in &rc.source {
+                                let enabled = if s.enabled { "" } else { " [disabled]" };
+                                let location = s.path.as_ref()
+                                    .map(|p| p.display().to_string())
+                                    .or_else(|| s.url.clone())
+                                    .unwrap_or_default();
+                                println!("{:<15} {:<8} pri={:<4} {}{}",
+                                    s.name, s.type_, s.priority, location, enabled);
+                            }
+                        }
+                    }
+                }
+                SourceAction::Add { name, r#type, path, priority } => {
+                    let type_str = r#type;
+                    if type_str != "local" && type_str != "hold" {
+                        eprintln!("error: type must be 'local' or 'hold'");
+                        std::process::exit(1);
+                    }
+                    if !path.exists() {
+                        eprintln!("warning: path '{}' does not exist yet", path.display());
+                    }
+
+                    // Read existing content or start fresh
+                    let mut content = if repos_path.exists() {
+                        std::fs::read_to_string(&repos_path)
+                            .context("failed to read repos.toml")?
+                    } else {
+                        String::new()
+                    };
+
+                    // Check for duplicate name
+                    if repos_path.exists() {
+                        let rc = wright::config::RepoConfig::load(Some(&repos_path))
+                            .context("failed to load repos.toml")?;
+                        if rc.source.iter().any(|s| s.name == name) {
+                            eprintln!("error: source '{}' already exists", name);
+                            std::process::exit(1);
+                        }
+                    }
+
+                    // Append new source entry
+                    if !content.is_empty() && !content.ends_with('\n') {
+                        content.push('\n');
+                    }
+                    content.push_str(&format!(
+                        "\n[[source]]\nname = \"{}\"\ntype = \"{}\"\npath = \"{}\"\npriority = {}\n",
+                        name, type_str, path.display(), priority
+                    ));
+
+                    std::fs::write(&repos_path, &content)
+                        .context("failed to write repos.toml")?;
+                    println!("added source '{}' -> {}", name, path.display());
+                }
+                SourceAction::Remove { name } => {
+                    if !repos_path.exists() {
+                        eprintln!("error: {} does not exist", repos_path.display());
+                        std::process::exit(1);
+                    }
+
+                    let rc = wright::config::RepoConfig::load(Some(&repos_path))
+                        .context("failed to load repos.toml")?;
+                    if !rc.source.iter().any(|s| s.name == name) {
+                        eprintln!("error: source '{}' not found", name);
+                        std::process::exit(1);
+                    }
+
+                    // Rebuild the file without the named source
+                    let remaining: Vec<_> = rc.source.iter()
+                        .filter(|s| s.name != name)
+                        .collect();
+
+                    let mut content = String::new();
+                    for s in &remaining {
+                        content.push_str("[[source]]\n");
+                        content.push_str(&format!("name = \"{}\"\n", s.name));
+                        content.push_str(&format!("type = \"{}\"\n", s.type_));
+                        if let Some(ref p) = s.path {
+                            content.push_str(&format!("path = \"{}\"\n", p.display()));
+                        }
+                        if let Some(ref u) = s.url {
+                            content.push_str(&format!("url = \"{}\"\n", u));
+                        }
+                        content.push_str(&format!("priority = {}\n", s.priority));
+                        if let Some(ref k) = s.gpg_key {
+                            content.push_str(&format!("gpg_key = \"{}\"\n", k.display()));
+                        }
+                        if !s.enabled {
+                            content.push_str("enabled = false\n");
+                        }
+                        content.push('\n');
+                    }
+
+                    std::fs::write(&repos_path, &content)
+                        .context("failed to write repos.toml")?;
+                    println!("removed source '{}'", name);
+                }
+            }
+        }
+        Commands::Sync => {
+            let mut total = 0usize;
+            for dir in &resolver.search_dirs {
+                if !dir.exists() { continue; }
+                let idx_path = repo::index::index_path(dir);
+                if idx_path.exists() {
+                    match repo::index::read_index(dir) {
+                        Ok(Some(index)) => {
+                            println!("{}: {} package(s)", dir.display(), index.packages.len());
+                            total += index.packages.len();
+                        }
+                        Ok(None) => {}
+                        Err(e) => eprintln!("warning: {}: {}", dir.display(), e),
+                    }
+                } else {
+                    println!("{}: no index (run 'wbuild index {}')", dir.display(), dir.display());
+                }
+            }
+            println!("Total: {} available package(s)", total);
         }
         Commands::Assume { name, version } => {
             match db.assume_package(&name, &version) {

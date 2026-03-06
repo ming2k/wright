@@ -2,18 +2,43 @@
 
 Wright is split into two tools: `wright` (system management) and `wbuild` (package construction).
 
+## Typical Workflow
+
+```
+ plan.toml ──► wbuild run ──► .wright.tar.zst ──► wbuild index ──► wright sync ──► wright install
+  (source)      (build)         (packages)         (index repo)    (refresh)       (install)
+```
+
+1. **Write a plan** — define how to build a package in `plan.toml`
+2. **Build** — `wbuild run mypackage` compiles and creates `.wright.tar.zst` archives
+3. **Index** — `wbuild index` scans the built packages and generates `wright.index.toml`
+4. **Sync** — `wright sync` loads the index so the resolver knows what's available
+5. **Install** — `wright install mypackage` resolves the name from the index and installs
+
+For quick iteration, `wbuild run -i mypackage` builds and installs in one step (skipping the index/sync cycle).
+
 ## Wright (System Administrator)
 
 Use `wright` to manage the live system.
 
+### Repositories
+
+See [Repositories](repositories.md) for the full guide on creating local repos,
+managing sources, indexing, and syncing.
+
 ### Installing and Upgrading
 
 ```bash
-wright install hello-1.0.0-1-x86_64.wright.tar.zst
+wright install hello-1.0.0-1-x86_64.wright.tar.zst   # from a file
+wright install curl                                    # by package name (resolved from sources)
+wright install @base                                   # all packages in a container
+wright install @base @devel curl                       # mix containers and packages
 wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst
 ```
 
 Wright handles dependencies, conflicts, and package replacements (renames) automatically during installation.
+
+**Containers** are named groups of packages (distinct from assemblies, which group plans). Like assemblies, containers are non-dependent and combinatory — packages in a container are independent items bundled for convenience, not a dependency chain. Multiple containers can be freely combined in one command, and overlapping packages are deduplicated. Define them in `/var/lib/wright/containers/*.toml` — see [Configuration](configuration.md#containers-package-groups) for details.
 
 ### Removing Packages
 
@@ -99,10 +124,29 @@ wbuild check hello              # validate syntax only
 wbuild checksum zlib            # download sources, fill in sha256
 ```
 
-### Assembly Builds
+### Repository Indexing
 
-Group related plans for batch building:
+After building packages, generate an index so `wright` can resolve packages by name:
 
 ```bash
-wbuild run @core
+wbuild index                    # index the default components directory
+wbuild index /path/to/repo      # index a specific directory
 ```
+
+This creates a `wright.index.toml` in the target directory. With an index present, the resolver uses fast lookups instead of scanning every archive.
+
+### Assembly Builds
+
+Assemblies are named collections of plans that can be built together.
+Membership is purely combinatory — items in an assembly are independent
+units bundled for convenience, not a dependency chain. Actual build
+ordering comes from the dependency graph in each plan.
+
+```bash
+wbuild run @core                # build all plans in the "core" assembly
+wbuild run @core @devel         # combine multiple assemblies
+wbuild run -ic @qemu            # build and install, skipping already-installed packages
+```
+
+When used with `--install` (`-i`), packages already installed on the system
+are automatically skipped. Use `--force` (`-f`) to rebuild them anyway.
