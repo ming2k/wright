@@ -55,10 +55,9 @@ enum Commands {
         #[arg(long, conflicts_with = "stage")]
         skip_check: bool,
 
-        /// Clear the build cache entry and working directory before starting.
-        /// Use this when you want to force a full recompile bypassing the
-        /// build cache. Composable with --force: --clean clears the cache,
-        /// --force bypasses the output archive skip check.
+        /// Clear the build cache, source tree, and working directory before
+        /// starting. Without --clean, src/ is preserved for incremental builds
+        /// when the build key is unchanged. Composable with --force.
         #[arg(long, short = 'c')]
         clean: bool,
 

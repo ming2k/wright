@@ -948,7 +948,7 @@ fn execute_builds(
     };
     let actual_dockyards = if opts.dockyards == 0 { total_cpus } else { opts.dockyards.min(total_cpus) };
 
-    info!("CPUs: {}  |  compile: serialized", total_cpus);
+    info!("CPUs: {}  |  compile: one-at-a-time across dockyards", total_cpus);
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -1351,7 +1351,7 @@ fn build_one(
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
-        info!("Part stored in the Components Hold: {}", archive_path.display());
+        info!("{}: part stored in {}", manifest.plan.name, archive_path.display());
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
@@ -1363,7 +1363,7 @@ fn build_one(
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!("Sub-package part stored: {}", sub_archive.display());
+                info!("{}: part stored in {}", sub_name, sub_archive.display());
             }
         }
     }

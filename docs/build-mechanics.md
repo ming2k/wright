@@ -18,9 +18,13 @@ Each package gets its own working directory under `build_dir`
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
 
-`src/` is the dockyard's `/build` mount. `pkg/` is `/output`. The directory is
-recreated clean at the start of every full build run. `--stage` recreates `pkg/`
-and `log/` but leaves `src/` intact so the previous extraction is reused.
+`src/` is the dockyard's `/build` mount. `pkg/` is `/output`. By default,
+`pkg/` and `log/` are recreated clean at the start of every build. `src/` is
+**reused** when the build key has not changed (same version, sources, and
+lifecycle scripts), enabling incremental builds — the fetch/verify/extract
+steps are skipped entirely. When the build key changes (e.g. a version bump),
+`src/` is cleaned and sources are re-extracted automatically. `--clean`
+always removes the entire working directory including `src/`.
 
 ### BUILD_DIR auto-detection
 
@@ -68,11 +72,12 @@ is empty) are printed to the terminal directly. The full output is always in
 the log file. Logs from the failed run are **preserved** — they are only
 overwritten on the next build attempt.
 
-### Log recreation rules
+### Directory lifecycle rules
 
 | Operation | `src/` | `pkg/` | `log/` |
 |-----------|:------:|:------:|:------:|
-| Full build | recreated | recreated | recreated |
+| Full build (key match) | **preserved** | recreated | recreated |
+| Full build (key mismatch) | recreated | recreated | recreated |
 | `--stage <s>` | preserved | recreated | recreated |
 | `--clean` then build | deleted first | recreated | recreated |
 | Cache hit | recreated from cache | restored | restored |
@@ -194,15 +199,26 @@ archive produced by their `script`.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Build cache | Output archive | Working dir |
-|------|:---:|:---:|:---:|:---:|
-| (default) | reuse | reuse | skip if exists | always recreated |
-| `--force` | reuse | bypass read, overwrite | overwrite | always recreated |
-| `--clean` | reuse | **delete + rebuild** | skip if exists | delete then recreated |
-| `--clean --force` | reuse | **delete + rebuild** | overwrite | delete then recreated |
-| `--stage <s>` | reuse | bypass | skip | keep `src/` |
+| Flag | Source cache | Build cache | Output archive | `src/` | `pkg/` / `log/` |
+|------|:---:|:---:|:---:|:---:|:---:|
+| (default) | reuse | reuse | skip if exists | reuse if key matches | recreated |
+| `--force` | reuse | bypass read, overwrite | overwrite | reuse if key matches | recreated |
+| `--clean` | reuse | **delete + rebuild** | skip if exists | **deleted** | recreated |
+| `--clean --force` | reuse | **delete + rebuild** | overwrite | **deleted** | recreated |
+| `--stage <s>` | reuse | bypass | skip | preserved | recreated |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — invalidate the build cache (force full recompile)
+- `--clean` — invalidate the build cache **and** force a clean `src/` re-extraction
 - `--force` — bypass the output archive skip check (always produce a new archive)
-- `--clean --force` — "start completely from scratch": clear cache and always write a new archive
+- `--clean --force` — "start completely from scratch": clear cache, re-extract sources, and always write a new archive
+
+### Incremental builds
+
+By default, `src/` is preserved across builds when the **build key** has not
+changed. This allows plan authors to write lifecycle scripts that support
+incremental compilation (e.g. `make` without `make clean` first). The
+fetch/verify/extract steps are skipped entirely when `src/` is reused.
+
+When the build key changes — because the version, sources, or lifecycle scripts
+were modified — `src/` is automatically cleaned and sources are re-extracted.
+To force a clean re-extraction without changing the plan, use `--clean`.

@@ -270,9 +270,23 @@ impl Builder {
                 ensure_clean_dir(dir)?;
             }
         } else {
-            // Ensure clean build directories
-            for dir in [&src_dir, &pkg_dir, &log_dir] {
-                ensure_clean_dir(dir)?;
+            // Check if src/ can be reused: if the build key matches the
+            // previous build, skip re-extraction for an incremental build.
+            let key_file = build_root.join(".build_key");
+            let src_reusable = src_dir.exists() && key_file.exists()
+                && std::fs::read_to_string(&key_file)
+                    .map(|stored| stored.trim() == build_key)
+                    .unwrap_or(false);
+
+            if src_reusable {
+                debug!("Source tree unchanged (build key match) — reusing src/");
+                for dir in [&pkg_dir, &log_dir] {
+                    ensure_clean_dir(dir)?;
+                }
+            } else {
+                for dir in [&src_dir, &pkg_dir, &log_dir] {
+                    ensure_clean_dir(dir)?;
+                }
             }
         }
 
@@ -281,14 +295,21 @@ impl Builder {
         let files_dir = build_root.join("files");
 
         if stages.is_empty() {
-            // Fetch sources (remote downloads + local file copies to cache)
-            self.fetch(manifest, plan_dir)?;
+            if !src_dir.join(".extracted").exists() {
+                // Fetch sources (remote downloads + local file copies to cache)
+                self.fetch(manifest, plan_dir)?;
 
-            // Verify sources
-            self.verify(manifest)?;
+                // Verify sources
+                self.verify(manifest)?;
 
-            // Extract archives and copy non-archive files to files_dir
-            self.extract(manifest, &src_dir, &files_dir)?;
+                // Extract archives and copy non-archive files to files_dir
+                self.extract(manifest, &src_dir, &files_dir)?;
+
+                // Mark extraction complete so incremental builds can skip it
+                let _ = std::fs::write(src_dir.join(".extracted"), "");
+            } else {
+                debug!("Sources already extracted — skipping fetch/verify/extract");
+            }
         }
 
         if fetch_only {
@@ -482,6 +503,15 @@ impl Builder {
                 warn!("Failed to create build cache for {}: {}", manifest.plan.name, e);
             } else {
                 debug!("Saved build cache for {} at {}", manifest.plan.name, cache_file.display());
+            }
+        }
+
+        // Persist the build key so future runs can detect whether
+        // the source tree is still valid for an incremental build.
+        if !partial {
+            let key_file = build_root.join(".build_key");
+            if let Err(e) = std::fs::write(&key_file, &build_key) {
+                warn!("Failed to write build key: {}", e);
             }
         }
 
