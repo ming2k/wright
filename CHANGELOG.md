@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-08
+
+### Features
+- **Incremental builds**: the source tree (`src/`) is now preserved across builds when the build key is unchanged, skipping fetch/verify/extract. Plans that support incremental compilation (e.g. `make` without `make clean`) benefit from significantly faster rebuilds. Use `--clean` to force a full re-extraction.
+
+### Changes
+- Clarify the `compile: serialized` log message to `compile: one-at-a-time across dockyards` to avoid implying single-threaded compilation.
+
 ## [1.5.1] - 2026-03-08
 
 ### Changes
