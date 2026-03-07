@@ -10,23 +10,26 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
 use tracing::{debug, info};
 
-use super::{ResourceLimits, DockyardConfig, DockyardLevel, DockyardOutput, spawn_tee_reader};
+use super::{ResourceLimits, CapturedOutput, DockyardConfig, DockyardLevel, DockyardOutput, spawn_stream_reader};
 use crate::error::{Result, WrightError};
 
-/// Route subprocess I/O based on `verbose`. When verbose, output is echoed to
-/// stdout/stderr in real time; otherwise it is silently captured via a sink.
-fn make_tee<R: std::io::Read + Send + 'static>(
+/// Create a stream reader that captures output to a temp file, optionally
+/// echoing to the terminal. Returns a [`CapturedOutput`] with the tail in
+/// memory and the full content on disk.
+fn make_stream_capture<R: std::io::Read + Send + 'static>(
     source: R,
     verbose: bool,
     to_stdout: bool,
-) -> std::thread::JoinHandle<Vec<u8>> {
-    if verbose && to_stdout {
-        spawn_tee_reader(source, std::io::stdout())
+) -> std::thread::JoinHandle<CapturedOutput> {
+    let dest = tempfile::tempfile().expect("failed to create capture temp file");
+    let echo: Option<Box<dyn std::io::Write + Send>> = if verbose && to_stdout {
+        Some(Box::new(std::io::stdout()))
     } else if verbose {
-        spawn_tee_reader(source, std::io::stderr())
+        Some(Box::new(std::io::stderr()))
     } else {
-        spawn_tee_reader(source, std::io::sink())
-    }
+        None
+    };
+    spawn_stream_reader(source, echo, dest)
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -182,18 +185,15 @@ pub fn run_in_dockyard(
             .spawn()
             .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
+        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
+        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
-        let stdout_bytes = stdout_handle.join().unwrap_or_default();
-        let stderr_bytes = stderr_handle.join().unwrap_or_default();
-        return Ok(DockyardOutput {
-            status,
-            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
-        });
+        let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+        let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
+        let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
+        return Ok(DockyardOutput { status, stdout, stderr });
     }
 
     let real_uid = nix::unistd::getuid();
@@ -255,18 +255,15 @@ pub fn run_in_dockyard(
             .spawn()
             .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
         let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_tee(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle = make_tee(child.stderr.take().unwrap(), config.verbose, false);
+        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
+        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
         let status = child.wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog { done.store(true, Ordering::Release); }
-        let stdout_bytes = stdout_handle.join().unwrap_or_default();
-        let stderr_bytes = stderr_handle.join().unwrap_or_default();
-        return Ok(DockyardOutput {
-            status,
-            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
-        });
+        let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+        let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
+        let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
+        return Ok(DockyardOutput { status, stdout, stderr });
     }
 
     // Error pipe: child/grandchild write error messages, parent reads.
@@ -728,23 +725,20 @@ pub fn run_in_dockyard(
                 spawn_timeout_watchdog(child.as_raw() as u32, t, false)
             });
 
-            let stdout_handle = make_tee(out_file, config.verbose, true);
-            let stderr_handle = make_tee(err_file, config.verbose, false);
+            let stdout_handle = make_stream_capture(out_file, config.verbose, true);
+            let stderr_handle = make_stream_capture(err_file, config.verbose, false);
 
             let status = wait_for_child(child)?;
             if let Some(done) = watchdog { done.store(true, Ordering::Release); }
 
-            let stdout_bytes = stdout_handle.join().unwrap_or_default();
-            let stderr_bytes = stderr_handle.join().unwrap_or_default();
+            let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+            let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
+            let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
 
             cleanup_dockyard_dirs(config);
 
             debug!("Dockyard child exited with: {:?}", status);
-            Ok(DockyardOutput {
-                status,
-                stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
-                stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
-            })
+            Ok(DockyardOutput { status, stdout, stderr })
         }
         Err(e) => Err(WrightError::DockyardError(format!("fork: {e}"))),
     }

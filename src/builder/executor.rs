@@ -113,8 +113,8 @@ pub struct ExecutorOptions {
 }
 
 pub struct ExecutionResult {
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: crate::dockyard::CapturedOutput,
+    pub stderr: crate::dockyard::CapturedOutput,
     pub exit_code: i32,
 }
 

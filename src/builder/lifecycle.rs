@@ -225,7 +225,7 @@ impl<'a> LifecyclePipeline<'a> {
         };
 
         let t0 = std::time::Instant::now();
-        let result = executor::execute_script(
+        let mut result = executor::execute_script(
             executor,
             &stage.script,
             self.working_dir,
@@ -235,24 +235,33 @@ impl<'a> LifecyclePipeline<'a> {
         )?;
         let elapsed = t0.elapsed().as_secs_f64();
 
-        // Write logs — include the expanded script and working dir for easier debugging
+        // Write logs — stream from captured temp files to avoid holding
+        // full output in memory.
         let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
         let log_path = self.log_dir.join(format!("{}.log", stage_name));
-        let log_content = format!(
-            "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n=== Working dir: {} ===\n\n--- script ---\n{}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-            stage_name, result.exit_code, elapsed, self.working_dir.display(),
-            expanded_script.trim(), result.stdout, result.stderr
-        );
-        let _ = std::fs::write(&log_path, &log_content);
+        if let Ok(mut log_file) = std::fs::File::create(&log_path) {
+            use std::io::Write;
+            let _ = write!(
+                log_file,
+                "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n=== Working dir: {} ===\n\n--- script ---\n{}\n",
+                stage_name, result.exit_code, elapsed, self.working_dir.display(),
+                expanded_script.trim()
+            );
+            let _ = log_file.write_all(b"--- stdout ---\n");
+            let _ = std::io::copy(&mut result.stdout.file, &mut log_file);
+            let _ = log_file.write_all(b"\n--- stderr ---\n");
+            let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
+            let _ = log_file.write_all(b"\n");
+        }
 
         if result.exit_code != 0 {
             // Many build tools (meson, cmake, autoconf) write errors to stdout.
             // Show stderr if non-empty, otherwise fall back to the tail of stdout.
             let output_snippet = {
-                let relevant = if !result.stderr.trim().is_empty() {
-                    result.stderr.trim()
+                let relevant = if !result.stderr.tail.trim().is_empty() {
+                    result.stderr.tail.trim()
                 } else {
-                    result.stdout.trim()
+                    result.stdout.tail.trim()
                 };
                 // Limit to last 40 lines to keep the message readable.
                 let lines: Vec<&str> = relevant.lines().collect();

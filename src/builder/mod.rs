@@ -439,7 +439,7 @@ impl Builder {
                         "executor not found: {}", sub_pkg.executor
                     )))?;
 
-                let result = executor::execute_script(
+                let mut result = executor::execute_script(
                     sub_executor,
                     &sub_pkg.script,
                     &src_dir,
@@ -448,20 +448,26 @@ impl Builder {
                     &sub_options,
                 )?;
 
-                // Write log
+                // Write log — stream from captured temp files
                 let log_path = log_dir.join(format!("package-{}.log", sub_name));
-                let log_content = format!(
-                    "=== Sub-package: {} ===\n=== Exit code: {} ===\n\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-                    sub_name, result.exit_code, result.stdout, result.stderr
-                );
-                if let Err(e) = std::fs::write(&log_path, &log_content) {
-                    warn!("Failed to write build log {}: {}", log_path.display(), e);
+                if let Ok(mut log_file) = std::fs::File::create(&log_path) {
+                    use std::io::Write;
+                    let _ = write!(
+                        log_file,
+                        "=== Sub-package: {} ===\n=== Exit code: {} ===\n\n",
+                        sub_name, result.exit_code
+                    );
+                    let _ = log_file.write_all(b"--- stdout ---\n");
+                    let _ = std::io::copy(&mut result.stdout.file, &mut log_file);
+                    let _ = log_file.write_all(b"\n--- stderr ---\n");
+                    let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
+                    let _ = log_file.write_all(b"\n");
                 }
 
                 if result.exit_code != 0 {
                     return Err(WrightError::BuildError(format!(
                         "sub-package '{}' packaging stage failed with exit code {}\nstderr: {}",
-                        sub_name, result.exit_code, result.stderr
+                        sub_name, result.exit_code, result.stderr.tail
                     )));
                 }
 

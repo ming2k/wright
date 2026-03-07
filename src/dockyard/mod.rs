@@ -1,42 +1,73 @@
 pub mod native;
 
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use crate::error::Result;
 
+/// Captured subprocess output, streamed to a temporary file with only the
+/// tail kept in memory for error display.
+pub struct CapturedOutput {
+    /// Temporary file containing the full output, seeked to the beginning.
+    pub file: std::fs::File,
+    /// Last ~16 KB of output for error display without re-reading the file.
+    pub tail: String,
+}
+
 /// Captured output from a dockyard command execution.
 pub struct DockyardOutput {
     pub status: ExitStatus,
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: CapturedOutput,
+    pub stderr: CapturedOutput,
 }
 
-/// Spawn a thread that reads from `source` in 8 KB chunks, echoes each chunk
-/// to `echo_to` (for real-time terminal output), and accumulates the bytes.
-/// Returns the accumulated output when EOF is reached.
-pub fn spawn_tee_reader<R: Read + Send + 'static>(
+const TAIL_BYTES: u64 = 16384;
+
+/// Spawn a thread that reads from `source` in 8 KB chunks, streams to
+/// `dest` file, optionally echoes to the terminal, and keeps the last
+/// [`TAIL_BYTES`] for error display.  Returns a [`CapturedOutput`] with the
+/// file seeked to the beginning ready for the caller to read.
+pub fn spawn_stream_reader<R: Read + Send + 'static>(
     source: R,
-    mut echo_to: impl Write + Send + 'static,
-) -> std::thread::JoinHandle<Vec<u8>> {
+    mut echo_to: Option<Box<dyn Write + Send>>,
+    mut dest: std::fs::File,
+) -> std::thread::JoinHandle<CapturedOutput> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
-        let mut accumulated = Vec::new();
+        let mut total: u64 = 0;
         let mut source = source;
         loop {
             match source.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let _ = echo_to.write_all(&buf[..n]);
-                    let _ = echo_to.flush();
-                    accumulated.extend_from_slice(&buf[..n]);
+                    let _ = dest.write_all(&buf[..n]);
+                    if let Some(ref mut w) = echo_to {
+                        let _ = w.write_all(&buf[..n]);
+                        let _ = w.flush();
+                    }
+                    total += n as u64;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        accumulated
+
+        // Extract tail
+        let tail = if total > 0 {
+            let tail_start = total.saturating_sub(TAIL_BYTES);
+            let _ = dest.seek(std::io::SeekFrom::Start(tail_start));
+            let mut tail_buf = Vec::with_capacity((total - tail_start) as usize);
+            let _ = dest.read_to_end(&mut tail_buf);
+            String::from_utf8_lossy(&tail_buf).into_owned()
+        } else {
+            String::new()
+        };
+
+        // Seek to beginning so the caller can stream the full content
+        let _ = dest.seek(std::io::SeekFrom::Start(0));
+
+        CapturedOutput { file: dest, tail }
     })
 }
 
