@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::part::archive;
-use wright::part::manifest::{PartConfig, PlanManifest};
+use wright::plan::manifest::{FabricateConfig, PlanManifest};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -84,16 +84,16 @@ fn test_lint_nginx_fixture() {
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "nginx");
     assert_eq!(manifest.dependencies.runtime.len(), 3);
-    // Nginx uses multi-package mode with hooks/backup on the main sub-package
-    match manifest.package {
-        Some(PartConfig::Multi(ref pkgs)) => {
+    // Nginx uses fabricate metadata on the main output plus an extra doc output.
+    match manifest.fabricate {
+        Some(FabricateConfig::Multi(ref pkgs)) => {
             assert!(pkgs.contains_key("nginx"));
             assert!(pkgs.contains_key("nginx-doc"));
             let main = pkgs.get("nginx").unwrap();
             assert!(main.hooks.is_some());
             assert!(main.backup.is_some());
         }
-        _ => panic!("expected Multi package config for nginx"),
+        _ => panic!("expected Multi fabricate config for nginx"),
     }
 }
 

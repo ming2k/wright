@@ -109,7 +109,7 @@ The following **legacy paths are forbidden** — packages must not install files
 | `/home/`, `/root/` | User data — not for package files |
 | `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
 
-Wright enforces this layout automatically: after the `staging` lifecycle stage completes, every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
+Wright enforces this layout automatically: after the final output phase completes (`fabricate`, or `staging` for legacy plans with no fabricate stage), every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
 
 #### musl Compatibility Policy
 
@@ -331,11 +331,11 @@ strip = true            # Strip binaries (default: true)
 static = false          # Static linking (default: false)
 debug = false           # Preserve debug symbols (default: false)
 ccache = true           # Enable ccache if available (default: true)
-skip_fhs_check = false  # Skip FHS path validation after staging stage (default: false)
+skip_fhs_check = false  # Skip FHS path validation after the final output stage (default: false)
 
 # ---- Lifecycle definitions ----
 # Default pipeline order:
-#   fetch → verify → extract → prepare → configure → build → check → staging
+#   fetch → verify → extract → prepare → configure → build → check → staging → fabricate
 #
 # Each stage format:
 #   [lifecycle.<stage_name>]
@@ -392,8 +392,8 @@ install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 # ---- Package output declaration (under lifecycle) ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
-# Single-package mode (bare [lifecycle.part]):
-[lifecycle.part]
+# Single-package mode (bare [lifecycle.fabricate]):
+[lifecycle.fabricate]
 hooks.pre_install = "echo 'Preparing nginx...'"
 hooks.post_install = """
 # Create nginx user
@@ -411,11 +411,12 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-# ---- Multi-package mode (mutually exclusive with single-package) ----
-# Each sub-table under [lifecycle.part] declares a separate output package.
+# ---- Multi-package mode ----
+# The parent [lifecycle.fabricate] table describes the main output.
+# Each sub-table under it declares an additional output package.
 # Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
 #
-# [lifecycle.part.libfoo]
+# [lifecycle.fabricate.libfoo]
 # description = "libfoo shared library"
 # script = "install -Dm755 libfoo.so ${PART_DIR}/usr/lib/libfoo.so"
 # hooks.post_install = "ldconfig"
@@ -423,7 +424,7 @@ backup = [
 
 # ---- Custom lifecycle order (optional, overrides default) ----
 # [lifecycle_order]
-# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "check", "staging"]
+# stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "check", "staging", "fabricate"]
 ```
 
 ### 4.2 Variable Substitution Rules
@@ -594,7 +595,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `hooks` in `[lifecycle.part]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `hooks` in `[lifecycle.fabricate]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -603,7 +604,7 @@ bwrap \
 ### 7.1 Default Pipeline
 
 ```
-fetch → verify → extract → prepare → configure → build → check → staging
+fetch → verify → extract → prepare → configure → build → check → staging → fabricate
 ```
 
 ### 7.2 Stage Descriptions
@@ -617,7 +618,8 @@ fetch → verify → extract → prepare → configure → build → check → s
 | `configure` | User script | Yes | ./configure and similar configuration steps |
 | `build` | User script | Yes | Compilation (make, etc.) |
 | `check` | User script | Yes | Run tests (optional stage) |
-| `staging` | User script | Yes | make install to PKG_DIR |
+| `staging` | User script | Yes | make install into PART_DIR |
+| `fabricate` | User script | Yes | finalize the staged part before archive creation |
 
 ### 7.3 Hook System
 
@@ -658,7 +660,7 @@ Packages can override the default pipeline via `[lifecycle_order]`:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "staging"]
+stages = ["fetch", "verify", "extract", "prepare", "codegen", "configure", "compile", "staging", "fabricate"]
 ```
 
 Stages without a defined script are automatically skipped (except fetch/verify/extract, which are handled internally by the build tool).
@@ -810,7 +812,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 5.  fetch: Download source to cache, symlink to src/
 6.  verify: Validate SHA-256 checksums
 7.  extract: Unpack source archive into src/
-8.  For each user-defined stage (prepare → ... → staging):
+8.  For each user-defined stage (prepare → ... → staging → fabricate):
     a. Load executor definition
     b. Perform variable substitution on script content
     c. Generate bwrap command
@@ -1129,7 +1131,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- Package hooks (`hooks.post_install`, etc. in `[lifecycle.part]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`hooks.post_install`, etc. in `[lifecycle.fabricate]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode

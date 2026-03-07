@@ -5,7 +5,7 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::error::{WrightError, Result};
-use crate::part::manifest::PlanManifest;
+use crate::plan::manifest::PlanManifest;
 
 /// Metadata extracted from a .PARTINFO file
 #[derive(Debug, Clone)]
@@ -303,7 +303,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
 /// post_remove = "userdel nginx"
 /// ```
 fn generate_hooks_toml(
-    scripts: &crate::part::manifest::InstallScripts,
+    scripts: &crate::plan::manifest::InstallScripts,
 ) -> String {
     let has_any = scripts.pre_install.is_some()
         || scripts.post_install.is_some()

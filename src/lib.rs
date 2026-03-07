@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod plan;
 pub mod part;
 pub mod database;
 pub mod transaction;

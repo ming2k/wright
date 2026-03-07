@@ -7,7 +7,7 @@ use tracing_subscriber::EnvFilter;
 
 use wright::config::GlobalConfig;
 use wright::builder::orchestrator::{self, BuildOptions};
-use wright::part::manifest::PlanManifest;
+use wright::plan::manifest::PlanManifest;
 use wright::part::version;
 
 #[derive(Parser)]
@@ -46,7 +46,7 @@ enum Commands {
 
         /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
         /// Skips fetch/verify/extract — requires a previous full build.
-        /// Example: --stage check --stage staging
+        /// Example: --stage check --stage staging --stage fabricate
         #[arg(long)]
         stage: Vec<String>,
 

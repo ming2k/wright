@@ -7,7 +7,7 @@
 ### Changes
 - **Rename "container" to "kit"**: package groupings for `wright install @name` are now called "kits" to avoid confusion with Docker/OCI containers. Config field `containers_dir` → `kits_dir`, TOML syntax `[[container]]` → `[[kit]]`, default path `/var/lib/wright/containers/` → `/var/lib/wright/kits/`.
 - **Rename `hold_dir` to `plan_dir`** in builder internals for clarity.
-- **Rename internal package terminology to part**: core module paths and plan output syntax now use `part` terminology (`wright::part`, `PlanManifest`, `[lifecycle.part]`, `.PARTINFO`, `PART_*` variables), while older package-named syntax remains backward-compatible with deprecation warnings.
+- **Rename the plan output schema to fabricate**: plans now use `[lifecycle.fabricate]` and `[lifecycle.fabricate.<name>]` for final output metadata and split outputs, with `fabricate` also serving as the final lifecycle phase.
 - **Builds no longer default to `/tmp`**: the default `build_dir` is now `/var/tmp/wright-build`, and dockyard overlay/root scratch directories live under the active build root instead of hardcoded `/tmp`.
 
 ### Fixes
@@ -49,7 +49,7 @@
 ## [1.3.0] - 2026-03-04
 
 ### Breaking Changes
-- `[lifecycle.package]` (file install stage) renamed to `[lifecycle.staging]`. The default pipeline is now: `fetch → verify → extract → prepare → configure → compile → check → staging`.
+- `[lifecycle.package]` (file install stage) renamed to `[lifecycle.staging]`. The default pipeline is now: `fetch → verify → extract → prepare → configure → compile → check → staging → fabricate`.
 - `[split.<name>]` replaced by `[lifecycle.package.<name>]` (multi-package mode). All sub-packages including the main package must be explicitly declared.
 - `[install_scripts]` and `[backup]` top-level sections replaced by `[lifecycle.package]` with `hooks.*` fields and `backup = [...]` (single-package mode), or per-sub-package fields in multi-package mode.
 - `post_package` lifecycle stage removed.

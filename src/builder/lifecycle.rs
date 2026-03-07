@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 
 use crate::error::{WrightError, Result};
-use crate::part::manifest::{LifecycleStage, PlanManifest};
+use crate::plan::manifest::{LifecycleStage, PlanManifest};
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::dockyard::ResourceLimits;
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
-    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging",
+    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging", "fabricate",
 ];
 
 /// Built-in stages handled by the build tool itself (not user scripts)

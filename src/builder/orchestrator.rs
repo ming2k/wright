@@ -13,7 +13,7 @@ use crate::builder::Builder;
 use crate::config::{GlobalConfig, AssembliesConfig};
 use crate::database::Database;
 use crate::part::archive;
-use crate::part::manifest::{PartConfig, PhaseDependencies, PlanManifest};
+use crate::plan::manifest::{FabricateConfig, PhaseDependencies, PlanManifest};
 use crate::part::version;
 use crate::repo::source::SimpleResolver;
 use crate::part::fhs;
@@ -869,7 +869,7 @@ fn build_dep_map(
     for (plan_name, path) in all_plans {
         pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
         if let Ok(m) = PlanManifest::from_file(path) {
-            if let Some(PartConfig::Multi(ref pkgs)) = m.package {
+            if let Some(FabricateConfig::Multi(ref pkgs)) = m.fabricate {
                 for sub_name in pkgs.keys() {
                     if sub_name != &m.plan.name {
                         pkg_to_plan.insert(sub_name.clone(), plan_name.clone());
@@ -1075,7 +1075,7 @@ fn execute_builds(
                                     }
 
                                     // 2. Install all sub-packages
-                                    if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
+                                    if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
                                         for (sub_name, sub_pkg) in pkgs {
                                             if sub_name == &manifest.plan.name { continue; }
                                             let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
@@ -1239,7 +1239,7 @@ fn build_one(
 
     if opts.lint {
         println!("valid plan: {} {}-{}", manifest.plan.name, manifest.plan.version, manifest.plan.release);
-        if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
+        if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for sub_name in pkgs.keys() {
                 if sub_name != &manifest.plan.name {
                     println!("  sub-package: {}", sub_name);
@@ -1265,8 +1265,8 @@ fn build_one(
     if !opts.force && opts.stages.is_empty() && !opts.fetch_only {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
-        let all_exist = existing.exists() && match manifest.package {
-            Some(PartConfig::Multi(ref pkgs)) => pkgs.iter()
+        let all_exist = existing.exists() && match manifest.fabricate {
+            Some(FabricateConfig::Multi(ref pkgs)) => pkgs.iter()
                 .filter(|(name, _)| *name != &manifest.plan.name)
                 .all(|(sub_name, sub_pkg)| {
                     let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
@@ -1328,9 +1328,24 @@ fn build_one(
         Some(compile_lock),
     )?;
 
-    // Skip archive creation when specific stages are requested and none of them produce output
-    let produces_output = opts.stages.is_empty()
-        || opts.stages.iter().any(|s| s == "staging" || s == "post_staging");
+    // Full builds always end in archive creation. For explicit stage runs, only
+    // produce output when the selection reaches the final fabricate phase.
+    // Plans with no fabricate stage or fabricate output metadata still treat
+    // staging as the final output-producing step for compatibility.
+    let has_fabricate_stage = manifest.fabricate.is_some()
+        || manifest.lifecycle.contains_key("fabricate")
+        || manifest.lifecycle.contains_key("pre_fabricate")
+        || manifest.lifecycle.contains_key("post_fabricate");
+    let explicit_output_stage = opts
+        .stages
+        .iter()
+        .any(|s| s == "fabricate" || s == "post_fabricate");
+    let legacy_output_stage = !has_fabricate_stage
+        && opts
+            .stages
+            .iter()
+            .any(|s| s == "staging" || s == "post_staging");
+    let produces_output = opts.stages.is_empty() || explicit_output_stage || legacy_output_stage;
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
@@ -1338,7 +1353,7 @@ fn build_one(
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 
-        if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
+        if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
                 if sub_name == &manifest.plan.name { continue; }
                 let sub_pkg_dir = result.split_pkg_dirs.get(sub_name)

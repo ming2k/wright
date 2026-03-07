@@ -90,7 +90,7 @@ make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
-[lifecycle.part.nginx]
+[lifecycle.fabricate]
 hooks.pre_install = """
 echo "Preparing nginx installation..."
 """
@@ -108,7 +108,7 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-[lifecycle.part.nginx-doc]
+[lifecycle.fabricate.nginx-doc]
 description = "Nginx documentation files"
 script = """
 cd nginx-${PART_VERSION}

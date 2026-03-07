@@ -54,6 +54,10 @@ dockyard = "none"
 script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 ```
 
+`staging` installs files into `${PART_DIR}`. The default pipeline then runs a
+final `fabricate` stage before Wright validates and archives the resulting
+part; most simple plans can leave `fabricate` undefined.
+
 Build, install, verify, remove:
 
 ```

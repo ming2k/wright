@@ -185,7 +185,7 @@ impl SimpleResolver {
             for entry in walkdir::WalkDir::new(root) {
                 let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
                 if entry.file_name() == "plan.toml" {
-                    if let Ok(manifest) = crate::part::manifest::PlanManifest::from_file(entry.path()) {
+                    if let Ok(manifest) = crate::plan::manifest::PlanManifest::from_file(entry.path()) {
                         map.insert(manifest.plan.name, entry.path().to_path_buf());
                     }
                 }

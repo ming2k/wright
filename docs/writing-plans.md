@@ -203,7 +203,7 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the `staging` stage. Use only for packages with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`, or legacy `staging`-only plans). Use only for packages with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -248,7 +248,7 @@ Override the default pipeline order:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
+stages = ["fetch", "verify", "extract", "configure", "compile", "staging", "fabricate"]
 ```
 
 ### `[mvp]` — MVP Phase Overrides
@@ -276,14 +276,19 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[lifecycle.part]` — Package Output Declaration
+### `[lifecycle.fabricate]` — Final Output Phase
 
-The `[lifecycle.part]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section under `[lifecycle]`.
+`[lifecycle.fabricate]` is the final output phase container. It can do three
+things at once:
+
+- define the final `fabricate` stage script with the normal stage fields (`executor`, `dockyard`, `env`, `script`)
+- declare hooks and `backup` for the main output
+- contain `[lifecycle.fabricate.<name>]` subtables for extra outputs
 
 **Single-package mode** (no sub-packages):
 
 ```toml
-[lifecycle.part]
+[lifecycle.fabricate]
 hooks.pre_install = "echo 'Preparing installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -291,15 +296,15 @@ hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
-**Multi-package mode** (all packages explicitly declared, mutually exclusive with single-package mode):
+**Multi-package mode** (main output in the parent table, extra outputs in subtables):
 
 ```toml
-[lifecycle.part.nginx]
+[lifecycle.fabricate]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[lifecycle.part."nginx-doc"]
+[lifecycle.fabricate."nginx-doc"]
 description = "Nginx documentation"
 script = "..."
 ```
@@ -340,9 +345,10 @@ The default pipeline runs these stages in order:
 | `configure`    | user     | Run configure scripts                    |
 | `compile`      | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
-| `staging`      | user     | Install files into `${PART_DIR}`          |
+| `staging`      | user     | Install files into `${PART_DIR}`         |
+| `fabricate`    | user     | Finalize the staged part before archiving |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[lifecycle.part]` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.part]`](#lifecyclepackage--package-output-declaration)).
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Most plans install files during `staging` and use `[lifecycle.fabricate]` only for hooks/backup, but the same table can also define a final post-staging script before archive creation.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -739,7 +745,7 @@ cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.part]
+[lifecycle.fabricate]
 hooks.pre_install = "echo 'Preparing nginx installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -751,7 +757,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
-In multi-package mode, all packages are declared as sub-tables of `[lifecycle.part]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.part]`).
+In multi-package mode, the main output still uses the parent `[lifecycle.fabricate]` table, and extra outputs are declared as sub-tables of `[lifecycle.fabricate]`.
 
 ```toml
 [plan]
@@ -771,25 +777,25 @@ cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.part.gcc]
+[lifecycle.fabricate]
 hooks.post_install = "..."
 
-[lifecycle.part."libstdc++"]
+[lifecycle.fabricate."libstdc++"]
 description = "GNU C++ standard library"
 script = "install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so"
 hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.part."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.fabricate."libstdc++"]`).
 
-Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.part.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
+Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.fabricate.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
 
 ```toml
 [lifecycle.staging]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PART_DIR} install"
 
-[lifecycle.part."libfoo-dev"]
+[lifecycle.fabricate."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
 install -Dm644 ${BUILD_DIR}/include/* ${PART_DIR}/usr/include/libfoo/
@@ -807,7 +813,7 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[lifecycle.part.linux-firmware-amd]
+[lifecycle.fabricate.linux-firmware-amd]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
@@ -817,7 +823,7 @@ In this pattern the parent package itself may contain no files — it exists onl
 For a `-doc` sub-package that overrides the architecture:
 
 ```toml
-[lifecycle.part.mypackage-doc]
+[lifecycle.fabricate.mypackage-doc]
 description = "Documentation for mypackage"
 arch = "any"
 script = """
@@ -831,7 +837,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.part."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.fabricate."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |

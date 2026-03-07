@@ -10,7 +10,7 @@ use tracing::{info, warn, debug};
 
 use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
-use crate::part::manifest::{PlanManifest, PartConfig};
+use crate::plan::manifest::{PlanManifest, FabricateConfig};
 use crate::repo::source::sanitize_cache_filename;
 use crate::dockyard::ResourceLimits;
 use crate::util::{checksum, download, compress};
@@ -239,7 +239,7 @@ impl Builder {
             
             // Re-detect sub-package directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
-            if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
+            if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
                 for sub_name in pkgs.keys() {
                     if sub_name == &manifest.plan.name { continue; }
                     let sub_dir = build_root.join(format!("pkg-{}", sub_name));
@@ -376,7 +376,7 @@ impl Builder {
 
         // Run sub-package stages (multi-package mode)
         let mut split_pkg_dirs = std::collections::HashMap::new();
-        if let Some(PartConfig::Multi(ref packages)) = manifest.package {
+        if let Some(FabricateConfig::Multi(ref packages)) = manifest.fabricate {
             for (sub_name, sub_pkg) in packages {
                 // Main package uses PKG_DIR directly, skip
                 if sub_name == &manifest.plan.name { continue; }

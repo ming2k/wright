@@ -1394,7 +1394,7 @@ mod tests {
     fn build_hello_archive() -> PathBuf {
         use crate::builder::Builder;
         use crate::config::GlobalConfig;
-        use crate::part::manifest::PlanManifest;
+        use crate::plan::manifest::PlanManifest;
 
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/hello/plan.toml");

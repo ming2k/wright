@@ -115,8 +115,8 @@ run specific stages against the existing build tree:
 # Full first build (extracts, configures, compiles, packages)
 wbuild run mypkg
 
-# Edit lifecycle.staging in plan.toml, then re-run only staging:
-wbuild run mypkg --stage staging
+# Edit lifecycle.staging in plan.toml, then re-run the output phases:
+wbuild run mypkg --stage staging --stage fabricate
 ```
 
 To iterate on a subset of stages and inspect the result:
@@ -125,16 +125,16 @@ To iterate on a subset of stages and inspect the result:
 wbuild run mypkg --stage configure
 # Inspect $SRC_DIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
 wbuild run mypkg --stage compile
-wbuild run mypkg --stage staging
+wbuild run mypkg --stage staging --stage fabricate
 
-# Or run compile and staging together in one command:
-wbuild run mypkg --stage compile --stage staging
+# Or run compile plus the output phases together in one command:
+wbuild run mypkg --stage compile --stage staging --stage fabricate
 ```
 
 To skip the `check` stage (e.g. tests are slow or broken upstream):
 
 ```bash
-wbuild run mypkg --stage prepare --stage configure --stage compile --stage staging
+wbuild run mypkg --stage prepare --stage configure --stage compile --stage staging --stage fabricate
 ```
 
 Or more concisely, run the full pipeline but skip `check` by doing a full build
@@ -142,7 +142,7 @@ and using `--stage` to re-run only the stages you need after a prior full
 configure+compile:
 
 ```bash
-wbuild run mypkg --stage compile --stage staging
+wbuild run mypkg --stage compile --stage staging --stage fabricate
 ```
 
 ---
@@ -162,7 +162,7 @@ release = 1
 [lifecycle.staging]
 script = "make DESTDIR=$PART_DIR install"
 
-[lifecycle.part.zlib-devel]
+[lifecycle.fabricate.zlib-devel]
 description = "Development files for zlib"
 script = """
 install -Dm644 ${BUILD_DIR}/zlib.h ${PART_DIR}/usr/include/zlib.h
@@ -172,7 +172,7 @@ install -Dm644 ${BUILD_DIR}/zlib.pc ${PART_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-Each sub-package declared via `[lifecycle.part.<name>]` produces its own
+Each sub-package declared via `[lifecycle.fabricate.<name>]` produces its own
 archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
 and `dependencies`.
 

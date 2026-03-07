@@ -141,9 +141,10 @@ produce a broken archive that a later full pass would have to overwrite anyway.
 
 ## FHS Validation
 
-After the `staging` stage completes,
-Wright validates every file and symlink in `$PART_DIR` against the distribution's
-FHS whitelist before creating the archive. This catches silent packaging mistakes
+After the `fabricate` stage completes (or after `staging` for legacy plans that
+do not define any fabricate hook or stage), Wright validates every file and
+symlink in `$PART_DIR` against the distribution's FHS whitelist before creating
+the archive. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 
 ```
@@ -186,9 +187,10 @@ consulted. Use `--force` to override this and rebuild regardless.
 
 ### What the archive contains
 
-The archive is created from the staging root (`pkg/`) and records the full
-package metadata (name, version, dependencies, file list) for the installer.
-Sub-packages each get their own archive produced by their `script`.
+The archive is created from the staged root (`pkg/`) after the final
+`fabricate` phase and records the full package metadata (name, version,
+dependencies, file list) for the installer. Sub-packages each get their own
+archive produced by their `script`.
 
 ## Flag Quick Reference
 

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::Database;
+use wright::plan::manifest::PlanManifest;
 use wright::part::archive;
-use wright::part::manifest::PlanManifest;
 use wright::transaction;
 
 fn fixture_path(name: &str) -> PathBuf {
