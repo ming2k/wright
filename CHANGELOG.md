@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-03-08
+
+### Performance
+- **Streaming output capture**: build output is now streamed to temp files instead of accumulated in memory. Log files are assembled via `io::copy`. Reduces peak memory usage and pipe backpressure during large compilations.
+
 ## [1.5.2] - 2026-03-08
 
 ### Features
