@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.5.0] - 2026-03-08
+## [1.5.1] - 2026-03-08
 
 ### Changes
 - **Rename "container" to "kit"**: package groupings for `wright install @name` are now called "kits" to avoid confusion with Docker/OCI containers. Config field `containers_dir` → `kits_dir`, TOML syntax `[[container]]` → `[[kit]]`, default path `/var/lib/wright/containers/` → `/var/lib/wright/kits/`.
