@@ -50,29 +50,44 @@ multiple groups in one command (`wbuild run @core @devel`, `wright install @base
 and overlapping members are simply deduplicated.
 
 Assembly definitions are loaded from all `*.toml` files in `assemblies_dir`
-(default: `/var/lib/wright/assemblies/`). Each file defines one assembly; the
-filename (minus `.toml`) is the assembly name.
+(default: `/var/lib/wright/assemblies/`). Each file can contain multiple
+assemblies using `[[assembly]]` array-of-tables syntax. The filename groups
+related assemblies logically.
 
 ```toml
 # /var/lib/wright/assemblies/qemu.toml
-description = "Minimal headless QEMU system emulator stack."
-plans = ["pkgconf", "ninja", "meson", "libffi", "glib", "zlib", "pixman", "qemu"]
+[[assembly]]
+name = "qemu-base"
+description = "Core QEMU system emulator package."
+plans = ["qemu"]
+
+[[assembly]]
+name = "qemu-firmware"
+description = "Firmware set commonly used with QEMU PC guests."
+plans = ["seabios"]
+
+[[assembly]]
+name = "qemu-network"
+description = "User-mode networking support for QEMU."
+plans = ["libslirp"]
 ```
 
 ### containers (package groups)
 
 Container definitions are loaded from all `*.toml` files in `containers_dir`
-(default: `/var/lib/wright/containers/`). Each file defines one container; the
-filename (minus `.toml`) is the container name.
+(default: `/var/lib/wright/containers/`). Each file can contain multiple
+containers using `[[container]]` array-of-tables syntax, consistent with
+assemblies and `[[source]]`.
 
 ```toml
 # /var/lib/wright/containers/base.toml
+[[container]]
+name = "base"
 description = "Base system packages"
 packages = ["glibc", "coreutils", "bash", "libgcc", "libstdc++"]
-```
 
-```toml
-# /var/lib/wright/containers/devel.toml
+[[container]]
+name = "devel"
 description = "Development tools"
 packages = ["gcc", "binutils", "make"]
 includes = ["base"]   # inherit all packages from @base

@@ -167,7 +167,7 @@
 - Stage-level exec (`wbuild run <pkg> --stage <stage>`) for targeted rebuilds
 - Resource limits on build processes to prevent runaway builds
 - SHA-256 checksum verification for downloaded sources
-- Archive support: `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`
+- Archive support: `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.zip`
 - Symlink-aware tar packaging (archives symlinks as symlinks, not followed)
 - Special file handling in archives (FIFO, char/block devices)
 - Progress indicators for downloads and package operations

@@ -91,7 +91,14 @@ pub struct AssembliesConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct AssemblyFile {
+    #[serde(default)]
+    assembly: Vec<Assembly>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Assembly {
+    pub name: String,
     pub description: Option<String>,
     #[serde(default)]
     pub plans: Vec<String>,
@@ -106,7 +113,14 @@ pub struct ContainersConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+struct ContainerFile {
+    #[serde(default)]
+    container: Vec<Container>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Container {
+    pub name: String,
     pub description: Option<String>,
     #[serde(default)]
     pub packages: Vec<String>,
@@ -313,19 +327,14 @@ impl AssembliesConfig {
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
                 })?;
-                let name = path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| WrightError::ConfigError(
-                        format!("invalid assembly filename: {}", path.display())
-                    ))?
-                    .to_string();
-                let assembly: Assembly = toml::from_str(&content)?;
-                config.assemblies.insert(name, assembly);
+                let file: AssemblyFile = toml::from_str(&content)?;
+                for assembly in file.assembly {
+                    config.assemblies.insert(assembly.name.clone(), assembly);
+                }
             }
         }
         Ok(config)
     }
-
 }
 
 impl ContainersConfig {
@@ -339,17 +348,13 @@ impl ContainersConfig {
             let entry = entry.map_err(WrightError::IoError)?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                let name = path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| WrightError::ConfigError(
-                        format!("invalid container filename: {}", path.display())
-                    ))?
-                    .to_string();
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
                 })?;
-                let container: Container = toml::from_str(&content)?;
-                config.containers.insert(name, container);
+                let file: ContainerFile = toml::from_str(&content)?;
+                for container in file.container {
+                    config.containers.insert(container.name.clone(), container);
+                }
             }
         }
         Ok(config)

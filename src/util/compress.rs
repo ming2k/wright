@@ -175,7 +175,7 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Generic extraction function that supports .tar.gz, .tar.xz, and .tar.zst
+/// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, and .zip
 pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     let filename = archive_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
     
@@ -187,6 +187,8 @@ pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         extract_tar_xz(archive_path, dest_dir)
     } else if filename.ends_with(".tar.bz2") {
         extract_tar_bz2(archive_path, dest_dir)
+    } else if filename.ends_with(".zip") {
+        extract_zip(archive_path, dest_dir)
     } else {
         Err(WrightError::ArchiveError(format!("unsupported archive format: {}", filename)))
     }
@@ -216,6 +218,72 @@ pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     let decoder = XzDecoder::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
+    Ok(())
+}
+
+pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+    let file = std::fs::File::open(archive_path).map_err(|e| {
+        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+    })?;
+
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+        WrightError::ArchiveError(format!("failed to read zip archive: {}", e))
+    })?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| {
+            WrightError::ArchiveError(format!("failed to read zip entry: {}", e))
+        })?;
+
+        let raw_path = match entry.enclosed_name() {
+            Some(p) => p.to_owned(),
+            None => {
+                warn!("Skipping unsafe zip entry: {}", entry.name());
+                continue;
+            }
+        };
+
+        if !is_path_safe(&raw_path) {
+            return Err(WrightError::ArchiveError(format!(
+                "unsafe path in zip archive: {}",
+                raw_path.display()
+            )));
+        }
+
+        let out_path = dest_dir.join(&raw_path);
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path).map_err(|e| {
+                WrightError::ArchiveError(format!("failed to create directory {}: {}", out_path.display(), e))
+            })?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    WrightError::ArchiveError(format!("failed to create parent directory {}: {}", parent.display(), e))
+                })?;
+            }
+
+            let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
+                WrightError::ArchiveError(format!("failed to create file {}: {}", out_path.display(), e))
+            })?;
+
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| {
+                WrightError::ArchiveError(format!("failed to extract {}: {}", raw_path.display(), e))
+            })?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(mode) = entry.unix_mode() {
+                    let _ = std::fs::set_permissions(
+                        &out_path,
+                        std::fs::Permissions::from_mode(mode),
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

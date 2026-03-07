@@ -73,6 +73,7 @@ fn is_archive(filename: &str) -> bool {
         || filename.ends_with(".tar.xz")
         || filename.ends_with(".tar.bz2")
         || filename.ends_with(".tar.zst")
+        || filename.ends_with(".zip")
 }
 
 /// Remove a directory if it exists (logs a warning on failure), then recreate it.
