@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-03-07
+
+### Features
+- Built-in `.zip` archive extraction using the pure-Rust `zip` crate — no external `unzip` tool required. Includes path traversal protection and Unix permission preservation.
+
 ## [1.4.0] - 2026-03-06
 
 ### Features
