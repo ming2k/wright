@@ -2,12 +2,16 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-08
+
 ### Changes
 - **Rename "container" to "kit"**: package groupings for `wright install @name` are now called "kits" to avoid confusion with Docker/OCI containers. Config field `containers_dir` → `kits_dir`, TOML syntax `[[container]]` → `[[kit]]`, default path `/var/lib/wright/containers/` → `/var/lib/wright/kits/`.
 - **Rename `hold_dir` to `plan_dir`** in builder internals for clarity.
+- **Rename internal package terminology to part**: core module paths and plan output syntax now use `part` terminology (`wright::part`, `PlanManifest`, `[lifecycle.part]`, `.PARTINFO`, `PART_*` variables), while older package-named syntax remains backward-compatible with deprecation warnings.
+- **Builds no longer default to `/tmp`**: the default `build_dir` is now `/var/tmp/wright-build`, and dockyard overlay/root scratch directories live under the active build root instead of hardcoded `/tmp`.
 
 ### Fixes
-- Dockyard temporary directories (`/tmp/wright-overlay-*`, `/tmp/.wright-dockyard-root-*`) are now cleaned up after each build, preventing stale accumulation in `/tmp`.
+- Dockyard temporary directories are cleaned up from the build root after each build, preventing stale accumulation in global `/tmp`.
 
 ## [1.4.1] - 2026-03-07
 
