@@ -37,15 +37,15 @@ sources are ranked by the `priority` field (higher number = preferred).
 ### assembly definitions
 
 Assemblies group **plans** for batch building with `wbuild run @name`.
-Containers group **packages** for batch installation with `wright install @name`.
+Kits group **packages** for batch installation with `wright install @name`.
 
 Both are **non-dependent, combinatory groupings** — membership in an assembly or
-container implies no dependency relationship between the items. The items are
-independent units that happen to be bundled together for convenience (like cargo
-containers on a ship). Actual dependency resolution is handled separately by the
-build system and package manager.
+kit implies no dependency relationship between the items. The items are
+independent units that happen to be bundled together for convenience (like a
+kit of parts for a build). Actual dependency resolution is handled separately
+by the build system and package manager.
 
-This means assemblies and containers are freely composable: you can combine
+This means assemblies and kits are freely composable: you can combine
 multiple groups in one command (`wbuild run @core @devel`, `wright install @base @gui`),
 and overlapping members are simply deduplicated.
 
@@ -72,21 +72,21 @@ description = "User-mode networking support for QEMU."
 plans = ["libslirp"]
 ```
 
-### containers (package groups)
+### kits (package groups)
 
-Container definitions are loaded from all `*.toml` files in `containers_dir`
-(default: `/var/lib/wright/containers/`). Each file can contain multiple
-containers using `[[container]]` array-of-tables syntax, consistent with
+Kit definitions are loaded from all `*.toml` files in `kits_dir`
+(default: `/var/lib/wright/kits/`). Each file can contain multiple
+kits using `[[kit]]` array-of-tables syntax, consistent with
 assemblies and `[[source]]`.
 
 ```toml
-# /var/lib/wright/containers/base.toml
-[[container]]
+# /var/lib/wright/kits/base.toml
+[[kit]]
 name = "base"
 description = "Base system packages"
 packages = ["glibc", "coreutils", "bash", "libgcc", "libstdc++"]
 
-[[container]]
+[[kit]]
 name = "devel"
 description = "Development tools"
 packages = ["gcc", "binutils", "make"]
@@ -131,10 +131,10 @@ db_path = "/var/lib/wright/db/packages.db" # Installed package database
 log_dir = "/var/log/wright"               # Operation logs (build logs are under build_dir/<name>-<version>/log)
 executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
 assemblies_dir = "/var/lib/wright/assemblies" # Assembly definitions (*.toml)
-containers_dir = "/var/lib/wright/containers" # Container (package group) definitions (*.toml)
+kits_dir = "/var/lib/wright/kits"             # Kit (package group) definitions (*.toml)
 
 [build]
-build_dir = "/tmp/wright-build"           # Build working directory
+build_dir = "/var/tmp/wright-build"       # Build working directory
 default_dockyard = "strict"             # Default dockyard level: none / relaxed / strict
 dockyards = 0                           # Max concurrent dockyards (0 = auto = available_cpus - 4, minimum 1)
 # nproc_per_dockyard = 4               # Fixed CPU count per dockyard (unset = dynamic share)
@@ -164,13 +164,13 @@ retry_count = 3                         # Download retry attempts
 | `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |
 | `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
 | `assemblies_dir` | path | `/var/lib/wright/assemblies` | Assembly definition files (`*.toml`) |
-| `containers_dir` | path | `/var/lib/wright/containers` | Container (package group) definition files (`*.toml`) |
+| `kits_dir` | path | `/var/lib/wright/kits` | Kit (package group) definition files (`*.toml`) |
 
 ### `[build]` section
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `build_dir` | path | `/tmp/wright-build` | Working directory for builds (tmpfs recommended) |
+| `build_dir` | path | `/var/tmp/wright-build` | Working directory for builds. Prefer a large persistent filesystem over `/tmp`. |
 | `default_dockyard` | string | `"strict"` | Dockyard isolation level when not specified per-stage (`none` / `relaxed` / `strict`) |
 | `dockyards` | integer | `0` | Max concurrent dockyard processes. `0` = auto (available_cpus − 4, minimum 1). |
 | `nproc_per_dockyard` | integer | — | Fixed CPU count per dockyard. Unset = dynamic (`total_cpus / active_dockyards`). |

@@ -123,36 +123,36 @@ gcc (source)
 
 ```toml
 # gcc/plan.toml multi-package example
-[lifecycle.package."libstdc++"]
+[lifecycle.part."libstdc++"]
 description = "GNU C++ standard library runtime"
-script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PKG_DIR}/usr/lib/"
+script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PART_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 
-[lifecycle.package."libstdc++".dependencies]
+[lifecycle.part."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.libgcc]
+[lifecycle.part.libgcc]
 description = "GCC low-level runtime library"
-script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PKG_DIR}/usr/lib/"
+script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.package.libgomp]
+[lifecycle.part.libgomp]
 description = "GNU OpenMP runtime"
-script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PKG_DIR}/usr/lib/"
+script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.package.libgomp.dependencies]
+[lifecycle.part.libgomp.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.libatomic]
+[lifecycle.part.libatomic]
 description = "GNU atomic operations library"
-script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PKG_DIR}/usr/lib/"
+script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.package.libatomic.dependencies]
+[lifecycle.part.libatomic.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.package.doc]
+[lifecycle.part.doc]
 description = "GCC documentation"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
+install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/gcc/
 """
 ```
 
@@ -180,21 +180,21 @@ linux-firmware (source, ~800MB+)
 
 ```toml
 # linux-firmware/plan.toml multi-package example
-[lifecycle.package.amdgpu]
+[lifecycle.part.amdgpu]
 description = "AMD GPU firmware"
-script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PKG_DIR}/usr/lib/firmware/amdgpu/"
+script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PART_DIR}/usr/lib/firmware/amdgpu/"
 
-[lifecycle.package.iwlwifi]
+[lifecycle.part.iwlwifi]
 description = "Intel wireless firmware"
-script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PKG_DIR}/usr/lib/firmware/"
+script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PART_DIR}/usr/lib/firmware/"
 
-[lifecycle.package.realtek]
+[lifecycle.part.realtek]
 description = "Realtek firmware"
 script = """
-install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PKG_DIR}/usr/lib/firmware/rtl_nic/
-install -Dm644 ${BUILD_DIR}/rtlwifi/* ${PKG_DIR}/usr/lib/firmware/rtlwifi/
-install -Dm644 ${BUILD_DIR}/rtw88/* ${PKG_DIR}/usr/lib/firmware/rtw88/
-install -Dm644 ${BUILD_DIR}/rtw89/* ${PKG_DIR}/usr/lib/firmware/rtw89/
+install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PART_DIR}/usr/lib/firmware/rtl_nic/
+install -Dm644 ${BUILD_DIR}/rtlwifi/* ${PART_DIR}/usr/lib/firmware/rtlwifi/
+install -Dm644 ${BUILD_DIR}/rtw88/* ${PART_DIR}/usr/lib/firmware/rtw88/
+install -Dm644 ${BUILD_DIR}/rtw89/* ${PART_DIR}/usr/lib/firmware/rtw89/
 """
 ```
 
@@ -238,20 +238,20 @@ However, for Wright's target users (personal or small team maintained custom dis
 
 ### 2.6 Multi-Package Practice
 
-Use `[lifecycle.package.<name>]` sub-tables in `plan.toml` to define sub-packages:
+Use `[lifecycle.part.<name>]` sub-tables in `plan.toml` to define sub-packages:
 
 ```toml
 # Example: Splitting large documentation only
-[lifecycle.package.doc]
+[lifecycle.part.doc]
 description = "GCC documentation"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/gcc/
+install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/gcc/
 """
 
 # Example: Library and daemon split
-[lifecycle.package.libs]
+[lifecycle.part.libs]
 description = "D-Bus shared libraries"
-script = "install -Dm755 ${BUILD_DIR}/libdbus-1.so* ${PKG_DIR}/usr/lib/"
+script = "install -Dm755 ${BUILD_DIR}/libdbus-1.so* ${PART_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 ```
 
@@ -355,10 +355,10 @@ ln -s /etc/sv/nginx /var/service/
 
 ### 4.4 Configuration File Protection
 
-Declare configuration files to be protected in the `backup` field of `[lifecycle.package]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
+Declare configuration files to be protected in the `backup` field of `[lifecycle.part]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
 
 ```toml
-[lifecycle.package]
+[lifecycle.part]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 

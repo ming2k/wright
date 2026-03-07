@@ -41,7 +41,7 @@ src/
 ## Data Flow: Build (wbuild)
 
 ```
-plan.toml → PackageManifest
+plan.toml → PlanManifest
   → wbuild run
       → resolve targets
       → expand missing deps (Upward, build ops only)
@@ -69,7 +69,7 @@ See [dependencies.md](dependencies.md) for the conceptual model and [cli-referen
 
 ```
 .wright.tar.zst → transaction::install_package()
-  → parse .PKGINFO → handle replaces (auto-uninstall) → check conflicts
+  → parse .PARTINFO → handle replaces (auto-uninstall) → check conflicts
   → BEGIN TRANSACTION → insert files → record shadows (ownership overlaps)
   → copy files to root → COMMIT
 

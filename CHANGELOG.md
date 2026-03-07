@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changes
+- **Rename "container" to "kit"**: package groupings for `wright install @name` are now called "kits" to avoid confusion with Docker/OCI containers. Config field `containers_dir` → `kits_dir`, TOML syntax `[[container]]` → `[[kit]]`, default path `/var/lib/wright/containers/` → `/var/lib/wright/kits/`.
+- **Rename `hold_dir` to `plan_dir`** in builder internals for clarity.
+
+### Fixes
+- Dockyard temporary directories (`/tmp/wright-overlay-*`, `/tmp/.wright-dockyard-root-*`) are now cleaned up after each build, preventing stale accumulation in `/tmp`.
+
 ## [1.4.1] - 2026-03-07
 
 ### Features
@@ -10,19 +17,19 @@
 ## [1.4.0] - 2026-03-06
 
 ### Features
-- **Containers**: new package grouping concept for `wright install @name`. Containers group packages (distinct from assemblies which group plans). One file per container in `containers_dir`, filename is the container name.
+- **Kits**: new package grouping concept for `wright install @name`. Kits group packages (distinct from assemblies which group plans). One file per kit in `kits_dir`, filename is the kit name.
 - **Repository management**: `wright source add/remove/list` commands to manage `repos.toml` without manual editing.
 - **Repository indexing**: `wbuild index [PATH]` generates `wright.index.toml` from built packages for fast name-based resolution. Resolver uses the index when available, falls back to archive scanning.
 - **Repository sync**: `wright sync` reports available packages from all indexed sources.
 - **Available package search**: `wright search --available` (`-a`) searches indexed repos, showing `[installed]` tags for packages already on the system.
-- **Flexible install targets**: `wright install` now accepts `.wright.tar.zst` file paths, package names (resolved from sources), and `@container` references.
+- **Flexible install targets**: `wright install` now accepts `.wright.tar.zst` file paths, package names (resolved from sources), and `@kit` references.
 - **Skip installed packages**: `wbuild run -i` automatically skips packages already installed on the system. Use `--force` to rebuild anyway.
 - New `docs/repositories.md` guide covering local repo creation, source management, indexing, and workflows.
 
 ### Changes
-- **Assembly format**: one file per assembly (filename = assembly name), consistent with containers. Removed unused `AssembliesConfig::load()` single-file method.
+- **Assembly format**: one file per assembly (filename = assembly name), consistent with kits. Removed unused `AssembliesConfig::load()` single-file method.
 - **Assemblies dir** default moved from `/etc/wright/assemblies` to `/var/lib/wright/assemblies` (data, not config).
-- Assemblies and containers are documented as **non-dependent, combinatory groupings** — membership implies no dependency relationship. Multiple groups combine freely with deduplication.
+- Assemblies and kits are documented as **non-dependent, combinatory groupings** — membership implies no dependency relationship. Multiple groups combine freely with deduplication.
 
 ## [1.3.1] - 2026-03-04
 

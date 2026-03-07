@@ -31,8 +31,8 @@ pub struct GeneralConfig {
     pub executors_dir: PathBuf,
     #[serde(default = "default_assemblies_dir")]
     pub assemblies_dir: PathBuf,
-    #[serde(default = "default_containers_dir")]
-    pub containers_dir: PathBuf,
+    #[serde(default = "default_kits_dir")]
+    pub kits_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -107,19 +107,19 @@ pub struct Assembly {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct ContainersConfig {
+pub struct KitsConfig {
     #[serde(default)]
-    pub containers: std::collections::HashMap<String, Container>,
+    pub kits: std::collections::HashMap<String, Kit>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct ContainerFile {
+struct KitFile {
     #[serde(default)]
-    container: Vec<Container>,
+    kit: Vec<Kit>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct Container {
+pub struct Kit {
     pub name: String,
     pub description: Option<String>,
     #[serde(default)]
@@ -163,7 +163,7 @@ fn default_general() -> GeneralConfig {
         },
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
-        containers_dir: default_containers_dir(),
+        kits_dir: default_kits_dir(),
     }
 }
 
@@ -231,11 +231,11 @@ fn default_executors_dir() -> PathBuf {
 fn default_assemblies_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/assemblies")
 }
-fn default_containers_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/containers")
+fn default_kits_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/kits")
 }
 fn default_build_dir() -> PathBuf {
-    PathBuf::from("/tmp/wright-build")
+    PathBuf::from("/var/tmp/wright-build")
 }
 fn default_dockyard() -> String {
     "strict".to_string()
@@ -337,9 +337,9 @@ impl AssembliesConfig {
     }
 }
 
-impl ContainersConfig {
+impl KitsConfig {
     pub fn load_all(dir: &Path) -> Result<Self> {
-        let mut config = ContainersConfig { containers: std::collections::HashMap::new() };
+        let mut config = KitsConfig { kits: std::collections::HashMap::new() };
         if !dir.exists() {
             return Ok(config);
         }
@@ -351,9 +351,9 @@ impl ContainersConfig {
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
                 })?;
-                let file: ContainerFile = toml::from_str(&content)?;
-                for container in file.container {
-                    config.containers.insert(container.name.clone(), container);
+                let file: KitFile = toml::from_str(&content)?;
+                for kit in file.kit {
+                    config.kits.insert(kit.name.clone(), kit);
                 }
             }
         }
@@ -371,13 +371,13 @@ impl ContainersConfig {
         if !visited.insert(name.to_string()) {
             return;
         }
-        if let Some(container) = self.containers.get(name) {
-            for pkg in &container.packages {
+        if let Some(kit) = self.kits.get(name) {
+            for pkg in &kit.packages {
                 if !packages.contains(pkg) {
                     packages.push(pkg.clone());
                 }
             }
-            for include in &container.includes {
+            for include in &kit.includes {
                 self.collect(include, packages, visited);
             }
         }

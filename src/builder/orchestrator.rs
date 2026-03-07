@@ -12,11 +12,11 @@ use tracing::{debug, info, warn, error};
 use crate::builder::Builder;
 use crate::config::{GlobalConfig, AssembliesConfig};
 use crate::database::Database;
-use crate::package::archive;
-use crate::package::manifest::{PackageManifest, PackageConfig};
-use crate::package::version;
+use crate::part::archive;
+use crate::part::manifest::{PartConfig, PhaseDependencies, PlanManifest};
+use crate::part::version;
 use crate::repo::source::SimpleResolver;
-use crate::package::manifest::PhaseDependencies;
+use crate::part::fhs;
 
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
@@ -107,7 +107,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         //      already installed at the same version+release.
         if opts.is_build_op() && opts.install && !opts.force {
             plans_to_build.retain(|path| {
-                if let Ok(manifest) = PackageManifest::from_file(path) {
+                if let Ok(manifest) = PlanManifest::from_file(path) {
                     match db.get_package(&manifest.plan.name) {
                         Ok(Some(pkg)) => {
                             info!("Skipping {} (already installed at {}-{})",
@@ -137,7 +137,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         expand_rebuild_deps(&mut plans_to_build, &all_plans, opts.rebuild_dependents, actual_max)?
     } else {
         plans_to_build.iter()
-            .filter_map(|p| PackageManifest::from_file(p).ok())
+            .filter_map(|p| PlanManifest::from_file(p).ok())
             .map(|m| (m.plan.name, RebuildReason::Explicit))
             .collect()
     };
@@ -268,7 +268,7 @@ fn resolve_targets(
                 for plans_dir in &resolver.plans_dirs {
                     let candidate = plans_dir.join(clean_target).join("plan.toml");
                     if candidate.exists() {
-                        PackageManifest::from_file(&candidate)
+                        PlanManifest::from_file(&candidate)
                             .context(format!("failed to parse plan '{}'", clean_target))?;
                         plans_to_build.insert(candidate);
                         found = true;
@@ -310,7 +310,7 @@ struct CycleCandidate {
 }
 
 fn collect_phase_deps(
-    manifest: &PackageManifest,
+    manifest: &PlanManifest,
     pkg_to_plan: &HashMap<String, String>,
     is_mvp: bool,
     all_plans: Option<&HashMap<String, PathBuf>>,
@@ -368,7 +368,7 @@ fn collect_phase_deps(
                     continue;
                 }
                 if let Some(plan_path) = plans.get(&cur) {
-                    if let Ok(dep_manifest) = PackageManifest::from_file(plan_path) {
+                    if let Ok(dep_manifest) = PlanManifest::from_file(plan_path) {
                         for rdep in &dep_manifest.dependencies.runtime {
                             let rdep_name = version::parse_dependency(rdep)
                                 .unwrap_or_else(|_| (rdep.clone(), None)).0;
@@ -399,7 +399,7 @@ fn cycle_candidates_for(
             Some(p) => p,
             None => continue,
         };
-        let manifest = match PackageManifest::from_file(path) {
+        let manifest = match PlanManifest::from_file(path) {
             Ok(m) => m,
             Err(_) => continue,
         };
@@ -596,7 +596,7 @@ fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         let bootstrap_key = format!("{}:bootstrap", pkg);
 
         // Bootstrap task: same deps as full, minus the cycle-breaking edges.
-        let mvp_manifest = PackageManifest::from_file(&graph.name_to_path[&pkg])?;
+        let mvp_manifest = PlanManifest::from_file(&graph.name_to_path[&pkg])?;
         let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, true, None);
 
         graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
@@ -652,7 +652,7 @@ fn expand_missing_dependencies(
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
     for path in plans_to_build.iter() {
-        if let Ok(m) = PackageManifest::from_file(path) {
+        if let Ok(m) = PlanManifest::from_file(path) {
             build_set.insert(m.plan.name.clone());
         }
     }
@@ -664,7 +664,7 @@ fn expand_missing_dependencies(
         let mut to_add_paths = Vec::new();
 
         for path in plans_to_build.iter() {
-            let manifest = PackageManifest::from_file(path)?;
+            let manifest = PlanManifest::from_file(path)?;
 
             // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
             // With --install (-i), we also resolve missing runtime deps since they're needed post-install.
@@ -711,7 +711,7 @@ fn expand_missing_dependencies(
         if !force_all {
             let snapshot: Vec<PathBuf> = plans_to_build.iter().chain(to_add_paths.iter()).cloned().collect();
             for path in &snapshot {
-                let manifest = match PackageManifest::from_file(path) {
+                let manifest = match PlanManifest::from_file(path) {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
@@ -727,7 +727,7 @@ fn expand_missing_dependencies(
 
                     while let Some(cur) = queue.pop_front() {
                         if let Some(cur_plan_path) = all_plans.get(&cur) {
-                            if let Ok(cur_manifest) = PackageManifest::from_file(cur_plan_path) {
+                            if let Ok(cur_manifest) = PlanManifest::from_file(cur_plan_path) {
                                 for rdep in &cur_manifest.dependencies.runtime {
                                     let rdep_name = version::parse_dependency(rdep)
                                         .unwrap_or_else(|_| (rdep.clone(), None)).0;
@@ -780,7 +780,7 @@ fn expand_rebuild_deps(
     let mut all_name_to_path: HashMap<String, PathBuf> = HashMap::new();
 
     for (plan_name, plan_path) in all_plans {
-        if let Ok(m) = PackageManifest::from_file(plan_path) {
+        if let Ok(m) = PlanManifest::from_file(plan_path) {
             let br_deps: Vec<String> = m.dependencies.runtime.iter()
                 .chain(m.dependencies.build.iter())
                 .map(|d| version::parse_dependency(d)
@@ -800,7 +800,7 @@ fn expand_rebuild_deps(
     // 2. Initial rebuild set
     let mut rebuild_set: HashSet<String> = HashSet::new();
     for path in plans_to_build.iter() {
-        if let Ok(m) = PackageManifest::from_file(path) {
+        if let Ok(m) = PlanManifest::from_file(path) {
             let name = m.plan.name.clone();
             rebuild_set.insert(name.clone());
             reasons.insert(name, RebuildReason::Explicit);
@@ -868,8 +868,8 @@ fn build_dep_map(
     let mut pkg_to_plan = HashMap::new();
     for (plan_name, path) in all_plans {
         pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
-        if let Ok(m) = PackageManifest::from_file(path) {
-            if let Some(PackageConfig::Multi(ref pkgs)) = m.package {
+        if let Ok(m) = PlanManifest::from_file(path) {
+            if let Some(PartConfig::Multi(ref pkgs)) = m.package {
                 for sub_name in pkgs.keys() {
                     if sub_name != &m.plan.name {
                         pkg_to_plan.insert(sub_name.clone(), plan_name.clone());
@@ -880,7 +880,7 @@ fn build_dep_map(
     }
 
     for path in plans_to_build {
-        let manifest = PackageManifest::from_file(path)?;
+        let manifest = PlanManifest::from_file(path)?;
         let name = manifest.plan.name.clone();
         name_to_path.insert(name.clone(), path.clone());
         build_set.insert(name.clone());
@@ -1041,7 +1041,7 @@ fn execute_builds(
             effective_opts.nproc_per_dockyard = dynamic_nproc_cap;
 
             std::thread::spawn(move || {
-                let manifest = match PackageManifest::from_file(&path) {
+                let manifest = match PlanManifest::from_file(&path) {
                     Ok(m) => m,
                     Err(e) => {
                         tx_clone.send(Err((name_clone, e.into()))).unwrap();
@@ -1075,7 +1075,7 @@ fn execute_builds(
                                     }
 
                                     // 2. Install all sub-packages
-                                    if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+                                    if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
                                         for (sub_name, sub_pkg) in pkgs {
                                             if sub_name == &manifest.plan.name { continue; }
                                             let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
@@ -1224,7 +1224,7 @@ fn lint_dependency_graph(
 
 fn build_one(
     builder: &Builder,
-    manifest: &PackageManifest,
+    manifest: &PlanManifest,
     manifest_path: &Path,
     config: &GlobalConfig,
     opts: &BuildOptions,
@@ -1239,7 +1239,7 @@ fn build_one(
 
     if opts.lint {
         println!("valid plan: {} {}-{}", manifest.plan.name, manifest.plan.version, manifest.plan.release);
-        if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+        if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
             for sub_name in pkgs.keys() {
                 if sub_name != &manifest.plan.name {
                     println!("  sub-package: {}", sub_name);
@@ -1266,7 +1266,7 @@ fn build_one(
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists() && match manifest.package {
-            Some(PackageConfig::Multi(ref pkgs)) => pkgs.iter()
+            Some(PartConfig::Multi(ref pkgs)) => pkgs.iter()
                 .filter(|(name, _)| *name != &manifest.plan.name)
                 .all(|(sub_name, sub_pkg)| {
                     let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
@@ -1333,18 +1333,18 @@ fn build_one(
         || opts.stages.iter().any(|s| s == "staging" || s == "post_staging");
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
-            crate::package::fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
+            fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!("Part stored in the Components Hold: {}", archive_path.display());
 
-        if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+        if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
             for (sub_name, sub_pkg) in pkgs {
                 if sub_name == &manifest.plan.name { continue; }
                 let sub_pkg_dir = result.split_pkg_dirs.get(sub_name)
                     .ok_or_else(|| WrightError::BuildError(format!("missing sub-package pkg_dir for '{}'", sub_name)))?;
                 if !manifest.options.skip_fhs_check {
-                    crate::package::fhs::validate(sub_pkg_dir, sub_name)?;
+                    fhs::validate(sub_pkg_dir, sub_name)?;
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;

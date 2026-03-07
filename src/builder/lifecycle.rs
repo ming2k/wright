@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 
 use crate::error::{WrightError, Result};
-use crate::package::manifest::{LifecycleStage, PackageManifest};
+use crate::part::manifest::{LifecycleStage, PlanManifest};
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::dockyard::ResourceLimits;
 
@@ -19,12 +19,12 @@ pub const DEFAULT_STAGES: &[&str] = &[
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
 pub struct LifecyclePipeline<'a> {
-    manifest: &'a PackageManifest,
+    manifest: &'a PlanManifest,
     vars: HashMap<String, String>,
     working_dir: &'a Path,
     log_dir: &'a Path,
     src_dir: PathBuf,
-    pkg_dir: PathBuf,
+    part_dir: PathBuf,
     files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     stages: Vec<String>,
@@ -47,12 +47,12 @@ pub struct LifecyclePipeline<'a> {
 }
 
 pub struct LifecycleContext<'a> {
-    pub manifest: &'a PackageManifest,
+    pub manifest: &'a PlanManifest,
     pub vars: HashMap<String, String>,
     pub working_dir: &'a Path,
     pub log_dir: &'a Path,
     pub src_dir: PathBuf,
-    pub pkg_dir: PathBuf,
+    pub part_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     pub stages: Vec<String>,
@@ -78,7 +78,7 @@ impl<'a> LifecyclePipeline<'a> {
             working_dir: ctx.working_dir,
             log_dir: ctx.log_dir,
             src_dir: ctx.src_dir,
-            pkg_dir: ctx.pkg_dir,
+            part_dir: ctx.part_dir,
             files_dir: ctx.files_dir,
             stages: ctx.stages,
             skip_check: ctx.skip_check,
@@ -216,10 +216,10 @@ impl<'a> LifecyclePipeline<'a> {
         let options = ExecutorOptions {
             level: stage.dockyard.parse().unwrap(),
             src_dir: self.src_dir.clone(),
-            pkg_dir: self.pkg_dir.clone(),
+            part_dir: self.part_dir.clone(),
             files_dir: self.files_dir.clone(),
             rlimits: self.rlimits.clone(),
-            main_pkg_dir: None,
+            main_part_dir: None,
             verbose: self.verbose,
             cpu_count: self.cpu_count.get(),
         };

@@ -31,14 +31,14 @@ managing sources, indexing, and syncing.
 ```bash
 wright install hello-1.0.0-1-x86_64.wright.tar.zst   # from a file
 wright install curl                                    # by package name (resolved from sources)
-wright install @base                                   # all packages in a container
-wright install @base @devel curl                       # mix containers and packages
+wright install @base                                   # all packages in a kit
+wright install @base @devel curl                       # mix kits and packages
 wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst
 ```
 
 Wright handles dependencies, conflicts, and package replacements (renames) automatically during installation.
 
-**Containers** are named groups of packages (distinct from assemblies, which group plans). Like assemblies, containers are non-dependent and combinatory — packages in a container are independent items bundled for convenience, not a dependency chain. Multiple containers can be freely combined in one command, and overlapping packages are deduplicated. Define them in `/var/lib/wright/containers/*.toml` — see [Configuration](configuration.md#containers-package-groups) for details.
+**Kits** are named groups of packages (distinct from assemblies, which group plans). Like assemblies, kits are non-dependent and combinatory — packages in a kit are independent items bundled for convenience, not a dependency chain. Multiple kits can be freely combined in one command, and overlapping packages are deduplicated. Define them in `/var/lib/wright/kits/*.toml` — see [Configuration](configuration.md#kits-package-groups) for details.
 
 ### Removing Packages
 
@@ -115,7 +115,7 @@ To skip the `check` stage — for example when tests are slow or broken upstream
 wbuild run hello --stage prepare --stage configure --stage compile --stage staging
 ```
 
-The build directory (`/tmp/wright-build/<name>-<version>/`) is preserved between staged runs for inspection.
+The build directory (`/var/tmp/wright-build/<name>-<version>/` by default) is preserved between staged runs for inspection.
 
 ### Validating and Updating
 

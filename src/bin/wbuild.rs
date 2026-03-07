@@ -7,8 +7,8 @@ use tracing_subscriber::EnvFilter;
 
 use wright::config::GlobalConfig;
 use wright::builder::orchestrator::{self, BuildOptions};
-use wright::package::manifest::PackageManifest;
-use wright::package::version;
+use wright::part::manifest::PlanManifest;
+use wright::part::version;
 
 #[derive(Parser)]
 #[command(name = "wbuild", about = "wright package constructor")]
@@ -224,7 +224,7 @@ fn main() -> Result<()> {
             let repo_dir = path.unwrap_or_else(|| config.general.components_dir.clone());
             println!("Indexing packages in {}...", repo_dir.display());
             let index = wright::repo::index::generate_index(&repo_dir)?;
-            let count = index.packages.len();
+            let count = index.parts.len();
             wright::repo::index::write_index(&index, &repo_dir)?;
             println!("Indexed {} package(s) -> {}", count,
                 wright::repo::index::index_path(&repo_dir).display());
@@ -269,7 +269,7 @@ fn print_plan_tree_inner(
     let path = all_plans.get(name)
         .ok_or_else(|| anyhow::anyhow!("Plan '{}' not found in hold tree", name))?;
 
-    let manifest = PackageManifest::from_file(path)?;
+    let manifest = PlanManifest::from_file(path)?;
 
     let mut all_deps = Vec::new();
     all_deps.extend(manifest.dependencies.build.iter().cloned());
@@ -284,7 +284,7 @@ fn print_plan_tree_inner(
         if ancestors.contains(&dep_name) {
             // True cycle: check if the dep has [mvp.dependencies] that could break it
             let cycle_note = all_plans.get(&dep_name)
-                .and_then(|p| PackageManifest::from_file(p).ok())
+                .and_then(|p| PlanManifest::from_file(p).ok())
                 .and_then(|m| m.mvp)
                 .and_then(|mvp| mvp.dependencies)
                 .map(|_| " (cycle → resolvable via mvp)")

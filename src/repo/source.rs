@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use crate::config::{RepoConfig, SourceConfig, AssembliesConfig};
 use crate::error::{WrightError, Result};
-use crate::package::archive;
+use crate::part::archive;
 use crate::util::download;
 
 /// Strip path separators and dangerous components from a filename derived from a URL.
@@ -27,7 +27,7 @@ pub struct SimpleResolver {
     pub download_timeout: u64,
 }
 
-pub struct ResolvedPackage {
+pub struct ResolvedPart {
     pub name: String,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
@@ -81,14 +81,14 @@ impl SimpleResolver {
         self.assemblies = config;
     }
 
-    pub fn resolve(&self, name: &str) -> Result<Option<ResolvedPackage>> {
+    pub fn resolve(&self, name: &str) -> Result<Option<ResolvedPart>> {
         if let Some(pkg) = self.resolve_local(name)? {
             return Ok(Some(pkg));
         }
 
         if name.starts_with("http") {
              let filename = sanitize_cache_filename(
-                 name.split('/').next_back().unwrap_or("package.wright.tar.zst")
+                 name.split('/').next_back().unwrap_or("part.wright.tar.zst")
              );
              std::fs::create_dir_all(&self.cache_dir).map_err(WrightError::IoError)?;
              let dest = self.cache_dir.join(&filename);
@@ -101,16 +101,16 @@ impl SimpleResolver {
         Ok(None)
     }
 
-    fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPackage>> {
+    fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
         for dir in &self.search_dirs {
             if !dir.exists() { continue; }
 
             // Try index first (fast path)
             if let Some(index) = crate::repo::index::read_index(dir)? {
-                if let Some(entry) = index.packages.iter().find(|e| e.name == name) {
+                if let Some(entry) = index.parts.iter().find(|e| e.name == name) {
                     let path = dir.join(&entry.filename);
                     if path.exists() {
-                        return Ok(Some(ResolvedPackage {
+                        return Ok(Some(ResolvedPart {
                             name: entry.name.clone(),
                             path,
                             dependencies: entry.runtime_deps.clone(),
@@ -124,12 +124,12 @@ impl SimpleResolver {
                 let entry = entry.map_err(WrightError::IoError)?;
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("zst") {
-                    if let Ok(pkginfo) = archive::read_pkginfo(&path) {
-                        if pkginfo.name == name {
-                            return Ok(Some(ResolvedPackage {
-                                name: pkginfo.name,
+                    if let Ok(partinfo) = archive::read_partinfo(&path) {
+                        if partinfo.name == name {
+                            return Ok(Some(ResolvedPart {
+                                name: partinfo.name,
                                 path,
-                                dependencies: pkginfo.runtime_deps,
+                                dependencies: partinfo.runtime_deps,
                             }));
                         }
                     }
@@ -139,12 +139,12 @@ impl SimpleResolver {
         Ok(None)
     }
 
-    pub fn read_archive(&self, path: &Path) -> Result<ResolvedPackage> {
-        let pkginfo = archive::read_pkginfo(path)?;
-        Ok(ResolvedPackage {
-            name: pkginfo.name,
+    pub fn read_archive(&self, path: &Path) -> Result<ResolvedPart> {
+        let partinfo = archive::read_partinfo(path)?;
+        Ok(ResolvedPart {
+            name: partinfo.name,
             path: path.to_path_buf(),
-            dependencies: pkginfo.runtime_deps,
+            dependencies: partinfo.runtime_deps,
         })
     }
 
@@ -185,7 +185,7 @@ impl SimpleResolver {
             for entry in walkdir::WalkDir::new(root) {
                 let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
                 if entry.file_name() == "plan.toml" {
-                    if let Ok(manifest) = crate::package::manifest::PackageManifest::from_file(entry.path()) {
+                    if let Ok(manifest) = crate::part::manifest::PlanManifest::from_file(entry.path()) {
                         map.insert(manifest.plan.name, entry.path().to_path_buf());
                     }
                 }

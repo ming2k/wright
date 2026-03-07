@@ -101,11 +101,11 @@ struct ExecutorWrapper {
 pub struct ExecutorOptions {
     pub level: DockyardLevel,
     pub src_dir: PathBuf,
-    pub pkg_dir: PathBuf,
+    pub part_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
     pub rlimits: ResourceLimits,
-    /// Main package's pkg_dir, mounted at /main-pkg for split package stages.
-    pub main_pkg_dir: Option<PathBuf>,
+    /// Main part's part_dir, mounted at /main-pkg for split part stages.
+    pub main_part_dir: Option<PathBuf>,
     pub verbose: bool,
     /// Number of CPUs to pin the sandboxed process to via sched_setaffinity.
     /// `nproc` inside the sandbox then returns this count naturally.
@@ -139,11 +139,13 @@ pub fn execute_script(
             }
         }
         v.insert("SRC_DIR".to_string(), "/build".to_string());
+        v.insert("PART_DIR".to_string(), "/output".to_string());
         v.insert("PKG_DIR".to_string(), "/output".to_string());
         if options.files_dir.is_some() {
             v.insert("FILES_DIR".to_string(), "/files".to_string());
         }
-        if options.main_pkg_dir.is_some() {
+        if options.main_part_dir.is_some() {
+            v.insert("MAIN_PART_DIR".to_string(), "/main-pkg".to_string());
             v.insert("MAIN_PKG_DIR".to_string(), "/main-pkg".to_string());
         }
         v
@@ -161,19 +163,19 @@ pub fn execute_script(
     })?;
 
     // Create sandbox config
-    let task_id = format!("{}-{}", 
-        vars.get("PKG_NAME").cloned().unwrap_or_else(|| "unknown".to_string()),
+    let task_id = format!("{}-{}",
+        vars.get("PART_NAME").cloned().unwrap_or_else(|| "unknown".to_string()),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     );
-    let mut config = DockyardConfig::new(options.level, options.src_dir.clone(), options.pkg_dir.clone(), task_id);
+    let mut config = DockyardConfig::new(options.level, options.src_dir.clone(), options.part_dir.clone(), task_id);
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
     config.cpu_count = options.cpu_count;
 
-    // Mount main package dir for split package stages
-    if let Some(ref main_pkg) = options.main_pkg_dir {
-        config.extra_binds.push((main_pkg.clone(), PathBuf::from("/main-pkg"), false));
+    // Mount main part dir for split part stages
+    if let Some(ref main_part) = options.main_part_dir {
+        config.extra_binds.push((main_part.clone(), PathBuf::from("/main-pkg"), false));
     }
 
     // Set environment variables
@@ -201,7 +203,7 @@ pub fn execute_script(
         "MAKEFLAGS", "JOBS",
     ] {
         if let Ok(value) = std::env::var(key) {
-            // Don't override if already set by the package manifest.
+            // Don't override if already set by the plan manifest.
             if !config.env.iter().any(|(k, _)| k == key) {
                 config.env.push((key.to_string(), value));
             }

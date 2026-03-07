@@ -51,7 +51,7 @@ script = "gcc -o hello hello.c"
 
 [lifecycle.staging]
 dockyard = "none"
-script = "install -Dm755 hello ${PKG_DIR}/usr/bin/hello"
+script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 ```
 
 Build, install, verify, remove:

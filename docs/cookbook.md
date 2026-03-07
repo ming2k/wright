@@ -83,7 +83,7 @@ script = "./configure --prefix=/usr"
 script = "make"
 
 [lifecycle.staging]
-script = "make DESTDIR=$PKG_DIR install"
+script = "make DESTDIR=$PART_DIR install"
 ```
 
 Fetch checksums automatically:
@@ -123,7 +123,7 @@ To iterate on a subset of stages and inspect the result:
 
 ```bash
 wbuild run mypkg --stage configure
-# Inspect $SRC_DIR (e.g. /tmp/wright-build/mypkg-1.0/src/) manually
+# Inspect $SRC_DIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
 wbuild run mypkg --stage compile
 wbuild run mypkg --stage staging
 
@@ -160,19 +160,19 @@ release = 1
 # ...
 
 [lifecycle.staging]
-script = "make DESTDIR=$PKG_DIR install"
+script = "make DESTDIR=$PART_DIR install"
 
-[lifecycle.package.zlib-devel]
+[lifecycle.part.zlib-devel]
 description = "Development files for zlib"
 script = """
-install -Dm644 ${BUILD_DIR}/zlib.h ${PKG_DIR}/usr/include/zlib.h
-install -Dm644 ${BUILD_DIR}/zconf.h ${PKG_DIR}/usr/include/zconf.h
-install -Dm644 ${BUILD_DIR}/libz.a ${PKG_DIR}/usr/lib/libz.a
-install -Dm644 ${BUILD_DIR}/zlib.pc ${PKG_DIR}/usr/lib/pkgconfig/zlib.pc
+install -Dm644 ${BUILD_DIR}/zlib.h ${PART_DIR}/usr/include/zlib.h
+install -Dm644 ${BUILD_DIR}/zconf.h ${PART_DIR}/usr/include/zconf.h
+install -Dm644 ${BUILD_DIR}/libz.a ${PART_DIR}/usr/lib/libz.a
+install -Dm644 ${BUILD_DIR}/zlib.pc ${PART_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-Each sub-package declared via `[lifecycle.package.<name>]` produces its own
+Each sub-package declared via `[lifecycle.part.<name>]` produces its own
 archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
 and `dependencies`.
 
@@ -393,7 +393,7 @@ cargo build --release --offline
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${SRC_DIR}/target/release/rg ${PKG_DIR}/usr/bin/rg
+install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 """
 ```
 
@@ -423,7 +423,7 @@ cargo build --release
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${SRC_DIR}/target/release/rg ${PKG_DIR}/usr/bin/rg
+install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 """
 ```
 
@@ -457,7 +457,7 @@ go build -mod=vendor -o hugo .
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${BUILD_DIR}/hugo ${PKG_DIR}/usr/bin/hugo
+install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo
 """
 ```
 
@@ -479,5 +479,5 @@ go build -o hugo .
 """
 
 [lifecycle.staging]
-script = "install -Dm755 ${BUILD_DIR}/hugo ${PKG_DIR}/usr/bin/hugo"
+script = "install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo"
 ```

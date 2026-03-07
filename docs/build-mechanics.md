@@ -8,12 +8,12 @@ when work is skipped or repeated.
 ## Build Directory Layout
 
 Each package gets its own working directory under `build_dir`
-(default `/tmp/wright-build`):
+(default `/var/tmp/wright-build`):
 
 ```
 <build_dir>/<name>-<version>/
 ├── src/            # Extracted source tree (BUILD_DIR points here or a subdir)
-├── pkg/            # Main package staging root ($PKG_DIR)
+├── pkg/            # Main package staging root ($PART_DIR)
 ├── log/            # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
@@ -46,7 +46,7 @@ Each file contains:
 === Stage: compile ===
 === Exit code: 0 ===
 === Duration: 42.3s ===
-=== Working dir: /tmp/wright-build/zlib-1.3.1/src/zlib-1.3.1 ===
+=== Working dir: /var/tmp/wright-build/zlib-1.3.1/src/zlib-1.3.1 ===
 
 --- script ---
 make
@@ -142,7 +142,7 @@ produce a broken archive that a later full pass would have to overwrite anyway.
 ## FHS Validation
 
 After the `staging` stage completes,
-Wright validates every file and symlink in `$PKG_DIR` against the distribution's
+Wright validates every file and symlink in `$PART_DIR` against the distribution's
 FHS whitelist before creating the archive. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 

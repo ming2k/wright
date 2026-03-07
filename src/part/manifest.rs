@@ -6,11 +6,11 @@ use serde::Deserialize;
 use crate::error::{WrightError, Result};
 
 // ---------------------------------------------------------------------------
-// New package output types
+// New part output types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct PackageHooks {
+pub struct PartHooks {
     #[serde(default)]
     pub pre_install: Option<String>,
     #[serde(default)]
@@ -23,19 +23,19 @@ pub struct PackageHooks {
     pub post_remove: Option<String>,
 }
 
-/// Single-package mode: `[lifecycle.package]`
+/// Single-part mode: `[lifecycle.part]`
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
-pub struct PackageOutput {
+pub struct PartOutput {
     #[serde(default)]
-    pub hooks: Option<PackageHooks>,
+    pub hooks: Option<PartHooks>,
     #[serde(default)]
     pub backup: Option<Vec<String>>,
 }
 
-/// Multi-package mode: `[lifecycle.package.<name>]`
+/// Multi-part mode: `[lifecycle.part.<name>]`
 #[derive(Debug, Deserialize, Clone)]
-pub struct SubPackageOutput {
+pub struct SubPartOutput {
     #[serde(default)]
     pub description: Option<String>,
     pub version: Option<String>,
@@ -53,15 +53,15 @@ pub struct SubPackageOutput {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub hooks: Option<PackageHooks>,
+    pub hooks: Option<PartHooks>,
     #[serde(default)]
     pub backup: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum PackageConfig {
-    Single(PackageOutput),
-    Multi(HashMap<String, SubPackageOutput>),
+pub enum PartConfig {
+    Single(PartOutput),
+    Multi(HashMap<String, SubPartOutput>),
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ fn default_skip() -> String {
 }
 
 #[derive(Debug, Clone)]
-pub struct PackageManifest {
+pub struct PlanManifest {
     pub plan: PackageMetadata,
     pub dependencies: Dependencies,
     pub relations: Relations,
@@ -146,9 +146,9 @@ pub struct PackageManifest {
     pub lifecycle: HashMap<String, LifecycleStage>,
     pub lifecycle_order: Option<LifecycleOrder>,
     pub mvp: Option<PhaseConfig>,
-    /// Package output configuration.
-    pub package: Option<PackageConfig>,
-    /// Legacy fields — populated from PackageConfig for archive creation compat.
+    /// Part output configuration.
+    pub package: Option<PartConfig>,
+    /// Legacy fields — populated from PartConfig for archive creation compat.
     pub install_scripts: Option<InstallScripts>,
     pub backup: Option<BackupConfig>,
 }
@@ -335,12 +335,12 @@ struct RawManifest {
 }
 
 // ---------------------------------------------------------------------------
-// SubPackageOutput → PackageManifest conversion
+// SubPartOutput -> PlanManifest conversion
 // ---------------------------------------------------------------------------
 
-impl SubPackageOutput {
-    /// Produce a full PackageManifest for archive creation, inheriting from the parent.
-    pub fn to_manifest(&self, name: &str, parent: &PackageManifest) -> PackageManifest {
+impl SubPartOutput {
+    /// Produce a full PlanManifest for archive creation, inheriting from the parent.
+    pub fn to_manifest(&self, name: &str, parent: &PlanManifest) -> PlanManifest {
         let description = self.description.clone()
             .unwrap_or_else(|| parent.plan.description.clone());
 
@@ -357,7 +357,7 @@ impl SubPackageOutput {
             files: files.clone(),
         });
 
-        PackageManifest {
+        PlanManifest {
             plan: PackageMetadata {
                 name: name.to_string(),
                 version: self.version.clone().unwrap_or_else(|| parent.plan.version.clone()),
@@ -387,7 +387,7 @@ impl SubPackageOutput {
 // Parsing
 // ---------------------------------------------------------------------------
 
-/// Determine whether a toml::Value table looks like Single-package mode.
+/// Determine whether a toml::Value table looks like single-part mode.
 /// Single mode has only flat keys (hooks, backup) — never sub-tables that
 /// themselves contain "description" or "script" keys.
 fn is_single_package_table(table: &toml::value::Table) -> bool {
@@ -416,7 +416,7 @@ fn is_single_package_table(table: &toml::value::Table) -> bool {
     true
 }
 
-impl PackageManifest {
+impl PlanManifest {
     pub fn parse(content: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(content)?;
 
@@ -492,13 +492,16 @@ impl PackageManifest {
             raw.relations.unwrap_or_default()
         };
 
-        // --- Extract lifecycle stages and detect old [lifecycle.package] ---
+        // --- Extract lifecycle stages and detect [lifecycle.part] ---
         let mut lifecycle_stages: HashMap<String, LifecycleStage> = HashMap::new();
         let mut lifecycle_package_value: Option<toml::Value> = None;
 
         if let Some(raw_lifecycle) = raw.lifecycle {
             for (key, value) in raw_lifecycle {
-                if key == "package" {
+                if key == "part" {
+                    lifecycle_package_value = Some(value);
+                } else if key == "package" {
+                    tracing::warn!("[lifecycle.package] is deprecated; use [lifecycle.part] instead");
                     lifecycle_package_value = Some(value);
                 } else {
                     let stage: LifecycleStage = value.try_into().map_err(|e: toml::de::Error| {
@@ -511,29 +514,29 @@ impl PackageManifest {
             }
         }
 
-        // --- Parse [lifecycle.package] ---
+        // --- Parse [lifecycle.part] ---
         let new_package = if let Some(pkg_val) = lifecycle_package_value {
             match pkg_val {
                 toml::Value::Table(ref table) if is_single_package_table(table) => {
-                    let output: PackageOutput = pkg_val.try_into().map_err(|e: toml::de::Error| {
+                    let output: PartOutput = pkg_val.try_into().map_err(|e: toml::de::Error| {
                         WrightError::ParseError(format!(
-                            "failed to parse [lifecycle.package]: {}", e
+                            "failed to parse [lifecycle.part]: {}", e
                         ))
                     })?;
-                    Some(PackageConfig::Single(output))
+                    Some(PartConfig::Single(output))
                 }
                 toml::Value::Table(_) => {
-                    let multi: HashMap<String, SubPackageOutput> = pkg_val.try_into()
+                    let multi: HashMap<String, SubPartOutput> = pkg_val.try_into()
                         .map_err(|e: toml::de::Error| {
                             WrightError::ParseError(format!(
-                                "failed to parse [lifecycle.package.*]: {}", e
+                                "failed to parse [lifecycle.part.*]: {}", e
                             ))
                         })?;
-                    Some(PackageConfig::Multi(multi))
+                    Some(PartConfig::Multi(multi))
                 }
                 _ => {
                     return Err(WrightError::ParseError(
-                        "[lifecycle.package] must be a table".to_string()
+                        "[lifecycle.part] must be a table".to_string()
                     ));
                 }
             }
@@ -549,20 +552,20 @@ impl PackageManifest {
 
         if has_old_style && new_package.is_some() {
             return Err(WrightError::ParseError(
-                "cannot mix old-style [split]/[install_scripts]/[backup] with [lifecycle.package]; \
+                "cannot mix old-style [split]/[install_scripts]/[backup] with [lifecycle.part]; \
                  migrate to the new syntax".to_string()
             ));
         }
 
         let (package, install_scripts, backup) = if has_old_style {
             if has_old_scripts {
-                tracing::warn!("[install_scripts] is deprecated; use [lifecycle.package] hooks instead");
+                tracing::warn!("[install_scripts] is deprecated; use [lifecycle.part] hooks instead");
             }
             if has_old_backup {
-                tracing::warn!("[backup] is deprecated; use [lifecycle.package] backup instead");
+                tracing::warn!("[backup] is deprecated; use [lifecycle.part] backup instead");
             }
             if has_old_split {
-                tracing::warn!("[split] is deprecated; use [lifecycle.package.<name>] instead");
+                tracing::warn!("[split] is deprecated; use [lifecycle.part.<name>] instead");
             }
 
             if has_old_split {
@@ -575,12 +578,12 @@ impl PackageManifest {
                             "failed to parse split package '{}': {}", name, e
                         ))
                     })?;
-                    let stage = legacy.lifecycle.get("package").ok_or_else(|| {
+                    let stage = legacy.lifecycle.get("part").or_else(|| legacy.lifecycle.get("package")).ok_or_else(|| {
                         WrightError::ValidationError(format!(
-                            "split package '{}': lifecycle.package stage is required", name
+                            "split package '{}': lifecycle.part stage is required", name
                         ))
                     })?;
-                    let hooks = legacy.install_scripts.map(|s| PackageHooks {
+                    let hooks = legacy.install_scripts.map(|s| PartHooks {
                         pre_install: s.pre_install,
                         post_install: s.post_install,
                         post_upgrade: s.post_upgrade,
@@ -588,7 +591,7 @@ impl PackageManifest {
                         post_remove: s.post_remove,
                     });
                     let backup_files = legacy.backup.map(|b| b.files);
-                    multi.insert(name, SubPackageOutput {
+                    multi.insert(name, SubPartOutput {
                         description: Some(legacy.description),
                         version: legacy.version,
                         release: legacy.release,
@@ -606,7 +609,7 @@ impl PackageManifest {
 
                 // Also handle old install_scripts/backup on the main package
                 if has_old_scripts || has_old_backup {
-                    let main_hooks = raw.install_scripts.as_ref().map(|s| PackageHooks {
+                    let main_hooks = raw.install_scripts.as_ref().map(|s| PartHooks {
                         pre_install: s.pre_install.clone(),
                         post_install: s.post_install.clone(),
                         post_upgrade: s.post_upgrade.clone(),
@@ -614,7 +617,7 @@ impl PackageManifest {
                         post_remove: s.post_remove.clone(),
                     });
                     let main_backup = raw.backup.as_ref().map(|b| b.files.clone());
-                    multi.insert(raw.plan.name.clone(), SubPackageOutput {
+                    multi.insert(raw.plan.name.clone(), SubPartOutput {
                         description: None,
                         version: None,
                         release: None,
@@ -630,10 +633,10 @@ impl PackageManifest {
                     });
                 }
 
-                (Some(PackageConfig::Multi(multi)), raw.install_scripts, raw.backup)
+                (Some(PartConfig::Multi(multi)), raw.install_scripts, raw.backup)
             } else {
                 // Only install_scripts and/or backup, no split — convert to Single
-                let hooks = raw.install_scripts.as_ref().map(|s| PackageHooks {
+                let hooks = raw.install_scripts.as_ref().map(|s| PartHooks {
                     pre_install: s.pre_install.clone(),
                     post_install: s.post_install.clone(),
                     post_upgrade: s.post_upgrade.clone(),
@@ -641,16 +644,16 @@ impl PackageManifest {
                     post_remove: s.post_remove.clone(),
                 });
                 let backup_files = raw.backup.as_ref().map(|b| b.files.clone());
-                let output = PackageOutput {
+                let output = PartOutput {
                     hooks,
                     backup: backup_files,
                 };
-                (Some(PackageConfig::Single(output)), raw.install_scripts, raw.backup)
+                (Some(PartConfig::Single(output)), raw.install_scripts, raw.backup)
             }
         } else if let Some(ref pkg) = new_package {
             // Populate legacy fields from new-style config for archive creation
             match pkg {
-                PackageConfig::Single(ref output) => {
+                PartConfig::Single(ref output) => {
                     let scripts = output.hooks.as_ref().map(|h| InstallScripts {
                         pre_install: h.pre_install.clone(),
                         post_install: h.post_install.clone(),
@@ -663,7 +666,7 @@ impl PackageManifest {
                     });
                     (new_package, scripts, backup)
                 }
-                PackageConfig::Multi(_) => {
+                PartConfig::Multi(_) => {
                     (new_package, None, None)
                 }
             }
@@ -671,7 +674,7 @@ impl PackageManifest {
             (None, None, None)
         };
 
-        let manifest = PackageManifest {
+        let manifest = PlanManifest {
             plan: raw.plan,
             dependencies: raw.dependencies,
             relations,
@@ -711,7 +714,7 @@ impl PackageManifest {
         }
 
         // Validate version parses
-        crate::package::version::Version::parse(&self.plan.version)?;
+        crate::part::version::Version::parse(&self.plan.version)?;
 
         if self.plan.release == 0 {
             return Err(WrightError::ValidationError(
@@ -768,8 +771,8 @@ impl PackageManifest {
         // Validate package config
         if let Some(ref pkg) = self.package {
             match pkg {
-                PackageConfig::Multi(ref packages) => {
-                    for (sub_name, sub_pkg) in packages {
+                PartConfig::Multi(ref packages) => {
+                    for (sub_name, sub_part) in packages {
                         if !name_re.is_match(sub_name) {
                             return Err(WrightError::ValidationError(format!(
                                 "invalid sub-package name '{}': must match [a-z0-9][a-z0-9_+.-]*",
@@ -777,16 +780,16 @@ impl PackageManifest {
                             )));
                         }
                         // Non-main sub-packages must have description
-                        if sub_name != &self.plan.name && sub_pkg.description.is_none() {
+                        if sub_name != &self.plan.name && sub_part.description.is_none() {
                             return Err(WrightError::ValidationError(format!(
                                 "sub-package '{}': description is required for non-main packages",
                                 sub_name
                             )));
                         }
-                        if let Some(ref ver) = sub_pkg.version {
-                            crate::package::version::Version::parse(ver)?;
+                        if let Some(ref ver) = sub_part.version {
+                            crate::part::version::Version::parse(ver)?;
                         }
-                        if let Some(ref rel) = sub_pkg.release {
+                        if let Some(ref rel) = sub_part.release {
                             if *rel == 0 {
                                 return Err(WrightError::ValidationError(format!(
                                     "sub-package '{}': release must be >= 1",
@@ -796,7 +799,7 @@ impl PackageManifest {
                         }
                     }
                 }
-                PackageConfig::Single(_) => {
+                PartConfig::Single(_) => {
                     // No special validation needed for single mode
                 }
             }
@@ -823,17 +826,17 @@ impl PackageManifest {
 
     /// Iterate over sub-packages (multi-package mode).
     /// Returns an empty iterator for Single or None.
-    pub fn sub_packages(&self) -> impl Iterator<Item = (&String, &SubPackageOutput)> {
+    pub fn sub_packages(&self) -> impl Iterator<Item = (&String, &SubPartOutput)> {
         match self.package {
-            Some(PackageConfig::Multi(ref pkgs)) => {
+            Some(PartConfig::Multi(ref pkgs)) => {
                 Box::new(pkgs.iter()) as Box<dyn Iterator<Item = _>>
             }
             _ => Box::new(std::iter::empty()),
         }
     }
 
-    /// Get sub-packages that are not the main package (need their own script/PKG_DIR).
-    pub fn extra_sub_packages(&self) -> impl Iterator<Item = (&String, &SubPackageOutput)> {
+    /// Get sub-packages that are not the main package (need their own script/PART_DIR).
+    pub fn extra_sub_packages(&self) -> impl Iterator<Item = (&String, &SubPartOutput)> {
         let main_name = self.plan.name.clone();
         self.sub_packages().filter(move |(name, _)| *name != &main_name)
     }
@@ -879,10 +882,10 @@ gcc -o hello hello.c
 executor = "shell"
 dockyard = "none"
 script = """
-install -Dm755 hello ${PKG_DIR}/usr/bin/hello
+install -Dm755 hello ${PART_DIR}/usr/bin/hello
 """
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.name, "hello");
         assert_eq!(manifest.plan.version, "1.0.0");
         assert_eq!(manifest.plan.release, 1);
@@ -936,7 +939,7 @@ ccache = true
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
 """
 
@@ -945,7 +948,7 @@ executor = "shell"
 dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe" }
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 ./configure --prefix=/usr
 """
 
@@ -953,7 +956,7 @@ cd nginx-${PKG_VERSION}
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 make
 """
 
@@ -962,7 +965,7 @@ executor = "shell"
 dockyard = "strict"
 optional = true
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 make test
 """
 
@@ -970,17 +973,17 @@ make test
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
-make DESTDIR=${PKG_DIR} install
+cd nginx-${PART_VERSION}
+make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.name, "nginx");
         assert_eq!(manifest.plan.url.as_deref(), Some("https://nginx.org"));
         assert_eq!(manifest.dependencies.runtime.len(), 3);
@@ -1000,7 +1003,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
         // New-style package config
         match manifest.package {
-            Some(PackageConfig::Single(ref output)) => {
+            Some(PartConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert!(hooks.post_install.is_some());
                 assert!(hooks.pre_remove.is_some());
@@ -1021,7 +1024,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::parse(toml_str).is_err());
+        assert!(PlanManifest::parse(toml_str).is_err());
     }
 
     #[test]
@@ -1034,7 +1037,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::parse(toml_str).is_err());
+        assert!(PlanManifest::parse(toml_str).is_err());
     }
 
     #[test]
@@ -1048,7 +1051,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        assert!(PackageManifest::parse(toml_str).is_err());
+        assert!(PlanManifest::parse(toml_str).is_err());
     }
 
     #[test]
@@ -1062,7 +1065,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(
             manifest.archive_filename(),
             "hello-1.0.0-1-x86_64.wright.tar.zst"
@@ -1084,23 +1087,23 @@ arch = "x86_64"
 script = "make -j4"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PKG_DIR} install"
+script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.package.gcc]
+[lifecycle.part.gcc]
 # main package, no script needed
 
-[lifecycle.package."libstdc++"]
+[lifecycle.part."libstdc++"]
 description = "GNU C++ standard library"
 script = """
-install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
+install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
 """
 
-[lifecycle.package."libstdc++".dependencies]
+[lifecycle.part."libstdc++".dependencies]
 runtime = ["libgcc"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Multi(ref pkgs)) => {
+            Some(PartConfig::Multi(ref pkgs)) => {
                 assert_eq!(pkgs.len(), 2);
                 let libstdcpp = pkgs.get("libstdc++").unwrap();
                 assert_eq!(libstdcpp.description.as_deref(), Some("GNU C++ standard library"));
@@ -1138,17 +1141,17 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "true"
 
-[lifecycle.package.test]
+[lifecycle.part.test]
 
-[lifecycle.package.test-doc]
+[lifecycle.part.test-doc]
 description = "Documentation for test"
 version = "1.0.0-doc"
 arch = "any"
 script = "true"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Multi(ref pkgs)) => {
+            Some(PartConfig::Multi(ref pkgs)) => {
                 let doc = pkgs.get("test-doc").unwrap();
                 let doc_manifest = doc.to_manifest("test-doc", &manifest);
                 assert_eq!(doc_manifest.plan.version, "1.0.0-doc");
@@ -1170,10 +1173,10 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.package.test-lib]
+[lifecycle.part.test-lib]
 script = "true"
 "#;
-        let err = PackageManifest::parse(toml_str).unwrap_err();
+        let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("description is required"));
     }
 
@@ -1188,11 +1191,11 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.package.BadName]
+[lifecycle.part.BadName]
 description = "bad"
 script = "true"
 "#;
-        let err = PackageManifest::parse(toml_str).unwrap_err();
+        let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("invalid sub-package name"));
     }
 
@@ -1208,17 +1211,17 @@ license = "MIT"
 arch = "x86_64"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PKG_DIR} install"
+script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.pre_install = "echo pre"
 hooks.post_install = "ldconfig"
 hooks.pre_remove = "systemctl stop test"
 backup = ["/etc/test.conf"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Single(ref output)) => {
+            Some(PartConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo pre"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
@@ -1243,13 +1246,13 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.post_install = "ldconfig"
 
 [install_scripts]
 post_install = "ldconfig"
 "#;
-        let err = PackageManifest::parse(toml_str).unwrap_err();
+        let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("cannot mix"));
     }
 
@@ -1271,10 +1274,10 @@ pre_remove = "systemctl stop test"
 [backup]
 files = ["/etc/test.conf"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         // Should be converted to Single package config
         match manifest.package {
-            Some(PackageConfig::Single(ref output)) => {
+            Some(PartConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
                 assert_eq!(hooks.pre_remove.as_deref(), Some("systemctl stop test"));
@@ -1299,7 +1302,7 @@ arch = "x86_64"
 script = "make -j4"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PKG_DIR} install"
+script = "make DESTDIR=${PART_DIR} install"
 
 [split."libstdc++"]
 description = "GNU C++ standard library"
@@ -1307,14 +1310,14 @@ description = "GNU C++ standard library"
 [split."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[split."libstdc++".lifecycle.package]
+[split."libstdc++".lifecycle.part]
 script = """
-install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so
+install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
 """
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Multi(ref pkgs)) => {
+            Some(PartConfig::Multi(ref pkgs)) => {
                 let libstdcpp = pkgs.get("libstdc++").unwrap();
                 assert_eq!(libstdcpp.description.as_deref(), Some("GNU C++ standard library"));
                 assert_eq!(libstdcpp.dependencies.runtime, vec!["libgcc"]);
@@ -1335,18 +1338,18 @@ license = "GPL-3.0-or-later"
 arch = "x86_64"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PKG_DIR} install"
+script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.package.gcc]
+[lifecycle.part.gcc]
 hooks.post_install = "ldconfig"
 
-[lifecycle.package."gcc-doc"]
+[lifecycle.part."gcc-doc"]
 description = "GCC documentation"
 script = "true"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Multi(ref pkgs)) => {
+            Some(PartConfig::Multi(ref pkgs)) => {
                 let main = pkgs.get("gcc").unwrap();
                 // Main package description is None — to_manifest will use parent's
                 let main_manifest = main.to_manifest("gcc", &manifest);
@@ -1376,7 +1379,7 @@ link = ["freetype"]
 [mvp.lifecycle.configure]
 script = "meson setup build -Dglib=disabled"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         let mvp = manifest.mvp.as_ref().unwrap();
         let mvp_deps = mvp.dependencies.as_ref().unwrap();
         assert_eq!(mvp_deps.link.as_deref(), Some(&["freetype".to_string()][..]));
@@ -1396,7 +1399,7 @@ description = "minimal package"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert!(manifest.dependencies.runtime.is_empty());
         assert!(manifest.dependencies.build.is_empty());
         assert!(manifest.sources.entries.is_empty());
@@ -1422,7 +1425,7 @@ arch = "x86_64"
 [options]
 skip_fhs_check = true
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert!(manifest.options.skip_fhs_check);
     }
 
@@ -1444,7 +1447,7 @@ replaces = ["old-nginx"]
 conflicts = ["apache"]
 provides = ["http-server"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.relations.replaces, vec!["old-nginx"]);
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
@@ -1472,7 +1475,7 @@ sha256 = "SKIP"
 [[sources]]
 uri = "git+https://github.com/foo/bar.git#v1.0"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.sources.entries.len(), 3);
         assert_eq!(manifest.sources.entries[0].uri, "https://example.com/foo.tar.gz");
         assert_eq!(manifest.sources.entries[0].sha256, "abc123");
@@ -1499,7 +1502,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.epoch, 2);
         assert_eq!(
             manifest.archive_filename(),
@@ -1519,7 +1522,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.epoch, 0);
         assert_eq!(
             manifest.archive_filename(),
@@ -1538,13 +1541,13 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.pre_install = "echo preparing"
 hooks.post_install = "ldconfig"
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Single(ref output)) => {
+            Some(PartConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo preparing"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
@@ -1570,7 +1573,7 @@ arch = "x86_64"
 uris = ["https://example.com/foo.tar.gz", "patches/fix.patch"]
 sha256 = ["abc123", "SKIP"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.sources.entries.len(), 2);
         assert_eq!(manifest.sources.entries[0].uri, "https://example.com/foo.tar.gz");
         assert_eq!(manifest.sources.entries[0].sha256, "abc123");
@@ -1594,7 +1597,7 @@ replaces = ["old-test"]
 conflicts = ["other"]
 provides = ["test-provider"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.relations.replaces, vec!["old-test"]);
         assert_eq!(manifest.relations.conflicts, vec!["other"]);
         assert_eq!(manifest.relations.provides, vec!["test-provider"]);
@@ -1614,18 +1617,18 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "true"
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.post_install = "ldconfig"
 backup = ["/etc/test.conf"]
 "#;
-        let manifest = PackageManifest::parse(toml_str).unwrap();
+        let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.package {
-            Some(PackageConfig::Single(ref output)) => {
+            Some(PartConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
                 assert_eq!(output.backup.as_ref().unwrap(), &["/etc/test.conf"]);
             }
-            _ => panic!("expected Single from [lifecycle.package]"),
+            _ => panic!("expected Single from [lifecycle.part]"),
         }
     }
 
@@ -1646,7 +1649,7 @@ replaces = ["old"]
 [relations]
 replaces = ["old"]
 "#;
-        let err = PackageManifest::parse(toml_str).unwrap_err();
+        let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("cannot have replaces/conflicts/provides in both"));
     }
 

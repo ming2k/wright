@@ -109,7 +109,7 @@ The following **legacy paths are forbidden** — packages must not install files
 | `/home/`, `/root/` | User data — not for package files |
 | `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
 
-Wright enforces this layout automatically: after the `staging` lifecycle stage completes, every file and symlink in `$PKG_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
+Wright enforces this layout automatically: after the `staging` lifecycle stage completes, every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
 
 #### musl Compatibility Policy
 
@@ -314,7 +314,7 @@ provides = ["http-server"]
 
 # ---- Source definitions (array-of-tables) ----
 [[sources]]
-uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
@@ -384,16 +384,16 @@ executor = "shell"
 dockyard = "strict"
 script = """
 cd ${BUILD_DIR}
-make DESTDIR=${PKG_DIR} install
+make DESTDIR=${PART_DIR} install
 # Install configuration files
-install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
+install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
 # ---- Package output declaration (under lifecycle) ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
-# Single-package mode (bare [lifecycle.package]):
-[lifecycle.package]
+# Single-package mode (bare [lifecycle.part]):
+[lifecycle.part]
 hooks.pre_install = "echo 'Preparing nginx...'"
 hooks.post_install = """
 # Create nginx user
@@ -412,12 +412,12 @@ backup = [
 ]
 
 # ---- Multi-package mode (mutually exclusive with single-package) ----
-# Each sub-table under [lifecycle.package] declares a separate output package.
+# Each sub-table under [lifecycle.part] declares a separate output package.
 # Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
 #
-# [lifecycle.package.libfoo]
+# [lifecycle.part.libfoo]
 # description = "libfoo shared library"
-# script = "install -Dm755 libfoo.so ${PKG_DIR}/usr/lib/libfoo.so"
+# script = "install -Dm755 libfoo.so ${PART_DIR}/usr/lib/libfoo.so"
 # hooks.post_install = "ldconfig"
 # dependencies.runtime = ["libbar"]
 
@@ -432,12 +432,12 @@ The `script` fields in package description files support the following variables
 
 | Variable | Description |
 |----------|-------------|
-| `${PKG_NAME}` | Package name |
-| `${PKG_VERSION}` | Package version |
-| `${PKG_RELEASE}` | Release number |
-| `${PKG_ARCH}` | Target architecture |
+| `${PART_NAME}` | Package name |
+| `${PART_VERSION}` | Package version |
+| `${PART_RELEASE}` | Release number |
+| `${PART_ARCH}` | Target architecture |
 | `${SRC_DIR}` | Source directory after extraction (build working directory) |
-| `${PKG_DIR}` | Package output directory (simulated install root) |
+| `${PART_DIR}` | Package output directory (simulated install root) |
 | `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |
@@ -567,7 +567,7 @@ bwrap \
     --ro-bind /etc/ld.so.conf /etc/ld.so.conf \
     --ro-bind /etc/ld.so.cache /etc/ld.so.cache \
     --bind "${SRC_DIR}" /build \
-    --bind "${PKG_DIR}" /output \
+    --bind "${PART_DIR}" /output \
     --ro-bind "${FILES_DIR}" /files \
     --dev /dev \
     --proc /proc \
@@ -581,8 +581,8 @@ bwrap \
     --gid 1000 \
     --die-with-parent \
     --chdir /build \
-    --setenv PKG_NAME "${PKG_NAME}" \
-    --setenv PKG_VERSION "${PKG_VERSION}" \
+    --setenv PKG_NAME "${PART_NAME}" \
+    --setenv PKG_VERSION "${PART_VERSION}" \
     --setenv PKG_DIR "/output" \
     --setenv SRC_DIR "/build" \
     --setenv FILES_DIR "/files" \
@@ -594,7 +594,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `hooks` in `[lifecycle.package]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `hooks` in `[lifecycle.part]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
 
 ---
 
@@ -803,7 +803,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 1.  Parse plan.toml
 2.  Validate all required fields
 3.  Check that build dependencies are installed
-4.  Create build working directory: /tmp/wright-build/{name}-{version}/
+4.  Create build working directory: /var/tmp/wright-build/{name}-{version}/
     ├── src/        (SRC_DIR)
     ├── pkg/        (PKG_DIR)
     └── log/        (build logs)
@@ -818,7 +818,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
     e. Check exit code
 9.  Generate file manifest from pkg/
 10. Strip binaries (if options.strip = true)
-11. Generate package metadata file .PKGINFO
+11. Generate package metadata file .PARTINFO
 12. Archive: tar -c -I 'zstd -19' -f {name}-{version}-{release}-{arch}.wright.tar.zst -C pkg/ .
 13. Compute package SHA-256
 14. Move to output directory
@@ -828,7 +828,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 
 ```
 {name}-{version}-{release}-{arch}.wright.tar.zst
-├── .PKGINFO        # Package metadata (TOML format)
+├── .PARTINFO        # Package metadata (TOML format)
 ├── .FILELIST       # File manifest (one path per line)
 ├── .INSTALL        # Install scripts (if any)
 └── usr/            # Actual installed files
@@ -838,7 +838,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
     └── ...
 ```
 
-`.PKGINFO` format:
+`.PARTINFO` format:
 
 ```toml
 [package]
@@ -876,7 +876,7 @@ db_path = "/var/lib/wright/db/packages.db"
 log_dir = "/var/log/wright"
 
 [build]
-build_dir = "/tmp/wright-build"       # Build working directory (tmpfs recommended)
+build_dir = "/var/tmp/wright-build"   # Build working directory (use a large persistent filesystem)
 default_dockyard = "strict"          # Default dockyard level
 dockyards = 0                        # Max concurrent dockyards (0 = auto = available_cpus − 4)
 # nproc_per_dockyard = 4            # Optional: fixed CPU share per dockyard
@@ -1087,7 +1087,7 @@ Repository generation creates a repository from a directory of built packages. T
 
 Process:
 1. Scan directory for `*.wright.tar.zst` files
-2. Extract `.PKGINFO` from each package
+2. Extract `.PARTINFO` from each package
 3. Compute SHA-256 and file sizes
 4. Generate `index.toml`
 5. Optionally sign with GPG: `gpg --detach-sign index.toml`
@@ -1129,7 +1129,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- Package hooks (`hooks.post_install`, etc. in `[lifecycle.package]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`hooks.post_install`, etc. in `[lifecycle.part]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode

@@ -10,7 +10,7 @@ use tracing::{info, warn, debug};
 
 use crate::config::GlobalConfig;
 use crate::error::{WrightError, Result};
-use crate::package::manifest::{PackageManifest, PackageConfig};
+use crate::part::manifest::{PlanManifest, PartConfig};
 use crate::repo::source::sanitize_cache_filename;
 use crate::dockyard::ResourceLimits;
 use crate::util::{checksum, download, compress};
@@ -92,20 +92,20 @@ fn ensure_clean_dir(dir: &Path) -> Result<()> {
 }
 
 /// Validate that a local URI resolves within the plan directory.
-fn validate_local_path(hold_dir: &Path, relative_path: &str) -> Result<PathBuf> {
-    let resolved = hold_dir.join(relative_path).canonicalize().map_err(|e| {
+fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> {
+    let resolved = plan_dir.join(relative_path).canonicalize().map_err(|e| {
         WrightError::ValidationError(format!(
             "local path not found: {} ({})",
             relative_path, e
         ))
     })?;
-    let hold_abs = hold_dir.canonicalize().map_err(|e| {
+    let plan_abs = plan_dir.canonicalize().map_err(|e| {
         WrightError::ValidationError(format!(
             "failed to resolve plan directory {}: {}",
-            hold_dir.display(), e
+            plan_dir.display(), e
         ))
     })?;
-    if !resolved.starts_with(&hold_abs) {
+    if !resolved.starts_with(&plan_abs) {
         return Err(WrightError::ValidationError(
             format!("local path escapes plan directory: {}", relative_path)
         ));
@@ -123,7 +123,7 @@ impl Builder {
     }
 
     /// Compute a unique hash representing the entire build context.
-    pub fn compute_build_key(&self, manifest: &PackageManifest) -> Result<String> {
+    pub fn compute_build_key(&self, manifest: &PlanManifest) -> Result<String> {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
 
@@ -156,9 +156,14 @@ impl Builder {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// Process a URI by substituting variables like ${PKG_VERSION}, ${PKG_NAME}, etc.
-    fn process_uri(&self, uri: &str, manifest: &PackageManifest) -> String {
+    /// Process a URI by substituting variables like ${PART_VERSION}, ${PART_NAME}, etc.
+    fn process_uri(&self, uri: &str, manifest: &PlanManifest) -> String {
         let mut vars = std::collections::HashMap::new();
+        vars.insert("PART_NAME".to_string(), manifest.plan.name.clone());
+        vars.insert("PART_VERSION".to_string(), manifest.plan.version.clone());
+        vars.insert("PART_RELEASE".to_string(), manifest.plan.release.to_string());
+        vars.insert("PART_ARCH".to_string(), manifest.plan.arch.clone());
+        // Legacy aliases for older plans.
         vars.insert("PKG_NAME".to_string(), manifest.plan.name.clone());
         vars.insert("PKG_VERSION".to_string(), manifest.plan.version.clone());
         vars.insert("PKG_RELEASE".to_string(), manifest.plan.release.to_string());
@@ -168,7 +173,7 @@ impl Builder {
     }
 
     /// Get absolute build root for a package (tools like libtool require absolute paths).
-    fn build_root(&self, manifest: &PackageManifest) -> Result<PathBuf> {
+    fn build_root(&self, manifest: &PlanManifest) -> Result<PathBuf> {
         let build_dir = if self.config.build.build_dir.is_absolute() {
             self.config.build.build_dir.clone()
         } else {
@@ -190,8 +195,8 @@ impl Builder {
     /// with WRIGHT_BOOTSTRAP_BUILD=1 and WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1.
     pub fn build(
         &self,
-        manifest: &PackageManifest,
-        hold_dir: &Path,
+        manifest: &PlanManifest,
+        plan_dir: &Path,
         stages: &[String],
         fetch_only: bool,
         skip_check: bool,
@@ -234,7 +239,7 @@ impl Builder {
             
             // Re-detect sub-package directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
-            if let Some(PackageConfig::Multi(ref pkgs)) = manifest.package {
+            if let Some(PartConfig::Multi(ref pkgs)) = manifest.package {
                 for sub_name in pkgs.keys() {
                     if sub_name == &manifest.plan.name { continue; }
                     let sub_dir = build_root.join(format!("pkg-{}", sub_name));
@@ -277,7 +282,7 @@ impl Builder {
 
         if stages.is_empty() {
             // Fetch sources (remote downloads + local file copies to cache)
-            self.fetch(manifest, hold_dir)?;
+            self.fetch(manifest, plan_dir)?;
 
             // Verify sources
             self.verify(manifest)?;
@@ -324,12 +329,12 @@ impl Builder {
             .unwrap_or(total_cpus);
 
         let vars = variables::standard_variables(variables::VariableContext {
-            pkg_name: &manifest.plan.name,
-            pkg_version: &manifest.plan.version,
-            pkg_release: manifest.plan.release,
-            pkg_arch: &manifest.plan.arch,
+            part_name: &manifest.plan.name,
+            part_version: &manifest.plan.version,
+            part_release: manifest.plan.release,
+            part_arch: &manifest.plan.arch,
             src_dir: &src_dir.to_string_lossy(),
-            pkg_dir: &pkg_dir.to_string_lossy(),
+            part_dir: &pkg_dir.to_string_lossy(),
             files_dir: &files_dir_str,
             cflags: &self.config.build.cflags,
             cxxflags: &self.config.build.cxxflags,
@@ -355,7 +360,7 @@ impl Builder {
             working_dir: &src_dir,
             log_dir: &log_dir,
             src_dir: src_dir.clone(),
-            pkg_dir: pkg_dir.clone(),
+            part_dir: pkg_dir.clone(),
             files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
             stages: stages.to_vec(),
             skip_check,
@@ -371,7 +376,7 @@ impl Builder {
 
         // Run sub-package stages (multi-package mode)
         let mut split_pkg_dirs = std::collections::HashMap::new();
-        if let Some(PackageConfig::Multi(ref packages)) = manifest.package {
+        if let Some(PartConfig::Multi(ref packages)) = manifest.package {
             for (sub_name, sub_pkg) in packages {
                 // Main package uses PKG_DIR directly, skip
                 if sub_name == &manifest.plan.name { continue; }
@@ -387,6 +392,10 @@ impl Builder {
                 })?;
 
                 let mut sub_vars = vars_for_splits.clone();
+                sub_vars.insert("PART_DIR".to_string(), sub_pkg_dir.to_string_lossy().to_string());
+                sub_vars.insert("PART_NAME".to_string(), sub_name.clone());
+                sub_vars.insert("MAIN_PART_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
+                // Legacy aliases for older sub-part scripts.
                 sub_vars.insert("PKG_DIR".to_string(), sub_pkg_dir.to_string_lossy().to_string());
                 sub_vars.insert("PKG_NAME".to_string(), sub_name.clone());
                 sub_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
@@ -396,10 +405,10 @@ impl Builder {
                 let sub_options = executor::ExecutorOptions {
                     level: sub_pkg.dockyard.parse().unwrap(),
                     src_dir: src_dir.clone(),
-                    pkg_dir: sub_pkg_dir.clone(),
+                    part_dir: sub_pkg_dir.clone(),
                     files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
                     rlimits: rlimits.clone(),
-                    main_pkg_dir: Some(pkg_dir.clone()),
+                    main_part_dir: Some(pkg_dir.clone()),
                     verbose,
                     cpu_count: Some(cpu_count),
                 };
@@ -496,7 +505,7 @@ impl Builder {
     /// recreated at the start of every build anyway, but the build cache
     /// persists across runs and can only be invalidated by a key change or
     /// this explicit clean.
-    pub fn clean(&self, manifest: &PackageManifest) -> Result<()> {
+    pub fn clean(&self, manifest: &PlanManifest) -> Result<()> {
         // 1. Remove working directory.
         let build_root = self.build_root(manifest)?;
         if build_root.exists() {
@@ -530,7 +539,7 @@ impl Builder {
 
     /// Verify integrity of downloaded sources.
     /// Only verifies remote URIs (local paths use "SKIP").
-    pub fn verify(&self, manifest: &PackageManifest) -> Result<()> {
+    pub fn verify(&self, manifest: &PlanManifest) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
         for (i, source) in manifest.sources.entries.iter().enumerate() {
@@ -562,7 +571,7 @@ impl Builder {
 
     /// Extract archives to the build directory and copy non-archive files to files_dir.
     /// Returns the path to the top-level source directory (for BUILD_DIR).
-    pub fn extract(&self, manifest: &PackageManifest, dest_dir: &Path, files_dir: &Path) -> Result<PathBuf> {
+    pub fn extract(&self, manifest: &PlanManifest, dest_dir: &Path, files_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
         for source in &manifest.sources.entries {
@@ -666,7 +675,7 @@ impl Builder {
 
     /// Update sha256 checksums in plan.toml.
     /// Only computes hashes for remote URIs; local paths get "SKIP".
-    pub fn update_hashes(&self, manifest: &PackageManifest, manifest_path: &Path) -> Result<()> {
+    pub fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
 
         let cache_dir = self.config.general.cache_dir.join("sources");
@@ -828,7 +837,7 @@ impl Builder {
 
     /// Fetch sources for a package to the cache directory.
     /// Remote URIs are downloaded; local URIs are validated and copied to cache.
-    pub fn fetch(&self, manifest: &PackageManifest, hold_dir: &Path) -> Result<()> {
+    pub fn fetch(&self, manifest: &PlanManifest, plan_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
         if !cache_dir.exists() {
             std::fs::create_dir_all(cache_dir).map_err(WrightError::IoError)?;
@@ -898,7 +907,7 @@ impl Builder {
                 }
             } else {
                 // Local URI: validate path is within plan dir and copy to cache
-                let local_path = validate_local_path(hold_dir, &processed_uri)?;
+                let local_path = validate_local_path(plan_dir, &processed_uri)?;
                 let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
                 let dest = cache_dir.join(&filename);
 

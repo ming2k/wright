@@ -50,7 +50,7 @@ version = "1.0.0"
 epoch = 1       # This will upgrade over any epoch=0 package, even "9999.0"
 ```
 
-Epoch defaults to `0` and is omitted from archive filenames and `.PKGINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
+Epoch defaults to `0` and is omitted from archive filenames and `.PARTINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
 
 ### `[dependencies]`
 
@@ -124,7 +124,7 @@ URIs support variable substitution (see [Variable Substitution](#variable-substi
 
 ```toml
 [[sources]]
-uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
@@ -161,7 +161,7 @@ Patches are **not** auto-applied. Include them as `[[sources]]` entries and appl
 
 ```toml
 [[sources]]
-uri = "https://example.com/foo-${PKG_VERSION}.tar.gz"
+uri = "https://example.com/foo-${PART_VERSION}.tar.gz"
 sha256 = "abc123..."
 
 [[sources]]
@@ -276,14 +276,14 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[lifecycle.package]` — Package Output Declaration
+### `[lifecycle.part]` — Package Output Declaration
 
-The `[lifecycle.package]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section under `[lifecycle]`.
+The `[lifecycle.part]` section declares package output metadata: install/upgrade/removal hooks and backup files. It is **not** a build stage — it is a package declaration section under `[lifecycle]`.
 
 **Single-package mode** (no sub-packages):
 
 ```toml
-[lifecycle.package]
+[lifecycle.part]
 hooks.pre_install = "echo 'Preparing installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -294,12 +294,12 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 **Multi-package mode** (all packages explicitly declared, mutually exclusive with single-package mode):
 
 ```toml
-[lifecycle.package.nginx]
+[lifecycle.part.nginx]
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[lifecycle.package."nginx-doc"]
+[lifecycle.part."nginx-doc"]
 description = "Nginx documentation"
 script = "..."
 ```
@@ -340,9 +340,9 @@ The default pipeline runs these stages in order:
 | `configure`    | user     | Run configure scripts                    |
 | `compile`      | user     | Compile the software                     |
 | `check`        | user     | Run test suites                          |
-| `staging`      | user     | Install files into `${PKG_DIR}`          |
+| `staging`      | user     | Install files into `${PART_DIR}`          |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[lifecycle.package]` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.package]`](#lifecyclepackage--package-output-declaration)).
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Note that `[lifecycle.part]` is not a lifecycle stage — it is a package output declaration section (see [`[lifecycle.part]`](#lifecyclepackage--package-output-declaration)).
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -501,13 +501,13 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 
 | Variable        | Description                                |
 |-----------------|--------------------------------------------|
-| `${PKG_NAME}`   | Package name from `[plan].name`         |
-| `${PKG_VERSION}`| Package version from `[plan].version`   |
-| `${PKG_RELEASE}`| Release number as a string                 |
-| `${PKG_ARCH}`   | Target architecture                        |
+| `${PART_NAME}`   | Package name from `[plan].name`         |
+| `${PART_VERSION}`| Package version from `[plan].version`   |
+| `${PART_RELEASE}`| Release number as a string                 |
+| `${PART_ARCH}`   | Target architecture                        |
 | `${SRC_DIR}`    | Extraction root directory                  |
 | `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
-| `${PKG_DIR}`    | Package output directory (install files here) |
+| `${PART_DIR}`    | Package output directory (install files here) |
 | `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
@@ -521,7 +521,7 @@ When running inside a dockyard, path variables are remapped to dockyard mount po
 |-----------------|------------------------|------------------------|
 | `${SRC_DIR}`    | actual host path       | `/build`               |
 | `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
-| `${PKG_DIR}`    | actual host path       | `/output`              |
+| `${PART_DIR}`    | actual host path       | `/output`              |
 | `${FILES_DIR}`  | actual host path       | `/files`               |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
@@ -665,7 +665,7 @@ gcc -o hello hello.c
 
 [lifecycle.staging]
 script = """
-install -Dm755 hello ${PKG_DIR}/usr/bin/hello
+install -Dm755 hello ${PART_DIR}/usr/bin/hello
 """
 ```
 
@@ -694,7 +694,7 @@ conflicts = ["apache"]
 provides = ["http-server"]
 
 [[sources]]
-uri = "https://nginx.org/download/nginx-${PKG_VERSION}.tar.gz"
+uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
@@ -736,10 +736,10 @@ make test
 [lifecycle.staging]
 script = """
 cd ${BUILD_DIR}
-make DESTDIR=${PKG_DIR} install
+make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.package]
+[lifecycle.part]
 hooks.pre_install = "echo 'Preparing nginx installation...'"
 hooks.post_install = "useradd -r nginx 2>/dev/null || true"
 hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -751,7 +751,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
-In multi-package mode, all packages are declared as sub-tables of `[lifecycle.package]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.package]`).
+In multi-package mode, all packages are declared as sub-tables of `[lifecycle.part]`. This mode is mutually exclusive with single-package mode (bare `[lifecycle.part]`).
 
 ```toml
 [plan]
@@ -768,32 +768,32 @@ script = "make -j$(nproc)"
 [lifecycle.staging]
 script = """
 cd ${BUILD_DIR}
-make DESTDIR=${PKG_DIR} install
+make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.package.gcc]
+[lifecycle.part.gcc]
 hooks.post_install = "..."
 
-[lifecycle.package."libstdc++"]
+[lifecycle.part."libstdc++"]
 description = "GNU C++ standard library"
-script = "install -Dm755 libstdc++.so ${PKG_DIR}/usr/lib/libstdc++.so"
+script = "install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so"
 hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.part."libstdc++"]`).
 
-Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.package.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
+Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.part.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
 
 ```toml
 [lifecycle.staging]
-script = "cd ${BUILD_DIR} && make DESTDIR=${PKG_DIR} install"
+script = "cd ${BUILD_DIR} && make DESTDIR=${PART_DIR} install"
 
-[lifecycle.package."libfoo-dev"]
+[lifecycle.part."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
-install -Dm644 ${BUILD_DIR}/include/* ${PKG_DIR}/usr/include/libfoo/
-install -Dm644 ${BUILD_DIR}/libfoo.pc ${PKG_DIR}/usr/lib/pkgconfig/libfoo.pc
+install -Dm644 ${BUILD_DIR}/include/* ${PART_DIR}/usr/include/libfoo/
+install -Dm644 ${BUILD_DIR}/libfoo.pc ${PART_DIR}/usr/lib/pkgconfig/libfoo.pc
 """
 ```
 
@@ -807,7 +807,7 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[lifecycle.package.linux-firmware-amd]
+[lifecycle.part.linux-firmware-amd]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
@@ -817,11 +817,11 @@ In this pattern the parent package itself may contain no files — it exists onl
 For a `-doc` sub-package that overrides the architecture:
 
 ```toml
-[lifecycle.package.mypackage-doc]
+[lifecycle.part.mypackage-doc]
 description = "Documentation for mypackage"
 arch = "any"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PKG_DIR}/usr/share/doc/mypackage/
+install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/mypackage/
 """
 ```
 
@@ -831,7 +831,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.package."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.part."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |

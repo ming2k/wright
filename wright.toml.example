@@ -42,9 +42,9 @@ assemblies_dir = "/var/lib/wright/assemblies"
 containers_dir = "/var/lib/wright/containers"
 
 [build]
-# Working directory for build trees. Using a tmpfs mount here is recommended
-# for faster builds and automatic cleanup on reboot.
-build_dir = "/tmp/wright-build"
+# Working directory for build trees. Use a large persistent filesystem here;
+# kernel, LLVM, and browser builds can exceed a small /tmp quickly.
+build_dir = "/var/tmp/wright-build"
 
 # Default sandbox level applied when a stage does not specify one.
 # Options: "none", "relaxed", "strict"

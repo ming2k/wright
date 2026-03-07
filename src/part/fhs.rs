@@ -1,7 +1,7 @@
-//! FHS (Filesystem Hierarchy Standard) validation for package staging directories.
+//! FHS (Filesystem Hierarchy Standard) validation for part staging directories.
 //!
 //! Wright targets a merged-usr Linux layout. This module validates that all files
-//! installed into a package's staging directory (`PKG_DIR`) reside under an
+//! installed into a part's staging directory (`PART_DIR`) reside under an
 //! allowed FHS path before the archive is created.
 
 use std::fs;
@@ -22,7 +22,7 @@ pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
     for entry in WalkDir::new(pkg_dir) {
         let entry = entry.map_err(|e| {
             WrightError::BuildError(format!(
-                "failed to walk package directory {}: {}",
+                "failed to walk part directory {}: {}",
                 pkg_dir.display(),
                 e
             ))
@@ -40,7 +40,7 @@ pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
         if !is_allowed(&abs) {
             let hint = rejection_hint(&abs);
             return Err(WrightError::ValidationError(format!(
-                "package '{}': file '{}' violates FHS — {}",
+                "part '{}': file '{}' violates FHS — {}",
                 pkg_name,
                 abs.display(),
                 hint
@@ -53,7 +53,7 @@ pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
                 if target.is_absolute() && !is_allowed(&target) {
                     let hint = rejection_hint(&target);
                     return Err(WrightError::ValidationError(format!(
-                        "package '{}': symlink '{}' points to '{}' which violates FHS — {}",
+                        "part '{}': symlink '{}' points to '{}' which violates FHS — {}",
                         pkg_name,
                         abs.display(),
                         target.display(),
@@ -98,11 +98,11 @@ fn rejection_hint(path: &Path) -> &'static str {
         "bin" | "sbin" => "install to /usr/bin",
         "lib" => "install to /usr/lib",
         "lib64" => "install to /usr/lib or /usr/lib64",
-        "home" | "root" => "user data, not for package files",
+        "home" | "root" => "user data, not for part files",
         "tmp" | "run" => "runtime-only; create via install scripts",
         "usr" => match second {
             "sbin" => "install to /usr/bin",
-            "local" => "packages install to /usr directly, not /usr/local",
+            "local" => "parts install to /usr directly, not /usr/local",
             _ => "not an FHS-compliant path",
         },
         _ => "not an FHS-compliant path",

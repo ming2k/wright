@@ -26,7 +26,7 @@ wright [OPTIONS] <COMMAND>
 
 #### `wright install <PACKAGES...>`
 
-Install packages. Each argument can be a `.wright.tar.zst` file path, a package name (resolved from configured sources), or a `@container` reference (expands to all packages in the named container). Multiple containers can be combined freely — they are non-dependent, combinatory groupings and overlapping packages are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
+Install packages. Each argument can be a `.wright.tar.zst` file path, a package name (resolved from configured sources), or a `@kit` reference (expands to all packages in the named kit). Multiple kits can be combined freely — they are non-dependent, combinatory groupings and overlapping packages are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
 
 | Flag | Description |
 |------|-------------|

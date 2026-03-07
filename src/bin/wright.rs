@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use wright::config::{GlobalConfig, ContainersConfig};
+use wright::config::{GlobalConfig, KitsConfig};
 use wright::database::Database;
 use wright::repo;
 use wright::transaction;
@@ -64,9 +64,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Install packages from .wright.tar.zst files, package names, or @containers
+    /// Install packages from .wright.tar.zst files, package names, or @kits
     Install {
-        /// Package files, package names, or @container names
+        /// Package files, package names, or @kit names
         #[arg(required = true)]
         packages: Vec<String>,
 
@@ -296,23 +296,23 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Install { packages, force, nodeps } => {
-            let containers = ContainersConfig::load_all(&config.general.containers_dir)
-                .context("failed to load containers config")?;
+            let kits = KitsConfig::load_all(&config.general.kits_dir)
+                .context("failed to load kits config")?;
 
-            // Expand @container references and resolve package names to paths
+            // Expand @kit references and resolve package names to paths
             let mut pkg_paths: Vec<PathBuf> = Vec::new();
             for arg in &packages {
-                if let Some(container_name) = arg.strip_prefix('@') {
-                    let members = containers.resolve(container_name);
+                if let Some(kit_name) = arg.strip_prefix('@') {
+                    let members = kits.resolve(kit_name);
                     if members.is_empty() {
-                        eprintln!("error: container '{}' not found or empty", container_name);
+                        eprintln!("error: kit '{}' not found or empty", kit_name);
                         std::process::exit(1);
                     }
                     for name in &members {
                         match resolver.resolve(name) {
                             Ok(Some(resolved)) => pkg_paths.push(resolved.path),
                             Ok(None) => {
-                                eprintln!("error: package '{}' (from @{}) not found", name, container_name);
+                                eprintln!("error: package '{}' (from @{}) not found", name, kit_name);
                                 std::process::exit(1);
                             }
                             Err(e) => {
@@ -539,7 +539,7 @@ fn main() -> Result<()> {
                     if let Some(index) = repo::index::read_index(dir)
                         .context("failed to read repo index")?
                     {
-                        for entry in &index.packages {
+                        for entry in &index.parts {
                             if entry.name.contains(&keyword)
                                 || entry.description.to_lowercase().contains(&keyword.to_lowercase())
                             {
@@ -635,7 +635,7 @@ fn main() -> Result<()> {
             for pkg in &packages {
                 match resolver.resolve(&pkg.name) {
                     Ok(Some(resolved)) => {
-                        match wright::package::archive::read_pkginfo(&resolved.path) {
+                        match wright::part::archive::read_partinfo(&resolved.path) {
                             Ok(info) => {
                                 let is_newer = info.version != pkg.version
                                     || info.release > pkg.release;
@@ -792,8 +792,8 @@ fn main() -> Result<()> {
                 if idx_path.exists() {
                     match repo::index::read_index(dir) {
                         Ok(Some(index)) => {
-                            println!("{}: {} package(s)", dir.display(), index.packages.len());
-                            total += index.packages.len();
+                            println!("{}: {} package(s)", dir.display(), index.parts.len());
+                            total += index.parts.len();
                         }
                         Ok(None) => {}
                         Err(e) => eprintln!("warning: {}: {}", dir.display(), e),

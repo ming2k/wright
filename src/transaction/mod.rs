@@ -11,10 +11,10 @@ use rusqlite::params;
 
 use crate::database::{Database, Dependency, DepType, FileEntry, FileType, NewPackage};
 use crate::error::{WrightError, Result};
-use crate::package::archive::{self, PkgInfo};
-use crate::package::version::{self, Version};
+use crate::part::archive::{self, PartInfo};
+use crate::part::version::{self, Version};
 use crate::util::checksum;
-use crate::repo::source::{SimpleResolver, ResolvedPackage};
+use crate::repo::source::{ResolvedPart, SimpleResolver};
 
 use rollback::RollbackState;
 
@@ -181,7 +181,7 @@ fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
 }
 
 /// Replace provides and conflicts rows for a package (used during upgrade).
-fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PkgInfo) -> Result<()> {
+fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PartInfo) -> Result<()> {
     // Delete old rows
     db.connection().execute("DELETE FROM provides WHERE package_id = ?1", params![pkg_id])
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
@@ -317,7 +317,7 @@ pub fn install_packages(
 
 fn visit_resolved(
     name: &str,
-    map: &HashMap<String, ResolvedPackage>,
+    map: &HashMap<String, ResolvedPart>,
     visited: &mut HashSet<String>,
     visiting: &mut HashSet<String>,
     sorted: &mut Vec<String>,
@@ -1094,7 +1094,7 @@ pub fn verify_package(
 // ---------------------------------------------------------------------------
 
 /// Collect file entries from an extracted archive directory.
-fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<FileEntry>> {
+fn collect_file_entries(extract_dir: &Path, pkginfo: &PartInfo) -> Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
 
     for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
@@ -1110,6 +1110,7 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PkgInfo) -> Result<Vec<Fil
 
         // Skip root dir and metadata files
         if relative_str.is_empty()
+            || relative_str.starts_with(".PARTINFO")
             || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
@@ -1235,6 +1236,7 @@ fn copy_files_to_root(
 
         // Skip root dir and metadata files
         if relative_str.is_empty()
+            || relative_str.starts_with(".PARTINFO")
             || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
@@ -1378,7 +1380,7 @@ fn copy_files_to_root(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::package::version::VersionConstraint;
+    use crate::part::version::VersionConstraint;
     use tempfile::TempDir;
     use crate::util::compress;
     use crate::database::FileEntry as DbFileEntry;
@@ -1392,15 +1394,15 @@ mod tests {
     fn build_hello_archive() -> PathBuf {
         use crate::builder::Builder;
         use crate::config::GlobalConfig;
-        use crate::package::manifest::PackageManifest;
+        use crate::part::manifest::PlanManifest;
 
         let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/hello/plan.toml");
-        let mut manifest = PackageManifest::from_file(&manifest_path).unwrap();
+        let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
         for stage in manifest.lifecycle.values_mut() {
             stage.dockyard = "none".to_string();
         }
-        let hold_dir = manifest_path.parent().unwrap();
+        let plan_dir = manifest_path.parent().unwrap();
 
         let mut config = GlobalConfig::default();
         let build_tmp = tempfile::tempdir().unwrap();
@@ -1410,11 +1412,11 @@ mod tests {
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let result = builder
-            .build(&manifest, hold_dir, &[], false, false, &extra_env, false, false, None, None)
+            .build(&manifest, plan_dir, &[], false, false, &extra_env, false, false, None, None)
             .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
-        let archive = crate::package::archive::create_archive(
+        let archive = crate::part::archive::create_archive(
             &result.pkg_dir,
             &manifest,
             output_dir.path(),

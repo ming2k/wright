@@ -71,7 +71,7 @@ wright source remove myrepo
 ## Indexing
 
 The index (`wright.index.toml`) is what makes name-based resolution fast.
-Without it, the resolver must decompress and read `.PKGINFO` from every
+Without it, the resolver must decompress and read `.PARTINFO` from every
 archive in the directory.
 
 ```bash

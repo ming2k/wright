@@ -45,7 +45,7 @@ ccache = true
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
 patch -Np1 < ${FILES_DIR}/add-feature.patch
 """
@@ -55,7 +55,7 @@ executor = "shell"
 dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 ./configure \
     --prefix=/usr \
     --sysconfdir=/etc/nginx \
@@ -69,7 +69,7 @@ executor = "shell"
 dockyard = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 make
 """
 
@@ -77,7 +77,7 @@ make
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
+cd nginx-${PART_VERSION}
 make test
 """
 
@@ -85,12 +85,12 @@ make test
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PKG_VERSION}
-make DESTDIR=${PKG_DIR} install
-install -Dm644 conf/nginx.conf ${PKG_DIR}/etc/nginx/nginx.conf
+cd nginx-${PART_VERSION}
+make DESTDIR=${PART_DIR} install
+install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
-[lifecycle.package.nginx]
+[lifecycle.part.nginx]
 hooks.pre_install = """
 echo "Preparing nginx installation..."
 """
@@ -108,11 +108,11 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-[lifecycle.package.nginx-doc]
+[lifecycle.part.nginx-doc]
 description = "Nginx documentation files"
 script = """
-cd nginx-${PKG_VERSION}
-install -d ${PKG_DIR}/usr/share/doc/nginx
-install -Dm644 README ${PKG_DIR}/usr/share/doc/nginx/README
-install -Dm644 LICENSE ${PKG_DIR}/usr/share/doc/nginx/LICENSE
+cd nginx-${PART_VERSION}
+install -d ${PART_DIR}/usr/share/doc/nginx
+install -Dm644 README ${PART_DIR}/usr/share/doc/nginx/README
+install -Dm644 LICENSE ${PART_DIR}/usr/share/doc/nginx/LICENSE
 """

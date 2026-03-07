@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{WrightError, Result};
-use crate::package::archive;
+use crate::part::archive;
 
 const INDEX_FILENAME: &str = "wright.index.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoIndex {
     #[serde(default)]
-    pub packages: Vec<IndexEntry>,
+    pub parts: Vec<IndexEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,12 +41,12 @@ pub fn index_path(repo_dir: &Path) -> PathBuf {
     repo_dir.join(INDEX_FILENAME)
 }
 
-/// Generate an index for all `.wright.tar.zst` packages in `repo_dir`.
+/// Generate an index for all `.wright.tar.zst` parts in `repo_dir`.
 pub fn generate_index(repo_dir: &Path) -> Result<RepoIndex> {
     let mut entries = Vec::new();
 
     if !repo_dir.exists() {
-        return Ok(RepoIndex { packages: entries });
+        return Ok(RepoIndex { parts: entries });
     }
 
     for entry in std::fs::read_dir(repo_dir).map_err(WrightError::IoError)? {
@@ -61,7 +61,7 @@ pub fn generate_index(repo_dir: &Path) -> Result<RepoIndex> {
             continue;
         }
 
-        let pkginfo = match archive::read_pkginfo(&path) {
+        let partinfo = match archive::read_partinfo(&path) {
             Ok(info) => info,
             Err(e) => {
                 tracing::warn!("Skipping {}: {}", path.display(), e);
@@ -72,25 +72,25 @@ pub fn generate_index(repo_dir: &Path) -> Result<RepoIndex> {
         let sha256 = crate::util::checksum::sha256_file(&path)?;
 
         entries.push(IndexEntry {
-            name: pkginfo.name,
-            version: pkginfo.version,
-            release: pkginfo.release,
-            epoch: pkginfo.epoch,
-            description: pkginfo.description,
-            arch: pkginfo.arch,
+            name: partinfo.name,
+            version: partinfo.version,
+            release: partinfo.release,
+            epoch: partinfo.epoch,
+            description: partinfo.description,
+            arch: partinfo.arch,
             filename: name.to_string(),
             sha256,
-            install_size: pkginfo.install_size,
-            runtime_deps: pkginfo.runtime_deps,
-            link_deps: pkginfo.link_deps,
-            provides: pkginfo.provides,
-            conflicts: pkginfo.conflicts,
-            replaces: pkginfo.replaces,
+            install_size: partinfo.install_size,
+            runtime_deps: partinfo.runtime_deps,
+            link_deps: partinfo.link_deps,
+            provides: partinfo.provides,
+            conflicts: partinfo.conflicts,
+            replaces: partinfo.replaces,
         });
     }
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(RepoIndex { packages: entries })
+    Ok(RepoIndex { parts: entries })
 }
 
 /// Write an index file to disk.

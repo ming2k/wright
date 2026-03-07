@@ -5,11 +5,11 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::error::{WrightError, Result};
-use crate::package::manifest::PackageManifest;
+use crate::part::manifest::PlanManifest;
 
-/// Metadata extracted from a .PKGINFO file
+/// Metadata extracted from a .PARTINFO file
 #[derive(Debug, Clone)]
-pub struct PkgInfo {
+pub struct PartInfo {
     pub name: String,
     pub version: String,
     pub release: u32,
@@ -30,14 +30,14 @@ pub struct PkgInfo {
 
 /// Files that should never be included in a package.
 /// These are shared/generated files that cause conflicts between packages.
-const PACKAGE_EXCLUDE_FILES: &[&str] = &[
+const PART_EXCLUDE_FILES: &[&str] = &[
     "usr/share/info/dir",
 ];
 
 /// Remove well-known files that should never be packaged.
-fn purge_excluded_files(pkg_dir: &Path) {
-    for rel in PACKAGE_EXCLUDE_FILES {
-        let path = pkg_dir.join(rel);
+fn purge_excluded_files(part_dir: &Path) {
+    for rel in PART_EXCLUDE_FILES {
+        let path = part_dir.join(rel);
         if path.exists() {
             tracing::debug!("Removing excluded file from package: {}", rel);
             let _ = std::fs::remove_file(&path);
@@ -47,27 +47,27 @@ fn purge_excluded_files(pkg_dir: &Path) {
 
 /// Create a .wright.tar.zst binary package archive.
 pub fn create_archive(
-    pkg_dir: &Path,
-    manifest: &PackageManifest,
+    part_dir: &Path,
+    manifest: &PlanManifest,
     output_path: &Path,
 ) -> Result<PathBuf> {
-    purge_excluded_files(pkg_dir);
+    purge_excluded_files(part_dir);
 
     // Calculate install size
-    let install_size = calculate_dir_size(pkg_dir)?;
+    let install_size = calculate_dir_size(part_dir)?;
 
-    // Generate .PKGINFO
-    let pkginfo = generate_pkginfo(manifest, install_size);
+    // Generate .PARTINFO
+    let partinfo = generate_partinfo(manifest, install_size);
 
     // Generate .FILELIST
-    let filelist = generate_filelist(pkg_dir)?;
+    let filelist = generate_filelist(part_dir)?;
 
-    // Write metadata files into pkg_dir
-    std::fs::write(pkg_dir.join(".PKGINFO"), &pkginfo).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to write .PKGINFO: {}", e))
+    // Write metadata files into part_dir
+    std::fs::write(part_dir.join(".PARTINFO"), &partinfo).map_err(|e| {
+        WrightError::ArchiveError(format!("failed to write .PARTINFO: {}", e))
     })?;
 
-    std::fs::write(pkg_dir.join(".FILELIST"), &filelist).map_err(|e| {
+    std::fs::write(part_dir.join(".FILELIST"), &filelist).map_err(|e| {
         WrightError::ArchiveError(format!("failed to write .FILELIST: {}", e))
     })?;
 
@@ -75,7 +75,7 @@ pub fn create_archive(
     if let Some(ref scripts) = manifest.install_scripts {
         let hooks_content = generate_hooks_toml(scripts);
         if !hooks_content.is_empty() {
-            std::fs::write(pkg_dir.join(".HOOKS"), &hooks_content).map_err(|e| {
+            std::fs::write(part_dir.join(".HOOKS"), &hooks_content).map_err(|e| {
                 WrightError::ArchiveError(format!("failed to write .HOOKS: {}", e))
             })?;
         }
@@ -85,25 +85,37 @@ pub fn create_archive(
     let archive_name = manifest.archive_filename();
     let archive_path = output_path.join(&archive_name);
 
-    crate::util::compress::create_tar_zst(pkg_dir, &archive_path)?;
+    crate::util::compress::create_tar_zst(part_dir, &archive_path)?;
 
-    // Clean up metadata files from pkg_dir
-    let _ = std::fs::remove_file(pkg_dir.join(".PKGINFO"));
-    let _ = std::fs::remove_file(pkg_dir.join(".FILELIST"));
-    let _ = std::fs::remove_file(pkg_dir.join(".HOOKS"));
+    // Clean up metadata files from part_dir
+    let _ = std::fs::remove_file(part_dir.join(".PARTINFO"));
+    let _ = std::fs::remove_file(part_dir.join(".FILELIST"));
+    let _ = std::fs::remove_file(part_dir.join(".HOOKS"));
 
     Ok(archive_path)
 }
 
-/// Extract a .wright.tar.zst archive and return the parsed PKGINFO.
-pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<PkgInfo> {
+/// Extract a .wright.tar.zst archive and return the parsed PARTINFO.
+pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<PartInfo> {
     crate::util::compress::extract_tar_zst(archive_path, dest_dir)?;
-    let pkginfo_path = dest_dir.join(".PKGINFO");
-    parse_pkginfo(&pkginfo_path)
+    let partinfo_path = dest_dir.join(".PARTINFO");
+    if partinfo_path.exists() {
+        return parse_partinfo(&partinfo_path);
+    }
+
+    // Backward compatibility for older test fixtures and archives.
+    let legacy_path = dest_dir.join(".PKGINFO");
+    if legacy_path.exists() {
+        return parse_partinfo(&legacy_path);
+    }
+
+    Err(WrightError::ArchiveError(
+        "archive does not contain .PARTINFO".to_string(),
+    ))
 }
 
-/// Read .PKGINFO from an archive without full extraction.
-pub fn read_pkginfo(archive_path: &Path) -> Result<PkgInfo> {
+/// Read .PARTINFO from an archive without full extraction.
+pub fn read_partinfo(archive_path: &Path) -> Result<PartInfo> {
     let file = std::fs::File::open(archive_path).map_err(|e| {
         WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
     })?;
@@ -125,21 +137,22 @@ pub fn read_pkginfo(archive_path: &Path) -> Result<PkgInfo> {
             WrightError::ArchiveError(format!("failed to read entry path: {}", e))
         })?;
 
-        if path.to_string_lossy().ends_with(".PKGINFO") {
+        let path_str = path.to_string_lossy();
+        if path_str.ends_with(".PARTINFO") || path_str.ends_with(".PKGINFO") {
             let mut content = String::new();
             entry.read_to_string(&mut content).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to read .PKGINFO: {}", e))
+                WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e))
             })?;
-            return parse_pkginfo_str(&content);
+            return parse_partinfo_str(&content);
         }
     }
 
     Err(WrightError::ArchiveError(
-        "archive does not contain .PKGINFO".to_string(),
+        "archive does not contain .PARTINFO".to_string(),
     ))
 }
 
-fn generate_pkginfo(manifest: &PackageManifest, install_size: u64) -> String {
+fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut deps_toml = String::new();
@@ -258,17 +271,17 @@ packager = "wright {wright_version}"
     )
 }
 
-fn generate_filelist(pkg_dir: &Path) -> Result<String> {
+fn generate_filelist(part_dir: &Path) -> Result<String> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(pkg_dir).sort_by_file_name() {
+    for entry in WalkDir::new(part_dir).sort_by_file_name() {
         let entry = entry.map_err(|e| {
             WrightError::ArchiveError(format!("failed to walk directory: {}", e))
         })?;
-        let relative = entry.path().strip_prefix(pkg_dir).unwrap_or(entry.path());
+        let relative = entry.path().strip_prefix(part_dir).unwrap_or(entry.path());
         let relative_str = relative.to_string_lossy();
         // Skip metadata files and root
         if relative_str.is_empty()
-            || relative_str.starts_with(".PKGINFO")
+            || relative_str.starts_with(".PARTINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".INSTALL")
@@ -290,7 +303,7 @@ fn generate_filelist(pkg_dir: &Path) -> Result<String> {
 /// post_remove = "userdel nginx"
 /// ```
 fn generate_hooks_toml(
-    scripts: &crate::package::manifest::InstallScripts,
+    scripts: &crate::part::manifest::InstallScripts,
 ) -> String {
     let has_any = scripts.pre_install.is_some()
         || scripts.post_install.is_some()
@@ -334,27 +347,27 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
     Ok(size)
 }
 
-fn parse_pkginfo(path: &Path) -> Result<PkgInfo> {
+fn parse_partinfo(path: &Path) -> Result<PartInfo> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read .PKGINFO: {}", e))
+        WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e))
     })?;
-    parse_pkginfo_str(&content)
+    parse_partinfo_str(&content)
 }
 
-fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
+fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
-    struct PkgInfoToml {
-        package: PkgInfoPackage,
+    struct PartInfoToml {
+        package: PartInfoMeta,
         #[serde(default)]
-        dependencies: Option<PkgInfoDeps>,
+        dependencies: Option<PartInfoDeps>,
         #[serde(default)]
-        relations: Option<PkgInfoRelations>,
+        relations: Option<PartInfoRelations>,
         #[serde(default)]
-        backup: Option<PkgInfoBackup>,
+        backup: Option<PartInfoBackup>,
     }
 
     #[derive(serde::Deserialize)]
-    struct PkgInfoPackage {
+    struct PartInfoMeta {
         name: String,
         version: String,
         release: u32,
@@ -370,13 +383,13 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
     }
 
     #[derive(serde::Deserialize)]
-    struct PkgInfoOptDep {
+    struct PartInfoOptDep {
         name: String,
         description: String,
     }
 
     #[derive(serde::Deserialize)]
-    struct PkgInfoDeps {
+    struct PartInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
         #[serde(default)]
@@ -389,11 +402,11 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
         #[serde(default)]
         provides: Vec<String>,
         #[serde(default)]
-        optional: Vec<PkgInfoOptDep>,
+        optional: Vec<PartInfoOptDep>,
     }
 
     #[derive(serde::Deserialize, Default)]
-    struct PkgInfoRelations {
+    struct PartInfoRelations {
         #[serde(default)]
         replaces: Vec<String>,
         #[serde(default)]
@@ -403,13 +416,13 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
     }
 
     #[derive(serde::Deserialize)]
-    struct PkgInfoBackup {
+    struct PartInfoBackup {
         #[serde(default)]
         files: Vec<String>,
     }
 
-    let parsed: PkgInfoToml = toml::from_str(content).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to parse .PKGINFO: {}", e))
+    let parsed: PartInfoToml = toml::from_str(content).map_err(|e| {
+        WrightError::ArchiveError(format!("failed to parse .PARTINFO: {}", e))
     })?;
 
     let (runtime_deps, link_deps, old_replaces, old_conflicts, old_provides, optional_deps) = parsed
@@ -426,7 +439,7 @@ fn parse_pkginfo_str(content: &str) -> Result<PkgInfo> {
     let conflicts = if relations.conflicts.is_empty() { old_conflicts } else { relations.conflicts };
     let provides = if relations.provides.is_empty() { old_provides } else { relations.provides };
 
-    Ok(PkgInfo {
+    Ok(PartInfo {
         name: parsed.package.name,
         version: parsed.package.version,
         release: parsed.package.release,

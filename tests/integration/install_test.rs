@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::Database;
-use wright::package::archive;
-use wright::package::manifest::PackageManifest;
+use wright::part::archive;
+use wright::part::manifest::PlanManifest;
 use wright::transaction;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -15,15 +15,18 @@ fn fixture_path(name: &str) -> PathBuf {
 
 fn build_hello_archive() -> PathBuf {
     let manifest_path = fixture_path("hello").join("plan.toml");
-    let manifest = PackageManifest::from_file(&manifest_path).unwrap();
-    let hold_dir = manifest_path.parent().unwrap();
+    let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
+    for stage in manifest.lifecycle.values_mut() {
+        stage.dockyard = "none".to_string();
+    }
+    let plan_dir = manifest_path.parent().unwrap();
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, hold_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None).unwrap();
+    let result = builder.build(&manifest, plan_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None).unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =

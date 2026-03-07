@@ -8,7 +8,7 @@ Common problems and how to diagnose them.
 
 ```
 ERROR stage 'compile' failed with exit code 2
-Log: /tmp/wright-build/zlib-1.3.1/log/compile.log
+Log: /var/tmp/wright-build/zlib-1.3.1/log/compile.log
 
 make: *** [Makefile:42: libz.a] Error 1
 cc: error: unrecognized command-line option '-msse4'
@@ -17,7 +17,7 @@ cc: error: unrecognized command-line option '-msse4'
 The last 40 lines of output are printed inline. For the full transcript:
 
 ```bash
-cat /tmp/wright-build/<name>-<version>/log/<stage>.log
+cat /var/tmp/wright-build/<name>-<version>/log/<stage>.log
 ```
 
 **To re-run only the failed stage** after fixing the plan:
@@ -253,7 +253,7 @@ scratch, but if you hit issues:
 wbuild run <pkg> --clean
 
 # Or remove it directly
-rm -rf /tmp/wright-build/<name>-<version>
+rm -rf /var/tmp/wright-build/<name>-<version>
 ```
 
 ---

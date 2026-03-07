@@ -104,6 +104,31 @@ fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// Derive the scratch directory for dockyard setup from the active build root.
+///
+/// `src_dir` is `<build_root>/src` for normal builds, so placing scratch
+/// directories under its parent keeps temporary overlay state on the same
+/// filesystem as the rest of the build instead of hardcoding `/tmp`.
+fn dockyard_scratch_base(config: &DockyardConfig) -> PathBuf {
+    let build_root = config.src_dir.parent().unwrap_or(config.src_dir.as_path());
+    build_root.join(".wright-dockyard").join(&config.task_id)
+}
+
+/// Remove the temporary overlay and dockyard-root directories for a given task.
+///
+/// These directories are created inside the forked child's mount namespace.
+/// The mounts are automatically cleaned up when the namespace is destroyed,
+/// but the empty directory trees can persist on the host filesystem after
+/// crashes or forced termination.
+fn cleanup_dockyard_dirs(config: &DockyardConfig) {
+    let scratch = dockyard_scratch_base(config);
+    if scratch.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&scratch) {
+            debug!("Failed to clean up {}: {}", scratch.display(), e);
+        }
+    }
+}
+
 /// Run a command inside a native Linux namespace dockyard.
 ///
 /// Architecture (double-fork for PID namespace):
@@ -336,14 +361,15 @@ pub fn run_in_dockyard(
 
                     // --- Set up new root filesystem ---
 
-                    let newroot = PathBuf::from(format!("/tmp/.wright-dockyard-root-{}", config.task_id));
+                    let scratch_base = dockyard_scratch_base(config);
+                    let newroot = scratch_base.join("root");
                     if let Err(e) = std::fs::create_dir_all(&newroot) {
                         die(format!("mkdir newroot: {e}"));
                     }
 
                     // Try OverlayFS first (much faster and cleaner)
                     let mut overlay_success = false;
-                    let overlay_base = PathBuf::from(format!("/tmp/wright-overlay-{}", config.task_id));
+                    let overlay_base = scratch_base.join("overlay");
                     let upper = overlay_base.join("upper");
                     let work = overlay_base.join("work");
 
@@ -686,6 +712,7 @@ pub fn run_in_dockyard(
             if n > 0 {
                 let msg = String::from_utf8_lossy(&err_buf[..n]).to_string();
                 let _ = waitpid(child, None);
+                cleanup_dockyard_dirs(config);
                 return Err(WrightError::DockyardError(format!(
                     "dockyard setup failed: {msg}"
                 )));
@@ -709,6 +736,8 @@ pub fn run_in_dockyard(
 
             let stdout_bytes = stdout_handle.join().unwrap_or_default();
             let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
+            cleanup_dockyard_dirs(config);
 
             debug!("Dockyard child exited with: {:?}", status);
             Ok(DockyardOutput {
