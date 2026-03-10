@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-03-11
+
+### Changes
+- Remove the unused `strip` option from plan and global config parsing, and reject stale keys instead of silently accepting them.
+- Drop compatibility-only support for legacy package metadata and hook formats; packages now use `.PARTINFO` and `.HOOKS` only.
+- Remove old `PKG_*` build variable aliases and rely on the current `PART_*` / `WRIGHT_BUILD_PHASE` interface.
+
 ## [1.5.3] - 2026-03-08
 
 ### Performance
