@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 use crate::part::archive;
 
 const INDEX_FILENAME: &str = "wright.index.toml";
@@ -95,13 +95,14 @@ pub fn generate_index(repo_dir: &Path) -> Result<RepoIndex> {
 
 /// Write an index file to disk.
 pub fn write_index(index: &RepoIndex, repo_dir: &Path) -> Result<()> {
-    let content = toml::to_string_pretty(index).map_err(|e| {
-        WrightError::ConfigError(format!("failed to serialize index: {}", e))
-    })?;
+    let content = toml::to_string_pretty(index)
+        .map_err(|e| WrightError::ConfigError(format!("failed to serialize index: {}", e)))?;
     let path = index_path(repo_dir);
     std::fs::write(&path, content).map_err(|e| {
-        WrightError::IoError(std::io::Error::new(std::io::ErrorKind::Other,
-            format!("failed to write {}: {}", path.display(), e)))
+        WrightError::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("failed to write {}: {}", path.display(), e),
+        ))
     })?;
     Ok(())
 }

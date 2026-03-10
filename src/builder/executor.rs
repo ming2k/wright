@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tracing::debug;
 
-use crate::error::{WrightError, Result};
 use crate::builder::variables;
-use crate::dockyard::{run_in_dockyard, ResourceLimits, DockyardConfig, DockyardLevel};
+use crate::dockyard::{run_in_dockyard, DockyardConfig, DockyardLevel, ResourceLimits};
+use crate::error::{Result, WrightError};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ExecutorConfig {
@@ -65,7 +65,9 @@ impl ExecutorRegistry {
             executors: HashMap::new(),
         };
         // Register default shell executor
-        registry.executors.insert("shell".to_string(), ExecutorConfig::default());
+        registry
+            .executors
+            .insert("shell".to_string(), ExecutorConfig::default());
         registry
     }
 
@@ -80,8 +82,13 @@ impl ExecutorRegistry {
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
                 let content = std::fs::read_to_string(&path).map_err(WrightError::IoError)?;
                 let config: ExecutorWrapper = toml::from_str(&content)?;
-                debug!("Loaded executor: {} from {}", config.executor.name, path.display());
-                self.executors.insert(config.executor.name.clone(), config.executor);
+                debug!(
+                    "Loaded executor: {} from {}",
+                    config.executor.name,
+                    path.display()
+                );
+                self.executors
+                    .insert(config.executor.name.clone(), config.executor);
             }
         }
         Ok(())
@@ -131,7 +138,9 @@ pub fn execute_script(
     let effective_vars = if options.level != DockyardLevel::None {
         let mut v = vars.clone();
         // Remap BUILD_DIR: replace the host SRC_DIR prefix with /build
-        if let (Some(host_build_dir), Some(host_src_dir)) = (vars.get("BUILD_DIR"), vars.get("SRC_DIR")) {
+        if let (Some(host_build_dir), Some(host_src_dir)) =
+            (vars.get("BUILD_DIR"), vars.get("SRC_DIR"))
+        {
             if let Some(suffix) = host_build_dir.strip_prefix(host_src_dir.as_str()) {
                 v.insert("BUILD_DIR".to_string(), format!("/build{}", suffix));
             } else {
@@ -140,13 +149,11 @@ pub fn execute_script(
         }
         v.insert("SRC_DIR".to_string(), "/build".to_string());
         v.insert("PART_DIR".to_string(), "/output".to_string());
-        v.insert("PKG_DIR".to_string(), "/output".to_string());
         if options.files_dir.is_some() {
             v.insert("FILES_DIR".to_string(), "/files".to_string());
         }
         if options.main_part_dir.is_some() {
             v.insert("MAIN_PART_DIR".to_string(), "/main-pkg".to_string());
-            v.insert("MAIN_PKG_DIR".to_string(), "/main-pkg".to_string());
         }
         v
     } else {
@@ -158,16 +165,26 @@ pub fn execute_script(
     // Write script to a hidden file in working_dir to keep it clean but accessible
     let script_name = format!(".wright_script{}", executor.tempfile_extension);
     let script_path = working_dir.join(&script_name);
-    std::fs::write(&script_path, &expanded).map_err(|e| {
-        WrightError::BuildError(format!("failed to write build script: {}", e))
-    })?;
+    std::fs::write(&script_path, &expanded)
+        .map_err(|e| WrightError::BuildError(format!("failed to write build script: {}", e)))?;
 
     // Create sandbox config
-    let task_id = format!("{}-{}",
-        vars.get("PART_NAME").cloned().unwrap_or_else(|| "unknown".to_string()),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    let task_id = format!(
+        "{}-{}",
+        vars.get("PART_NAME")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string()),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     );
-    let mut config = DockyardConfig::new(options.level, options.src_dir.clone(), options.part_dir.clone(), task_id);
+    let mut config = DockyardConfig::new(
+        options.level,
+        options.src_dir.clone(),
+        options.part_dir.clone(),
+        task_id,
+    );
     config.files_dir = options.files_dir.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
@@ -175,7 +192,9 @@ pub fn execute_script(
 
     // Mount main part dir for split part stages
     if let Some(ref main_part) = options.main_part_dir {
-        config.extra_binds.push((main_part.clone(), PathBuf::from("/main-pkg"), false));
+        config
+            .extra_binds
+            .push((main_part.clone(), PathBuf::from("/main-pkg"), false));
     }
 
     // Set environment variables
@@ -196,11 +215,27 @@ pub fn execute_script(
     // This is important for bootstrap/stage1 environments where paths
     // like C_INCLUDE_PATH or LIBRARY_PATH are set to non-standard locations.
     for key in [
-        "CC", "CXX", "AR", "AS", "LD", "NM", "RANLIB", "STRIP", "OBJCOPY", "OBJDUMP",
-        "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
-        "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH",
-        "PKG_CONFIG_PATH", "PKG_CONFIG_SYSROOT_DIR",
-        "MAKEFLAGS", "JOBS",
+        "CC",
+        "CXX",
+        "AR",
+        "AS",
+        "LD",
+        "NM",
+        "RANLIB",
+        "STRIP",
+        "OBJCOPY",
+        "OBJDUMP",
+        "CFLAGS",
+        "CXXFLAGS",
+        "CPPFLAGS",
+        "LDFLAGS",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH",
+        "LIBRARY_PATH",
+        "PKG_CONFIG_PATH",
+        "PKG_CONFIG_SYSROOT_DIR",
+        "MAKEFLAGS",
+        "JOBS",
     ] {
         if let Ok(value) = std::env::var(key) {
             // Don't override if already set by the plan manifest.

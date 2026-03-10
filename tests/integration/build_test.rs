@@ -29,7 +29,20 @@ fn test_build_hello_fixture() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, &plan_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None).unwrap();
+    let result = builder
+        .build(
+            &manifest,
+            &plan_dir,
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
+        .unwrap();
 
     // Verify the binary was built
     assert!(result.pkg_dir.join("usr/bin/hello").exists());
@@ -44,7 +57,20 @@ fn test_build_and_archive_hello() {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, &plan_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None).unwrap();
+    let result = builder
+        .build(
+            &manifest,
+            &plan_dir,
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
+        .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
@@ -54,7 +80,7 @@ fn test_build_and_archive_hello() {
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".wright.tar.zst"));
 
-    // Verify we can read PKGINFO from it
+    // Verify we can read PARTINFO from it
     let pkginfo = archive::read_partinfo(&archive_path).unwrap();
     assert_eq!(pkginfo.name, "hello");
     assert_eq!(pkginfo.version, "1.0.0");
@@ -109,12 +135,34 @@ fn test_build_single_stage() {
 
     // First do a full build so src/ directory exists
     builder
-        .build(&manifest, &plan_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None)
+        .build(
+            &manifest,
+            &plan_dir,
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
         .unwrap();
 
     // Now run a single stage on the existing build tree
     let result = builder
-        .build(&manifest, &plan_dir, &["prepare".to_string()], false, false, &std::collections::HashMap::new(), false, false, None, None)
+        .build(
+            &manifest,
+            &plan_dir,
+            &["prepare".to_string()],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
         .unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 
 // ---------------------------------------------------------------------------
 // Fabricate output types
@@ -185,9 +185,8 @@ impl Sources {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct BuildOptions {
-    #[serde(default = "default_true")]
-    pub strip: bool,
     #[serde(default, rename = "static")]
     pub static_: bool,
     #[serde(default)]
@@ -216,7 +215,6 @@ pub struct BuildOptions {
 impl Default for BuildOptions {
     fn default() -> Self {
         Self {
-            strip: true,
             static_: false,
             debug: false,
             ccache: true,
@@ -311,10 +309,12 @@ struct RawManifest {
 impl SubFabricateOutput {
     /// Produce a full PlanManifest for archive creation, inheriting from the parent.
     pub fn to_manifest(&self, name: &str, parent: &PlanManifest) -> PlanManifest {
-        let description = self.description.clone()
+        let description = self
+            .description
+            .clone()
             .unwrap_or_else(|| parent.plan.description.clone());
 
-        // Convert hooks to legacy InstallScripts for archive creation
+        // Convert hook metadata into the archive install script representation.
         let install_scripts = self.hooks.as_ref().map(|h| InstallScripts {
             pre_install: h.pre_install.clone(),
             post_install: h.post_install.clone(),
@@ -330,12 +330,21 @@ impl SubFabricateOutput {
         PlanManifest {
             plan: PackageMetadata {
                 name: name.to_string(),
-                version: self.version.clone().unwrap_or_else(|| parent.plan.version.clone()),
+                version: self
+                    .version
+                    .clone()
+                    .unwrap_or_else(|| parent.plan.version.clone()),
                 release: self.release.unwrap_or(parent.plan.release),
                 epoch: parent.plan.epoch,
                 description,
-                license: self.license.clone().unwrap_or_else(|| parent.plan.license.clone()),
-                arch: self.arch.clone().unwrap_or_else(|| parent.plan.arch.clone()),
+                license: self
+                    .license
+                    .clone()
+                    .unwrap_or_else(|| parent.plan.license.clone()),
+                arch: self
+                    .arch
+                    .clone()
+                    .unwrap_or_else(|| parent.plan.arch.clone()),
                 url: parent.plan.url.clone(),
                 maintainer: parent.plan.maintainer.clone(),
             },
@@ -373,7 +382,10 @@ fn fabricate_backup(output: &FabricateOutput) -> Option<BackupConfig> {
     })
 }
 
-fn empty_sub_fabricate_output(hooks: Option<FabricateHooks>, backup: Option<Vec<String>>) -> SubFabricateOutput {
+fn empty_sub_fabricate_output(
+    hooks: Option<FabricateHooks>,
+    backup: Option<Vec<String>>,
+) -> SubFabricateOutput {
     SubFabricateOutput {
         description: None,
         version: None,
@@ -393,12 +405,17 @@ fn empty_sub_fabricate_output(hooks: Option<FabricateHooks>, backup: Option<Vec<
 fn parse_fabricate_section(
     plan_name: &str,
     fabricate_val: toml::Value,
-) -> Result<(Option<LifecycleStage>, Option<FabricateConfig>, Option<InstallScripts>, Option<BackupConfig>)> {
+) -> Result<(
+    Option<LifecycleStage>,
+    Option<FabricateConfig>,
+    Option<InstallScripts>,
+    Option<BackupConfig>,
+)> {
     let mut table = match fabricate_val {
         toml::Value::Table(table) => table,
         _ => {
             return Err(WrightError::ParseError(
-                "[lifecycle.fabricate] must be a table".to_string()
+                "[lifecycle.fabricate] must be a table".to_string(),
             ));
         }
     };
@@ -418,7 +435,8 @@ fn parse_fabricate_section(
                 .try_into()
                 .map_err(|e: toml::de::Error| {
                     WrightError::ParseError(format!(
-                        "failed to parse [lifecycle.fabricate] stage fields: {}", e
+                        "failed to parse [lifecycle.fabricate] stage fields: {}",
+                        e
                     ))
                 })?,
         )
@@ -427,7 +445,8 @@ fn parse_fabricate_section(
     let hooks = match table.remove("hooks") {
         Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
             WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate].hooks: {}", e
+                "failed to parse [lifecycle.fabricate].hooks: {}",
+                e
             ))
         })?),
         None => None,
@@ -436,7 +455,8 @@ fn parse_fabricate_section(
     let backup = match table.remove("backup") {
         Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
             WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate].backup: {}", e
+                "failed to parse [lifecycle.fabricate].backup: {}",
+                e
             ))
         })?),
         None => None,
@@ -459,7 +479,8 @@ fn parse_fabricate_section(
     let mut outputs: HashMap<String, SubFabricateOutput> =
         table_value.try_into().map_err(|e: toml::de::Error| {
             WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate.<name>]: {}", e
+                "failed to parse [lifecycle.fabricate.<name>]: {}",
+                e
             ))
         })?;
 
@@ -494,7 +515,8 @@ impl PlanManifest {
                 for (i, val) in arr.into_iter().enumerate() {
                     let entry: Source = val.try_into().map_err(|e: toml::de::Error| {
                         WrightError::ParseError(format!(
-                            "failed to parse [[sources]] entry {}: {}", i, e
+                            "failed to parse [[sources]] entry {}: {}",
+                            i, e
                         ))
                     })?;
                     entries.push(entry);
@@ -503,13 +525,13 @@ impl PlanManifest {
             }
             Some(toml::Value::Table(_)) => {
                 return Err(WrightError::ParseError(
-                    "sources must use [[sources]] array-of-tables".to_string()
+                    "sources must use [[sources]] array-of-tables".to_string(),
                 ));
             }
             None => Sources::default(),
             _ => {
                 return Err(WrightError::ParseError(
-                    "sources must be an array-of-tables ([[sources]])".to_string()
+                    "sources must be an array-of-tables ([[sources]])".to_string(),
                 ));
             }
         };
@@ -530,18 +552,22 @@ impl PlanManifest {
                     lifecycle_fabricate_value = Some(value);
                 } else if key == "part" {
                     return Err(WrightError::ParseError(
-                        "[lifecycle.part] is no longer supported; use [lifecycle.fabricate]".to_string()
+                        "[lifecycle.part] is no longer supported; use [lifecycle.fabricate]"
+                            .to_string(),
                     ));
                 } else if key == "package" {
                     return Err(WrightError::ParseError(
-                        "[lifecycle.package] is no longer supported; use [lifecycle.fabricate]".to_string()
+                        "[lifecycle.package] is no longer supported; use [lifecycle.fabricate]"
+                            .to_string(),
                     ));
                 } else {
-                    let stage: LifecycleStage = value.try_into().map_err(|e: toml::de::Error| {
-                        WrightError::ParseError(format!(
-                            "failed to parse lifecycle stage '{}': {}", key, e
-                        ))
-                    })?;
+                    let stage: LifecycleStage =
+                        value.try_into().map_err(|e: toml::de::Error| {
+                            WrightError::ParseError(format!(
+                                "failed to parse lifecycle stage '{}': {}",
+                                key, e
+                            ))
+                        })?;
                     lifecycle_stages.insert(key, stage);
                 }
             }
@@ -641,7 +667,8 @@ impl PlanManifest {
                 return Err(WrightError::ValidationError(format!(
                     "unknown lifecycle stage '{}'. Valid stages: {}",
                     key,
-                    stages.iter()
+                    stages
+                        .iter()
                         .filter(|s| !["fetch", "verify", "extract"].contains(s))
                         .cloned()
                         .collect::<Vec<_>>()
@@ -698,7 +725,11 @@ impl PlanManifest {
         if self.plan.epoch > 0 {
             format!(
                 "{}-{}:{}-{}-{}.wright.tar.zst",
-                self.plan.name, self.plan.epoch, self.plan.version, self.plan.release, self.plan.arch
+                self.plan.name,
+                self.plan.epoch,
+                self.plan.version,
+                self.plan.release,
+                self.plan.arch
             )
         } else {
             format!(
@@ -722,7 +753,8 @@ impl PlanManifest {
     /// Get sub-packages that are not the main package (need their own script/PART_DIR).
     pub fn extra_sub_packages(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
         let main_name = self.plan.name.clone();
-        self.sub_packages().filter(move |(name, _)| *name != &main_name)
+        self.sub_packages()
+            .filter(move |(name, _)| *name != &main_name)
     }
 }
 
@@ -814,7 +846,6 @@ uri = "patches/fix-headers.patch"
 sha256 = "SKIP"
 
 [options]
-strip = true
 static = false
 debug = false
 ccache = true
@@ -874,7 +905,6 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
         assert_eq!(manifest.sources.entries.len(), 2);
-        assert!(manifest.options.strip);
         assert!(!manifest.options.static_);
         assert!(manifest.lifecycle.contains_key("check"));
 
@@ -987,7 +1017,10 @@ runtime = ["libgcc"]
             Some(FabricateConfig::Multi(ref pkgs)) => {
                 assert_eq!(pkgs.len(), 2);
                 let libstdcpp = pkgs.get("libstdc++").unwrap();
-                assert_eq!(libstdcpp.description.as_deref(), Some("GNU C++ standard library"));
+                assert_eq!(
+                    libstdcpp.description.as_deref(),
+                    Some("GNU C++ standard library")
+                );
                 assert_eq!(libstdcpp.dependencies.runtime, vec!["libgcc"]);
 
                 // Test to_manifest
@@ -1212,7 +1245,10 @@ script = "true"
                 let main = pkgs.get("gcc").unwrap();
                 // Main package description is None — to_manifest will use parent's
                 let main_manifest = main.to_manifest("gcc", &manifest);
-                assert_eq!(main_manifest.plan.description, "The GNU Compiler Collection");
+                assert_eq!(
+                    main_manifest.plan.description,
+                    "The GNU Compiler Collection"
+                );
             }
             _ => panic!("expected Multi"),
         }
@@ -1241,7 +1277,10 @@ script = "meson setup build -Dglib=disabled"
         let manifest = PlanManifest::parse(toml_str).unwrap();
         let mvp = manifest.mvp.as_ref().unwrap();
         let mvp_deps = mvp.dependencies.as_ref().unwrap();
-        assert_eq!(mvp_deps.link.as_deref(), Some(&["freetype".to_string()][..]));
+        assert_eq!(
+            mvp_deps.link.as_deref(),
+            Some(&["freetype".to_string()][..])
+        );
         assert!(mvp.lifecycle.contains_key("configure"));
         // Full deps unaffected
         assert_eq!(manifest.dependencies.link.len(), 3);
@@ -1262,7 +1301,6 @@ arch = "x86_64"
         assert!(manifest.dependencies.runtime.is_empty());
         assert!(manifest.dependencies.build.is_empty());
         assert!(manifest.sources.entries.is_empty());
-        assert!(manifest.options.strip);
         assert!(manifest.lifecycle.is_empty());
         assert!(manifest.install_scripts.is_none());
         assert!(manifest.backup.is_none());
@@ -1336,7 +1374,10 @@ uri = "git+https://github.com/foo/bar.git#v1.0"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.sources.entries.len(), 3);
-        assert_eq!(manifest.sources.entries[0].uri, "https://example.com/foo.tar.gz");
+        assert_eq!(
+            manifest.sources.entries[0].uri,
+            "https://example.com/foo.tar.gz"
+        );
         assert_eq!(manifest.sources.entries[0].sha256, "abc123");
         assert_eq!(manifest.sources.entries[1].sha256, "SKIP");
         // Git source without sha256 defaults to SKIP
@@ -1501,7 +1542,8 @@ arch = "x86_64"
 hooks.post_install = "ldconfig"
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("[lifecycle.package] is no longer supported"));
+        assert!(err
+            .to_string()
+            .contains("[lifecycle.package] is no longer supported"));
     }
-
 }

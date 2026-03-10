@@ -7,10 +7,10 @@ use tracing_subscriber::EnvFilter;
 
 use wright::config::{GlobalConfig, KitsConfig};
 use wright::database::Database;
-use wright::repo;
-use wright::transaction;
 use wright::query;
 use wright::query::PrefixMode;
+use wright::repo;
+use wright::transaction;
 
 /// Write `content` to `$PAGER` (default: `less`) when stdout is a TTY,
 /// otherwise print directly. Falls back to plain print if the pager fails.
@@ -243,7 +243,10 @@ fn parse_prefix_mode(s: &str) -> std::result::Result<PrefixMode, String> {
         "indent" => Ok(PrefixMode::Indent),
         "depth" => Ok(PrefixMode::Depth),
         "none" => Ok(PrefixMode::None),
-        _ => Err(format!("invalid prefix mode '{}': expected indent, depth, or none", s)),
+        _ => Err(format!(
+            "invalid prefix mode '{}': expected indent, depth, or none",
+            s
+        )),
     }
 }
 
@@ -275,19 +278,18 @@ fn main() -> Result<()> {
             .init();
     }
 
-    let config = GlobalConfig::load(cli.config.as_deref())
-        .context("failed to load config")?;
+    let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
 
-    let repo_config = wright::config::RepoConfig::load(None)
-        .context("failed to load repo config")?;
+    let repo_config =
+        wright::config::RepoConfig::load(None).context("failed to load repo config")?;
 
     let db_path = cli.db.unwrap_or(config.general.db_path.clone());
     let root_dir = cli.root.unwrap_or_else(|| PathBuf::from("/"));
 
-    let db = Database::open(&db_path)
-        .context("failed to open database")?;
+    let db = Database::open(&db_path).context("failed to open database")?;
 
-    let mut resolver = wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("packages"));
+    let mut resolver =
+        wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("packages"));
     resolver.load_from_config(&repo_config);
     resolver.add_search_dir(config.general.cache_dir.join("packages"));
     resolver.add_search_dir(config.general.components_dir.clone());
@@ -295,7 +297,11 @@ fn main() -> Result<()> {
     resolver.add_plans_dir(config.general.plans_dir.clone());
 
     match cli.command {
-        Commands::Install { packages, force, nodeps } => {
+        Commands::Install {
+            packages,
+            force,
+            nodeps,
+        } => {
             let kits = KitsConfig::load_all(&config.general.kits_dir)
                 .context("failed to load kits config")?;
 
@@ -312,7 +318,10 @@ fn main() -> Result<()> {
                         match resolver.resolve(name) {
                             Ok(Some(resolved)) => pkg_paths.push(resolved.path),
                             Ok(None) => {
-                                eprintln!("error: package '{}' (from @{}) not found", name, kit_name);
+                                eprintln!(
+                                    "error: package '{}' (from @{}) not found",
+                                    name, kit_name
+                                );
                                 std::process::exit(1);
                             }
                             Err(e) => {
@@ -342,7 +351,9 @@ fn main() -> Result<()> {
                 }
             }
 
-            match transaction::install_packages(&db, &pkg_paths, &root_dir, &resolver, force, nodeps) {
+            match transaction::install_packages(
+                &db, &pkg_paths, &root_dir, &resolver, force, nodeps,
+            ) {
                 Ok(()) => println!("installation completed successfully"),
                 Err(e) => {
                     eprintln!("error: {}", e);
@@ -351,13 +362,16 @@ fn main() -> Result<()> {
             }
         }
         Commands::Upgrade { packages, force } => {
-            let pkg_paths: Vec<PathBuf> = packages.iter().map(|p| {
-                if p.exists() {
-                    p.clone()
-                } else {
-                    std::env::current_dir().unwrap().join(p)
-                }
-            }).collect();
+            let pkg_paths: Vec<PathBuf> = packages
+                .iter()
+                .map(|p| {
+                    if p.exists() {
+                        p.clone()
+                    } else {
+                        std::env::current_dir().unwrap().join(p)
+                    }
+                })
+                .collect();
 
             for path in &pkg_paths {
                 if !path.exists() {
@@ -376,14 +390,24 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Remove { packages, force, recursive, cascade } => {
+        Commands::Remove {
+            packages,
+            force,
+            recursive,
+            cascade,
+        } => {
             for name in &packages {
                 if recursive {
-                    let dependents = db.get_recursive_dependents(name)
+                    let dependents = db
+                        .get_recursive_dependents(name)
                         .context(format!("failed to resolve dependents of {}", name))?;
 
                     if !dependents.is_empty() {
-                        println!("will also remove (depends on {}): {}", name, dependents.join(", "));
+                        println!(
+                            "will also remove (depends on {}): {}",
+                            name,
+                            dependents.join(", ")
+                        );
                     }
 
                     for dep in &dependents {
@@ -402,7 +426,11 @@ fn main() -> Result<()> {
                     let list = transaction::cascade_remove_list(&db, name)
                         .context(format!("failed to compute cascade list for {}", name))?;
                     if !list.is_empty() {
-                        println!("will also remove orphan dependencies of {}: {}", name, list.join(", "));
+                        println!(
+                            "will also remove orphan dependencies of {}: {}",
+                            name,
+                            list.join(", ")
+                        );
                     }
                     list
                 } else {
@@ -429,7 +457,15 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Deps { package, reverse, depth, filter, all, prefix: prefix_mode, prune } => {
+        Commands::Deps {
+            package,
+            reverse,
+            depth,
+            filter,
+            all,
+            prefix: prefix_mode,
+            prune,
+        } => {
             use std::io::IsTerminal;
             let color = std::io::stdout().is_terminal();
             let mut buf = Vec::new();
@@ -450,7 +486,8 @@ fn main() -> Result<()> {
                     anyhow::anyhow!("package name is required unless using --all")
                 })?;
 
-                let pkg = db.get_package(&package_name)
+                let pkg = db
+                    .get_package(&package_name)
                     .context("failed to query package")?;
                 if pkg.is_none() {
                     eprintln!("package '{}' is not installed", package_name);
@@ -468,14 +505,19 @@ fn main() -> Result<()> {
             stats.write_summary(&mut buf, color).ok();
             print_paged(&String::from_utf8_lossy(&buf));
         }
-        Commands::List { roots, assumed, orphans } => {
+        Commands::List {
+            roots,
+            assumed,
+            orphans,
+        } => {
             let packages = if orphans {
                 db.get_orphan_packages()
             } else if roots {
                 db.get_root_packages()
             } else {
                 db.list_packages()
-            }.context("failed to list packages")?;
+            }
+            .context("failed to list packages")?;
 
             if packages.is_empty() {
                 if orphans {
@@ -491,14 +533,17 @@ fn main() -> Result<()> {
                     if pkg.assumed {
                         println!("{} {} [external]", pkg.name, pkg.version);
                     } else {
-                        println!("{} {}-{} ({})",
-                            pkg.name, pkg.version, pkg.release, pkg.arch);
+                        println!(
+                            "{} {}-{} ({})",
+                            pkg.name, pkg.version, pkg.release, pkg.arch
+                        );
                     }
                 }
             }
         }
         Commands::Query { package } => {
-            let pkg = db.get_package(&package)
+            let pkg = db
+                .get_package(&package)
                 .context("failed to query package")?;
             match pkg {
                 Some(info) => {
@@ -517,7 +562,8 @@ fn main() -> Result<()> {
                     if let Some(ref hash) = info.pkg_hash {
                         println!("Package Hash: {}", hash);
                     }
-                    let opt_deps = db.get_optional_dependencies(info.id)
+                    let opt_deps = db
+                        .get_optional_dependencies(info.id)
                         .context("failed to get optional dependencies")?;
                     if !opt_deps.is_empty() {
                         println!("Optional    :");
@@ -536,47 +582,64 @@ fn main() -> Result<()> {
             if available {
                 let mut found = false;
                 for dir in &resolver.search_dirs {
-                    if let Some(index) = repo::index::read_index(dir)
-                        .context("failed to read repo index")?
+                    if let Some(index) =
+                        repo::index::read_index(dir).context("failed to read repo index")?
                     {
                         for entry in &index.parts {
                             if entry.name.contains(&keyword)
-                                || entry.description.to_lowercase().contains(&keyword.to_lowercase())
+                                || entry
+                                    .description
+                                    .to_lowercase()
+                                    .contains(&keyword.to_lowercase())
                             {
-                                let installed = db.get_package(&entry.name)
-                                    .ok().flatten();
-                                let tag = if installed.is_some() { " [installed]" } else { "" };
-                                println!("{} {}-{} - {}{}",
-                                    entry.name, entry.version, entry.release,
-                                    entry.description, tag);
+                                let installed = db.get_package(&entry.name).ok().flatten();
+                                let tag = if installed.is_some() {
+                                    " [installed]"
+                                } else {
+                                    ""
+                                };
+                                println!(
+                                    "{} {}-{} - {}{}",
+                                    entry.name,
+                                    entry.version,
+                                    entry.release,
+                                    entry.description,
+                                    tag
+                                );
                                 found = true;
                             }
                         }
                     }
                 }
                 if !found {
-                    println!("no available packages found matching '{}' (run 'wright sync' first?)", keyword);
+                    println!(
+                        "no available packages found matching '{}' (run 'wright sync' first?)",
+                        keyword
+                    );
                 }
             } else {
-                let results = db.search_packages(&keyword)
+                let results = db
+                    .search_packages(&keyword)
                     .context("failed to search packages")?;
                 if results.is_empty() {
                     println!("no packages found matching '{}'", keyword);
                 } else {
                     for pkg in &results {
-                        println!("{} {}-{} - {}",
-                            pkg.name, pkg.version, pkg.release, pkg.description);
+                        println!(
+                            "{} {}-{} - {}",
+                            pkg.name, pkg.version, pkg.release, pkg.description
+                        );
                     }
                 }
             }
         }
         Commands::Files { package } => {
-            let pkg = db.get_package(&package)
+            let pkg = db
+                .get_package(&package)
                 .context("failed to query package")?;
             match pkg {
                 Some(info) => {
-                    let files = db.get_files(info.id)
-                        .context("failed to get files")?;
+                    let files = db.get_files(info.id).context("failed to get files")?;
                     for file in &files {
                         println!("{}", file.path);
                     }
@@ -587,16 +650,13 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Owner { file } => {
-            match db.find_owner(&file)
-                .context("failed to find owner")? {
-                Some(owner) => println!("{} is owned by {}", file, owner),
-                None => {
-                    println!("{} is not owned by any package", file);
-                    std::process::exit(1);
-                }
+        Commands::Owner { file } => match db.find_owner(&file).context("failed to find owner")? {
+            Some(owner) => println!("{} is owned by {}", file, owner),
+            None => {
+                println!("{} is not owned by any package", file);
+                std::process::exit(1);
             }
-        }
+        },
         Commands::Verify { package } => {
             let packages_to_verify: Vec<String> = if let Some(name) = package {
                 vec![name]
@@ -637,15 +697,23 @@ fn main() -> Result<()> {
                     Ok(Some(resolved)) => {
                         match wright::part::archive::read_partinfo(&resolved.path) {
                             Ok(info) => {
-                                let is_newer = info.version != pkg.version
-                                    || info.release > pkg.release;
+                                let is_newer =
+                                    info.version != pkg.version || info.release > pkg.release;
                                 if is_newer {
-                                    println!("upgrade: {} {}-{} -> {}-{}",
-                                        pkg.name, pkg.version, pkg.release,
-                                        info.version, info.release);
+                                    println!(
+                                        "upgrade: {} {}-{} -> {}-{}",
+                                        pkg.name,
+                                        pkg.version,
+                                        pkg.release,
+                                        info.version,
+                                        info.release
+                                    );
                                     if !dry_run {
                                         if let Err(e) = transaction::upgrade_package(
-                                            &db, &resolved.path, &root_dir, false
+                                            &db,
+                                            &resolved.path,
+                                            &root_dir,
+                                            false,
                                         ) {
                                             eprintln!("  error: {}", e);
                                         } else {
@@ -661,7 +729,9 @@ fn main() -> Result<()> {
                             Err(e) => eprintln!("warning: could not read {}: {}", pkg.name, e),
                         }
                     }
-                    Ok(None) => { not_found += 1; }
+                    Ok(None) => {
+                        not_found += 1;
+                    }
                     Err(e) => eprintln!("warning: resolver error for {}: {}", pkg.name, e),
                 }
             }
@@ -670,8 +740,10 @@ fn main() -> Result<()> {
                 println!("\n[dry-run] would upgrade {} package(s), {} up to date, {} not found in resolver",
                     upgraded, up_to_date, not_found);
             } else {
-                println!("\nupgraded {}, {} up to date, {} not found",
-                    upgraded, up_to_date, not_found);
+                println!(
+                    "\nupgraded {}, {} up to date, {} not found",
+                    upgraded, up_to_date, not_found
+                );
             }
         }
         Commands::Source { action } => {
@@ -688,17 +760,26 @@ fn main() -> Result<()> {
                         } else {
                             for s in &rc.source {
                                 let enabled = if s.enabled { "" } else { " [disabled]" };
-                                let location = s.path.as_ref()
+                                let location = s
+                                    .path
+                                    .as_ref()
                                     .map(|p| p.display().to_string())
                                     .or_else(|| s.url.clone())
                                     .unwrap_or_default();
-                                println!("{:<15} {:<8} pri={:<4} {}{}",
-                                    s.name, s.type_, s.priority, location, enabled);
+                                println!(
+                                    "{:<15} {:<8} pri={:<4} {}{}",
+                                    s.name, s.type_, s.priority, location, enabled
+                                );
                             }
                         }
                     }
                 }
-                SourceAction::Add { name, r#type, path, priority } => {
+                SourceAction::Add {
+                    name,
+                    r#type,
+                    path,
+                    priority,
+                } => {
                     let type_str = r#type;
                     if type_str != "local" && type_str != "hold" {
                         eprintln!("error: type must be 'local' or 'hold'");
@@ -710,8 +791,7 @@ fn main() -> Result<()> {
 
                     // Read existing content or start fresh
                     let mut content = if repos_path.exists() {
-                        std::fs::read_to_string(&repos_path)
-                            .context("failed to read repos.toml")?
+                        std::fs::read_to_string(&repos_path).context("failed to read repos.toml")?
                     } else {
                         String::new()
                     };
@@ -735,8 +815,7 @@ fn main() -> Result<()> {
                         name, type_str, path.display(), priority
                     ));
 
-                    std::fs::write(&repos_path, &content)
-                        .context("failed to write repos.toml")?;
+                    std::fs::write(&repos_path, &content).context("failed to write repos.toml")?;
                     println!("added source '{}' -> {}", name, path.display());
                 }
                 SourceAction::Remove { name } => {
@@ -753,9 +832,7 @@ fn main() -> Result<()> {
                     }
 
                     // Rebuild the file without the named source
-                    let remaining: Vec<_> = rc.source.iter()
-                        .filter(|s| s.name != name)
-                        .collect();
+                    let remaining: Vec<_> = rc.source.iter().filter(|s| s.name != name).collect();
 
                     let mut content = String::new();
                     for s in &remaining {
@@ -778,8 +855,7 @@ fn main() -> Result<()> {
                         content.push('\n');
                     }
 
-                    std::fs::write(&repos_path, &content)
-                        .context("failed to write repos.toml")?;
+                    std::fs::write(&repos_path, &content).context("failed to write repos.toml")?;
                     println!("removed source '{}'", name);
                 }
             }
@@ -787,7 +863,9 @@ fn main() -> Result<()> {
         Commands::Sync => {
             let mut total = 0usize;
             for dir in &resolver.search_dirs {
-                if !dir.exists() { continue; }
+                if !dir.exists() {
+                    continue;
+                }
                 let idx_path = repo::index::index_path(dir);
                 if idx_path.exists() {
                     match repo::index::read_index(dir) {
@@ -799,29 +877,29 @@ fn main() -> Result<()> {
                         Err(e) => eprintln!("warning: {}: {}", dir.display(), e),
                     }
                 } else {
-                    println!("{}: no index (run 'wbuild index {}')", dir.display(), dir.display());
+                    println!(
+                        "{}: no index (run 'wbuild index {}')",
+                        dir.display(),
+                        dir.display()
+                    );
                 }
             }
             println!("Total: {} available package(s)", total);
         }
-        Commands::Assume { name, version } => {
-            match db.assume_package(&name, &version) {
-                Ok(()) => println!("assumed: {} {}", name, version),
-                Err(e) => {
-                    eprintln!("error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Assume { name, version } => match db.assume_package(&name, &version) {
+            Ok(()) => println!("assumed: {} {}", name, version),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
             }
-        }
-        Commands::Unassume { name } => {
-            match db.unassume_package(&name) {
-                Ok(()) => println!("unassumed: {}", name),
-                Err(e) => {
-                    eprintln!("error: {}", e);
-                    std::process::exit(1);
-                }
+        },
+        Commands::Unassume { name } => match db.unassume_package(&name) {
+            Ok(()) => println!("unassumed: {}", name),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
         Commands::History { package } => {
             let records = db.get_history(package.as_deref())?;
             if records.is_empty() {
@@ -839,7 +917,10 @@ fn main() -> Result<()> {
                     } else {
                         String::new()
                     };
-                    println!("{}  {:<9} {} {}{}", r.timestamp, r.operation, r.package_name, version, status);
+                    println!(
+                        "{}  {:<9} {} {}{}",
+                        r.timestamp, r.operation, r.package_name, version, status
+                    );
                 }
             }
         }
@@ -854,7 +935,9 @@ fn main() -> Result<()> {
                 Ok(issues) if issues.is_empty() => println!("OK"),
                 Ok(issues) => {
                     println!("FAILED");
-                    for issue in issues { println!("  [DB] {}", issue); }
+                    for issue in issues {
+                        println!("  [DB] {}", issue);
+                    }
                     total_issues += 1;
                 }
                 Err(e) => {
@@ -869,7 +952,9 @@ fn main() -> Result<()> {
                 Ok(issues) if issues.is_empty() => println!("OK"),
                 Ok(issues) => {
                     println!("FAILED");
-                    for issue in issues { println!("  [DEP] {}", issue); }
+                    for issue in issues {
+                        println!("  [DEP] {}", issue);
+                    }
                     total_issues += 1;
                 }
                 Err(e) => {
@@ -884,7 +969,9 @@ fn main() -> Result<()> {
                 Ok(issues) if issues.is_empty() => println!("OK"),
                 Ok(issues) => {
                     println!("FAILED");
-                    for issue in issues { println!("  [CIRC] {}", issue); }
+                    for issue in issues {
+                        println!("  [CIRC] {}", issue);
+                    }
                     total_issues += 1;
                 }
                 Err(e) => {
@@ -899,7 +986,9 @@ fn main() -> Result<()> {
                 Ok(issues) if issues.is_empty() => println!("OK"),
                 Ok(issues) => {
                     println!("FAILED");
-                    for issue in issues { println!("  [FILE] {}", issue); }
+                    for issue in issues {
+                        println!("  [FILE] {}", issue);
+                    }
                     total_issues += 1;
                 }
                 Err(e) => {
@@ -914,7 +1003,9 @@ fn main() -> Result<()> {
                 Ok(issues) if issues.is_empty() => println!("OK (None)"),
                 Ok(issues) => {
                     println!("INFO (Found {} overlaps)", issues.len());
-                    for issue in issues { println!("  [SHADOW] {}", issue); }
+                    for issue in issues {
+                        println!("  [SHADOW] {}", issue);
+                    }
                     // We don't increment total_issues here as this is often intentional info
                 }
                 Err(e) => {

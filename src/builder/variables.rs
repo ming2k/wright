@@ -35,12 +35,6 @@ pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     vars.insert("FILES_DIR".to_string(), ctx.files_dir.to_string());
     vars.insert("CFLAGS".to_string(), ctx.cflags.to_string());
     vars.insert("CXXFLAGS".to_string(), ctx.cxxflags.to_string());
-    // Legacy aliases for plans that still use the old package variable names.
-    vars.insert("PKG_NAME".to_string(), ctx.part_name.to_string());
-    vars.insert("PKG_VERSION".to_string(), ctx.part_version.to_string());
-    vars.insert("PKG_RELEASE".to_string(), ctx.part_release.to_string());
-    vars.insert("PKG_ARCH".to_string(), ctx.part_arch.to_string());
-    vars.insert("PKG_DIR".to_string(), ctx.part_dir.to_string());
     vars
 }
 

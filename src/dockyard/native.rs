@@ -10,7 +10,10 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
 use tracing::{debug, info};
 
-use super::{ResourceLimits, CapturedOutput, DockyardConfig, DockyardLevel, DockyardOutput, spawn_stream_reader};
+use super::{
+    spawn_stream_reader, CapturedOutput, DockyardConfig, DockyardLevel, DockyardOutput,
+    ResourceLimits,
+};
 use crate::error::{Result, WrightError};
 
 /// Create a stream reader that captures output to a temp file, optionally
@@ -61,12 +64,12 @@ fn spawn_timeout_watchdog(pid: u32, timeout: u64, kill_pgroup: bool) -> Arc<Atom
                 );
                 -(pid as i32)
             } else {
-                tracing::error!(
-                    "Wall-clock timeout ({timeout}s) exceeded, killing process {pid}"
-                );
+                tracing::error!("Wall-clock timeout ({timeout}s) exceeded, killing process {pid}");
                 pid as i32
             };
-            unsafe { libc::kill(target, libc::SIGKILL); }
+            unsafe {
+                libc::kill(target, libc::SIGKILL);
+            }
         }
     });
     done
@@ -184,16 +187,30 @@ pub fn run_in_dockyard(
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
-        let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
+        let watchdog = config
+            .rlimits
+            .timeout_secs
+            .map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
-        let status = child.wait()
+        let stderr_handle =
+            make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
+        let status = child
+            .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
-        if let Some(done) = watchdog { done.store(true, Ordering::Release); }
-        let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+        if let Some(done) = watchdog {
+            done.store(true, Ordering::Release);
+        }
+        let empty = || CapturedOutput {
+            file: tempfile::tempfile().unwrap(),
+            tail: String::new(),
+        };
         let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
         let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
-        return Ok(DockyardOutput { status, stdout, stderr });
+        return Ok(DockyardOutput {
+            status,
+            stdout,
+            stderr,
+        });
     }
 
     let real_uid = nix::unistd::getuid();
@@ -215,9 +232,7 @@ pub fn run_in_dockyard(
                 | CloneFlags::CLONE_NEWNET
         }
         DockyardLevel::Relaxed => {
-            CloneFlags::CLONE_NEWNS
-                | CloneFlags::CLONE_NEWPID
-                | CloneFlags::CLONE_NEWUTS
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWUTS
         }
         DockyardLevel::None => unreachable!(),
     };
@@ -254,16 +269,30 @@ pub fn run_in_dockyard(
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
-        let watchdog = config.rlimits.timeout_secs.map(|t| spawn_timeout_watchdog(child.id(), t, true));
+        let watchdog = config
+            .rlimits
+            .timeout_secs
+            .map(|t| spawn_timeout_watchdog(child.id(), t, true));
         let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
-        let status = child.wait()
+        let stderr_handle =
+            make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
+        let status = child
+            .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
-        if let Some(done) = watchdog { done.store(true, Ordering::Release); }
-        let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+        if let Some(done) = watchdog {
+            done.store(true, Ordering::Release);
+        }
+        let empty = || CapturedOutput {
+            file: tempfile::tempfile().unwrap(),
+            tail: String::new(),
+        };
         let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
         let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
-        return Ok(DockyardOutput { status, stdout, stderr });
+        return Ok(DockyardOutput {
+            status,
+            stdout,
+            stderr,
+        });
     }
 
     // Error pipe: child/grandchild write error messages, parent reads.
@@ -309,14 +338,10 @@ pub fn run_in_dockyard(
                 if let Err(e) = std::fs::write("/proc/self/setgroups", "deny") {
                     die(format!("write setgroups: {e}"));
                 }
-                if let Err(e) =
-                    std::fs::write("/proc/self/uid_map", format!("0 {real_uid} 1\n"))
-                {
+                if let Err(e) = std::fs::write("/proc/self/uid_map", format!("0 {real_uid} 1\n")) {
                     die(format!("write uid_map: {e}"));
                 }
-                if let Err(e) =
-                    std::fs::write("/proc/self/gid_map", format!("0 {real_gid} 1\n"))
-                {
+                if let Err(e) = std::fs::write("/proc/self/gid_map", format!("0 {real_gid} 1\n")) {
                     die(format!("write gid_map: {e}"));
                 }
             }
@@ -370,7 +395,9 @@ pub fn run_in_dockyard(
                     let upper = overlay_base.join("upper");
                     let work = overlay_base.join("work");
 
-                    if std::fs::create_dir_all(&upper).is_ok() && std::fs::create_dir_all(&work).is_ok() {
+                    if std::fs::create_dir_all(&upper).is_ok()
+                        && std::fs::create_dir_all(&work).is_ok()
+                    {
                         let opts = format!(
                             "lowerdir=/,upperdir={},workdir={}",
                             upper.to_string_lossy(),
@@ -382,7 +409,9 @@ pub fn run_in_dockyard(
                             Some("overlay"),
                             MsFlags::empty(),
                             Some(opts.as_str()),
-                        ).is_ok() {
+                        )
+                        .is_ok()
+                        {
                             overlay_success = true;
                             debug!("Using OverlayFS for dockyard root: {}", newroot.display());
                         }
@@ -430,11 +459,7 @@ pub fn run_in_dockyard(
                             None::<&str>,
                         )
                         .map_err(|e| {
-                            format!(
-                                "bind mount {} -> {}: {e}",
-                                src.display(),
-                                dest.display()
-                            )
+                            format!("bind mount {} -> {}: {e}", src.display(), dest.display())
                         })?;
 
                         if readonly {
@@ -459,7 +484,11 @@ pub fn run_in_dockyard(
                             if let Ok(target) = std::fs::read_link(p) {
                                 if let Err(e) = std::os::unix::fs::symlink(&target, &dest) {
                                     if e.kind() != std::io::ErrorKind::AlreadyExists {
-                                        die(format!("symlink {} -> {}: {e}", dest.display(), target.display()));
+                                        die(format!(
+                                            "symlink {} -> {}: {e}",
+                                            dest.display(),
+                                            target.display()
+                                        ));
                                     }
                                 }
                             } else if p.exists() {
@@ -470,7 +499,14 @@ pub fn run_in_dockyard(
                         }
 
                         // Essential /etc files.
-                        for etc_file in ["/etc/ld.so.conf", "/etc/ld.so.cache", "/etc/resolv.conf", "/etc/hosts", "/etc/passwd", "/etc/group"] {
+                        for etc_file in [
+                            "/etc/ld.so.conf",
+                            "/etc/ld.so.cache",
+                            "/etc/resolv.conf",
+                            "/etc/hosts",
+                            "/etc/passwd",
+                            "/etc/group",
+                        ] {
                             let p = Path::new(etc_file);
                             if p.exists() {
                                 if let Err(e) = bind(p, etc_file, true) {
@@ -721,24 +757,34 @@ pub fn run_in_dockyard(
             let err_file = unsafe { std::fs::File::from_raw_fd(eout_read.as_raw_fd()) };
             std::mem::forget(eout_read);
 
-            let watchdog = config.rlimits.timeout_secs.map(|t| {
-                spawn_timeout_watchdog(child.as_raw() as u32, t, false)
-            });
+            let watchdog = config
+                .rlimits
+                .timeout_secs
+                .map(|t| spawn_timeout_watchdog(child.as_raw() as u32, t, false));
 
             let stdout_handle = make_stream_capture(out_file, config.verbose, true);
             let stderr_handle = make_stream_capture(err_file, config.verbose, false);
 
             let status = wait_for_child(child)?;
-            if let Some(done) = watchdog { done.store(true, Ordering::Release); }
+            if let Some(done) = watchdog {
+                done.store(true, Ordering::Release);
+            }
 
-            let empty = || CapturedOutput { file: tempfile::tempfile().unwrap(), tail: String::new() };
+            let empty = || CapturedOutput {
+                file: tempfile::tempfile().unwrap(),
+                tail: String::new(),
+            };
             let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
             let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
 
             cleanup_dockyard_dirs(config);
 
             debug!("Dockyard child exited with: {:?}", status);
-            Ok(DockyardOutput { status, stdout, stderr })
+            Ok(DockyardOutput {
+                status,
+                stdout,
+                stderr,
+            })
         }
         Err(e) => Err(WrightError::DockyardError(format!("fork: {e}"))),
     }
@@ -794,10 +840,7 @@ fn can_unshare(flags: CloneFlags) -> bool {
             unsafe { libc::_exit(if ok { 0 } else { 1 }) }
         }
         Ok(ForkResult::Parent { child }) => {
-            matches!(
-                waitpid(child, None),
-                Ok(WaitStatus::Exited(_, 0))
-            )
+            matches!(waitpid(child, None), Ok(WaitStatus::Exited(_, 0)))
         }
         Err(_) => false,
     }

@@ -1,14 +1,14 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use wright::config::GlobalConfig;
 use wright::builder::orchestrator::{self, BuildOptions};
-use wright::plan::manifest::PlanManifest;
+use wright::config::GlobalConfig;
 use wright::part::version;
+use wright::plan::manifest::PlanManifest;
 
 #[derive(Parser)]
 #[command(name = "wbuild", about = "wright package constructor")]
@@ -172,61 +172,94 @@ fn main() -> Result<()> {
             .with_env_filter(filter)
             .init();
     }
-    let config = GlobalConfig::load(cli.config.as_deref())
-        .context("failed to load config")?;
+    let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
 
     match cli.command {
         Commands::Run {
-            targets, stage, skip_check, clean, force, dockyards,
-            rebuild_dependents, rebuild_dependencies, install, depth,
-            include_self, include_deps, include_dependents, mvp,
+            targets,
+            stage,
+            skip_check,
+            clean,
+            force,
+            dockyards,
+            rebuild_dependents,
+            rebuild_dependencies,
+            install,
+            depth,
+            include_self,
+            include_deps,
+            include_dependents,
+            mvp,
         } => {
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
-            let effective_dockyards = if dockyards != 0 { dockyards } else { config.build.dockyards };
-            Ok(orchestrator::run_build(&config, targets, BuildOptions {
-                stages: stage, fetch_only: false, clean, force,
-                dockyards: effective_dockyards,
-                rebuild_dependents, rebuild_dependencies, install, depth: Some(depth),
-                checksum: false,
-                lint: false,
-                skip_check,
-                verbose: cli.verbose > 0,
-                quiet: cli.quiet,
-                include_self,
-                include_deps,
-                include_dependents,
-                mvp,
-                // Config nproc_per_dockyard is a static override; None means the
-                // scheduler computes it dynamically as total_cpus / active_dockyards.
-                nproc_per_dockyard: config.build.nproc_per_dockyard,
-            })?)
+            let effective_dockyards = if dockyards != 0 {
+                dockyards
+            } else {
+                config.build.dockyards
+            };
+            Ok(orchestrator::run_build(
+                &config,
+                targets,
+                BuildOptions {
+                    stages: stage,
+                    fetch_only: false,
+                    clean,
+                    force,
+                    dockyards: effective_dockyards,
+                    rebuild_dependents,
+                    rebuild_dependencies,
+                    install,
+                    depth: Some(depth),
+                    checksum: false,
+                    lint: false,
+                    skip_check,
+                    verbose: cli.verbose > 0,
+                    quiet: cli.quiet,
+                    include_self,
+                    include_deps,
+                    include_dependents,
+                    mvp,
+                    // Config nproc_per_dockyard is a static override; None means the
+                    // scheduler computes it dynamically as total_cpus / active_dockyards.
+                    nproc_per_dockyard: config.build.nproc_per_dockyard,
+                },
+            )?)
         }
-        Commands::Check { targets } => {
-            Ok(orchestrator::run_build(&config, targets, BuildOptions {
+        Commands::Check { targets } => Ok(orchestrator::run_build(
+            &config,
+            targets,
+            BuildOptions {
                 lint: true,
                 ..Default::default()
-            })?)
-        }
-        Commands::Fetch { targets } => {
-            Ok(orchestrator::run_build(&config, targets, BuildOptions {
+            },
+        )?),
+        Commands::Fetch { targets } => Ok(orchestrator::run_build(
+            &config,
+            targets,
+            BuildOptions {
                 fetch_only: true,
                 ..Default::default()
-            })?)
-        }
-        Commands::Checksum { targets } => {
-            Ok(orchestrator::run_build(&config, targets, BuildOptions {
+            },
+        )?),
+        Commands::Checksum { targets } => Ok(orchestrator::run_build(
+            &config,
+            targets,
+            BuildOptions {
                 checksum: true,
                 ..Default::default()
-            })?)
-        }
+            },
+        )?),
         Commands::Index { path } => {
             let repo_dir = path.unwrap_or_else(|| config.general.components_dir.clone());
             println!("Indexing packages in {}...", repo_dir.display());
             let index = wright::repo::index::generate_index(&repo_dir)?;
             let count = index.parts.len();
             wright::repo::index::write_index(&index, &repo_dir)?;
-            println!("Indexed {} package(s) -> {}", count,
-                wright::repo::index::index_path(&repo_dir).display());
+            println!(
+                "Indexed {} package(s) -> {}",
+                count,
+                wright::repo::index::index_path(&repo_dir).display()
+            );
             Ok(())
         }
         Commands::Deps { target, depth } => {
@@ -235,7 +268,13 @@ fn main() -> Result<()> {
             let all_plans = resolver.get_all_plans()?;
 
             println!("Plan dependency tree for: {}", target);
-            print_plan_tree(&target, &all_plans, "", 1, if depth == 0 { usize::MAX } else { depth })
+            print_plan_tree(
+                &target,
+                &all_plans,
+                "",
+                1,
+                if depth == 0 { usize::MAX } else { depth },
+            )
         }
     }
 }
@@ -251,7 +290,15 @@ fn print_plan_tree(
     let mut ancestors = std::collections::HashSet::new();
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
-    print_plan_tree_inner(name, all_plans, prefix, current_depth, max_depth, &mut visited, &mut ancestors)
+    print_plan_tree_inner(
+        name,
+        all_plans,
+        prefix,
+        current_depth,
+        max_depth,
+        &mut visited,
+        &mut ancestors,
+    )
 }
 
 fn print_plan_tree_inner(
@@ -263,9 +310,12 @@ fn print_plan_tree_inner(
     visited: &mut std::collections::HashSet<String>,
     ancestors: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
-    if current_depth > max_depth { return Ok(()); }
+    if current_depth > max_depth {
+        return Ok(());
+    }
 
-    let path = all_plans.get(name)
+    let path = all_plans
+        .get(name)
         .ok_or_else(|| anyhow::anyhow!("Plan '{}' not found in hold tree", name))?;
 
     let manifest = PlanManifest::from_file(path)?;
@@ -276,13 +326,16 @@ fn print_plan_tree_inner(
     all_deps.extend(manifest.dependencies.runtime.iter().cloned());
 
     for (i, dep) in all_deps.iter().enumerate() {
-        let dep_name = version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None)).0;
+        let dep_name = version::parse_dependency(dep)
+            .unwrap_or_else(|_| (dep.clone(), None))
+            .0;
         let is_last = i == all_deps.len() - 1;
         let connector = if is_last { "└── " } else { "├── " };
 
         if ancestors.contains(&dep_name) {
             // True cycle: check if the dep has [mvp.dependencies] that could break it
-            let cycle_note = all_plans.get(&dep_name)
+            let cycle_note = all_plans
+                .get(&dep_name)
                 .and_then(|p| PlanManifest::from_file(p).ok())
                 .and_then(|m| m.mvp)
                 .and_then(|mvp| mvp.dependencies)
@@ -297,7 +350,15 @@ fn print_plan_tree_inner(
                 visited.insert(dep_name.clone());
                 ancestors.insert(dep_name.clone());
                 let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-                print_plan_tree_inner(&dep_name, all_plans, &new_prefix, current_depth + 1, max_depth, visited, ancestors)?;
+                print_plan_tree_inner(
+                    &dep_name,
+                    all_plans,
+                    &new_prefix,
+                    current_depth + 1,
+                    max_depth,
+                    visited,
+                    ancestors,
+                )?;
                 ancestors.remove(&dep_name);
             }
         }

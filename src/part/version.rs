@@ -1,7 +1,7 @@
-use std::fmt;
 use std::cmp::Ordering;
+use std::fmt;
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum Segment {

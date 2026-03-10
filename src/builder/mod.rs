@@ -1,19 +1,19 @@
-pub mod lifecycle;
 pub mod executor;
-pub mod variables;
+pub mod lifecycle;
 pub mod orchestrator;
+pub mod variables;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::config::GlobalConfig;
-use crate::error::{WrightError, Result};
-use crate::plan::manifest::{PlanManifest, FabricateConfig};
-use crate::repo::source::sanitize_cache_filename;
 use crate::dockyard::ResourceLimits;
-use crate::util::{checksum, download, compress};
+use crate::error::{Result, WrightError};
+use crate::plan::manifest::{FabricateConfig, PlanManifest};
+use crate::repo::source::sanitize_cache_filename;
+use crate::util::{checksum, compress, download};
 
 pub struct BuildResult {
     pub pkg_dir: PathBuf,
@@ -53,13 +53,11 @@ fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
 /// same last path segment but come from different remotes (e.g.
 /// `org-a/mylib.git` vs `org-b/mylib.git`) will therefore never collide.
 fn git_cache_dir_name(uri: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let url = uri.strip_prefix("git+").unwrap_or(uri);
     let url = url.split('#').next().unwrap_or(url);
     let last_segment = url.split('/').next_back().unwrap_or("repo");
-    let stem = sanitize_cache_filename(
-        last_segment.strip_suffix(".git").unwrap_or(last_segment)
-    );
+    let stem = sanitize_cache_filename(last_segment.strip_suffix(".git").unwrap_or(last_segment));
     let mut h = Sha256::new();
     h.update(url.as_bytes());
     let hash = format!("{:x}", h.finalize());
@@ -86,7 +84,8 @@ fn ensure_clean_dir(dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir).map_err(|e| {
         WrightError::BuildError(format!(
             "failed to create build directory {}: {}",
-            dir.display(), e
+            dir.display(),
+            e
         ))
     })
 }
@@ -94,21 +93,20 @@ fn ensure_clean_dir(dir: &Path) -> Result<()> {
 /// Validate that a local URI resolves within the plan directory.
 fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> {
     let resolved = plan_dir.join(relative_path).canonicalize().map_err(|e| {
-        WrightError::ValidationError(format!(
-            "local path not found: {} ({})",
-            relative_path, e
-        ))
+        WrightError::ValidationError(format!("local path not found: {} ({})", relative_path, e))
     })?;
     let plan_abs = plan_dir.canonicalize().map_err(|e| {
         WrightError::ValidationError(format!(
             "failed to resolve plan directory {}: {}",
-            plan_dir.display(), e
+            plan_dir.display(),
+            e
         ))
     })?;
     if !resolved.starts_with(&plan_abs) {
-        return Err(WrightError::ValidationError(
-            format!("local path escapes plan directory: {}", relative_path)
-        ));
+        return Err(WrightError::ValidationError(format!(
+            "local path escapes plan directory: {}",
+            relative_path
+        )));
     }
     Ok(resolved)
 }
@@ -117,14 +115,18 @@ impl Builder {
     pub fn new(config: GlobalConfig) -> Self {
         let mut executors = executor::ExecutorRegistry::new();
         if let Err(e) = executors.load_from_dir(&config.general.executors_dir) {
-            tracing::warn!("Failed to load executors from {}: {}", config.general.executors_dir.display(), e);
+            tracing::warn!(
+                "Failed to load executors from {}: {}",
+                config.general.executors_dir.display(),
+                e
+            );
         }
         Self { config, executors }
     }
 
     /// Compute a unique hash representing the entire build context.
     pub fn compute_build_key(&self, manifest: &PlanManifest) -> Result<String> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
 
         // 1. Hash the plan itself
@@ -161,14 +163,11 @@ impl Builder {
         let mut vars = std::collections::HashMap::new();
         vars.insert("PART_NAME".to_string(), manifest.plan.name.clone());
         vars.insert("PART_VERSION".to_string(), manifest.plan.version.clone());
-        vars.insert("PART_RELEASE".to_string(), manifest.plan.release.to_string());
+        vars.insert(
+            "PART_RELEASE".to_string(),
+            manifest.plan.release.to_string(),
+        );
         vars.insert("PART_ARCH".to_string(), manifest.plan.arch.clone());
-        // Legacy aliases for older plans.
-        vars.insert("PKG_NAME".to_string(), manifest.plan.name.clone());
-        vars.insert("PKG_VERSION".to_string(), manifest.plan.version.clone());
-        vars.insert("PKG_RELEASE".to_string(), manifest.plan.release.to_string());
-        vars.insert("PKG_ARCH".to_string(), manifest.plan.arch.clone());
-
         variables::substitute(uri, &vars)
     }
 
@@ -181,10 +180,7 @@ impl Builder {
                 .map_err(|e| WrightError::BuildError(format!("failed to get cwd: {}", e)))?
                 .join(&self.config.build.build_dir)
         };
-        Ok(build_dir.join(format!(
-            "{}-{}",
-            manifest.plan.name, manifest.plan.version
-        )))
+        Ok(build_dir.join(format!("{}-{}", manifest.plan.name, manifest.plan.version)))
     }
 
     /// Run the full build pipeline for a package manifest.
@@ -192,7 +188,7 @@ impl Builder {
     ///
     /// `extra_env` is merged into every lifecycle stage's variable map.
     /// For MVP builds the orchestrator injects WRIGHT_BUILD_PHASE=mvp along
-    /// with WRIGHT_BOOTSTRAP_BUILD=1 and WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1.
+    /// with WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1.
     pub fn build(
         &self,
         manifest: &PlanManifest,
@@ -218,7 +214,9 @@ impl Builder {
         let log_dir = build_root.join("log");
 
         let partial = !stages.is_empty() || fetch_only;
-        let is_bootstrap = extra_env.contains_key("WRIGHT_BOOTSTRAP_BUILD");
+        let is_bootstrap = extra_env
+            .get("WRIGHT_BUILD_PHASE")
+            .is_some_and(|phase| phase == "mvp");
 
         // --- Caching Logic (Step 1: Check) ---
         // Bootstrap builds are intentionally incomplete; never use or save cache.
@@ -227,8 +225,11 @@ impl Builder {
         let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
 
         if !force && !is_bootstrap && !partial && cache_file.exists() {
-            debug!("Cache hit for {}: using pre-built artifacts", manifest.plan.name);
-            
+            debug!(
+                "Cache hit for {}: using pre-built artifacts",
+                manifest.plan.name
+            );
+
             // Recreate directories
             for dir in [&src_dir, &pkg_dir, &log_dir] {
                 ensure_clean_dir(dir)?;
@@ -236,12 +237,14 @@ impl Builder {
 
             // Extract cache into build_root
             compress::extract_archive(&cache_file, &build_root)?;
-            
+
             // Re-detect sub-package directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
             if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
                 for sub_name in pkgs.keys() {
-                    if sub_name == &manifest.plan.name { continue; }
+                    if sub_name == &manifest.plan.name {
+                        continue;
+                    }
                     let sub_dir = build_root.join(format!("pkg-{}", sub_name));
                     if sub_dir.exists() {
                         split_pkg_dirs.insert(sub_name.clone(), sub_dir);
@@ -273,7 +276,8 @@ impl Builder {
             // Check if src/ can be reused: if the build key matches the
             // previous build, skip re-extraction for an incremental build.
             let key_file = build_root.join(".build_key");
-            let src_reusable = src_dir.exists() && key_file.exists()
+            let src_reusable = src_dir.exists()
+                && key_file.exists()
                 && std::fs::read_to_string(&key_file)
                     .map(|stored| stored.trim() == build_key)
                     .unwrap_or(false);
@@ -329,8 +333,14 @@ impl Builder {
 
         // Resolve resource limits: per-plan overrides global config
         let rlimits = ResourceLimits {
-            memory_mb: manifest.options.memory_limit.or(self.config.build.memory_limit),
-            cpu_time_secs: manifest.options.cpu_time_limit.or(self.config.build.cpu_time_limit),
+            memory_mb: manifest
+                .options
+                .memory_limit
+                .or(self.config.build.memory_limit),
+            cpu_time_secs: manifest
+                .options
+                .cpu_time_limit
+                .or(self.config.build.cpu_time_limit),
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
@@ -361,7 +371,10 @@ impl Builder {
             cxxflags: &self.config.build.cxxflags,
         });
         let mut vars = vars;
-        vars.insert("BUILD_DIR".to_string(), build_src_dir.to_string_lossy().to_string());
+        vars.insert(
+            "BUILD_DIR".to_string(),
+            build_src_dir.to_string_lossy().to_string(),
+        );
 
         // Package-level env from [options.env]: injected into all stages.
         // Per-stage env takes precedence (it goes in env_vars, which the
@@ -382,7 +395,11 @@ impl Builder {
             log_dir: &log_dir,
             src_dir: src_dir.clone(),
             part_dir: pkg_dir.clone(),
-            files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+            files_dir: if files_dir.exists() {
+                Some(files_dir.clone())
+            } else {
+                None
+            },
             stages: stages.to_vec(),
             skip_check,
             executors: &self.executors,
@@ -399,27 +416,34 @@ impl Builder {
         let mut split_pkg_dirs = std::collections::HashMap::new();
         if let Some(FabricateConfig::Multi(ref packages)) = manifest.fabricate {
             for (sub_name, sub_pkg) in packages {
-                // Main package uses PKG_DIR directly, skip
-                if sub_name == &manifest.plan.name { continue; }
-                // Sub-packages with empty script use the main PKG_DIR (no separate stage)
-                if sub_pkg.script.is_empty() { continue; }
+                // Main package uses PART_DIR directly, skip
+                if sub_name == &manifest.plan.name {
+                    continue;
+                }
+                // Sub-packages with empty script use the main PART_DIR (no separate stage)
+                if sub_pkg.script.is_empty() {
+                    continue;
+                }
 
                 let sub_pkg_dir = build_root.join(format!("pkg-{}", sub_name));
                 std::fs::create_dir_all(&sub_pkg_dir).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to create sub-package directory {}: {}",
-                        sub_pkg_dir.display(), e
+                        sub_pkg_dir.display(),
+                        e
                     ))
                 })?;
 
                 let mut sub_vars = vars_for_splits.clone();
-                sub_vars.insert("PART_DIR".to_string(), sub_pkg_dir.to_string_lossy().to_string());
+                sub_vars.insert(
+                    "PART_DIR".to_string(),
+                    sub_pkg_dir.to_string_lossy().to_string(),
+                );
                 sub_vars.insert("PART_NAME".to_string(), sub_name.clone());
-                sub_vars.insert("MAIN_PART_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
-                // Legacy aliases for older sub-part scripts.
-                sub_vars.insert("PKG_DIR".to_string(), sub_pkg_dir.to_string_lossy().to_string());
-                sub_vars.insert("PKG_NAME".to_string(), sub_name.clone());
-                sub_vars.insert("MAIN_PKG_DIR".to_string(), pkg_dir.to_string_lossy().to_string());
+                sub_vars.insert(
+                    "MAIN_PART_DIR".to_string(),
+                    pkg_dir.to_string_lossy().to_string(),
+                );
 
                 debug!("Running package stage for sub-package: {}", sub_name);
 
@@ -427,17 +451,20 @@ impl Builder {
                     level: sub_pkg.dockyard.parse().unwrap(),
                     src_dir: src_dir.clone(),
                     part_dir: sub_pkg_dir.clone(),
-                    files_dir: if files_dir.exists() { Some(files_dir.clone()) } else { None },
+                    files_dir: if files_dir.exists() {
+                        Some(files_dir.clone())
+                    } else {
+                        None
+                    },
                     rlimits: rlimits.clone(),
                     main_part_dir: Some(pkg_dir.clone()),
                     verbose,
                     cpu_count: Some(cpu_count),
                 };
 
-                let sub_executor = self.executors.get(&sub_pkg.executor)
-                    .ok_or_else(|| WrightError::BuildError(format!(
-                        "executor not found: {}", sub_pkg.executor
-                    )))?;
+                let sub_executor = self.executors.get(&sub_pkg.executor).ok_or_else(|| {
+                    WrightError::BuildError(format!("executor not found: {}", sub_pkg.executor))
+                })?;
 
                 let mut result = executor::execute_script(
                     sub_executor,
@@ -479,7 +506,11 @@ impl Builder {
         // Bootstrap builds are incomplete by design; skip saving to cache.
         if !is_bootstrap && !partial {
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                warn!("Failed to create build cache directory {}: {}", cache_dir.display(), e);
+                warn!(
+                    "Failed to create build cache directory {}: {}",
+                    cache_dir.display(),
+                    e
+                );
             }
             // For the cache, we only store pkg/, log/ and pkg-* directories.
             // We exclude src/ to keep the cache compact.
@@ -499,16 +530,27 @@ impl Builder {
                             .arg(&dest)
                             .status()
                         {
-                            warn!("Failed to copy {} to build cache: {}", entry.path().display(), e);
+                            warn!(
+                                "Failed to copy {} to build cache: {}",
+                                entry.path().display(),
+                                e
+                            );
                         }
                     }
                 }
             }
 
             if let Err(e) = compress::create_tar_zst(tmp_cache_dir.path(), &cache_file) {
-                warn!("Failed to create build cache for {}: {}", manifest.plan.name, e);
+                warn!(
+                    "Failed to create build cache for {}: {}",
+                    manifest.plan.name, e
+                );
             } else {
-                debug!("Saved build cache for {} at {}", manifest.plan.name, cache_file.display());
+                debug!(
+                    "Saved build cache for {} at {}",
+                    manifest.plan.name,
+                    cache_file.display()
+                );
             }
         }
 
@@ -557,7 +599,10 @@ impl Builder {
 
         // 2. Remove build cache entry.
         let build_key = self.compute_build_key(manifest)?;
-        let cache_file = self.config.general.cache_dir
+        let cache_file = self
+            .config
+            .general
+            .cache_dir
             .join("builds")
             .join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
         if cache_file.exists() {
@@ -589,7 +634,10 @@ impl Builder {
             let path = cache_dir.join(&filename);
 
             if !path.exists() {
-                return Err(WrightError::ValidationError(format!("source file missing: {}", filename)));
+                return Err(WrightError::ValidationError(format!(
+                    "source file missing: {}",
+                    filename
+                )));
             }
 
             let actual_hash = checksum::sha256_file(&path)?;
@@ -607,7 +655,12 @@ impl Builder {
 
     /// Extract archives to the build directory and copy non-archive files to files_dir.
     /// Returns the path to the top-level source directory (for BUILD_DIR).
-    pub fn extract(&self, manifest: &PlanManifest, dest_dir: &Path, files_dir: &Path) -> Result<PathBuf> {
+    pub fn extract(
+        &self,
+        manifest: &PlanManifest,
+        dest_dir: &Path,
+        files_dir: &Path,
+    ) -> Result<PathBuf> {
         let cache_dir = &self.config.general.cache_dir.join("sources");
 
         for source in &manifest.sources.entries {
@@ -616,46 +669,60 @@ impl Builder {
             if is_git_uri(&processed_uri) {
                 let git_dir_name = git_cache_dir_name(&processed_uri);
                 let cache_path = cache_dir.join("git").join(&git_dir_name);
-                
+
                 // Parse the ref
                 let git_ref = if let Some(pos) = processed_uri.find('#') {
-                    let r = processed_uri[pos+1..].to_string();
+                    let r = processed_uri[pos + 1..].to_string();
                     let parts: Vec<&str> = r.split('=').collect();
-                    if parts.len() == 2 { parts[1].to_string() } else { r }
+                    if parts.len() == 2 {
+                        parts[1].to_string()
+                    } else {
+                        r
+                    }
                 } else {
                     "HEAD".to_string()
                 };
 
                 let target_dir = dest_dir.join(&git_dir_name);
-                debug!("Extracting Git repo to {} (ref: {})...", target_dir.display(), git_ref);
+                debug!(
+                    "Extracting Git repo to {} (ref: {})...",
+                    target_dir.display(),
+                    git_ref
+                );
 
                 // Open the cached bare repo and clone it locally to the target_dir
-                let cache_str = cache_path.to_str()
-                    .ok_or_else(|| WrightError::BuildError(
-                        format!("git cache path contains non-UTF-8 characters: {}", cache_path.display())
-                    ))?;
-                let repo = git2::Repository::clone(cache_str, &target_dir)
-                    .map_err(|e| WrightError::BuildError(format!("local git clone failed: {}", e)))?;
+                let cache_str = cache_path.to_str().ok_or_else(|| {
+                    WrightError::BuildError(format!(
+                        "git cache path contains non-UTF-8 characters: {}",
+                        cache_path.display()
+                    ))
+                })?;
+                let repo = git2::Repository::clone(cache_str, &target_dir).map_err(|e| {
+                    WrightError::BuildError(format!("local git clone failed: {}", e))
+                })?;
 
                 // Resolve and checkout the specific ref
-                let (object, reference) = repo.revparse_ext(&git_ref)
+                let (object, reference) = repo
+                    .revparse_ext(&git_ref)
                     .or_else(|_| repo.revparse_ext(&format!("origin/{}", git_ref)))
-                    .map_err(|e| WrightError::BuildError(format!("failed to resolve ref {}: {}", git_ref, e)))?;
+                    .map_err(|e| {
+                        WrightError::BuildError(format!("failed to resolve ref {}: {}", git_ref, e))
+                    })?;
 
                 repo.checkout_tree(&object, None)
                     .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
 
                 match reference {
                     Some(gref) => {
-                        let ref_name = gref.name()
-                            .ok_or_else(|| WrightError::BuildError(
-                                "git reference name is non-UTF-8".to_string()
-                            ))?;
+                        let ref_name = gref.name().ok_or_else(|| {
+                            WrightError::BuildError("git reference name is non-UTF-8".to_string())
+                        })?;
                         repo.set_head(ref_name)
                     }
                     None => repo.set_head_detached(object.id()),
-                }.map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
-                
+                }
+                .map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
+
                 continue;
             }
 
@@ -671,18 +738,27 @@ impl Builder {
                 std::fs::create_dir_all(files_dir).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to create files directory {}: {}",
-                        files_dir.display(), e
+                        files_dir.display(),
+                        e
                     ))
                 })?;
-                let dest_name = processed_uri.split('/').next_back().unwrap_or(&processed_uri);
+                let dest_name = processed_uri
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&processed_uri);
                 let dest = files_dir.join(dest_name);
                 std::fs::copy(&path, &dest).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to copy {} to {}: {}",
-                        path.display(), dest.display(), e
+                        path.display(),
+                        dest.display(),
+                        e
                     ))
                 })?;
-                debug!("Copied {} to files directory as {}", cache_filename, dest_name);
+                debug!(
+                    "Copied {} to files directory as {}",
+                    cache_filename, dest_name
+                );
             }
         }
 
@@ -693,18 +769,20 @@ impl Builder {
     /// If the directory contains a single subdirectory, point BUILD_DIR there.
     /// Otherwise, BUILD_DIR is the directory itself.
     fn detect_build_dir(src_dir: &Path) -> Result<PathBuf> {
-        let entries: Vec<_> = std::fs::read_dir(src_dir).map_err(WrightError::IoError)?
+        let entries: Vec<_> = std::fs::read_dir(src_dir)
+            .map_err(WrightError::IoError)?
             .filter_map(|e| e.ok())
             .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect();
 
-        let build_dir = if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            let dir = entries[0].path();
-            debug!("Source directory: {}", dir.display());
-            dir
-        } else {
-            src_dir.to_path_buf()
-        };
+        let build_dir =
+            if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let dir = entries[0].path();
+                debug!("Source directory: {}", dir.display());
+                dir
+            } else {
+                src_dir.to_path_buf()
+            };
 
         Ok(build_dir)
     }
@@ -741,7 +819,12 @@ impl Builder {
                 debug!("Using cached source: {}", cache_filename);
             } else {
                 info!("Downloading {}...", processed_uri);
-                download::download_file(&processed_uri, &cache_path, self.config.network.download_timeout).map_err(|e| {
+                download::download_file(
+                    &processed_uri,
+                    &cache_path,
+                    self.config.network.download_timeout,
+                )
+                .map_err(|e| {
                     WrightError::BuildError(format!("Failed to download {}: {}", processed_uri, e))
                 })?;
             }
@@ -770,10 +853,17 @@ impl Builder {
             // Replace each sha256 = "..." occurrence in order
             while let Some(m) = sha256_re.find(&result[..]) {
                 if hash_idx < new_hashes.len() {
-                    let replacement = format!("{}\"{}\"",
+                    let replacement = format!(
+                        "{}\"{}\"",
                         &result[m.start()..m.start() + result[m.start()..].find('"').unwrap()],
-                        new_hashes[hash_idx]);
-                    result = format!("{}{}{}", &result[..m.start()], replacement, &result[m.end()..]);
+                        new_hashes[hash_idx]
+                    );
+                    result = format!(
+                        "{}{}{}",
+                        &result[..m.start()],
+                        replacement,
+                        &result[m.end()..]
+                    );
                     hash_idx += 1;
                 } else {
                     break;
@@ -783,7 +873,8 @@ impl Builder {
         } else {
             // Old format: update sha256 = [...] array
             let re = regex::Regex::new(r"(?m)^sha256\s*=\s*\[[\s\S]*?\]").unwrap();
-            let hashes_str = new_hashes.iter()
+            let hashes_str = new_hashes
+                .iter()
                 .map(|h| format!("    \"{}\"", h))
                 .collect::<Vec<_>>()
                 .join(",\n");
@@ -799,7 +890,9 @@ impl Builder {
                     c.insert_str(uris_match.end(), &format!("\n{}", replacement));
                     c
                 } else {
-                    return Err(WrightError::BuildError("could not find sources or sha256 field in plan.toml".to_string()));
+                    return Err(WrightError::BuildError(
+                        "could not find sources or sha256 field in plan.toml".to_string(),
+                    ));
                 }
             }
         };
@@ -811,16 +904,21 @@ impl Builder {
 
     /// Fetch a Git repository into the cache using native git2 library.
     fn fetch_git_repo(&self, uri: &str, dest: &Path) -> Result<String> {
-        let uri_body = uri.strip_prefix("git+")
+        let uri_body = uri
+            .strip_prefix("git+")
             .ok_or_else(|| WrightError::BuildError(format!("invalid git URI: {}", uri)))?;
         let (git_url, git_ref) = if let Some(pos) = uri_body.find('#') {
-            (uri_body[..pos].to_string(), uri_body[pos+1..].to_string())
+            (uri_body[..pos].to_string(), uri_body[pos + 1..].to_string())
         } else {
             (uri_body.to_string(), "HEAD".to_string())
         };
 
         let ref_parts: Vec<&str> = git_ref.split('=').collect();
-        let actual_ref = if ref_parts.len() == 2 { ref_parts[1] } else { &git_ref };
+        let actual_ref = if ref_parts.len() == 2 {
+            ref_parts[1]
+        } else {
+            &git_ref
+        };
 
         let repo = if !dest.exists() {
             info!("Cloning Git repository (native): {}", git_url);
@@ -831,7 +929,8 @@ impl Builder {
                 .map_err(|e| WrightError::BuildError(format!("git open failed: {}", e)))?
         };
 
-        let mut remote = repo.remote_anonymous(&git_url)
+        let mut remote = repo
+            .remote_anonymous(&git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
         // Progress callbacks: log transfer stats so long fetches aren't silent.
@@ -840,7 +939,9 @@ impl Builder {
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.transfer_progress(move |stats| {
             let total = stats.total_objects();
-            if total == 0 { return true; }
+            if total == 0 {
+                return true;
+            }
             let pct = (stats.received_objects() * 100 / total) as u32;
             // Log at every 10% milestone to avoid flooding the log.
             if pct / 10 > last_pct / 10 {
@@ -861,13 +962,19 @@ impl Builder {
         fetch_opts.download_tags(git2::AutotagOption::All);
 
         info!("Fetching from remote: {}", git_url);
-        remote.fetch(&["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"], Some(&mut fetch_opts), None)
+        remote
+            .fetch(
+                &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
+                Some(&mut fetch_opts),
+                None,
+            )
             .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)))?;
 
         // Resolve the ref to a commit
-        let obj = repo.revparse_single(actual_ref)
-            .map_err(|e| WrightError::BuildError(format!("failed to resolve git ref '{}': {}", actual_ref, e)))?;
-        
+        let obj = repo.revparse_single(actual_ref).map_err(|e| {
+            WrightError::BuildError(format!("failed to resolve git ref '{}': {}", actual_ref, e))
+        })?;
+
         Ok(obj.id().to_string())
     }
 
@@ -886,7 +993,9 @@ impl Builder {
                 // Git repository handling
                 let git_dir_name = git_cache_dir_name(&processed_uri);
                 let git_cache_dir = cache_dir.join("git");
-                if !git_cache_dir.exists() { std::fs::create_dir_all(&git_cache_dir).ok(); }
+                if !git_cache_dir.exists() {
+                    std::fs::create_dir_all(&git_cache_dir).ok();
+                }
                 let dest = git_cache_dir.join(&git_dir_name);
 
                 let commit_id = self.fetch_git_repo(&processed_uri, &dest)?;
@@ -914,7 +1023,10 @@ impl Builder {
                                 debug!("Source {} already cached and verified", filename);
                                 needs_download = false;
                             } else {
-                                warn!("Cached source {} hash mismatch, re-downloading...", filename);
+                                warn!(
+                                    "Cached source {} hash mismatch, re-downloading...",
+                                    filename
+                                );
                                 let _ = std::fs::remove_file(&dest);
                             }
                         }
@@ -926,7 +1038,11 @@ impl Builder {
 
                 if needs_download {
                     info!("Fetching {} to {}", processed_uri, dest.display());
-                    download::download_file(&processed_uri, &dest, self.config.network.download_timeout)?;
+                    download::download_file(
+                        &processed_uri,
+                        &dest,
+                        self.config.network.download_timeout,
+                    )?;
 
                     // Verify immediately after download
                     if !skip_verify {
@@ -951,7 +1067,8 @@ impl Builder {
                     std::fs::copy(&local_path, &dest).map_err(|e| {
                         WrightError::BuildError(format!(
                             "failed to copy local file {} to cache: {}",
-                            local_path.display(), e
+                            local_path.display(),
+                            e
                         ))
                     })?;
                     debug!("Copied local file {} to cache", processed_uri);

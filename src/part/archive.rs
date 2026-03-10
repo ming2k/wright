@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use walkdir::WalkDir;
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 use crate::plan::manifest::PlanManifest;
 
 /// Metadata extracted from a .PARTINFO file
@@ -30,9 +30,7 @@ pub struct PartInfo {
 
 /// Files that should never be included in a package.
 /// These are shared/generated files that cause conflicts between packages.
-const PART_EXCLUDE_FILES: &[&str] = &[
-    "usr/share/info/dir",
-];
+const PART_EXCLUDE_FILES: &[&str] = &["usr/share/info/dir"];
 
 /// Remove well-known files that should never be packaged.
 fn purge_excluded_files(part_dir: &Path) {
@@ -63,21 +61,18 @@ pub fn create_archive(
     let filelist = generate_filelist(part_dir)?;
 
     // Write metadata files into part_dir
-    std::fs::write(part_dir.join(".PARTINFO"), &partinfo).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to write .PARTINFO: {}", e))
-    })?;
+    std::fs::write(part_dir.join(".PARTINFO"), &partinfo)
+        .map_err(|e| WrightError::ArchiveError(format!("failed to write .PARTINFO: {}", e)))?;
 
-    std::fs::write(part_dir.join(".FILELIST"), &filelist).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to write .FILELIST: {}", e))
-    })?;
+    std::fs::write(part_dir.join(".FILELIST"), &filelist)
+        .map_err(|e| WrightError::ArchiveError(format!("failed to write .FILELIST: {}", e)))?;
 
     // Write .HOOKS (TOML) if install scripts exist
     if let Some(ref scripts) = manifest.install_scripts {
         let hooks_content = generate_hooks_toml(scripts);
         if !hooks_content.is_empty() {
-            std::fs::write(part_dir.join(".HOOKS"), &hooks_content).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to write .HOOKS: {}", e))
-            })?;
+            std::fs::write(part_dir.join(".HOOKS"), &hooks_content)
+                .map_err(|e| WrightError::ArchiveError(format!("failed to write .HOOKS: {}", e)))?;
         }
     }
 
@@ -103,12 +98,6 @@ pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<PartInfo>
         return parse_partinfo(&partinfo_path);
     }
 
-    // Backward compatibility for older test fixtures and archives.
-    let legacy_path = dest_dir.join(".PKGINFO");
-    if legacy_path.exists() {
-        return parse_partinfo(&legacy_path);
-    }
-
     Err(WrightError::ArchiveError(
         "archive does not contain .PARTINFO".to_string(),
     ))
@@ -120,25 +109,24 @@ pub fn read_partinfo(archive_path: &Path) -> Result<PartInfo> {
         WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
     })?;
 
-    let decoder = zstd::Decoder::new(file).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd decoder init failed: {}", e))
-    })?;
+    let decoder = zstd::Decoder::new(file)
+        .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
 
     let mut archive = tar::Archive::new(decoder);
 
-    for entry in archive.entries().map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read archive entries: {}", e))
-    })? {
-        let mut entry = entry.map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read entry: {}", e))
-        })?;
+    for entry in archive
+        .entries()
+        .map_err(|e| WrightError::ArchiveError(format!("failed to read archive entries: {}", e)))?
+    {
+        let mut entry =
+            entry.map_err(|e| WrightError::ArchiveError(format!("failed to read entry: {}", e)))?;
 
-        let path = entry.path().map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read entry path: {}", e))
-        })?;
+        let path = entry
+            .path()
+            .map_err(|e| WrightError::ArchiveError(format!("failed to read entry path: {}", e)))?;
 
         let path_str = path.to_string_lossy();
-        if path_str.ends_with(".PARTINFO") || path_str.ends_with(".PKGINFO") {
+        if path_str.ends_with(".PARTINFO") {
             let mut content = String::new();
             entry.read_to_string(&mut content).map_err(|e| {
                 WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e))
@@ -164,7 +152,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.dependencies.runtime.is_empty() {
             deps_toml.push_str("runtime = [");
             for (i, dep) in manifest.dependencies.runtime.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
+                if i > 0 {
+                    deps_toml.push_str(", ");
+                }
                 deps_toml.push_str(&format!("\"{}\"", dep));
             }
             deps_toml.push_str("]\n");
@@ -172,7 +162,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.dependencies.link.is_empty() {
             deps_toml.push_str("link = [");
             for (i, dep) in manifest.dependencies.link.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
+                if i > 0 {
+                    deps_toml.push_str(", ");
+                }
                 deps_toml.push_str(&format!("\"{}\"", dep));
             }
             deps_toml.push_str("]\n");
@@ -180,7 +172,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.dependencies.optional.is_empty() {
             deps_toml.push_str("optional = [");
             for (i, dep) in manifest.dependencies.optional.iter().enumerate() {
-                if i > 0 { deps_toml.push_str(", "); }
+                if i > 0 {
+                    deps_toml.push_str(", ");
+                }
                 deps_toml.push_str(&format!(
                     "{{name = \"{}\", description = \"{}\"}}",
                     dep.name, dep.description
@@ -199,7 +193,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.relations.replaces.is_empty() {
             relations_toml.push_str("replaces = [");
             for (i, dep) in manifest.relations.replaces.iter().enumerate() {
-                if i > 0 { relations_toml.push_str(", "); }
+                if i > 0 {
+                    relations_toml.push_str(", ");
+                }
                 relations_toml.push_str(&format!("\"{}\"", dep));
             }
             relations_toml.push_str("]\n");
@@ -207,7 +203,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.relations.conflicts.is_empty() {
             relations_toml.push_str("conflicts = [");
             for (i, dep) in manifest.relations.conflicts.iter().enumerate() {
-                if i > 0 { relations_toml.push_str(", "); }
+                if i > 0 {
+                    relations_toml.push_str(", ");
+                }
                 relations_toml.push_str(&format!("\"{}\"", dep));
             }
             relations_toml.push_str("]\n");
@@ -215,7 +213,9 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         if !manifest.relations.provides.is_empty() {
             relations_toml.push_str("provides = [");
             for (i, dep) in manifest.relations.provides.iter().enumerate() {
-                if i > 0 { relations_toml.push_str(", "); }
+                if i > 0 {
+                    relations_toml.push_str(", ");
+                }
                 relations_toml.push_str(&format!("\"{}\"", dep));
             }
             relations_toml.push_str("]\n");
@@ -274,9 +274,8 @@ packager = "wright {wright_version}"
 fn generate_filelist(part_dir: &Path) -> Result<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(part_dir).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            WrightError::ArchiveError(format!("failed to walk directory: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
         let relative = entry.path().strip_prefix(part_dir).unwrap_or(entry.path());
         let relative_str = relative.to_string_lossy();
         // Skip metadata files and root
@@ -284,7 +283,6 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
             || relative_str.starts_with(".PARTINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
-            || relative_str.starts_with(".INSTALL")
         {
             continue;
         }
@@ -302,9 +300,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
 /// pre_remove = "systemctl stop nginx"
 /// post_remove = "userdel nginx"
 /// ```
-fn generate_hooks_toml(
-    scripts: &crate::plan::manifest::InstallScripts,
-) -> String {
+fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> String {
     let has_any = scripts.pre_install.is_some()
         || scripts.post_install.is_some()
         || scripts.post_upgrade.is_some()
@@ -327,7 +323,11 @@ fn generate_hooks_toml(
             if trimmed.contains('\n') {
                 content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
             } else {
-                content.push_str(&format!("{} = \"{}\"\n", key, trimmed.replace('\\', "\\\\").replace('"', "\\\"")));
+                content.push_str(&format!(
+                    "{} = \"{}\"\n",
+                    key,
+                    trimmed.replace('\\', "\\\\").replace('"', "\\\"")
+                ));
             }
         }
     }
@@ -337,9 +337,8 @@ fn generate_hooks_toml(
 fn calculate_dir_size(dir: &Path) -> Result<u64> {
     let mut size = 0;
     for entry in WalkDir::new(dir) {
-        let entry = entry.map_err(|e| {
-            WrightError::ArchiveError(format!("failed to walk directory: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
         if entry.file_type().is_file() {
             size += entry.metadata().map(|m| m.len()).unwrap_or(0);
         }
@@ -348,9 +347,8 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
 }
 
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e)))?;
     parse_partinfo_str(&content)
 }
 
@@ -394,13 +392,6 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         runtime: Vec<String>,
         #[serde(default)]
         link: Vec<String>,
-        // Backward compat: old archives store these under [dependencies]
-        #[serde(default)]
-        replaces: Vec<String>,
-        #[serde(default)]
-        conflicts: Vec<String>,
-        #[serde(default)]
-        provides: Vec<String>,
         #[serde(default)]
         optional: Vec<PartInfoOptDep>,
     }
@@ -421,23 +412,22 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         files: Vec<String>,
     }
 
-    let parsed: PartInfoToml = toml::from_str(content).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to parse .PARTINFO: {}", e))
-    })?;
+    let parsed: PartInfoToml = toml::from_str(content)
+        .map_err(|e| WrightError::ArchiveError(format!("failed to parse .PARTINFO: {}", e)))?;
 
-    let (runtime_deps, link_deps, old_replaces, old_conflicts, old_provides, optional_deps) = parsed
+    let (runtime_deps, link_deps, optional_deps) = parsed
         .dependencies
         .map(|d| {
-            let opt = d.optional.into_iter().map(|o| (o.name, o.description)).collect();
-            (d.runtime, d.link, d.replaces, d.conflicts, d.provides, opt)
+            let opt = d
+                .optional
+                .into_iter()
+                .map(|o| (o.name, o.description))
+                .collect();
+            (d.runtime, d.link, opt)
         })
         .unwrap_or_default();
 
-    // Prefer [relations] section; fall back to old [dependencies] fields for backward compat
     let relations = parsed.relations.unwrap_or_default();
-    let replaces = if relations.replaces.is_empty() { old_replaces } else { relations.replaces };
-    let conflicts = if relations.conflicts.is_empty() { old_conflicts } else { relations.conflicts };
-    let provides = if relations.provides.is_empty() { old_provides } else { relations.provides };
 
     Ok(PartInfo {
         name: parsed.package.name,
@@ -451,9 +441,9 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         build_date: parsed.package.build_date,
         runtime_deps,
         link_deps,
-        replaces,
-        conflicts,
-        provides,
+        replaces: relations.replaces,
+        conflicts: relations.conflicts,
+        provides: relations.provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
         optional_deps,
     })

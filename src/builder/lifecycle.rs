@@ -5,14 +5,22 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
 
-use crate::error::{WrightError, Result};
-use crate::plan::manifest::{LifecycleStage, PlanManifest};
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::dockyard::ResourceLimits;
+use crate::error::{Result, WrightError};
+use crate::plan::manifest::{LifecycleStage, PlanManifest};
 
 /// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
-    "fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging", "fabricate",
+    "fetch",
+    "verify",
+    "extract",
+    "prepare",
+    "configure",
+    "compile",
+    "check",
+    "staging",
+    "fabricate",
 ];
 
 /// Built-in stages handled by the build tool itself (not user scripts)
@@ -99,12 +107,14 @@ impl<'a> LifecyclePipeline<'a> {
             for s in &self.stages {
                 if BUILTIN_STAGES.contains(&s.as_str()) {
                     return Err(WrightError::BuildError(format!(
-                        "cannot use --stage with built-in stage '{}' (handled internally)", s
+                        "cannot use --stage with built-in stage '{}' (handled internally)",
+                        s
                     )));
                 }
                 if !pipeline.iter().any(|p| p == s) {
                     return Err(WrightError::BuildError(format!(
-                        "stage '{}' not found in lifecycle pipeline", s
+                        "stage '{}' not found in lifecycle pipeline",
+                        s
                     )));
                 }
             }
@@ -160,7 +170,12 @@ impl<'a> LifecyclePipeline<'a> {
             let pkg = &self.manifest.plan.name;
             info!("{}: running stage: {}", pkg, stage_name);
             self.run_stage(stage_name, stage)?;
-            info!("{}: stage {} finished in {:.1}s", pkg, stage_name, t0.elapsed().as_secs_f64());
+            info!(
+                "{}: stage {} finished in {:.1}s",
+                pkg,
+                stage_name,
+                t0.elapsed().as_secs_f64()
+            );
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
         }
@@ -210,8 +225,9 @@ impl<'a> LifecyclePipeline<'a> {
             return Ok(());
         }
 
-        let executor = self.executors.get(&stage.executor)
-            .ok_or_else(|| WrightError::BuildError(format!("executor not found: {}", stage.executor)))?;
+        let executor = self.executors.get(&stage.executor).ok_or_else(|| {
+            WrightError::BuildError(format!("executor not found: {}", stage.executor))
+        })?;
 
         let options = ExecutorOptions {
             level: stage.dockyard.parse().unwrap(),
@@ -266,14 +282,21 @@ impl<'a> LifecyclePipeline<'a> {
                 // Limit to last 40 lines to keep the message readable.
                 let lines: Vec<&str> = relevant.lines().collect();
                 if lines.len() > 40 {
-                    format!("... ({} lines omitted) ...\n{}", lines.len() - 40, lines[lines.len() - 40..].join("\n"))
+                    format!(
+                        "... ({} lines omitted) ...\n{}",
+                        lines.len() - 40,
+                        lines[lines.len() - 40..].join("\n")
+                    )
                 } else {
                     relevant.to_string()
                 }
             };
             return Err(WrightError::BuildError(format!(
                 "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
-                stage_name, result.exit_code, log_path.display(), output_snippet
+                stage_name,
+                result.exit_code,
+                log_path.display(),
+                output_snippet
             )));
         }
 

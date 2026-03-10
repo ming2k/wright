@@ -19,7 +19,7 @@ src/
 ├── package/
 │   ├── manifest.rs                 # plan.toml parsing, validation, replaces/conflicts
 │   ├── version.rs                  # Version comparison logic
-│   └── archive.rs                  # .wright.tar.zst creation and PKGINFO management
+│   └── archive.rs                  # .wright.tar.zst creation and PARTINFO management
 ├── builder/
 │   ├── mod.rs                      # The Build engine
 │   ├── orchestrator.rs             # Multi-target scheduling, upward/downward recursion
@@ -53,9 +53,9 @@ plan.toml → PlanManifest
       → display Construction Plan ([NEW] / [LINK-REBUILD] / [REV-REBUILD] / [MVP] / [FULL])
           (suppressed with --quiet; subprocess output echoed only with --verbose and single job)
       → parallel execution (topology-ordered):
-          → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp (and WRIGHT_BOOTSTRAP_BUILD=1), no cache write
+          → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp, no cache write
           → full pass: Builder::build() force=true, normal cache
-          → archive::create_archive() → PKGINFO (with link/replaces/conflicts)
+          → archive::create_archive() → PARTINFO (with link/replaces/conflicts)
       → if --install: acquisition of serial install lock → transaction::install_package()
 ```
 

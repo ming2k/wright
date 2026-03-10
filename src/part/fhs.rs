@@ -175,8 +175,16 @@ mod tests {
         make_file(tmp.path(), "bin/foo");
         let err = validate(tmp.path(), "foo").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("violates FHS"), "expected FHS error, got: {}", msg);
-        assert!(msg.contains("install to /usr/bin"), "expected hint, got: {}", msg);
+        assert!(
+            msg.contains("violates FHS"),
+            "expected FHS error, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("install to /usr/bin"),
+            "expected hint, got: {}",
+            msg
+        );
     }
 
     #[test]
@@ -258,8 +266,16 @@ mod tests {
         make_symlink(tmp.path(), "usr/lib/libfoo.so", "/lib/libfoo.so.1");
         let err = validate(tmp.path(), "foo").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("symlink"), "expected symlink error, got: {}", msg);
-        assert!(msg.contains("install to /usr/lib"), "expected hint, got: {}", msg);
+        assert!(
+            msg.contains("symlink"),
+            "expected symlink error, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("install to /usr/lib"),
+            "expected hint, got: {}",
+            msg
+        );
     }
 
     #[test]

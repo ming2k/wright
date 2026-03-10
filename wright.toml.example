@@ -70,9 +70,6 @@ cflags = "-O2 -pipe -march=x86-64"
 # C++ compiler flags. Same semantics as cflags above.
 cxxflags = "-O2 -pipe -march=x86-64"
 
-# Strip debug symbols from installed binaries. Reduces package size.
-strip = true
-
 # Use ccache to speed up repeated compilations. Requires ccache installed.
 ccache = false
 

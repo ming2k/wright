@@ -137,6 +137,10 @@ impl DockyardConfig {
 }
 
 /// Run a command inside a dockyard using the native Linux namespace implementation.
-pub fn run_in_dockyard(config: &DockyardConfig, command: &str, args: &[String]) -> Result<DockyardOutput> {
+pub fn run_in_dockyard(
+    config: &DockyardConfig,
+    command: &str,
+    args: &[String],
+) -> Result<DockyardOutput> {
     native::run_in_dockyard(config, command, args)
 }

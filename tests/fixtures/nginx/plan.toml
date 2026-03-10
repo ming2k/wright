@@ -36,7 +36,6 @@ uri = "patches/add-feature.patch"
 sha256 = "SKIP"
 
 [options]
-strip = true
 static = false
 debug = false
 ccache = true

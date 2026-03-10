@@ -1,10 +1,10 @@
-use std::io::{Read, Write};
-use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
+use std::io::{Read, Write};
+use std::path::Path;
 use tracing::info;
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 use crate::util::compress;
 use crate::util::progress;
 
@@ -20,7 +20,10 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         let src_path = Path::new(path_str);
 
         if !src_path.exists() {
-            return Err(WrightError::NetworkError(format!("local path not found: {}", path_str)));
+            return Err(WrightError::NetworkError(format!(
+                "local path not found: {}",
+                path_str
+            )));
         }
 
         if src_path.is_dir() {
@@ -44,14 +47,15 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         .build()
         .map_err(|e| WrightError::NetworkError(format!("failed to create client: {}", e)))?;
 
-    let mut response = client.get(url)
-        .send()
-        .map_err(|e| WrightError::NetworkError(format!("failed to send request to {}: {}", url, e)))?;
+    let mut response = client.get(url).send().map_err(|e| {
+        WrightError::NetworkError(format!("failed to send request to {}: {}", url, e))
+    })?;
 
     if !response.status().is_success() {
         return Err(WrightError::NetworkError(format!(
             "failed to download from {}: status {}",
-            url, response.status()
+            url,
+            response.status()
         )));
     }
 
@@ -70,9 +74,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         }
     }
 
-    let total_size = response
-        .content_length()
-        .unwrap_or(0);
+    let total_size = response.content_length().unwrap_or(0);
 
     let filename = url.split('/').next_back().unwrap_or(url);
     let pb = progress::MULTI.add(ProgressBar::new(total_size));
@@ -85,23 +87,25 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     // Write to a temporary file in the same directory, then rename on success.
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
     let tmp_file = tempfile::NamedTempFile::new_in(dest_dir).map_err(WrightError::IoError)?;
-    let mut file = tmp_file.as_file().try_clone().map_err(WrightError::IoError)?;
+    let mut file = tmp_file
+        .as_file()
+        .try_clone()
+        .map_err(WrightError::IoError)?;
 
     let mut downloaded: u64 = 0;
     let mut buffer = [0; 8192];
 
     loop {
-        let n = response.read(&mut buffer).map_err(|e| {
-            WrightError::IoError(e)
-        })?;
+        let n = response
+            .read(&mut buffer)
+            .map_err(|e| WrightError::IoError(e))?;
 
         if n == 0 {
             break;
         }
 
-        file.write_all(&buffer[..n]).map_err(|e| {
-            WrightError::IoError(e)
-        })?;
+        file.write_all(&buffer[..n])
+            .map_err(|e| WrightError::IoError(e))?;
 
         downloaded += n as u64;
         pb.set_position(downloaded);
@@ -110,9 +114,9 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     pb.finish_with_message("downloaded");
 
     // Atomically move the completed download into place
-    tmp_file.persist(dest).map_err(|e| {
-        WrightError::IoError(e.error)
-    })?;
+    tmp_file
+        .persist(dest)
+        .map_err(|e| WrightError::IoError(e.error))?;
 
     Ok(())
 }

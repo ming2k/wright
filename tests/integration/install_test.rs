@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::Database;
-use wright::plan::manifest::PlanManifest;
 use wright::part::archive;
+use wright::plan::manifest::PlanManifest;
 use wright::transaction;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -26,11 +26,23 @@ fn build_hello_archive() -> PathBuf {
     config.build.build_dir = build_tmp.path().to_path_buf();
 
     let builder = Builder::new(config);
-    let result = builder.build(&manifest, plan_dir, &[], false, false, &std::collections::HashMap::new(), false, false, None, None).unwrap();
+    let result = builder
+        .build(
+            &manifest,
+            plan_dir,
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
+        .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive =
-        archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let archive = archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};

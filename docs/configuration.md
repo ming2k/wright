@@ -141,7 +141,6 @@ dockyards = 0                           # Max concurrent dockyards (0 = auto = a
 # max_cpus = 16                        # Hard cap on CPU cores used (0 or unset = available - 4)
 cflags = "-O2 -pipe -march=x86-64"     # Default C compiler flags
 cxxflags = "-O2 -pipe -march=x86-64"   # Default C++ compiler flags
-strip = true                            # Strip binaries after build
 ccache = false                          # Enable ccache
 # memory_limit = 8192                   # Max virtual address space per build process (MB)
 # cpu_time_limit = 7200                 # Max CPU time per build process (seconds)
@@ -177,7 +176,6 @@ retry_count = 3                         # Download retry attempts
 | `max_cpus` | integer | — | Hard cap on total CPU cores wright may use. Unset = `available_cpus - 4` (minimum 1). |
 | `cflags` | string | `"-O2 -pipe -march=x86-64"` | Global C compiler flags |
 | `cxxflags` | string | `"-O2 -pipe -march=x86-64"` | Global C++ compiler flags |
-| `strip` | boolean | `true` | Strip debug symbols from binaries |
 | `ccache` | boolean | `false` | Use ccache if available |
 | `memory_limit` | integer | — | Max virtual address space per build process (MB). Uses `RLIMIT_AS`. Set generously — see note below. |
 | `cpu_time_limit` | integer | — | Max CPU time per build process (seconds). Uses `RLIMIT_CPU`. |

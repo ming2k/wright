@@ -1,15 +1,22 @@
-use std::path::{Path, PathBuf};
-use crate::config::{RepoConfig, SourceConfig, AssembliesConfig};
-use crate::error::{WrightError, Result};
+use crate::config::{AssembliesConfig, RepoConfig, SourceConfig};
+use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::util::download;
+use std::path::{Path, PathBuf};
 
 /// Strip path separators and dangerous components from a filename derived from a URL.
 pub fn sanitize_cache_filename(raw: &str) -> String {
     let name = raw.rsplit('/').next().unwrap_or(raw);
     let name = name.rsplit('\\').next().unwrap_or(name);
-    let sanitized: String = name.chars()
-        .map(|c| if c == '/' || c == '\\' || c == '\0' { '_' } else { c })
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == '\0' {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
         "download".to_string()
@@ -40,14 +47,18 @@ impl SimpleResolver {
             plans_dirs: Vec::new(),
             remote_sources: Vec::new(),
             cache_dir,
-            assemblies: AssembliesConfig { assemblies: std::collections::HashMap::new() },
+            assemblies: AssembliesConfig {
+                assemblies: std::collections::HashMap::new(),
+            },
             download_timeout: 300,
         }
     }
 
     pub fn load_from_config(&mut self, config: &RepoConfig) {
         for source in &config.source {
-            if !source.enabled { continue; }
+            if !source.enabled {
+                continue;
+            }
             match source.type_.as_str() {
                 "local" | "hold" => {
                     if let Some(ref path) = source.path {
@@ -66,7 +77,8 @@ impl SimpleResolver {
                 _ => {}
             }
         }
-        self.remote_sources.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.remote_sources
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
     }
 
     pub fn add_search_dir(&mut self, path: PathBuf) {
@@ -87,15 +99,15 @@ impl SimpleResolver {
         }
 
         if name.starts_with("http") {
-             let filename = sanitize_cache_filename(
-                 name.split('/').next_back().unwrap_or("part.wright.tar.zst")
-             );
-             std::fs::create_dir_all(&self.cache_dir).map_err(WrightError::IoError)?;
-             let dest = self.cache_dir.join(&filename);
-             if !dest.exists() {
-                 download::download_file(name, &dest, self.download_timeout)?;
-             }
-             return self.read_archive(&dest).map(Some);
+            let filename = sanitize_cache_filename(
+                name.split('/').next_back().unwrap_or("part.wright.tar.zst"),
+            );
+            std::fs::create_dir_all(&self.cache_dir).map_err(WrightError::IoError)?;
+            let dest = self.cache_dir.join(&filename);
+            if !dest.exists() {
+                download::download_file(name, &dest, self.download_timeout)?;
+            }
+            return self.read_archive(&dest).map(Some);
         }
 
         Ok(None)
@@ -103,7 +115,9 @@ impl SimpleResolver {
 
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
         for dir in &self.search_dirs {
-            if !dir.exists() { continue; }
+            if !dir.exists() {
+                continue;
+            }
 
             // Try index first (fast path)
             if let Some(index) = crate::repo::index::read_index(dir)? {
@@ -151,7 +165,7 @@ impl SimpleResolver {
     pub fn resolve_assembly(&self, assembly_name: &str) -> Result<Vec<PathBuf>> {
         let all_plans = self.get_all_plans()?;
         let mut plan_names = std::collections::HashSet::new();
-        
+
         if self.assemblies.assemblies.contains_key(assembly_name) {
             self.collect_assembly_members(assembly_name, &mut plan_names);
         }
@@ -161,13 +175,21 @@ impl SimpleResolver {
             if let Some(path) = all_plans.get(&name) {
                 paths.push(path.clone());
             } else {
-                tracing::warn!("Plan {} defined in assembly {} not found in plans tree", name, assembly_name);
+                tracing::warn!(
+                    "Plan {} defined in assembly {} not found in plans tree",
+                    name,
+                    assembly_name
+                );
             }
         }
         Ok(paths)
     }
 
-    fn collect_assembly_members(&self, name: &str, members: &mut std::collections::HashSet<String>) {
+    fn collect_assembly_members(
+        &self,
+        name: &str,
+        members: &mut std::collections::HashSet<String>,
+    ) {
         if let Some(assembly) = self.assemblies.assemblies.get(name) {
             for plan in &assembly.plans {
                 members.insert(plan.clone());
@@ -181,11 +203,15 @@ impl SimpleResolver {
     pub fn get_all_plans(&self) -> Result<std::collections::HashMap<String, PathBuf>> {
         let mut map = std::collections::HashMap::new();
         for root in &self.plans_dirs {
-            if !root.exists() { continue; }
+            if !root.exists() {
+                continue;
+            }
             for entry in walkdir::WalkDir::new(root) {
                 let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
                 if entry.file_name() == "plan.toml" {
-                    if let Ok(manifest) = crate::plan::manifest::PlanManifest::from_file(entry.path()) {
+                    if let Ok(manifest) =
+                        crate::plan::manifest::PlanManifest::from_file(entry.path())
+                    {
                         map.insert(manifest.plan.name, entry.path().to_path_buf());
                     }
                 }

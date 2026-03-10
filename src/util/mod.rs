@@ -1,4 +1,4 @@
-pub mod download;
 pub mod checksum;
 pub mod compress;
+pub mod download;
 pub mod progress;

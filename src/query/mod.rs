@@ -53,35 +53,67 @@ impl TreeStats {
 // ─── helpers for colored output ──────────────────────────────────────────────
 
 fn write_connector(out: &mut dyn std::io::Write, s: &str, color: bool) -> std::io::Result<()> {
-    if color { write!(out, "{}", s.dimmed()) } else { write!(out, "{}", s) }
+    if color {
+        write!(out, "{}", s.dimmed())
+    } else {
+        write!(out, "{}", s)
+    }
 }
 
 fn write_pkg_name(out: &mut dyn std::io::Write, name: &str, _color: bool) -> std::io::Result<()> {
     write!(out, "{}", name)
 }
 
-fn write_version_constraint(out: &mut dyn std::io::Write, c: &str, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", format!("({})", c).green()) } else { write!(out, " ({})", c) }
+fn write_version_constraint(
+    out: &mut dyn std::io::Write,
+    c: &str,
+    color: bool,
+) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", format!("({})", c).green())
+    } else {
+        write!(out, " ({})", c)
+    }
 }
 
 fn write_link_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", "[link]".blue()) } else { write!(out, " [link]") }
+    if color {
+        write!(out, " {}", "[link]".blue())
+    } else {
+        write!(out, " [link]")
+    }
 }
 
 fn write_not_installed(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", "[not installed]".red()) } else { write!(out, " [not installed]") }
+    if color {
+        write!(out, " {}", "[not installed]".red())
+    } else {
+        write!(out, " [not installed]")
+    }
 }
 
 fn write_cycle_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", "(cycle)".red().bold()) } else { write!(out, " (cycle)") }
+    if color {
+        write!(out, " {}", "(cycle)".red().bold())
+    } else {
+        write!(out, " (cycle)")
+    }
 }
 
 fn write_dup_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", "(*)".dimmed()) } else { write!(out, " (*)") }
+    if color {
+        write!(out, " {}", "(*)".dimmed())
+    } else {
+        write!(out, " (*)")
+    }
 }
 
 fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color { write!(out, " {}", "(pruned)".yellow()) } else { write!(out, " (pruned)") }
+    if color {
+        write!(out, " {}", "(pruned)".yellow())
+    } else {
+        write!(out, " (pruned)")
+    }
 }
 
 // ─── forward dependency tree ─────────────────────────────────────────────────
@@ -99,7 +131,17 @@ pub fn write_dep_tree(
     stats.total = 1; // root package
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
-    write_dep_tree_inner(db, name, "", 1, opts, &mut visited, &mut ancestors, &mut stats, out)?;
+    write_dep_tree_inner(
+        db,
+        name,
+        "",
+        1,
+        opts,
+        &mut visited,
+        &mut ancestors,
+        &mut stats,
+        out,
+    )?;
     Ok(stats)
 }
 
@@ -118,7 +160,8 @@ fn write_dep_tree_inner(
         return Ok(());
     }
 
-    let deps = db.get_dependencies_by_name(name)
+    let deps = db
+        .get_dependencies_by_name(name)
         .context(format!("failed to get dependencies for {}", name))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
@@ -128,11 +171,12 @@ fn write_dep_tree_inner(
     };
 
     // For PrefixMode::None, we need a set to deduplicate
-    let seen_none: Option<&std::collections::HashSet<String>> = if opts.prefix_mode == PrefixMode::None {
-        Some(visited)
-    } else {
-        Option::None
-    };
+    let seen_none: Option<&std::collections::HashSet<String>> =
+        if opts.prefix_mode == PrefixMode::None {
+            Some(visited)
+        } else {
+            Option::None
+        };
     let _ = seen_none; // used below
 
     for (i, dep) in children.iter().enumerate() {
@@ -158,7 +202,9 @@ fn write_dep_tree_inner(
             // True cycle
             stats.total += 1;
             stats.cycles += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
@@ -176,7 +222,9 @@ fn write_dep_tree_inner(
                 continue;
             }
             stats.total += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
             let installed = db.get_package(&dep.name).unwrap_or(None).is_some();
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, &dep.name, opts.color)?;
@@ -195,7 +243,9 @@ fn write_dep_tree_inner(
         } else {
             let installed = db.get_package(&dep.name).unwrap_or(None).is_some();
             stats.total += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
 
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, &dep.name, opts.color)?;
@@ -215,12 +265,22 @@ fn write_dep_tree_inner(
                 visited.insert(dep.name.clone());
                 ancestors.insert(dep.name.clone());
                 let new_prefix = match opts.prefix_mode {
-                    PrefixMode::Indent => format!("{}{}", prefix,
-                        if is_last_child { "    " } else { "│   " }),
+                    PrefixMode::Indent => {
+                        format!("{}{}", prefix, if is_last_child { "    " } else { "│   " })
+                    }
                     _ => String::new(),
                 };
-                write_dep_tree_inner(db, &dep.name, &new_prefix,
-                    current_depth + 1, opts, visited, ancestors, stats, out)?;
+                write_dep_tree_inner(
+                    db,
+                    &dep.name,
+                    &new_prefix,
+                    current_depth + 1,
+                    opts,
+                    visited,
+                    ancestors,
+                    stats,
+                    out,
+                )?;
                 ancestors.remove(&dep.name);
             }
         }
@@ -239,7 +299,11 @@ fn write_line_prefix(
 ) -> std::io::Result<()> {
     match opts.prefix_mode {
         PrefixMode::Indent => {
-            let connector = if is_last_child { "└── " } else { "├── " };
+            let connector = if is_last_child {
+                "└── "
+            } else {
+                "├── "
+            };
             write_connector(out, prefix, opts.color)?;
             write_connector(out, connector, opts.color)?;
         }
@@ -267,7 +331,17 @@ pub fn write_reverse_dep_tree(
     stats.total = 1;
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
-    write_reverse_dep_tree_inner(db, name, "", 1, opts, &mut visited, &mut ancestors, &mut stats, out)?;
+    write_reverse_dep_tree_inner(
+        db,
+        name,
+        "",
+        1,
+        opts,
+        &mut visited,
+        &mut ancestors,
+        &mut stats,
+        out,
+    )?;
     Ok(stats)
 }
 
@@ -286,7 +360,8 @@ fn write_reverse_dep_tree_inner(
         return Ok(());
     }
 
-    let dependents = db.get_dependents(name)
+    let dependents = db
+        .get_dependents(name)
         .context(format!("failed to get dependents of {}", name))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
@@ -304,7 +379,9 @@ fn write_reverse_dep_tree_inner(
             stats.total += 1;
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, dep_name, opts.color)?;
-            if is_link { write_link_tag(out, opts.color)?; }
+            if is_link {
+                write_link_tag(out, opts.color)?;
+            }
             write_pruned_tag(out, opts.color)?;
             writeln!(out)?;
             continue;
@@ -313,38 +390,62 @@ fn write_reverse_dep_tree_inner(
         if ancestors.contains(dep_name.as_str()) {
             stats.total += 1;
             stats.cycles += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, dep_name, opts.color)?;
-            if is_link { write_link_tag(out, opts.color)?; }
+            if is_link {
+                write_link_tag(out, opts.color)?;
+            }
             write_cycle_tag(out, opts.color)?;
             writeln!(out)?;
         } else if visited.contains(dep_name.as_str()) {
-            if opts.prefix_mode == PrefixMode::None { continue; }
+            if opts.prefix_mode == PrefixMode::None {
+                continue;
+            }
             stats.total += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, dep_name, opts.color)?;
-            if is_link { write_link_tag(out, opts.color)?; }
+            if is_link {
+                write_link_tag(out, opts.color)?;
+            }
             write_dup_tag(out, opts.color)?;
             writeln!(out)?;
         } else {
             stats.total += 1;
-            if current_depth > stats.max_depth_seen { stats.max_depth_seen = current_depth; }
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, dep_name, opts.color)?;
-            if is_link { write_link_tag(out, opts.color)?; }
+            if is_link {
+                write_link_tag(out, opts.color)?;
+            }
             writeln!(out)?;
 
             visited.insert(dep_name.clone());
             ancestors.insert(dep_name.clone());
             let new_prefix = match opts.prefix_mode {
-                PrefixMode::Indent => format!("{}{}", prefix,
-                    if is_last_child { "    " } else { "│   " }),
+                PrefixMode::Indent => {
+                    format!("{}{}", prefix, if is_last_child { "    " } else { "│   " })
+                }
                 _ => String::new(),
             };
-            write_reverse_dep_tree_inner(db, dep_name, &new_prefix,
-                current_depth + 1, opts, visited, ancestors, stats, out)?;
+            write_reverse_dep_tree_inner(
+                db,
+                dep_name,
+                &new_prefix,
+                current_depth + 1,
+                opts,
+                visited,
+                ancestors,
+                stats,
+                out,
+            )?;
             ancestors.remove(dep_name.as_str());
         }
     }
@@ -355,14 +456,21 @@ fn write_reverse_dep_tree_inner(
 // ─── system tree ─────────────────────────────────────────────────────────────
 
 /// Render the full system dependency tree into a writer.
-pub fn write_system_tree(db: &Database, opts: &TreeOptions, out: &mut dyn std::io::Write) -> Result<TreeStats> {
+pub fn write_system_tree(
+    db: &Database,
+    opts: &TreeOptions,
+    out: &mut dyn std::io::Write,
+) -> Result<TreeStats> {
     let roots = db.get_root_packages()?;
     if roots.is_empty() {
         let all = db.list_packages()?;
         if all.is_empty() {
             writeln!(out, "No packages installed.")?;
         } else {
-            writeln!(out, "No root packages found; the system may have circular dependencies.")?;
+            writeln!(
+                out,
+                "No root packages found; the system may have circular dependencies."
+            )?;
         }
         return Ok(TreeStats::default());
     }
@@ -384,7 +492,17 @@ pub fn write_system_tree(db: &Database, opts: &TreeOptions, out: &mut dyn std::i
             prune: opts.prune,
             color: opts.color,
         };
-        write_dep_tree_inner(db, &root.name, "", 1, &sys_opts, &mut visited, &mut ancestors, &mut combined_stats, out)?;
+        write_dep_tree_inner(
+            db,
+            &root.name,
+            "",
+            1,
+            &sys_opts,
+            &mut visited,
+            &mut ancestors,
+            &mut combined_stats,
+            out,
+        )?;
         if i < roots.len() - 1 {
             writeln!(out)?;
         }
@@ -403,10 +521,11 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
     for pkg in all_packages {
         let deps = db.get_dependencies(pkg.id)?;
         for dep in deps {
-            if db.get_package(&dep.name)?.is_none()
-                && db.find_providers(&dep.name)?.is_empty()
-            {
-                let constraint_str = dep.constraint.map(|c| format!(" ({})", c)).unwrap_or_default();
+            if db.get_package(&dep.name)?.is_none() && db.find_providers(&dep.name)?.is_empty() {
+                let constraint_str = dep
+                    .constraint
+                    .map(|c| format!(" ({})", c))
+                    .unwrap_or_default();
                 broken.push(format!(
                     "Package '{}' has a broken dependency: '{}'{} not found",
                     pkg.name, dep.name, constraint_str
@@ -426,7 +545,10 @@ pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
     for pkg in all_packages {
         if let Err(e) = db.get_recursive_dependents(&pkg.name) {
             if e.to_string().contains("circular") {
-                issues.push(format!("Circular dependency detected involving package '{}'", pkg.name));
+                issues.push(format!(
+                    "Circular dependency detected involving package '{}'",
+                    pkg.name
+                ));
             }
         }
     }
@@ -439,7 +561,7 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
     let mut stmt = db.connection().prepare(
         "SELECT path, COUNT(package_id) as count FROM files
          WHERE file_type != 'dir'
-         GROUP BY path HAVING count > 1"
+         GROUP BY path HAVING count > 1",
     )?;
 
     let rows = stmt
@@ -453,13 +575,17 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
     for path in rows {
         // Find who the owners are
         let mut owner_stmt = db.connection().prepare(
-            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id WHERE f.path = ?1"
+            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id WHERE f.path = ?1",
         )?;
         let owners = owner_stmt
             .query_map(params![path], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        issues.push(format!("File conflict: '{}' is claimed by multiple packages: {}", path, owners.join(", ")));
+        issues.push(format!(
+            "File conflict: '{}' is claimed by multiple packages: {}",
+            path,
+            owners.join(", ")
+        ));
     }
 
     Ok(issues)

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GlobalConfig {
@@ -36,6 +36,7 @@ pub struct GeneralConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     #[serde(default = "default_build_dir")]
     pub build_dir: PathBuf,
@@ -45,8 +46,6 @@ pub struct BuildConfig {
     pub cflags: String,
     #[serde(default = "default_cxxflags")]
     pub cxxflags: String,
-    #[serde(default = "default_true")]
-    pub strip: bool,
     #[serde(default)]
     pub ccache: bool,
     #[serde(default)]
@@ -179,7 +178,6 @@ fn get_xdg_cache() -> Option<PathBuf> {
         .map(|p| p.join("wright"))
 }
 
-
 fn get_xdg_state() -> Option<PathBuf> {
     std::env::var("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -194,7 +192,9 @@ fn get_xdg_state() -> Option<PathBuf> {
 
 fn get_xdg_config() -> Option<PathBuf> {
     let uid = unsafe { libc::getuid() };
-    if uid == 0 { return None; }
+    if uid == 0 {
+        return None;
+    }
 
     std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -273,7 +273,6 @@ impl Default for BuildConfig {
             default_dockyard: default_dockyard(),
             cflags: default_cflags(),
             cxxflags: default_cxxflags(),
-            strip: true,
             ccache: false,
             memory_limit: None,
             cpu_time_limit: None,
@@ -315,7 +314,9 @@ impl RepoConfig {
 
 impl AssembliesConfig {
     pub fn load_all(dir: &Path) -> Result<Self> {
-        let mut config = AssembliesConfig { assemblies: std::collections::HashMap::new() };
+        let mut config = AssembliesConfig {
+            assemblies: std::collections::HashMap::new(),
+        };
         if !dir.exists() {
             return Ok(config);
         }
@@ -339,7 +340,9 @@ impl AssembliesConfig {
 
 impl KitsConfig {
     pub fn load_all(dir: &Path) -> Result<Self> {
-        let mut config = KitsConfig { kits: std::collections::HashMap::new() };
+        let mut config = KitsConfig {
+            kits: std::collections::HashMap::new(),
+        };
         if !dir.exists() {
             return Ok(config);
         }
@@ -367,7 +370,12 @@ impl KitsConfig {
         packages
     }
 
-    fn collect(&self, name: &str, packages: &mut Vec<String>, visited: &mut std::collections::HashSet<String>) {
+    fn collect(
+        &self,
+        name: &str,
+        packages: &mut Vec<String>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
         if !visited.insert(name.to_string()) {
             return;
         }
@@ -436,9 +444,15 @@ impl GlobalConfig {
             if !config_path.exists() {
                 return Ok(Self::default());
             }
-            return Ok(toml::from_str(&std::fs::read_to_string(&config_path).map_err(|e| {
-                WrightError::ConfigError(format!("failed to read {}: {}", config_path.display(), e))
-            })?)?);
+            return Ok(toml::from_str(
+                &std::fs::read_to_string(&config_path).map_err(|e| {
+                    WrightError::ConfigError(format!(
+                        "failed to read {}: {}",
+                        config_path.display(),
+                        e
+                    ))
+                })?,
+            )?);
         }
 
         // Layered load: accumulate from lowest to highest priority.
@@ -467,5 +481,4 @@ impl GlobalConfig {
             }
         }
     }
-
 }

@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use indicatif::MultiProgress;
+use std::sync::LazyLock;
 
 /// Global multi-progress coordinator.  Every progress bar should be registered
 /// through this instance so `indicatif` can manage terminal lines without

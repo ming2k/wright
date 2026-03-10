@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 
 pub fn init_db(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -75,9 +75,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
 
     // Migration: add assumed column to databases created before this feature.
-    let _ = conn.execute_batch(
-        "ALTER TABLE packages ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;",
-    );
+    let _ =
+        conn.execute_batch("ALTER TABLE packages ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;");
 
     // Migration: add install_reason column (existing packages default to 'explicit').
     let _ = conn.execute_batch(
@@ -85,11 +84,10 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     );
 
     // Migration: add epoch column (default 0 for existing packages).
-    let _ = conn.execute_batch(
-        "ALTER TABLE packages ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
-    );
+    let _ = conn.execute_batch("ALTER TABLE packages ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;");
 
-    conn.execute_batch("
+    conn.execute_batch(
+        "
 
         -- Optional (informational) dependencies, not enforced
         CREATE TABLE IF NOT EXISTS optional_dependencies (

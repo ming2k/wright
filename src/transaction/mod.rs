@@ -9,12 +9,12 @@ use walkdir::WalkDir;
 
 use rusqlite::params;
 
-use crate::database::{Database, Dependency, DepType, FileEntry, FileType, NewPackage};
-use crate::error::{WrightError, Result};
+use crate::database::{Database, DepType, Dependency, FileEntry, FileType, NewPackage};
+use crate::error::{Result, WrightError};
 use crate::part::archive::{self, PartInfo};
 use crate::part::version::{self, Version};
-use crate::util::checksum;
 use crate::repo::source::{ResolvedPart, SimpleResolver};
+use crate::util::checksum;
 
 use rollback::RollbackState;
 
@@ -22,7 +22,7 @@ use rollback::RollbackState;
 // Hook helpers
 // ---------------------------------------------------------------------------
 
-/// Structured hooks parsed from `.HOOKS` TOML or legacy `.INSTALL` ini.
+/// Structured hooks parsed from `.HOOKS` TOML.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 struct HooksFile {
     #[serde(default)]
@@ -44,38 +44,24 @@ struct Hooks {
 }
 
 /// Read hooks from an extracted archive directory.
-/// Prefers `.HOOKS` (TOML), falls back to legacy `.INSTALL` (ini).
 /// Returns the raw file content (for DB storage) and parsed hooks.
 fn read_hooks(extract_dir: &Path) -> (Option<String>, Hooks) {
-    // Try new .HOOKS TOML first
     let hooks_path = extract_dir.join(".HOOKS");
     if let Ok(content) = std::fs::read_to_string(&hooks_path) {
         if let Ok(parsed) = toml::from_str::<HooksFile>(&content) {
             return (Some(content), parsed.hooks);
         }
-        warn!("Failed to parse .HOOKS as TOML, trying legacy format");
-    }
-
-    // Fall back to legacy .INSTALL ini
-    let install_path = extract_dir.join(".INSTALL");
-    if let Ok(content) = std::fs::read_to_string(&install_path) {
-        let hooks = parse_legacy_install(&content);
-        // Convert to TOML for DB storage
-        let toml_content = legacy_hooks_to_toml(&hooks);
-        return (Some(toml_content), hooks);
     }
 
     (None, Hooks::default())
 }
 
-/// Parse hooks stored in DB (TOML format, or legacy ini from old installs).
+/// Parse hooks stored in DB (TOML format).
 fn parse_hooks_from_db(content: &str) -> Hooks {
-    // Try TOML first
     if let Ok(parsed) = toml::from_str::<HooksFile>(content) {
         return parsed.hooks;
     }
-    // Fall back to legacy ini
-    parse_legacy_install(content)
+    Hooks::default()
 }
 
 /// Get a specific hook script from DB-stored content.
@@ -88,70 +74,6 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
         "pre_remove" => hooks.pre_remove,
         "post_remove" => hooks.post_remove,
         _ => None,
-    }
-}
-
-/// Parse legacy `.INSTALL` ini format into Hooks.
-fn parse_legacy_install(content: &str) -> Hooks {
-    Hooks {
-        pre_install: parse_ini_section(content, "pre_install"),
-        post_install: parse_ini_section(content, "post_install"),
-        post_upgrade: parse_ini_section(content, "post_upgrade"),
-        pre_remove: parse_ini_section(content, "pre_remove"),
-        post_remove: parse_ini_section(content, "post_remove"),
-    }
-}
-
-/// Convert Hooks to TOML string (for DB storage when migrating from legacy).
-fn legacy_hooks_to_toml(hooks: &Hooks) -> String {
-    let mut content = String::from("[hooks]\n");
-    for (key, value) in [
-        ("pre_install", &hooks.pre_install),
-        ("post_install", &hooks.post_install),
-        ("post_upgrade", &hooks.post_upgrade),
-        ("pre_remove", &hooks.pre_remove),
-        ("post_remove", &hooks.post_remove),
-    ] {
-        if let Some(ref s) = value {
-            let trimmed = s.trim();
-            if trimmed.contains('\n') {
-                content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
-            } else {
-                content.push_str(&format!("{} = \"{}\"\n", key, trimmed.replace('\\', "\\\\").replace('"', "\\\"")));
-            }
-        }
-    }
-    content
-}
-
-/// Parse a `[section]` from legacy `.INSTALL` ini content.
-fn parse_ini_section(content: &str, section: &str) -> Option<String> {
-    let header = format!("[{}]", section);
-    let mut lines = content.lines();
-    // Find section header
-    loop {
-        match lines.next() {
-            Some(line) if line.trim() == header => break,
-            Some(_) => continue,
-            None => return None,
-        }
-    }
-    // Collect body until next section or EOF
-    let mut body = String::new();
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            break;
-        }
-        if !body.is_empty() {
-            body.push('\n');
-        }
-        body.push_str(line);
-    }
-    if body.is_empty() {
-        None
-    } else {
-        Some(body)
     }
 }
 
@@ -183,10 +105,20 @@ fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
 /// Replace provides and conflicts rows for a package (used during upgrade).
 fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PartInfo) -> Result<()> {
     // Delete old rows
-    db.connection().execute("DELETE FROM provides WHERE package_id = ?1", params![pkg_id])
+    db.connection()
+        .execute(
+            "DELETE FROM provides WHERE package_id = ?1",
+            params![pkg_id],
+        )
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
-    db.connection().execute("DELETE FROM conflicts WHERE package_id = ?1", params![pkg_id])
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e)))?;
+    db.connection()
+        .execute(
+            "DELETE FROM conflicts WHERE package_id = ?1",
+            params![pkg_id],
+        )
+        .map_err(|e| {
+            WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
+        })?;
     // Insert new
     if !pkginfo.provides.is_empty() {
         db.insert_provides(pkg_id, &pkginfo.provides)?;
@@ -226,7 +158,9 @@ pub fn install_packages(
         let mut processed = HashSet::new();
 
         while let Some(name) = queue.pop() {
-            if processed.contains(&name) { continue; }
+            if processed.contains(&name) {
+                continue;
+            }
 
             let dependencies = if let Some(pkg) = resolved_map.get(&name) {
                 pkg.dependencies.clone()
@@ -235,8 +169,8 @@ pub fn install_packages(
             };
 
             for dep in &dependencies {
-                let (dep_name, constraint) = version::parse_dependency(dep)
-                    .unwrap_or_else(|_| (dep.clone(), None));
+                let (dep_name, constraint) =
+                    version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
 
                 #[allow(clippy::map_entry)]
                 if !resolved_map.contains_key(&dep_name) {
@@ -265,7 +199,10 @@ pub fn install_packages(
                         queue.push(dep_name.clone());
                         resolved_map.insert(dep_name, resolved);
                     } else {
-                        return Err(WrightError::DependencyError(format!("could not resolve dependency: {}", dep_name)));
+                        return Err(WrightError::DependencyError(format!(
+                            "could not resolve dependency: {}",
+                            dep_name
+                        )));
                     }
                 } else {
                     queue.push(dep_name);
@@ -281,7 +218,13 @@ pub fn install_packages(
     let mut visiting = HashSet::new();
 
     for name in resolved_map.keys() {
-        visit_resolved(name, &resolved_map, &mut visited, &mut visiting, &mut sorted_names)?;
+        visit_resolved(
+            name,
+            &resolved_map,
+            &mut visited,
+            &mut visiting,
+            &mut sorted_names,
+        )?;
     }
 
     // Build set of user-specified target names for install_reason tracking
@@ -308,7 +251,12 @@ pub fn install_packages(
 
         let reason = if is_target { "explicit" } else { "dependency" };
         let pkg = resolved_map.get(&name).unwrap();
-        info!("Installing {} from {} (reason: {})", name, pkg.path.display(), reason);
+        info!(
+            "Installing {} from {} (reason: {})",
+            name,
+            pkg.path.display(),
+            reason
+        );
         install_package_with_reason(db, &pkg.path, root_dir, force, reason)?;
     }
 
@@ -322,17 +270,22 @@ fn visit_resolved(
     visiting: &mut HashSet<String>,
     sorted: &mut Vec<String>,
 ) -> Result<()> {
-    if visited.contains(name) { return Ok(()); }
+    if visited.contains(name) {
+        return Ok(());
+    }
     if visiting.contains(name) {
-        return Err(WrightError::DependencyError(format!("circular dependency: {}", name)));
+        return Err(WrightError::DependencyError(format!(
+            "circular dependency: {}",
+            name
+        )));
     }
 
     visiting.insert(name.to_string());
 
     if let Some(pkg) = map.get(name) {
         for dep in &pkg.dependencies {
-            let (dep_name, _) = version::parse_dependency(dep)
-                .unwrap_or_else(|_| (dep.clone(), None));
+            let (dep_name, _) =
+                version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
             if map.contains_key(&dep_name) {
                 visit_resolved(&dep_name, map, visited, visiting, sorted)?;
             }
@@ -365,16 +318,18 @@ fn install_package_with_reason(
     install_reason: &str,
 ) -> Result<()> {
     // Extract to temp dir
-    let temp_dir = tempfile::tempdir().map_err(|e| {
-        WrightError::InstallError(format!("failed to create temp dir: {}", e))
-    })?;
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
     let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
 
     // --- Handle Replaces (Package Renaming) ---
     for replaced_name in &pkginfo.replaces {
         if db.get_package(replaced_name)?.is_some() {
-            info!("Package {} is replaced by {}. Removing {}...", replaced_name, pkginfo.name, replaced_name);
+            info!(
+                "Package {} is replaced by {}. Removing {}...",
+                replaced_name, pkginfo.name, replaced_name
+            );
             remove_package(db, replaced_name, root_dir, true)?;
         }
     }
@@ -396,7 +351,9 @@ fn install_package_with_reason(
                 return Err(WrightError::DependencyError(format!(
                     "package conflict detected: '{}' conflicts with '{}' (provided by {}). \
                      Please remove it first or use --force.",
-                    pkginfo.name, conflict_name, providers.join(", ")
+                    pkginfo.name,
+                    conflict_name,
+                    providers.join(", ")
                 )));
             }
         }
@@ -406,7 +363,8 @@ fn install_package_with_reason(
             return Err(WrightError::DependencyError(format!(
                 "package conflict detected: installed package(s) {} conflict with '{}'. \
                  Please remove them first or use --force.",
-                reverse_conflicts.join(", "), pkginfo.name
+                reverse_conflicts.join(", "),
+                pkginfo.name
             )));
         }
         // 3. Already-installed packages declare conflicts against names this package provides
@@ -425,13 +383,16 @@ fn install_package_with_reason(
     // Check if already installed (with same name)
     if db.get_package(&pkginfo.name)?.is_some() {
         if force {
-            debug!("Package {} already installed, attempting upgrade/reinstall", pkginfo.name);
+            debug!(
+                "Package {} already installed, attempting upgrade/reinstall",
+                pkginfo.name
+            );
             return upgrade_package(db, archive_path, root_dir, true);
         }
         return Err(WrightError::PackageAlreadyInstalled(pkginfo.name.clone()));
     }
 
-    // Read hooks from .HOOKS (TOML) or legacy .INSTALL
+    // Read hooks from .HOOKS
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
 
     // Collect file list and check for conflicts
@@ -444,7 +405,10 @@ fn install_package_with_reason(
                 if force {
                     // Don't record self-shadowing (upgrade case)
                     if owner_name != pkginfo.name {
-                        warn!("{}: overwriting {} (owned by {})", pkginfo.name, entry.path, owner_name);
+                        warn!(
+                            "{}: overwriting {} (owned by {})",
+                            pkginfo.name, entry.path, owner_name
+                        );
                         shadows.push((entry.path.clone(), owner_name));
                     }
                 } else {
@@ -473,9 +437,8 @@ fn install_package_with_reason(
     };
 
     // Backup existing files so install rollback can restore overwrites.
-    let backup_dir = tempfile::tempdir().map_err(|e| {
-        WrightError::InstallError(format!("failed to create backup dir: {}", e))
-    })?;
+    let backup_dir = tempfile::tempdir()
+        .map_err(|e| WrightError::InstallError(format!("failed to create backup dir: {}", e)))?;
 
     // Run pre_install hook before file extraction
     if let Some(ref script) = hooks.pre_install {
@@ -531,14 +494,20 @@ fn install_package_with_reason(
     // Record dependencies
     let mut deps = Vec::new();
     for d in &pkginfo.runtime_deps {
-        let (name, constraint) = version::parse_dependency(d)
-            .unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Runtime });
+        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
+        deps.push(Dependency {
+            name,
+            constraint: constraint.map(|c| c.to_string()),
+            dep_type: DepType::Runtime,
+        });
     }
     for d in &pkginfo.link_deps {
-        let (name, constraint) = version::parse_dependency(d)
-            .unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Link });
+        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
+        deps.push(Dependency {
+            name,
+            constraint: constraint.map(|c| c.to_string()),
+            dep_type: DepType::Link,
+        });
     }
 
     if !deps.is_empty() {
@@ -568,7 +537,10 @@ fn install_package_with_reason(
 
     rollback_state.commit();
 
-    info!("Installed {} {}-{}", pkginfo.name, pkginfo.version, pkginfo.release);
+    info!(
+        "Installed {} {}-{}",
+        pkginfo.name, pkginfo.version, pkginfo.release
+    );
     Ok(())
 }
 
@@ -580,15 +552,10 @@ fn install_package_with_reason(
 ///
 /// By default, removal is denied if other installed packages depend on this one.
 /// Use `force` to override this check.
-pub fn remove_package(
-    db: &Database,
-    name: &str,
-    root_dir: &Path,
-    force: bool,
-) -> Result<()> {
-    let pkg = db.get_package(name)?.ok_or_else(|| {
-        WrightError::PackageNotFound(name.to_string())
-    })?;
+pub fn remove_package(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
+    let pkg = db
+        .get_package(name)?
+        .ok_or_else(|| WrightError::PackageNotFound(name.to_string()))?;
 
     // Check if other packages depend on this one (by name or via provides)
     let mut dependents = db.get_dependents(name)?;
@@ -600,7 +567,8 @@ pub fn remove_package(
         let virtual_dependents = db.get_dependents(virtual_name)?;
         for (dep_name, dep_type) in virtual_dependents {
             // Check if another package also provides this virtual name
-            let other_providers: Vec<String> = db.find_providers(virtual_name)?
+            let other_providers: Vec<String> = db
+                .find_providers(virtual_name)?
                 .into_iter()
                 .filter(|p| p != name)
                 .collect();
@@ -631,21 +599,20 @@ pub fn remove_package(
         if force {
             warn!(
                 "Warning: forcing removal of {} which is depended on by: {}",
-                name,
-                deps_str
+                name, deps_str
             );
         } else {
             if !link_dependents.is_empty() {
                 return Err(WrightError::DependencyError(format!(
                     "CRITICAL: Cannot remove '{}' because it is a LINK dependency of: {}. \
                      Removing it will cause these packages to CRASH. Use --force to override.",
-                    name, link_dependents.join(", ")
+                    name,
+                    link_dependents.join(", ")
                 )));
             }
             return Err(WrightError::DependencyError(format!(
                 "cannot remove '{}': required by {}",
-                name,
-                deps_str
+                name, deps_str
             )));
         }
     }
@@ -660,14 +627,7 @@ pub fn remove_package(
         }
     }
 
-    let tx_id = db.record_transaction(
-        "remove",
-        name,
-        Some(&pkg.version),
-        None,
-        "pending",
-        None,
-    )?;
+    let tx_id = db.record_transaction("remove", name, Some(&pkg.version), None, "pending", None)?;
 
     // Get file list
     let files = db.get_files(pkg.id)?;
@@ -774,10 +734,9 @@ pub fn upgrade_package(
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    // 1. Extract archive and parse .PKGINFO
-    let temp_dir = tempfile::tempdir().map_err(|e| {
-        WrightError::UpgradeError(format!("failed to create temp dir: {}", e))
-    })?;
+    // 1. Extract archive and parse .PARTINFO
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
 
     // 2. Check old package exists
@@ -804,16 +763,12 @@ pub fn upgrade_package(
         if !is_newer {
             return Err(WrightError::UpgradeError(format!(
                 "{} {}-{} is not newer than installed {}-{}",
-                pkginfo.name,
-                pkginfo.version,
-                pkginfo.release,
-                old_pkg.version,
-                old_pkg.release,
+                pkginfo.name, pkginfo.version, pkginfo.release, old_pkg.version, old_pkg.release,
             )));
         }
     }
 
-    // Read hooks from .HOOKS (TOML) or legacy .INSTALL
+    // Read hooks from .HOOKS
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
 
     // 4. Collect new file entries
@@ -825,7 +780,10 @@ pub fn upgrade_package(
             if let Some(owner) = db.find_owner(&entry.path)? {
                 if owner != pkginfo.name {
                     if force {
-                        warn!("{}: overwriting {} (owned by {})", pkginfo.name, entry.path, owner);
+                        warn!(
+                            "{}: overwriting {} (owned by {})",
+                            pkginfo.name, entry.path, owner
+                        );
                     } else {
                         return Err(WrightError::FileConflict {
                             path: PathBuf::from(&entry.path),
@@ -856,9 +814,8 @@ pub fn upgrade_package(
     let old_files = db.get_files(old_pkg.id)?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
 
-    let backup_dir = tempfile::tempdir().map_err(|e| {
-        WrightError::UpgradeError(format!("failed to create backup dir: {}", e))
-    })?;
+    let backup_dir = tempfile::tempdir()
+        .map_err(|e| WrightError::UpgradeError(format!("failed to create backup dir: {}", e)))?;
 
     for old_file in &old_files {
         if !new_paths.contains(old_file.path.as_str()) {
@@ -871,9 +828,9 @@ pub fn upgrade_package(
         }
 
         if old_file.file_type == FileType::File {
-            let backup_path = backup_dir.path().join(
-                old_file.path.trim_start_matches('/'),
-            );
+            let backup_path = backup_dir
+                .path()
+                .join(old_file.path.trim_start_matches('/'));
             if let Some(parent) = backup_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
                     WrightError::UpgradeError(format!(
@@ -893,10 +850,8 @@ pub fn upgrade_package(
             rollback_state.record_backup(full_path, backup_path);
         } else if old_file.file_type == FileType::Symlink {
             if let Ok(target) = std::fs::read_link(&full_path) {
-                rollback_state.record_symlink_backup(
-                    full_path,
-                    target.to_string_lossy().to_string(),
-                );
+                rollback_state
+                    .record_symlink_backup(full_path, target.to_string_lossy().to_string());
             }
         }
     }
@@ -991,14 +946,20 @@ pub fn upgrade_package(
 
     let mut deps = Vec::new();
     for d in &pkginfo.runtime_deps {
-        let (name, constraint) = version::parse_dependency(d)
-            .unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Runtime });
+        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
+        deps.push(Dependency {
+            name,
+            constraint: constraint.map(|c| c.to_string()),
+            dep_type: DepType::Runtime,
+        });
     }
     for d in &pkginfo.link_deps {
-        let (name, constraint) = version::parse_dependency(d)
-            .unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency { name, constraint: constraint.map(|c| c.to_string()), dep_type: DepType::Link });
+        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
+        deps.push(Dependency {
+            name,
+            constraint: constraint.map(|c| c.to_string()),
+            dep_type: DepType::Link,
+        });
     }
     db.replace_dependencies(updated_pkg.id, &deps)?;
     db.replace_optional_dependencies(updated_pkg.id, &pkginfo.optional_deps)?;
@@ -1022,11 +983,7 @@ pub fn upgrade_package(
 
     info!(
         "Upgraded {} from {}-{} to {}-{}",
-        pkginfo.name,
-        old_pkg.version,
-        old_pkg.release,
-        pkginfo.version,
-        pkginfo.release,
+        pkginfo.name, old_pkg.version, old_pkg.release, pkginfo.version, pkginfo.release,
     );
     Ok(())
 }
@@ -1036,14 +993,10 @@ pub fn upgrade_package(
 // ---------------------------------------------------------------------------
 
 /// Verify installed package file integrity.
-pub fn verify_package(
-    db: &Database,
-    name: &str,
-    root_dir: &Path,
-) -> Result<Vec<String>> {
-    let pkg = db.get_package(name)?.ok_or_else(|| {
-        WrightError::PackageNotFound(name.to_string())
-    })?;
+pub fn verify_package(db: &Database, name: &str, root_dir: &Path) -> Result<Vec<String>> {
+    let pkg = db
+        .get_package(name)?
+        .ok_or_else(|| WrightError::PackageNotFound(name.to_string()))?;
 
     let files = db.get_files(pkg.id)?;
     let mut issues = Vec::new();
@@ -1097,10 +1050,12 @@ pub fn verify_package(
 fn collect_file_entries(extract_dir: &Path, pkginfo: &PartInfo) -> Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
 
-    for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            WrightError::InstallError(format!("failed to walk directory: {}", e))
-        })?;
+    for entry in WalkDir::new(extract_dir)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry
+            .map_err(|e| WrightError::InstallError(format!("failed to walk directory: {}", e)))?;
 
         let relative = entry
             .path()
@@ -1111,10 +1066,8 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PartInfo) -> Result<Vec<Fi
         // Skip root dir and metadata files
         if relative_str.is_empty()
             || relative_str.starts_with(".PARTINFO")
-            || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
-            || relative_str.starts_with(".INSTALL")
         {
             continue;
         }
@@ -1122,9 +1075,10 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PartInfo) -> Result<Vec<Fi
         let file_path = format!("/{}", relative_str);
 
         // Use symlink_metadata to avoid following symlinks
-        let metadata = entry.path().symlink_metadata().map_err(|e| {
-            WrightError::InstallError(format!("failed to get metadata: {}", e))
-        })?;
+        let metadata = entry
+            .path()
+            .symlink_metadata()
+            .map_err(|e| WrightError::InstallError(format!("failed to get metadata: {}", e)))?;
 
         let file_type = if metadata.is_dir() {
             FileType::Directory
@@ -1145,10 +1099,7 @@ fn collect_file_entries(extract_dir: &Path, pkginfo: &PartInfo) -> Result<Vec<Fi
             FileType::Directory => None,
         };
 
-        let is_config = pkginfo
-            .backup_files
-            .iter()
-            .any(|f| f == &file_path);
+        let is_config = pkginfo.backup_files.iter().any(|f| f == &file_path);
 
         entries.push(FileEntry {
             path: file_path,
@@ -1179,10 +1130,13 @@ fn backup_existing_path(
     backup_root: &Path,
     rollback: &mut RollbackState,
 ) -> Result<()> {
-    let Ok(existing_meta) = dest_path.symlink_metadata() else { return Ok(()); };
+    let Ok(existing_meta) = dest_path.symlink_metadata() else {
+        return Ok(());
+    };
     if existing_meta.file_type().is_symlink() {
         if let Ok(target) = std::fs::read_link(dest_path) {
-            rollback.record_symlink_backup(dest_path.to_path_buf(), target.to_string_lossy().into());
+            rollback
+                .record_symlink_backup(dest_path.to_path_buf(), target.to_string_lossy().into());
         }
     } else if existing_meta.is_file() {
         let backup_path = backup_root.join(relative_str);
@@ -1223,10 +1177,12 @@ fn copy_files_to_root(
     config_paths: &HashSet<String>,
 ) -> Result<Vec<String>> {
     let mut preserved_configs = Vec::new();
-    for entry in WalkDir::new(extract_dir).follow_links(false).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            WrightError::InstallError(format!("failed to walk directory: {}", e))
-        })?;
+    for entry in WalkDir::new(extract_dir)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry
+            .map_err(|e| WrightError::InstallError(format!("failed to walk directory: {}", e)))?;
 
         let relative = entry
             .path()
@@ -1237,10 +1193,8 @@ fn copy_files_to_root(
         // Skip root dir and metadata files
         if relative_str.is_empty()
             || relative_str.starts_with(".PARTINFO")
-            || relative_str.starts_with(".PKGINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
-            || relative_str.starts_with(".INSTALL")
         {
             continue;
         }
@@ -1248,9 +1202,10 @@ fn copy_files_to_root(
         let dest_path = root_dir.join(&relative_str);
 
         // Use symlink_metadata to detect type without following
-        let metadata = entry.path().symlink_metadata().map_err(|e| {
-            WrightError::InstallError(format!("failed to get metadata: {}", e))
-        })?;
+        let metadata = entry
+            .path()
+            .symlink_metadata()
+            .map_err(|e| WrightError::InstallError(format!("failed to get metadata: {}", e)))?;
 
         if metadata.is_dir() {
             if !dest_path.exists() {
@@ -1340,7 +1295,11 @@ fn copy_files_to_root(
                     ))
                 })?;
                 if let Err(e) = std::fs::set_permissions(&side_path, metadata.permissions()) {
-                    warn!("Failed to set permissions on {}: {}", side_path.display(), e);
+                    warn!(
+                        "Failed to set permissions on {}: {}",
+                        side_path.display(),
+                        e
+                    );
                 }
                 rollback.record_file_created(side_path);
                 preserved_configs.push(canonical_path);
@@ -1366,7 +1325,11 @@ fn copy_files_to_root(
 
                 // Preserve permissions
                 if let Err(e) = std::fs::set_permissions(&dest_path, metadata.permissions()) {
-                    warn!("Failed to set permissions on {}: {}", dest_path.display(), e);
+                    warn!(
+                        "Failed to set permissions on {}: {}",
+                        dest_path.display(),
+                        e
+                    );
                 }
 
                 rollback.record_file_created(dest_path);
@@ -1380,10 +1343,10 @@ fn copy_files_to_root(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::part::version::VersionConstraint;
-    use tempfile::TempDir;
-    use crate::util::compress;
     use crate::database::FileEntry as DbFileEntry;
+    use crate::part::version::VersionConstraint;
+    use crate::util::compress;
+    use tempfile::TempDir;
 
     fn setup_test() -> (Database, TempDir) {
         let db = Database::open_in_memory().unwrap();
@@ -1396,8 +1359,8 @@ mod tests {
         use crate::config::GlobalConfig;
         use crate::plan::manifest::PlanManifest;
 
-        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/hello/plan.toml");
+        let manifest_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello/plan.toml");
         let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
         for stage in manifest.lifecycle.values_mut() {
             stage.dockyard = "none".to_string();
@@ -1412,16 +1375,24 @@ mod tests {
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let result = builder
-            .build(&manifest, plan_dir, &[], false, false, &extra_env, false, false, None, None)
+            .build(
+                &manifest,
+                plan_dir,
+                &[],
+                false,
+                false,
+                &extra_env,
+                false,
+                false,
+                None,
+                None,
+            )
             .unwrap();
 
         let output_dir = tempfile::tempdir().unwrap();
-        let archive = crate::part::archive::create_archive(
-            &result.pkg_dir,
-            &manifest,
-            output_dir.path(),
-        )
-        .unwrap();
+        let archive =
+            crate::part::archive::create_archive(&result.pkg_dir, &manifest, output_dir.path())
+                .unwrap();
 
         // Copy to a persistent location with unique name
         let persistent = std::env::temp_dir().join(format!(
@@ -1464,7 +1435,7 @@ install_size = 0
 build_date = "1970-01-01T00:00:00Z"
 "#
         );
-        std::fs::write(pkg_dir.path().join(".PKGINFO"), pkginfo).unwrap();
+        std::fs::write(pkg_dir.path().join(".PARTINFO"), pkginfo).unwrap();
 
         let archive_path = out_dir.join(format!("{name}-{version}-{release}.wright.tar.zst"));
         compress::create_tar_zst(pkg_dir.path(), &archive_path).unwrap();
@@ -1565,21 +1536,16 @@ build_date = "1970-01-01T00:00:00Z"
     }
 
     #[test]
-    fn test_parse_hooks_legacy_ini_fallback() {
-        // Legacy .INSTALL ini format should still work
-        let content = "[post_install]\necho hello\necho world\n[pre_remove]\necho bye\n";
-        let hooks = parse_hooks_from_db(content);
-        assert!(hooks.post_install.as_ref().unwrap().contains("echo hello"));
-        assert!(hooks.post_install.as_ref().unwrap().contains("echo world"));
-        assert!(hooks.pre_remove.as_ref().unwrap().contains("echo bye"));
-        assert!(hooks.post_upgrade.is_none());
-    }
-
-    #[test]
     fn test_get_hook() {
         let content = "[hooks]\npost_install = \"ldconfig\"\npre_remove = \"systemctl stop foo\"\n";
-        assert_eq!(get_hook(content, "post_install").as_deref(), Some("ldconfig"));
-        assert_eq!(get_hook(content, "pre_remove").as_deref(), Some("systemctl stop foo"));
+        assert_eq!(
+            get_hook(content, "post_install").as_deref(),
+            Some("ldconfig")
+        );
+        assert_eq!(
+            get_hook(content, "pre_remove").as_deref(),
+            Some("systemctl stop foo")
+        );
         assert!(get_hook(content, "post_upgrade").is_none());
         assert!(get_hook(content, "nonexistent").is_none());
     }
@@ -1619,7 +1585,11 @@ build_date = "1970-01-01T00:00:00Z"
         let result = upgrade_package(&db, &archive, root.path(), false);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("not newer"), "Expected 'not newer' error, got: {}", err_msg);
+        assert!(
+            err_msg.contains("not newer"),
+            "Expected 'not newer' error, got: {}",
+            err_msg
+        );
 
         let _ = std::fs::remove_file(&archive);
     }
@@ -1632,7 +1602,11 @@ build_date = "1970-01-01T00:00:00Z"
         install_package(&db, &archive, root.path(), false).unwrap();
         // Force upgrade to same version should succeed
         let result = upgrade_package(&db, &archive, root.path(), true);
-        assert!(result.is_ok(), "Force upgrade should succeed, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Force upgrade should succeed, got: {:?}",
+            result
+        );
 
         // Package should still be installed
         let pkg = db.get_package("hello").unwrap().unwrap();
@@ -1665,22 +1639,19 @@ build_date = "1970-01-01T00:00:00Z"
         let old_release: u32 = 1;
 
         // This is the same condition used in upgrade_package
-        let rejected = new_ver < old_ver
-            || (new_ver == old_ver && new_release <= old_release);
+        let rejected = new_ver < old_ver || (new_ver == old_ver && new_release <= old_release);
         assert!(rejected, "Downgrade 2.0.0-1 -> 1.0.0-2 should be rejected");
 
         // Same version, higher release should be accepted
         let new_ver2 = Version::parse("2.0.0").unwrap();
         let new_release2: u32 = 2;
-        let rejected2 = new_ver2 < old_ver
-            || (new_ver2 == old_ver && new_release2 <= old_release);
+        let rejected2 = new_ver2 < old_ver || (new_ver2 == old_ver && new_release2 <= old_release);
         assert!(!rejected2, "Upgrade 2.0.0-1 -> 2.0.0-2 should be accepted");
 
         // Higher version, lower release should be accepted
         let new_ver3 = Version::parse("3.0.0").unwrap();
         let new_release3: u32 = 1;
-        let rejected3 = new_ver3 < old_ver
-            || (new_ver3 == old_ver && new_release3 <= old_release);
+        let rejected3 = new_ver3 < old_ver || (new_ver3 == old_ver && new_release3 <= old_release);
         assert!(!rejected3, "Upgrade 2.0.0-1 -> 3.0.0-1 should be accepted");
     }
 
@@ -1689,26 +1660,30 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
 
         // Package A (to be upgraded)
-        let a_id = db.insert_package(NewPackage {
-            name: "pkgA",
-            version: "1.0.0",
-            release: 1,
-            description: "A",
-            arch: "x86_64",
-            license: "MIT",
-            ..Default::default()
-        }).unwrap();
+        let a_id = db
+            .insert_package(NewPackage {
+                name: "pkgA",
+                version: "1.0.0",
+                release: 1,
+                description: "A",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
 
         // Package B (shares a file with A)
-        let b_id = db.insert_package(NewPackage {
-            name: "pkgB",
-            version: "1.0.0",
-            release: 1,
-            description: "B",
-            arch: "x86_64",
-            license: "MIT",
-            ..Default::default()
-        }).unwrap();
+        let b_id = db
+            .insert_package(NewPackage {
+                name: "pkgB",
+                version: "1.0.0",
+                release: 1,
+                description: "B",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
 
         // Create shared file on disk
         let shared_path = root.path().join("usr/share/shared.conf");
@@ -1719,35 +1694,41 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::create_dir_all(old_path.parent().unwrap()).unwrap();
         std::fs::write(&old_path, b"old").unwrap();
 
-        db.insert_files(a_id, &[
-            DbFileEntry {
-                path: "/usr/share/shared.conf".to_string(),
-                file_hash: None,
-                file_type: crate::database::FileType::File,
-                file_mode: None,
-                file_size: None,
-                is_config: false,
-            },
-            DbFileEntry {
-                path: "/usr/bin/oldtool".to_string(),
-                file_hash: None,
-                file_type: crate::database::FileType::File,
-                file_mode: None,
-                file_size: None,
-                is_config: false,
-            },
-        ]).unwrap();
+        db.insert_files(
+            a_id,
+            &[
+                DbFileEntry {
+                    path: "/usr/share/shared.conf".to_string(),
+                    file_hash: None,
+                    file_type: crate::database::FileType::File,
+                    file_mode: None,
+                    file_size: None,
+                    is_config: false,
+                },
+                DbFileEntry {
+                    path: "/usr/bin/oldtool".to_string(),
+                    file_hash: None,
+                    file_type: crate::database::FileType::File,
+                    file_mode: None,
+                    file_size: None,
+                    is_config: false,
+                },
+            ],
+        )
+        .unwrap();
 
-        db.insert_files(b_id, &[
-            DbFileEntry {
+        db.insert_files(
+            b_id,
+            &[DbFileEntry {
                 path: "/usr/share/shared.conf".to_string(),
                 file_hash: None,
                 file_type: crate::database::FileType::File,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
-            },
-        ]).unwrap();
+            }],
+        )
+        .unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
         let archive = build_minimal_archive(
@@ -1783,10 +1764,7 @@ build_date = "1970-01-01T00:00:00Z"
             "broken",
             "1.0.0",
             1,
-            &[
-                ("usr/bin/ok", b"new"),
-                ("usr/share/conf", b"oops"),
-            ],
+            &[("usr/bin/ok", b"new"), ("usr/share/conf", b"oops")],
             out_dir.path(),
         );
 
@@ -1802,30 +1780,34 @@ build_date = "1970-01-01T00:00:00Z"
     fn test_upgrade_rollback_restores_symlink() {
         let (db, root) = setup_test();
 
-        let pkg_id = db.insert_package(NewPackage {
-            name: "linkpkg",
-            version: "1.0.0",
-            release: 1,
-            description: "symlink test",
-            arch: "x86_64",
-            license: "MIT",
-            ..Default::default()
-        }).unwrap();
+        let pkg_id = db
+            .insert_package(NewPackage {
+                name: "linkpkg",
+                version: "1.0.0",
+                release: 1,
+                description: "symlink test",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
 
         let link_path = root.path().join("usr/bin/a_link");
         std::fs::create_dir_all(link_path.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink("target1", &link_path).unwrap();
 
-        db.insert_files(pkg_id, &[
-            DbFileEntry {
+        db.insert_files(
+            pkg_id,
+            &[DbFileEntry {
                 path: "/usr/bin/a_link".to_string(),
                 file_hash: Some("target1".to_string()),
                 file_type: crate::database::FileType::Symlink,
                 file_mode: None,
                 file_size: None,
                 is_config: false,
-            },
-        ]).unwrap();
+            }],
+        )
+        .unwrap();
 
         // Create a path that will cause failure on second file
         let bad_parent = root.path().join("usr/z");
@@ -1836,10 +1818,7 @@ build_date = "1970-01-01T00:00:00Z"
             "linkpkg",
             "2.0.0",
             1,
-            &[
-                ("usr/bin/a_link", b""),
-                ("usr/z/conf", b"oops"),
-            ],
+            &[("usr/bin/a_link", b""), ("usr/z/conf", b"oops")],
             out_dir.path(),
         );
 
@@ -1865,15 +1844,17 @@ build_date = "1970-01-01T00:00:00Z"
     fn test_verify_symlink_detects_change() {
         let (db, root) = setup_test();
 
-        let pkg_id = db.insert_package(NewPackage {
-            name: "linkpkg",
-            version: "1.0.0",
-            release: 1,
-            description: "symlink test",
-            arch: "x86_64",
-            license: "MIT",
-            ..Default::default()
-        }).unwrap();
+        let pkg_id = db
+            .insert_package(NewPackage {
+                name: "linkpkg",
+                version: "1.0.0",
+                release: 1,
+                description: "symlink test",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
 
         // Create symlink target and symlink itself
         let target1 = root.path().join("usr/bin/target1");
@@ -1893,7 +1874,8 @@ build_date = "1970-01-01T00:00:00Z"
                 file_size: None,
                 is_config: false,
             }],
-        ).unwrap();
+        )
+        .unwrap();
 
         let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
         assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
@@ -1918,7 +1900,11 @@ build_date = "1970-01-01T00:00:00Z"
         let conf_v1 = b"setting = default\n";
         let conf_v2 = b"setting = updated\n";
 
-        let make_archive = |dir: &std::path::Path, name: &str, ver: &str, content: &[u8], out: &std::path::Path| {
+        let make_archive = |dir: &std::path::Path,
+                            name: &str,
+                            ver: &str,
+                            content: &[u8],
+                            out: &std::path::Path| {
             std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
             std::fs::write(dir.join(conf_rel), content).unwrap();
             let pkginfo = format!(
@@ -1927,7 +1913,7 @@ build_date = "1970-01-01T00:00:00Z"
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n\
                  [backup]\nfiles = [\"/etc/myapp/myapp.conf\"]\n"
             );
-            std::fs::write(dir.join(".PKGINFO"), pkginfo).unwrap();
+            std::fs::write(dir.join(".PARTINFO"), pkginfo).unwrap();
             let archive = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
             compress::create_tar_zst(dir, &archive).unwrap();
             archive
@@ -1947,14 +1933,16 @@ build_date = "1970-01-01T00:00:00Z"
 
         // Live file must be untouched
         assert_eq!(
-            std::fs::read(&live_conf).unwrap(), conf_v1,
+            std::fs::read(&live_conf).unwrap(),
+            conf_v1,
             "live config must not be overwritten"
         );
         // New default deposited as .wnew
         let wnew = root.path().join(format!("{conf_rel}.wnew"));
         assert!(wnew.exists(), ".wnew must be created");
         assert_eq!(
-            std::fs::read(&wnew).unwrap(), conf_v2,
+            std::fs::read(&wnew).unwrap(),
+            conf_v2,
             ".wnew must contain the new default"
         );
     }
@@ -1968,7 +1956,12 @@ build_date = "1970-01-01T00:00:00Z"
         let conf_rel = "etc/myapp/myapp.conf";
         let conf_v2 = b"setting = updated\n";
 
-        let make_archive = |dir: &std::path::Path, name: &str, ver: &str, include_conf: bool, content: &[u8], out: &std::path::Path| {
+        let make_archive = |dir: &std::path::Path,
+                            name: &str,
+                            ver: &str,
+                            include_conf: bool,
+                            content: &[u8],
+                            out: &std::path::Path| {
             if include_conf {
                 std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
                 std::fs::write(dir.join(conf_rel), content).unwrap();
@@ -1983,7 +1976,7 @@ build_date = "1970-01-01T00:00:00Z"
                  description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{backup_section}"
             );
-            std::fs::write(dir.join(".PKGINFO"), pkginfo).unwrap();
+            std::fs::write(dir.join(".PARTINFO"), pkginfo).unwrap();
             let archive = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
             compress::create_tar_zst(dir, &archive).unwrap();
             archive
@@ -1997,15 +1990,26 @@ build_date = "1970-01-01T00:00:00Z"
         install_package(&db, &v1, root.path(), false).unwrap();
 
         let live_conf = root.path().join(conf_rel);
-        assert!(!live_conf.exists(), "config should be absent before upgrade");
+        assert!(
+            !live_conf.exists(),
+            "config should be absent before upgrade"
+        );
 
         // v2 introduces the config file and marks it as [backup].
         let v2_dir = tempfile::tempdir().unwrap();
-        let v2 = make_archive(v2_dir.path(), "myapp", "2.0.0", true, conf_v2, out_dir.path());
+        let v2 = make_archive(
+            v2_dir.path(),
+            "myapp",
+            "2.0.0",
+            true,
+            conf_v2,
+            out_dir.path(),
+        );
         upgrade_package(&db, &v2, root.path(), false).unwrap();
 
         assert_eq!(
-            std::fs::read(&live_conf).unwrap(), conf_v2,
+            std::fs::read(&live_conf).unwrap(),
+            conf_v2,
             "missing config should be installed directly"
         );
         assert!(
@@ -2029,7 +2033,7 @@ build_date = "1970-01-01T00:00:00Z"
         let pkginfo_v1 = "[package]\nname = \"mypkg\"\nversion = \"1.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
-        std::fs::write(v1_dir.path().join(".PKGINFO"), pkginfo_v1).unwrap();
+        std::fs::write(v1_dir.path().join(".PARTINFO"), pkginfo_v1).unwrap();
         let v1 = out_dir.path().join("mypkg-1.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v1_dir.path(), &v1).unwrap();
         install_package(&db, &v1, root.path(), false).unwrap();
@@ -2041,13 +2045,20 @@ build_date = "1970-01-01T00:00:00Z"
         let pkginfo_v2 = "[package]\nname = \"mypkg\"\nversion = \"2.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
-        std::fs::write(v2_dir.path().join(".PKGINFO"), pkginfo_v2).unwrap();
+        std::fs::write(v2_dir.path().join(".PARTINFO"), pkginfo_v2).unwrap();
         let v2 = out_dir.path().join("mypkg-2.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v2_dir.path(), &v2).unwrap();
         upgrade_package(&db, &v2, root.path(), false).unwrap();
 
         let bin = root.path().join("usr/bin/mytool");
-        assert_eq!(std::fs::read(&bin).unwrap(), b"v2", "binary must be overwritten");
-        assert!(!root.path().join("usr/bin/mytool.wnew").exists(), "no .wnew for non-config file");
+        assert_eq!(
+            std::fs::read(&bin).unwrap(),
+            b"v2",
+            "binary must be overwritten"
+        );
+        assert!(
+            !root.path().join("usr/bin/mytool.wnew").exists(),
+            "no .wnew for non-config file"
+        );
     }
 }

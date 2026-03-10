@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
@@ -32,7 +32,10 @@ impl TryFrom<&str> for FileType {
             "file" => Ok(Self::File),
             "symlink" => Ok(Self::Symlink),
             "dir" => Ok(Self::Directory),
-            _ => Err(WrightError::DatabaseError(format!("unknown file type: {}", s))),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown file type: {}",
+                s
+            ))),
         }
     }
 }
@@ -69,7 +72,10 @@ impl TryFrom<&str> for DepType {
             "runtime" => Ok(Self::Runtime),
             "link" => Ok(Self::Link),
             "build" => Ok(Self::Build),
-            _ => Err(WrightError::DatabaseError(format!("unknown dep type: {}", s))),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown dep type: {}",
+                s
+            ))),
         }
     }
 }
@@ -261,7 +267,6 @@ impl Database {
             db_path: None,
         })
     }
-
 }
 
 impl Drop for Database {
@@ -302,7 +307,7 @@ impl Database {
             "SELECT s.path, p1.name as original, p2.name as shadower 
              FROM shadowed_files s
              JOIN packages p1 ON s.original_owner_id = p1.id
-             JOIN packages p2 ON s.shadowed_by_id = p2.id"
+             JOIN packages p2 ON s.shadowed_by_id = p2.id",
         )?;
 
         let rows = stmt
@@ -321,7 +326,8 @@ impl Database {
 
     pub fn insert_package(&self, pkg: NewPackage) -> Result<i64> {
         // If an assumed record exists for this package, replace it with the real one.
-        let was_assumed: bool = self.conn
+        let was_assumed: bool = self
+            .conn
             .query_row(
                 "SELECT assumed FROM packages WHERE name = ?1",
                 params![pkg.name],
@@ -330,8 +336,14 @@ impl Database {
             .unwrap_or(false);
 
         if was_assumed {
-            self.conn.execute("DELETE FROM packages WHERE name = ?1 AND assumed = 1", params![pkg.name])
-                .map_err(|e| WrightError::DatabaseError(format!("failed to remove assumed record: {}", e)))?;
+            self.conn
+                .execute(
+                    "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
+                    params![pkg.name],
+                )
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to remove assumed record: {}", e))
+                })?;
         }
 
         self.conn
@@ -379,10 +391,15 @@ impl Database {
     /// Remove an assumed package record. Returns an error if the package does not exist
     /// or is not assumed (i.e. was installed normally).
     pub fn unassume_package(&self, name: &str) -> Result<()> {
-        let rows = self.conn.execute(
-            "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
-            params![name],
-        ).map_err(|e| WrightError::DatabaseError(format!("failed to unassume package: {}", e)))?;
+        let rows = self
+            .conn
+            .execute(
+                "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
+                params![name],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to unassume package: {}", e))
+            })?;
         if rows == 0 {
             return Err(WrightError::PackageNotFound(name.to_string()));
         }
@@ -433,7 +450,8 @@ impl Database {
             Ok(info) => Ok(Some(info)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(WrightError::DatabaseError(format!(
-                "failed to query package: {}", e
+                "failed to query package: {}",
+                e
             ))),
         }
     }
@@ -461,7 +479,9 @@ impl Database {
         let rows = stmt
             .query_map([], row_to_package_info)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get root packages: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get root packages: {}", e))
+            })?;
 
         Ok(rows)
     }
@@ -496,8 +516,9 @@ impl Database {
     }
 
     pub fn insert_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to begin transaction: {}", e)))?;
+        let tx = self.conn.unchecked_transaction().map_err(|e| {
+            WrightError::DatabaseError(format!("failed to begin transaction: {}", e))
+        })?;
 
         {
             let mut stmt = tx.prepare(
@@ -527,7 +548,7 @@ impl Database {
     pub fn get_other_owners(&self, current_pkg_id: i64, path: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id 
-             WHERE f.path = ?1 AND p.id != ?2"
+             WHERE f.path = ?1 AND p.id != ?2",
         )?;
         let rows = stmt
             .query_map(params![path, current_pkg_id], |row| row.get::<_, String>(0))?
@@ -537,8 +558,13 @@ impl Database {
 
     pub fn replace_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
         self.conn
-            .execute("DELETE FROM files WHERE package_id = ?1", params![package_id])
-            .map_err(|e| WrightError::DatabaseError(format!("failed to delete old files: {}", e)))?;
+            .execute(
+                "DELETE FROM files WHERE package_id = ?1",
+                params![package_id],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old files: {}", e))
+            })?;
         self.insert_files(package_id, files)
     }
 
@@ -563,11 +589,22 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))?;
 
-        let rows = rows.into_iter().map(|(path, file_hash, ft_str, file_mode, file_size, is_config)| {
-            let file_type = FileType::try_from(ft_str.as_str())
-                .unwrap_or(FileType::File);
-            FileEntry { path, file_hash, file_type, file_mode, file_size, is_config }
-        }).collect();
+        let rows = rows
+            .into_iter()
+            .map(
+                |(path, file_hash, ft_str, file_mode, file_size, is_config)| {
+                    let file_type = FileType::try_from(ft_str.as_str()).unwrap_or(FileType::File);
+                    FileEntry {
+                        path,
+                        file_hash,
+                        file_type,
+                        file_mode,
+                        file_size,
+                        is_config,
+                    }
+                },
+            )
+            .collect();
 
         Ok(rows)
     }
@@ -587,11 +624,7 @@ impl Database {
         }
     }
 
-    pub fn insert_dependencies(
-        &self,
-        package_id: i64,
-        deps: &[Dependency],
-    ) -> Result<()> {
+    pub fn insert_dependencies(&self, package_id: i64, deps: &[Dependency]) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "INSERT INTO dependencies (package_id, depends_on, version_constraint, dep_type)
              VALUES (?1, ?2, ?3, ?4)",
@@ -604,11 +637,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn replace_dependencies(
-        &self,
-        package_id: i64,
-        deps: &[Dependency],
-    ) -> Result<()> {
+    pub fn replace_dependencies(&self, package_id: i64, deps: &[Dependency]) -> Result<()> {
         self.conn
             .execute(
                 "DELETE FROM dependencies WHERE package_id = ?1",
@@ -621,17 +650,17 @@ impl Database {
     }
 
     pub fn check_dependency(&self, name: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM packages WHERE name = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM packages WHERE name = ?1")?;
         let count: i64 = stmt.query_row(params![name], |row| row.get(0))?;
         if count > 0 {
             return Ok(true);
         }
         // Also check if any installed package provides this name
-        let mut stmt2 = self.conn.prepare(
-            "SELECT COUNT(*) FROM provides WHERE name = ?1",
-        )?;
+        let mut stmt2 = self
+            .conn
+            .prepare("SELECT COUNT(*) FROM provides WHERE name = ?1")?;
         let prov_count: i64 = stmt2.query_row(params![name], |row| row.get(0))?;
         Ok(prov_count > 0)
     }
@@ -646,9 +675,7 @@ impl Database {
         let rows = stmt
             .query_map(params![name], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get dependents: {}", e))
-            })?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get dependents: {}", e)))?;
 
         Ok(rows)
     }
@@ -660,16 +687,25 @@ impl Database {
 
         let rows = stmt
             .query_map(params![package_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get dependencies: {}", e))
+            })?;
 
-        Ok(rows.into_iter().map(|(name, constraint, dt_str)| Dependency {
-            name,
-            constraint,
-            dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(name, constraint, dt_str)| Dependency {
+                name,
+                constraint,
+                dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
+            })
+            .collect())
     }
 
     /// Get runtime dependencies for a package by name.
@@ -683,16 +719,25 @@ impl Database {
 
         let rows = stmt
             .query_map(params![name], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get dependencies: {}", e))
+            })?;
 
-        Ok(rows.into_iter().map(|(n, constraint, dt_str)| Dependency {
-            name: n,
-            constraint,
-            dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(n, constraint, dt_str)| Dependency {
+                name: n,
+                constraint,
+                dep_type: DepType::try_from(dt_str.as_str()).unwrap_or(DepType::Runtime),
+            })
+            .collect())
     }
 
     /// Get all transitive reverse dependents of a package (packages that depend on it,
@@ -727,10 +772,14 @@ impl Database {
 
     /// Update the install_reason of a package (e.g. promote dependency → explicit).
     pub fn set_install_reason(&self, name: &str, reason: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE packages SET install_reason = ?1 WHERE name = ?2",
-            params![reason, name],
-        ).map_err(|e| WrightError::DatabaseError(format!("failed to set install_reason: {}", e)))?;
+        self.conn
+            .execute(
+                "UPDATE packages SET install_reason = ?1 WHERE name = ?2",
+                params![reason, name],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to set install_reason: {}", e))
+            })?;
         Ok(())
     }
 
@@ -751,7 +800,8 @@ impl Database {
                )"
         ).map_err(|e| WrightError::DatabaseError(format!("failed to prepare orphan deps query: {}", e)))?;
 
-        let rows = stmt.query_map(params![name], |row| row.get::<_, String>(0))?
+        let rows = stmt
+            .query_map(params![name], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan deps: {}", e)))?;
 
@@ -767,12 +817,16 @@ impl Database {
             )",
             PKG_COLUMNS
         );
-        let mut stmt = self.conn.prepare(&sql)
-            .map_err(|e| WrightError::DatabaseError(format!("failed to prepare orphan query: {}", e)))?;
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| {
+            WrightError::DatabaseError(format!("failed to prepare orphan query: {}", e))
+        })?;
 
-        let rows = stmt.query_map([], row_to_package_info)?
+        let rows = stmt
+            .query_map([], row_to_package_info)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan packages: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get orphan packages: {}", e))
+            })?;
 
         Ok(rows)
     }
@@ -800,17 +854,21 @@ impl Database {
         if let Some(name) = package {
             let mut stmt = self.conn.prepare(
                 "SELECT timestamp, operation, package_name, old_version, new_version, status
-                 FROM transactions WHERE package_name = ?1 ORDER BY timestamp"
+                 FROM transactions WHERE package_name = ?1 ORDER BY timestamp",
             )?;
             let rows = stmt.query_map(params![name], row_to_transaction)?;
-            for row in rows { records.push(row?); }
+            for row in rows {
+                records.push(row?);
+            }
         } else {
             let mut stmt = self.conn.prepare(
                 "SELECT timestamp, operation, package_name, old_version, new_version, status
-                 FROM transactions ORDER BY timestamp"
+                 FROM transactions ORDER BY timestamp",
             )?;
             let rows = stmt.query_map([], row_to_transaction)?;
-            for row in rows { records.push(row?); }
+            for row in rows {
+                records.push(row?);
+            }
         }
         Ok(records)
     }
@@ -842,10 +900,14 @@ impl Database {
         package_id: i64,
         deps: &[(String, String)],
     ) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM optional_dependencies WHERE package_id = ?1",
-            params![package_id],
-        ).map_err(|e| WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e)))?;
+        self.conn
+            .execute(
+                "DELETE FROM optional_dependencies WHERE package_id = ?1",
+                params![package_id],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e))
+            })?;
         self.insert_optional_dependencies(package_id, deps)
     }
 
@@ -858,16 +920,18 @@ impl Database {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get optional deps: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get optional deps: {}", e))
+            })?;
         Ok(rows)
     }
 
     // ── provides ─────────────────────────────────────────────────────────
 
     pub fn insert_provides(&self, package_id: i64, names: &[String]) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO provides (package_id, name) VALUES (?1, ?2)",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("INSERT INTO provides (package_id, name) VALUES (?1, ?2)")?;
         for name in names {
             stmt.execute(params![package_id, name])?;
         }
@@ -875,9 +939,9 @@ impl Database {
     }
 
     pub fn get_provides(&self, package_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM provides WHERE package_id = ?1 ORDER BY name",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM provides WHERE package_id = ?1 ORDER BY name")?;
         let rows = stmt
             .query_map(params![package_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -902,9 +966,9 @@ impl Database {
     // ── conflicts ────────────────────────────────────────────────────────
 
     pub fn insert_conflicts(&self, package_id: i64, names: &[String]) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO conflicts (package_id, name) VALUES (?1, ?2)",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("INSERT INTO conflicts (package_id, name) VALUES (?1, ?2)")?;
         for name in names {
             stmt.execute(params![package_id, name])?;
         }
@@ -912,9 +976,9 @@ impl Database {
     }
 
     pub fn get_conflicts(&self, package_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM conflicts WHERE package_id = ?1 ORDER BY name",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM conflicts WHERE package_id = ?1 ORDER BY name")?;
         let rows = stmt
             .query_map(params![package_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -932,7 +996,9 @@ impl Database {
         let rows = stmt
             .query_map(params![name], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to find conflicting packages: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to find conflicting packages: {}", e))
+            })?;
         Ok(rows)
     }
 }
@@ -1167,16 +1233,15 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let result =
-            db.insert_package(NewPackage {
-                name: "hello",
-                version: "2.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
-                ..Default::default()
-            });
+        let result = db.insert_package(NewPackage {
+            name: "hello",
+            version: "2.0.0",
+            release: 1,
+            description: "test",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        });
         assert!(result.is_err());
     }
 
@@ -1239,7 +1304,10 @@ mod tests {
         assert_eq!(pkg.version, "2.0.0");
         assert_eq!(pkg.description, "updated pkg");
         assert_eq!(pkg.install_size, 2048);
-        assert_eq!(pkg.install_scripts.as_deref(), Some("post_install() { echo hi; }"));
+        assert_eq!(
+            pkg.install_scripts.as_deref(),
+            Some("post_install() { echo hi; }")
+        );
     }
 
     #[test]
@@ -1257,23 +1325,31 @@ mod tests {
             })
             .unwrap();
 
-        db.insert_files(id, &[FileEntry {
-            path: "/usr/bin/hello".to_string(),
-            file_hash: Some("abc".to_string()),
-            file_type: FileType::File,
-            file_mode: Some(0o755),
-            file_size: Some(1024),
-            is_config: false,
-        }]).unwrap();
+        db.insert_files(
+            id,
+            &[FileEntry {
+                path: "/usr/bin/hello".to_string(),
+                file_hash: Some("abc".to_string()),
+                file_type: FileType::File,
+                file_mode: Some(0o755),
+                file_size: Some(1024),
+                is_config: false,
+            }],
+        )
+        .unwrap();
 
-        db.replace_files(id, &[FileEntry {
-            path: "/usr/bin/hello2".to_string(),
-            file_hash: Some("def".to_string()),
-            file_type: FileType::File,
-            file_mode: Some(0o755),
-            file_size: Some(2048),
-            is_config: false,
-        }]).unwrap();
+        db.replace_files(
+            id,
+            &[FileEntry {
+                path: "/usr/bin/hello2".to_string(),
+                file_hash: Some("def".to_string()),
+                file_type: FileType::File,
+                file_mode: Some(0o755),
+                file_size: Some(2048),
+                is_config: false,
+            }],
+        )
+        .unwrap();
 
         let files = db.get_files(id).unwrap();
         assert_eq!(files.len(), 1);
@@ -1295,8 +1371,24 @@ mod tests {
             })
             .unwrap();
 
-        db.insert_dependencies(id, &[Dependency { name: "openssl".to_string(), constraint: Some(">= 3.0".to_string()), dep_type: DepType::Runtime }]).unwrap();
-        db.replace_dependencies(id, &[Dependency { name: "zlib".to_string(), constraint: None, dep_type: DepType::Runtime }]).unwrap();
+        db.insert_dependencies(
+            id,
+            &[Dependency {
+                name: "openssl".to_string(),
+                constraint: Some(">= 3.0".to_string()),
+                dep_type: DepType::Runtime,
+            }],
+        )
+        .unwrap();
+        db.replace_dependencies(
+            id,
+            &[Dependency {
+                name: "zlib".to_string(),
+                constraint: None,
+                dep_type: DepType::Runtime,
+            }],
+        )
+        .unwrap();
 
         let deps = db.get_dependencies(id).unwrap();
         assert_eq!(deps.len(), 1);
@@ -1321,7 +1413,10 @@ mod tests {
             .unwrap();
 
         let pkg = db.get_package("hello").unwrap().unwrap();
-        assert_eq!(pkg.install_scripts.as_deref(), Some("post_install() { echo done; }"));
+        assert_eq!(
+            pkg.install_scripts.as_deref(),
+            Some("post_install() { echo done; }")
+        );
 
         let _ = id;
     }
@@ -1336,7 +1431,11 @@ mod tests {
         match result {
             Err(ref e) => {
                 let err_msg = format!("{}", e);
-                assert!(err_msg.contains("locked"), "Expected lock error, got: {}", err_msg);
+                assert!(
+                    err_msg.contains("locked"),
+                    "Expected lock error, got: {}",
+                    err_msg
+                );
             }
             Ok(_) => panic!("Expected lock error, but open succeeded"),
         }

@@ -45,7 +45,10 @@ impl RollbackState {
     /// If a leftover journal exists, replay it first to recover from a previous crash.
     pub fn with_journal(path: PathBuf) -> Self {
         if path.exists() {
-            warn!("Found leftover rollback journal at {}, replaying...", path.display());
+            warn!(
+                "Found leftover rollback journal at {}, replaying...",
+                path.display()
+            );
             Self::replay_journal(&path);
         }
 
@@ -166,10 +169,19 @@ impl RollbackState {
         for (original, backup) in &self.backups {
             let _ = std::fs::remove_file(original);
             if let Err(e) = std::fs::copy(backup, original) {
-                warn!("Rollback: failed to restore {} from {}: {}", original.display(), backup.display(), e);
+                warn!(
+                    "Rollback: failed to restore {} from {}: {}",
+                    original.display(),
+                    backup.display(),
+                    e
+                );
             }
             if let Err(e) = std::fs::remove_file(backup) {
-                warn!("Rollback: failed to remove backup {}: {}", backup.display(), e);
+                warn!(
+                    "Rollback: failed to remove backup {}: {}",
+                    backup.display(),
+                    e
+                );
             }
         }
 
@@ -230,7 +242,12 @@ impl RollbackState {
                             let _ = std::fs::remove_file(&backup);
                         }
                         Err(e) => {
-                            tracing::debug!("Journal replay: failed to restore {} from {}: {}", original, backup, e);
+                            tracing::debug!(
+                                "Journal replay: failed to restore {} from {}: {}",
+                                original,
+                                backup,
+                                e
+                            );
                             restore_failures += 1;
                         }
                     }
@@ -242,9 +259,7 @@ impl RollbackState {
                     if let Err(e) = std::os::unix::fs::symlink(&target, &original) {
                         warn!(
                             "Journal replay: failed to restore symlink {} -> {}: {}",
-                            original,
-                            target,
-                            e
+                            original, target, e
                         );
                     }
                 }
@@ -319,7 +334,10 @@ mod tests {
 
         // Replay should restore original from backup
         RollbackState::replay_journal(&journal);
-        assert_eq!(std::fs::read_to_string(&original).unwrap(), "backup-content");
+        assert_eq!(
+            std::fs::read_to_string(&original).unwrap(),
+            "backup-content"
+        );
         assert!(!backup.exists());
     }
 

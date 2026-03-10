@@ -195,7 +195,6 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 | Field               | Type            | Default | Description                              |
 |---------------------|-----------------|---------|------------------------------------------|
-| `strip`             | bool            | `true`  | Strip debug symbols from binaries        |
 | `static`            | bool            | `false` | Build statically linked binaries         |
 | `debug`             | bool            | `false` | Build with debug info                    |
 | `ccache`            | bool            | `true`  | Use ccache for compilation if available  |
@@ -410,7 +409,6 @@ During the MVP pass, Wright injects these variables into every lifecycle stage:
 | Variable | Value | Description |
 |----------|-------|-------------|
 | `WRIGHT_BUILD_PHASE` | `mvp` | Phase name for the MVP pass (`full` in the normal pass) |
-| `WRIGHT_BOOTSTRAP_BUILD` | `1` | Set during the MVP pass for backward-compatible scripts |
 | `WRIGHT_BOOTSTRAP_WITHOUT_<DEP>` | `1` | Set for each excluded dependency (name uppercased, hyphens → underscores) |
 
 The plan script can still use these variables to disable the relevant feature:
@@ -518,7 +516,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
-| `${WRIGHT_BOOTSTRAP_BUILD}` | Set to `1` during the MVP pass (backward compatibility) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
 When running inside a dockyard, path variables are remapped to dockyard mount points:
@@ -636,7 +633,7 @@ Reference a custom executor by name:
 executor = "python"
 script = """
 import os
-os.makedirs(f"{os.environ['PKG_DIR']}/usr/lib", exist_ok=True)
+os.makedirs(f"{os.environ['PART_DIR']}/usr/lib", exist_ok=True)
 """
 ```
 
@@ -708,7 +705,6 @@ uri = "patches/fix-headers.patch"
 sha256 = "SKIP"
 
 [options]
-strip = true
 static = false
 debug = false
 ccache = true

@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::{Component, Path};
 
-use crate::error::{WrightError, Result};
+use crate::error::{Result, WrightError};
 use tracing::warn;
 
 #[cfg(unix)]
@@ -14,17 +14,15 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         WrightError::ArchiveError(format!("failed to create {}: {}", output_path.display(), e))
     })?;
 
-    let encoder = zstd::Encoder::new(file, 3).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd encoder init failed: {}", e))
-    })?;
+    let encoder = zstd::Encoder::new(file, 3)
+        .map_err(|e| WrightError::ArchiveError(format!("zstd encoder init failed: {}", e)))?;
 
     let mut tar_builder = tar::Builder::new(encoder);
     tar_builder.follow_symlinks(false);
 
     for entry in walkdir::WalkDir::new(source_dir).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            WrightError::ArchiveError(format!("failed to walk directory: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
         let full_path = entry.path();
         let raw_rel_path = full_path.strip_prefix(source_dir).unwrap_or(full_path);
         // The root entry itself produces an empty relative path — skip silently.
@@ -41,27 +39,44 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         };
 
         let metadata = entry.path().symlink_metadata().map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read metadata for {}: {}", full_path.display(), e))
+            WrightError::ArchiveError(format!(
+                "failed to read metadata for {}: {}",
+                full_path.display(),
+                e
+            ))
         })?;
 
         if metadata.is_symlink() {
             let target = std::fs::read_link(full_path).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to read symlink {}: {}", full_path.display(), e))
+                WrightError::ArchiveError(format!(
+                    "failed to read symlink {}: {}",
+                    full_path.display(),
+                    e
+                ))
             })?;
             let mut header = tar::Header::new_gnu();
             header.set_entry_type(tar::EntryType::Symlink);
             header.set_size(0);
             header.set_mode(0o777);
-            header.set_mtime(metadata.modified()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-                .unwrap_or(0));
-            tar_builder.append_link(&mut header, &rel_path, &target).map_err(|e| {
-                WrightError::ArchiveError(format!("tar append symlink failed: {}", e))
-            })?;
+            header.set_mtime(
+                metadata
+                    .modified()
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                    })
+                    .unwrap_or(0),
+            );
+            tar_builder
+                .append_link(&mut header, &rel_path, &target)
+                .map_err(|e| {
+                    WrightError::ArchiveError(format!("tar append symlink failed: {}", e))
+                })?;
         } else if metadata.is_dir() {
-            tar_builder.append_dir(&rel_path, full_path).map_err(|e| {
-                WrightError::ArchiveError(format!("tar append dir failed: {}", e))
-            })?;
+            tar_builder
+                .append_dir(&rel_path, full_path)
+                .map_err(|e| WrightError::ArchiveError(format!("tar append dir failed: {}", e)))?;
         } else {
             // The tar crate's append_path_with_name passes the absolute source path
             // to append_special for device/FIFO entries, ignoring the archive name.
@@ -80,21 +95,30 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                     header.set_path(&rel_path).map_err(|e| {
                         WrightError::ArchiveError(format!(
                             "tar set path failed for {}: {}",
-                            rel_path.display(), e
+                            rel_path.display(),
+                            e
                         ))
                     })?;
                     header.set_mode(metadata.mode());
                     header.set_uid(metadata.uid() as u64);
                     header.set_gid(metadata.gid() as u64);
                     header.set_size(0);
-                    header.set_mtime(metadata.modified()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-                        .unwrap_or(0));
+                    header.set_mtime(
+                        metadata
+                            .modified()
+                            .map(|t| {
+                                t.duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs()
+                            })
+                            .unwrap_or(0),
+                    );
                     if file_type.is_fifo() {
                         header.set_entry_type(tar::EntryType::Fifo);
                     } else {
                         let dev_id = metadata.rdev();
-                        let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
+                        let dev_major =
+                            ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
                         let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | (dev_id & 0x0000_00ff);
                         if file_type.is_char_device() {
                             header.set_entry_type(tar::EntryType::Char);
@@ -112,20 +136,25 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                     tar_builder.append(&header, std::io::empty()).map_err(|e| {
                         WrightError::ArchiveError(format!(
                             "tar append special failed for {}: {}",
-                            rel_path.display(), e
+                            rel_path.display(),
+                            e
                         ))
                     })?;
                 } else {
-                    tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
-                        WrightError::ArchiveError(format!("tar append file failed: {}", e))
-                    })?;
+                    tar_builder
+                        .append_path_with_name(full_path, &rel_path)
+                        .map_err(|e| {
+                            WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                        })?;
                 }
             }
             #[cfg(not(unix))]
             {
-                tar_builder.append_path_with_name(full_path, &rel_path).map_err(|e| {
-                    WrightError::ArchiveError(format!("tar append file failed: {}", e))
-                })?;
+                tar_builder
+                    .append_path_with_name(full_path, &rel_path)
+                    .map_err(|e| {
+                        WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                    })?;
             }
         }
     }
@@ -165,9 +194,8 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
     })?;
 
-    let decoder = zstd::Decoder::new(file).map_err(|e| {
-        WrightError::ArchiveError(format!("zstd decoder init failed: {}", e))
-    })?;
+    let decoder = zstd::Decoder::new(file)
+        .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
 
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
@@ -177,8 +205,11 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 /// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, and .zip
 pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
-    let filename = archive_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    
+    let filename = archive_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
     if filename.ends_with(".tar.zst") {
         extract_tar_zst(archive_path, dest_dir)
     } else if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
@@ -190,7 +221,10 @@ pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     } else if filename.ends_with(".zip") {
         extract_zip(archive_path, dest_dir)
     } else {
-        Err(WrightError::ArchiveError(format!("unsupported archive format: {}", filename)))
+        Err(WrightError::ArchiveError(format!(
+            "unsupported archive format: {}",
+            filename
+        )))
     }
 }
 
@@ -226,14 +260,13 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
     })?;
 
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read zip archive: {}", e))
-    })?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| WrightError::ArchiveError(format!("failed to read zip archive: {}", e)))?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read zip entry: {}", e))
-        })?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| WrightError::ArchiveError(format!("failed to read zip entry: {}", e)))?;
 
         let raw_path = match entry.enclosed_name() {
             Some(p) => p.to_owned(),
@@ -254,31 +287,45 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to create directory {}: {}", out_path.display(), e))
+                WrightError::ArchiveError(format!(
+                    "failed to create directory {}: {}",
+                    out_path.display(),
+                    e
+                ))
             })?;
         } else {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    WrightError::ArchiveError(format!("failed to create parent directory {}: {}", parent.display(), e))
+                    WrightError::ArchiveError(format!(
+                        "failed to create parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
                 })?;
             }
 
             let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to create file {}: {}", out_path.display(), e))
+                WrightError::ArchiveError(format!(
+                    "failed to create file {}: {}",
+                    out_path.display(),
+                    e
+                ))
             })?;
 
             std::io::copy(&mut entry, &mut outfile).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to extract {}: {}", raw_path.display(), e))
+                WrightError::ArchiveError(format!(
+                    "failed to extract {}: {}",
+                    raw_path.display(),
+                    e
+                ))
             })?;
 
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = entry.unix_mode() {
-                    let _ = std::fs::set_permissions(
-                        &out_path,
-                        std::fs::Permissions::from_mode(mode),
-                    );
+                    let _ =
+                        std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
                 }
             }
         }
@@ -300,16 +347,16 @@ fn is_path_safe(path: &Path) -> bool {
 }
 
 fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> Result<()> {
-    for entry in archive.entries().map_err(|e| {
-        WrightError::ArchiveError(format!("failed to read archive entries: {}", e))
-    })? {
-        let mut entry = entry.map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read tar entry: {}", e))
-        })?;
+    for entry in archive
+        .entries()
+        .map_err(|e| WrightError::ArchiveError(format!("failed to read archive entries: {}", e)))?
+    {
+        let mut entry = entry
+            .map_err(|e| WrightError::ArchiveError(format!("failed to read tar entry: {}", e)))?;
 
-        let path = entry.path().map_err(|e| {
-            WrightError::ArchiveError(format!("failed to read entry path: {}", e))
-        })?;
+        let path = entry
+            .path()
+            .map_err(|e| WrightError::ArchiveError(format!("failed to read entry path: {}", e)))?;
 
         if !is_path_safe(&path) {
             return Err(WrightError::ArchiveError(format!(
@@ -332,9 +379,9 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
             (mode, is_file, dest)
         };
 
-        entry.unpack_in(dest_dir).map_err(|e| {
-            WrightError::ArchiveError(format!("tar extract failed: {}", e))
-        })?;
+        entry
+            .unpack_in(dest_dir)
+            .map_err(|e| WrightError::ArchiveError(format!("tar extract failed: {}", e)))?;
 
         #[cfg(unix)]
         {
@@ -342,10 +389,7 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
             if is_file {
                 if let Some(m) = mode {
                     use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &dest,
-                        std::fs::Permissions::from_mode(m),
-                    );
+                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m));
                 }
             }
         }

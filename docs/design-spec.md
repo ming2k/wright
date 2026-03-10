@@ -327,7 +327,6 @@ sha256 = "SKIP"
 
 # ---- Build options ----
 [options]
-strip = true            # Strip binaries (default: true)
 static = false          # Static linking (default: false)
 debug = false           # Preserve debug symbols (default: false)
 ccache = true           # Enable ccache if available (default: true)
@@ -546,7 +545,7 @@ For each lifecycle stage execution, the filesystem view inside the dockyard is:
 ├── proc/           ← Mounted proc
 ├── tmp/            ← tmpfs (build temporary files)
 ├── build/          ← Read-write, source directory (SRC_DIR)
-├── output/         ← Read-write, package output directory (PKG_DIR)
+├── output/         ← Read-write, package output directory (PART_DIR)
 ├── files/          ← Read-only bind mount of non-archive files directory
 └── deps/           ← Read-only bind mount of build dependencies
     ├── openssl/    ← Dependency package installed files
@@ -582,9 +581,9 @@ bwrap \
     --gid 1000 \
     --die-with-parent \
     --chdir /build \
-    --setenv PKG_NAME "${PART_NAME}" \
-    --setenv PKG_VERSION "${PART_VERSION}" \
-    --setenv PKG_DIR "/output" \
+    --setenv PART_NAME "${PART_NAME}" \
+    --setenv PART_VERSION "${PART_VERSION}" \
+    --setenv PART_DIR "/output" \
     --setenv SRC_DIR "/build" \
     --setenv FILES_DIR "/files" \
     -- /bin/bash -e -o pipefail /tmp/_build_script.sh
@@ -807,7 +806,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 3.  Check that build dependencies are installed
 4.  Create build working directory: /var/tmp/wright-build/{name}-{version}/
     ├── src/        (SRC_DIR)
-    ├── pkg/        (PKG_DIR)
+    ├── pkg/        (PART_DIR)
     └── log/        (build logs)
 5.  fetch: Download source to cache, symlink to src/
 6.  verify: Validate SHA-256 checksums
@@ -819,10 +818,9 @@ wright build --clean --force <port_path>  # Clean + force rebuild
     d. Execute and capture output, write to log/
     e. Check exit code
 9.  Generate file manifest from pkg/
-10. Strip binaries (if options.strip = true)
-11. Generate package metadata file .PARTINFO
-12. Archive: tar -c -I 'zstd -19' -f {name}-{version}-{release}-{arch}.wright.tar.zst -C pkg/ .
-13. Compute package SHA-256
+10. Generate package metadata file .PARTINFO
+11. Archive: tar -c -I 'zstd -19' -f {name}-{version}-{release}-{arch}.wright.tar.zst -C pkg/ .
+12. Compute package SHA-256
 14. Move to output directory
 ```
 
@@ -832,7 +830,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 {name}-{version}-{release}-{arch}.wright.tar.zst
 ├── .PARTINFO        # Package metadata (TOML format)
 ├── .FILELIST       # File manifest (one path per line)
-├── .INSTALL        # Install scripts (if any)
+├── .HOOKS          # Install hooks (if any)
 └── usr/            # Actual installed files
     ├── bin/
     ├── lib/
@@ -885,7 +883,6 @@ dockyards = 0                        # Max concurrent dockyards (0 = auto = avai
 # max_cpus = 8                      # Optional: hard cap on total CPUs used
 cflags = "-O2 -pipe -march=x86-64"
 cxxflags = "${cflags}"
-strip = true
 ccache = false
 
 [network]
