@@ -119,7 +119,7 @@ from a layer are inherited from the layer below.
 | Use Case | Config | Cache | Database |
 |----------|--------|-------|----------|
 | **System (root)** | `/etc/wright/wright.toml` | `/var/lib/wright/cache` | `/var/lib/wright/db/packages.db` |
-| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `~/.local/share/wright/packages.db` |
+| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `~/.local/state/wright/packages.db` |
 
 ```toml
 [general]
@@ -151,12 +151,21 @@ download_timeout = 300                  # Download timeout in seconds
 retry_count = 3                         # Download retry attempts
 ```
 
+`plans_dir` does not automatically switch to a per-user location. For
+non-root use, point it at a writable plan tree such as `~/wright/plans` in
+your user config:
+
+```toml
+[general]
+plans_dir = "/home/alice/wright/plans"
+```
+
 ### `[general]` section
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `arch` | string | `"x86_64"` | Target architecture |
-| `plans_dir` | path | `/var/lib/wright/plans` | Root directory for plan definitions |
+| `plans_dir` | path | `/var/lib/wright/plans` | Root directory for plan definitions. Override this for non-root use if your plans live outside `/var/lib/wright/plans`. |
 | `components_dir` | path | `/var/lib/wright/components` | Built package archives (`.wright.tar.zst`) |
 | `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
 | `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database (SQLite) |

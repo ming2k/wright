@@ -15,6 +15,7 @@
 arch = "x86_64"
 
 # Root directory where plan definitions (plan.toml files) are stored.
+# For non-root use, set this to a user-writable path such as ~/wright/plans.
 plans_dir = "/var/lib/wright/plans"
 
 # Directory where built package archives (.wright.tar.zst) are placed.

@@ -63,7 +63,6 @@ wright unassume glibc
 Minimal `plan.toml` for a C library (`zlib`):
 
 ```toml
-[plan]
 name    = "zlib"
 version = "1.3.1"
 release = 1
@@ -153,7 +152,6 @@ A common pattern: build produces both runtime files and development headers.
 Separate them so users who only need the library don't pull in headers.
 
 ```toml
-[plan]
 name    = "zlib"
 version = "1.3.1"
 release = 1
@@ -162,7 +160,7 @@ release = 1
 [lifecycle.staging]
 script = "make DESTDIR=$PART_DIR install"
 
-[lifecycle.fabricate.zlib-devel]
+[output.zlib-devel]
 description = "Development files for zlib"
 script = """
 install -Dm644 ${BUILD_DIR}/zlib.h ${PART_DIR}/usr/include/zlib.h
@@ -172,7 +170,7 @@ install -Dm644 ${BUILD_DIR}/zlib.pc ${PART_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-Each sub-package declared via `[lifecycle.fabricate.<name>]` produces its own
+Each sub-package declared via `[output.<name>]` produces its own
 archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
 and `dependencies`.
 
@@ -187,7 +185,6 @@ compiles itself). Wright resolves this with a two-pass build:
 2. **Full pass** — rebuild with all dependencies, now that the cycle is broken
 
 ```toml
-[plan]
 name    = "gcc"
 version = "14.2.0"
 # ...
@@ -364,7 +361,6 @@ The preferred approach: vendor crates in the source tree so the build is fully
 offline and runs under the default `strict` dockyard.
 
 ```toml
-[plan]
 name    = "ripgrep"
 version = "14.1.1"
 release = 1
@@ -435,7 +431,6 @@ Run `go mod vendor` before packaging the source tarball so the build is
 offline under `strict`.
 
 ```toml
-[plan]
 name    = "hugo"
 version = "0.136.0"
 release = 1

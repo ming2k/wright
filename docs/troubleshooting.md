@@ -96,7 +96,7 @@ directory but could not find a `plan.toml` for `mypackage`.
 **Check:**
 
 ```bash
-# Verify the plan name matches the [plan] name field in plan.toml
+# Verify the plan name matches the top-level name field in plan.toml
 grep '^name' path/to/mypackage/plan.toml
 
 # Run with a path instead of a name
@@ -210,7 +210,7 @@ bumped.
 # Force rebuild regardless of existing archives
 wbuild run <pkg> --force
 
-# Or bump [plan] release in plan.toml to invalidate both the archive
+# Or bump the top-level release in plan.toml to invalidate both the archive
 # skip check and the build cache
 ```
 

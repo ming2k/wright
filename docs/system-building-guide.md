@@ -123,33 +123,33 @@ gcc (source)
 
 ```toml
 # gcc/plan.toml multi-package example
-[lifecycle.fabricate."libstdc++"]
+[output."libstdc++"]
 description = "GNU C++ standard library runtime"
 script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PART_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 
-[lifecycle.fabricate."libstdc++".dependencies]
+[output."libstdc++".dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.fabricate.libgcc]
+[output.libgcc]
 description = "GCC low-level runtime library"
 script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.fabricate.libgomp]
+[output.libgomp]
 description = "GNU OpenMP runtime"
 script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.fabricate.libgomp.dependencies]
+[output.libgomp.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.fabricate.libatomic]
+[output.libatomic]
 description = "GNU atomic operations library"
 script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PART_DIR}/usr/lib/"
 
-[lifecycle.fabricate.libatomic.dependencies]
+[output.libatomic.dependencies]
 runtime = ["libgcc"]
 
-[lifecycle.fabricate.doc]
+[output.doc]
 description = "GCC documentation"
 script = """
 install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/gcc/
@@ -180,15 +180,15 @@ linux-firmware (source, ~800MB+)
 
 ```toml
 # linux-firmware/plan.toml multi-package example
-[lifecycle.fabricate.amdgpu]
+[output.amdgpu]
 description = "AMD GPU firmware"
 script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PART_DIR}/usr/lib/firmware/amdgpu/"
 
-[lifecycle.fabricate.iwlwifi]
+[output.iwlwifi]
 description = "Intel wireless firmware"
 script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PART_DIR}/usr/lib/firmware/"
 
-[lifecycle.fabricate.realtek]
+[output.realtek]
 description = "Realtek firmware"
 script = """
 install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PART_DIR}/usr/lib/firmware/rtl_nic/
@@ -355,10 +355,10 @@ ln -s /etc/sv/nginx /var/service/
 
 ### 4.4 Configuration File Protection
 
-Declare configuration files to be protected in the `backup` field of `[lifecycle.fabricate]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
+Declare configuration files to be protected in the `backup` field of `[output]` in `plan.toml`. These files are preserved during uninstallation and not overwritten during upgrades:
 
 ```toml
-[lifecycle.fabricate]
+[output]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 

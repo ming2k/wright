@@ -48,6 +48,10 @@ wright source add myrepo --path /var/lib/wright/myrepo --priority 300
 wright source add holdtree --type hold --path /var/lib/wright/plans
 ```
 
+If you keep plans in a user-owned tree instead of the system default, point
+the hold source at that directory instead, for example
+`--path ~/wright/plans`.
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path <PATH>` | *(required)* | Local directory path |

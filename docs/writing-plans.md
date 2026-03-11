@@ -12,6 +12,7 @@ plans/
 │   └── plan.toml
 ├── nginx/
 │   ├── plan.toml
+│   ├── mvp.toml
 │   └── patches/
 │       └── fix-headers.patch
 └── python/
@@ -23,9 +24,13 @@ plans/
 
 The directory name should match the `name` field in `plan.toml`. Local files referenced in `[[sources]]` URIs are relative to the plan directory and must not escape it.
 
+If a plan needs a separate bootstrap/MVP override, place it in a sibling
+`mvp.toml`. The base file remains `plan.toml`; do not rename it to
+`main.toml` or `base.toml`.
+
 ## `plan.toml` Reference
 
-### `[plan]` — Metadata
+### Top-Level Metadata
 
 | Field         | Type     | Required | Default | Description                        |
 |---------------|----------|----------|---------|------------------------------------|
@@ -44,9 +49,12 @@ The directory name should match the `name` field in `plan.toml`. Local files ref
 The `epoch` field forces a package to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
 
 ```toml
-[plan]
 name = "example"
 version = "1.0.0"
+release = 1
+description = "Example package"
+license = "MIT"
+arch = "x86_64"
 epoch = 1       # This will upgrade over any epoch=0 package, even "9999.0"
 ```
 
@@ -275,50 +283,91 @@ Resolution order during the MVP pass:
 1. If `[mvp.lifecycle.<stage>]` exists, it is used.
 2. Otherwise, it falls back to `[lifecycle.<stage>]`.
 
-### `[lifecycle.fabricate]` — Final Output Phase
+#### Recommended: `mvp.toml`
 
-`[lifecycle.fabricate]` is the final output phase container. It can do three
-things at once:
+For small plans, inline `[mvp]` is fine. When the MVP path becomes large or
+substantially different, prefer a sibling `mvp.toml` file:
 
-- define the final `fabricate` stage script with the normal stage fields (`executor`, `dockyard`, `env`, `script`)
-- declare hooks and `backup` for the main output
-- contain `[lifecycle.fabricate.<name>]` subtables for extra outputs
-
-**Single-package mode** (no sub-packages):
-
-```toml
-[lifecycle.fabricate]
-hooks.pre_install = "echo 'Preparing installation...'"
-hooks.post_install = "useradd -r nginx 2>/dev/null || true"
-hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
-backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+```text
+foo/
+├── plan.toml
+└── mvp.toml
 ```
 
-**Multi-package mode** (main output in the parent table, extra outputs in subtables):
+`mvp.toml` is a **restricted overlay**. It accepts the same fields as the body
+of `[mvp]`, but without the wrapper:
+
+```toml
+[dependencies]
+build = ["binutils", "glibc"]
+
+[lifecycle.configure]
+script = "..."
+```
+
+Allowed top-level fields in `mvp.toml`:
+
+- `dependencies`
+- `lifecycle`
+- `lifecycle_order`
+
+Do not duplicate package metadata, sources, outputs, or hooks there. Also do
+not mix inline `[mvp]` in `plan.toml` with a sibling `mvp.toml`; choose one.
+
+### `[lifecycle.fabricate]` — Final Build Stage
+
+`[lifecycle.fabricate]` now describes only the final build-stage script that
+runs after `staging` and before archive creation.
 
 ```toml
 [lifecycle.fabricate]
-hooks.post_install = "useradd -r nginx 2>/dev/null || true"
-hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+script = """
+find ${PART_DIR}/usr/share/doc -type f -name '*.la' -delete
+"""
+```
+
+### `[hooks]` — Install / Upgrade / Remove Hooks
+
+`[hooks]` contains transaction-time scripts that run on the live system, not in
+the dockyarded build lifecycle.
+
+```toml
+[hooks]
+pre_install = "echo 'Preparing installation...'"
+post_install = "useradd -r nginx 2>/dev/null || true"
+post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+pre_remove = "systemctl stop nginx 2>/dev/null || true"
+```
+
+| Field                | Type   | Description                |
+|----------------------|--------|----------------------------|
+| `pre_install`        | string | Run before first install   |
+| `post_install`       | string | Run after first install    |
+| `post_upgrade`       | string | Run after upgrade          |
+| `pre_remove`         | string | Run before package removal |
+| `post_remove`        | string | Run after package removal  |
+
+### `[output]` — Output Metadata
+
+`[output]` defines install-time metadata for the main package, and
+`[output.<name>]` declares additional split outputs.
+
+```toml
+[output]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[lifecycle.fabricate."nginx-doc"]
+[output."nginx-doc"]
 description = "Nginx documentation"
 script = "..."
 ```
 
-| Field                | Type            | Description                              |
-|----------------------|-----------------|------------------------------------------|
-| `hooks.pre_install`  | string          | Run before first install                 |
-| `hooks.post_install` | string          | Run after first install                  |
-| `hooks.post_upgrade` | string          | Run after upgrade                        |
-| `hooks.pre_remove`   | string          | Run before package removal               |
-| `hooks.post_remove`  | string          | Run after package removal                |
-| `backup`             | list of strings | Config files preserved across upgrades   |
-| `description`        | string          | Sub-package description (multi-package mode) |
-| `script`             | string          | Script to select/install files into the sub-package (multi-package mode) |
-| `dependencies`       | table           | Sub-package dependencies (multi-package mode) |
+| Field          | Type            | Description                              |
+|----------------|-----------------|------------------------------------------|
+| `backup`       | list of strings | Config files preserved across upgrades   |
+| `description`  | string          | Sub-package description (multi-package mode) |
+| `script`       | string          | Script to select/install files into the sub-package (multi-package mode) |
+| `hooks.*`      | table/fields    | Transaction hooks for a sub-package      |
+| `dependencies` | table           | Sub-package dependencies (multi-package mode) |
 
 #### Backup files
 
@@ -347,7 +396,7 @@ The default pipeline runs these stages in order:
 | `staging`      | user     | Install files into `${PART_DIR}`         |
 | `fabricate`    | user     | Finalize the staged part before archiving |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Most plans install files during `staging` and use `[lifecycle.fabricate]` only for hooks/backup, but the same table can also define a final post-staging script before archive creation.
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Most plans install files during `staging`; use `[lifecycle.fabricate]` only when you need a final post-staging script before archive creation.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -505,8 +554,8 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 
 | Variable        | Description                                |
 |-----------------|--------------------------------------------|
-| `${PART_NAME}`   | Package name from `[plan].name`         |
-| `${PART_VERSION}`| Package version from `[plan].version`   |
+| `${PART_NAME}`   | Package name from `name`                |
+| `${PART_VERSION}`| Package version from `version`          |
 | `${PART_RELEASE}`| Release number as a string                 |
 | `${PART_ARCH}`   | Target architecture                        |
 | `${SRC_DIR}`    | Extraction root directory                  |
@@ -642,7 +691,6 @@ os.makedirs(f"{os.environ['PART_DIR']}/usr/lib", exist_ok=True)
 ### Minimal Plan
 
 ```toml
-[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -675,7 +723,6 @@ install -Dm755 hello ${PART_DIR}/usr/bin/hello
 ### Real-World Plan (nginx)
 
 ```toml
-[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -741,11 +788,13 @@ cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.fabricate]
-hooks.pre_install = "echo 'Preparing nginx installation...'"
-hooks.post_install = "useradd -r nginx 2>/dev/null || true"
-hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+[hooks]
+pre_install = "echo 'Preparing nginx installation...'"
+post_install = "useradd -r nginx 2>/dev/null || true"
+post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+pre_remove = "systemctl stop nginx 2>/dev/null || true"
+
+[output]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
@@ -753,10 +802,10 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
 
-In multi-package mode, the main output still uses the parent `[lifecycle.fabricate]` table, and extra outputs are declared as sub-tables of `[lifecycle.fabricate]`.
+In multi-package mode, the main package uses `[output]`, and extra outputs are
+declared as subtables of `[output]`.
 
 ```toml
-[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -773,25 +822,31 @@ cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.fabricate]
-hooks.post_install = "..."
+[hooks]
+post_install = "..."
 
-[lifecycle.fabricate."libstdc++"]
+[output."libstdc++"]
 description = "GNU C++ standard library"
 script = "install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so"
 hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the parent `[plan]` unless overridden. Each sub-package can have a `description`, a `script` to select/install files, `hooks.*` fields, `backup`, and a `dependencies` table. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.fabricate."libstdc++"]`).
+Sub-packages inherit `version`, `release`, `arch`, and `license` from the
+parent manifest unless overridden. Each sub-package can have a `description`, a
+`script` to select/install files, `hooks.*` fields, `backup`, and a
+`dependencies` table. Names containing `+` or `.` must be quoted in TOML table
+headers (e.g. `[output."libstdc++"]`).
 
-Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table (`[lifecycle.fabricate.<name>.dependencies]`) for packages that must be installed when this sub-package is installed independently.
+Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table
+(`[output.<name>.dependencies]`) for packages that must be installed when this
+sub-package is installed independently.
 
 ```toml
 [lifecycle.staging]
 script = "cd ${BUILD_DIR} && make DESTDIR=${PART_DIR} install"
 
-[lifecycle.fabricate."libfoo-dev"]
+[output."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
 install -Dm644 ${BUILD_DIR}/include/* ${PART_DIR}/usr/include/libfoo/
@@ -802,7 +857,6 @@ install -Dm644 ${BUILD_DIR}/libfoo.pc ${PART_DIR}/usr/lib/pkgconfig/libfoo.pc
 Sub-packages are independent archives — installing the parent does **not** automatically install its sub-packages. To create a meta-package that pulls in all sub-packages, list them as `runtime` dependencies on the parent:
 
 ```toml
-[plan]
 name = "linux-firmware"
 # ...
 

@@ -78,7 +78,9 @@ Use `wbuild` to transform `plan.toml` files into binary packages.
 wbuild run hello
 ```
 
-Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). You can also pass a path directly.
+Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). For
+non-root setups, override `plans_dir` to a writable user-owned path. You can
+also pass a path directly.
 
 Before building, Wright displays a **Construction Plan** showing what will be built and why:
 - `[NEW]`: The target you requested, or a missing dependency that Wright found in the hold tree.

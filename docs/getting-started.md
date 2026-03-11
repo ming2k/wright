@@ -25,7 +25,6 @@ Wright works with no config file. To customize, create `/etc/wright/wright.toml`
 Create `plans/hello/plan.toml`:
 
 ```toml
-[plan]
 name = "hello"
 version = "1.0.0"
 release = 1

@@ -23,7 +23,7 @@ pub struct FabricateHooks {
     pub post_remove: Option<String>,
 }
 
-/// Main output mode: `[lifecycle.fabricate]`
+/// Main output metadata.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FabricateOutput {
@@ -33,7 +33,7 @@ pub struct FabricateOutput {
     pub backup: Option<Vec<String>>,
 }
 
-/// Additional output mode: `[lifecycle.fabricate.<name>]`
+/// Additional output mode.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SubFabricateOutput {
@@ -257,6 +257,7 @@ pub struct LifecycleOrder {
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PhaseConfig {
     /// Phase-specific dependency overrides. Any field omitted falls back
     /// to the top-level [dependencies].
@@ -285,6 +286,7 @@ pub struct PhaseDependencies {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
+    #[serde(flatten)]
     plan: PackageMetadata,
     #[serde(default)]
     dependencies: Dependencies,
@@ -300,6 +302,10 @@ struct RawManifest {
     lifecycle_order: Option<LifecycleOrder>,
     #[serde(default)]
     mvp: Option<PhaseConfig>,
+    #[serde(default)]
+    hooks: Option<FabricateHooks>,
+    #[serde(default)]
+    output: Option<toml::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -402,62 +408,43 @@ fn empty_sub_fabricate_output(
     }
 }
 
-fn parse_fabricate_section(
+fn parse_output_section(
     plan_name: &str,
-    fabricate_val: toml::Value,
+    output_val: Option<toml::Value>,
+    main_hooks: Option<FabricateHooks>,
 ) -> Result<(
-    Option<LifecycleStage>,
     Option<FabricateConfig>,
     Option<InstallScripts>,
     Option<BackupConfig>,
 )> {
-    let mut table = match fabricate_val {
-        toml::Value::Table(table) => table,
-        _ => {
+    let mut table = match output_val {
+        Some(toml::Value::Table(table)) => table,
+        Some(_) => {
             return Err(WrightError::ParseError(
-                "[lifecycle.fabricate] must be a table".to_string(),
+                "[output] must be a table".to_string(),
             ));
         }
-    };
-
-    let mut stage_table = toml::value::Table::new();
-    for key in ["executor", "dockyard", "env", "script"] {
-        if let Some(value) = table.remove(key) {
-            stage_table.insert(key.to_string(), value);
-        }
-    }
-
-    let stage = if stage_table.is_empty() {
-        None
-    } else {
-        Some(
-            toml::Value::Table(stage_table)
-                .try_into()
-                .map_err(|e: toml::de::Error| {
-                    WrightError::ParseError(format!(
-                        "failed to parse [lifecycle.fabricate] stage fields: {}",
-                        e
-                    ))
-                })?,
-        )
+        None => toml::value::Table::new(),
     };
 
     let hooks = match table.remove("hooks") {
-        Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
-            WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate].hooks: {}",
-                e
-            ))
-        })?),
-        None => None,
+        Some(value) => {
+            if main_hooks.is_some() {
+                return Err(WrightError::ParseError(
+                    "main package hooks must be declared only once (prefer top-level [hooks])"
+                        .to_string(),
+                ));
+            }
+            Some(value.try_into().map_err(|e: toml::de::Error| {
+                WrightError::ParseError(format!("failed to parse [output].hooks: {}", e))
+            })?)
+        }
+        None => main_hooks,
     };
 
     let backup = match table.remove("backup") {
         Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
-            WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate].backup: {}",
-                e
-            ))
+            WrightError::ParseError(format!("failed to parse [output].backup: {}", e))
         })?),
         None => None,
     };
@@ -472,21 +459,18 @@ fn parse_fabricate_section(
         } else {
             None
         };
-        return Ok((stage, fabricate, install_scripts, backup_cfg));
+        return Ok((fabricate, install_scripts, backup_cfg));
     }
 
     let table_value = toml::Value::Table(table);
     let mut outputs: HashMap<String, SubFabricateOutput> =
         table_value.try_into().map_err(|e: toml::de::Error| {
-            WrightError::ParseError(format!(
-                "failed to parse [lifecycle.fabricate.<name>]: {}",
-                e
-            ))
+            WrightError::ParseError(format!("failed to parse [output.<name>]: {}", e))
         })?;
 
     if outputs.contains_key(plan_name) {
         return Err(WrightError::ParseError(format!(
-            "main output '{}' must use [lifecycle.fabricate], not [lifecycle.fabricate.{}]",
+            "main output '{}' must use [output], not [output.{}]",
             plan_name, plan_name
         )));
     }
@@ -497,7 +481,6 @@ fn parse_fabricate_section(
     );
 
     Ok((
-        stage,
         Some(FabricateConfig::Multi(outputs)),
         install_scripts,
         backup_cfg,
@@ -507,9 +490,21 @@ fn parse_fabricate_section(
 impl PlanManifest {
     pub fn parse(content: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(content)?;
+        let RawManifest {
+            plan,
+            dependencies,
+            relations,
+            sources: raw_sources,
+            options,
+            lifecycle: raw_lifecycle,
+            lifecycle_order,
+            mvp,
+            hooks,
+            output,
+        } = raw;
 
         // --- Parse sources ---
-        let sources = match raw.sources {
+        let sources = match raw_sources {
             Some(toml::Value::Array(arr)) => {
                 let mut entries = Vec::new();
                 for (i, val) in arr.into_iter().enumerate() {
@@ -537,20 +532,13 @@ impl PlanManifest {
         };
 
         // --- Parse relations ---
-        let relations = raw.relations.unwrap_or_default();
+        let relations = relations.unwrap_or_default();
 
-        // --- Extract lifecycle stages and parse [lifecycle.fabricate] ---
+        // --- Extract lifecycle stages ---
         let mut lifecycle_stages: HashMap<String, LifecycleStage> = HashMap::new();
-        let mut lifecycle_fabricate_value: Option<toml::Value> = None;
-        let mut fabricate: Option<FabricateConfig> = None;
-        let mut install_scripts: Option<InstallScripts> = None;
-        let mut backup: Option<BackupConfig> = None;
-
-        if let Some(raw_lifecycle) = raw.lifecycle {
+        if let Some(raw_lifecycle) = raw_lifecycle {
             for (key, value) in raw_lifecycle {
-                if key == "fabricate" {
-                    lifecycle_fabricate_value = Some(value);
-                } else if key == "part" {
+                if key == "part" {
                     return Err(WrightError::ParseError(
                         "[lifecycle.part] is no longer supported; use [lifecycle.fabricate]"
                             .to_string(),
@@ -573,26 +561,17 @@ impl PlanManifest {
             }
         }
 
-        if let Some(fabricate_val) = lifecycle_fabricate_value {
-            let (stage, fabricate_cfg, scripts, backup_cfg) =
-                parse_fabricate_section(&raw.plan.name, fabricate_val)?;
-            if let Some(stage) = stage {
-                lifecycle_stages.insert("fabricate".to_string(), stage);
-            }
-            fabricate = fabricate_cfg;
-            install_scripts = scripts;
-            backup = backup_cfg;
-        }
+        let (fabricate, install_scripts, backup) = parse_output_section(&plan.name, output, hooks)?;
 
         let manifest = PlanManifest {
-            plan: raw.plan,
-            dependencies: raw.dependencies,
+            plan,
+            dependencies,
             relations,
             sources,
-            options: raw.options,
+            options,
             lifecycle: lifecycle_stages,
-            lifecycle_order: raw.lifecycle_order,
-            mvp: raw.mvp,
+            lifecycle_order,
+            mvp,
             fabricate,
             install_scripts,
             backup,
@@ -606,7 +585,34 @@ impl PlanManifest {
         let content = std::fs::read_to_string(path).map_err(|e| {
             WrightError::ParseError(format!("failed to read {}: {}", path.display(), e))
         })?;
-        Self::parse(&content)
+        let mut manifest = Self::parse(&content)?;
+
+        if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
+            let mvp_path = path.with_file_name("mvp.toml");
+            if mvp_path.exists() {
+                if manifest.mvp.is_some() {
+                    return Err(WrightError::ParseError(format!(
+                        "do not mix inline [mvp] in {} with sibling {}",
+                        path.display(),
+                        mvp_path.display()
+                    )));
+                }
+
+                let mvp_content = std::fs::read_to_string(&mvp_path).map_err(|e| {
+                    WrightError::ParseError(format!("failed to read {}: {}", mvp_path.display(), e))
+                })?;
+                let overlay: PhaseConfig = toml::from_str(&mvp_content).map_err(|e| {
+                    WrightError::ParseError(format!(
+                        "failed to parse {}: {}",
+                        mvp_path.display(),
+                        e
+                    ))
+                })?;
+                manifest.mvp = Some(overlay);
+            }
+        }
+
+        Ok(manifest)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -765,7 +771,6 @@ mod tests {
     #[test]
     fn test_parse_hello_fixture() {
         let toml_str = r#"
-[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -816,7 +821,6 @@ install -Dm755 hello ${PART_DIR}/usr/bin/hello
     #[test]
     fn test_parse_full_featured() {
         let toml_str = r#"
-[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -892,10 +896,12 @@ cd nginx-${PART_VERSION}
 make DESTDIR=${PART_DIR} install
 """
 
-[lifecycle.fabricate]
-hooks.post_install = "useradd -r nginx 2>/dev/null || true"
-hooks.post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-hooks.pre_remove = "systemctl stop nginx 2>/dev/null || true"
+[hooks]
+post_install = "useradd -r nginx 2>/dev/null || true"
+post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+pre_remove = "systemctl stop nginx 2>/dev/null || true"
+
+[output]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -930,7 +936,6 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
     #[test]
     fn test_invalid_name() {
         let toml_str = r#"
-[plan]
 name = "Hello"
 version = "1.0.0"
 release = 1
@@ -944,7 +949,6 @@ arch = "x86_64"
     #[test]
     fn test_missing_name() {
         let toml_str = r#"
-[plan]
 version = "1.0.0"
 release = 1
 description = "test"
@@ -957,7 +961,6 @@ arch = "x86_64"
     #[test]
     fn test_bad_version() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "..."
 release = 1
@@ -971,7 +974,6 @@ arch = "x86_64"
     #[test]
     fn test_archive_filename() {
         let toml_str = r#"
-[plan]
 name = "hello"
 version = "1.0.0"
 release = 1
@@ -989,7 +991,6 @@ arch = "x86_64"
     #[test]
     fn test_parse_multi_packages() {
         let toml_str = r#"
-[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -1003,13 +1004,13 @@ script = "make -j4"
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.fabricate."libstdc++"]
+[output."libstdc++"]
 description = "GNU C++ standard library"
 script = """
 install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
 """
 
-[lifecycle.fabricate."libstdc++".dependencies]
+[output."libstdc++".dependencies]
 runtime = ["libgcc"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -1044,7 +1045,6 @@ runtime = ["libgcc"]
     #[test]
     fn test_multi_package_inherits_overrides() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1055,7 +1055,7 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "true"
 
-[lifecycle.fabricate.test-doc]
+[output.test-doc]
 description = "Documentation for test"
 version = "1.0.0-doc"
 arch = "any"
@@ -1077,7 +1077,6 @@ script = "true"
     #[test]
     fn test_multi_package_missing_description() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1085,7 +1084,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.fabricate.test-lib]
+[output.test-lib]
 script = "true"
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
@@ -1095,7 +1094,6 @@ script = "true"
     #[test]
     fn test_multi_package_invalid_name() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1103,7 +1101,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.fabricate.BadName]
+[output.BadName]
 description = "bad"
 script = "true"
 "#;
@@ -1114,7 +1112,6 @@ script = "true"
     #[test]
     fn test_single_package_with_hooks_and_backup() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1125,10 +1122,12 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.fabricate]
-hooks.pre_install = "echo pre"
-hooks.post_install = "ldconfig"
-hooks.pre_remove = "systemctl stop test"
+[hooks]
+pre_install = "echo pre"
+post_install = "ldconfig"
+pre_remove = "systemctl stop test"
+
+[output]
 backup = ["/etc/test.conf"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -1150,7 +1149,6 @@ backup = ["/etc/test.conf"]
     #[test]
     fn test_old_install_scripts_rejected() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1158,8 +1156,8 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.fabricate]
-hooks.post_install = "ldconfig"
+[hooks]
+post_install = "ldconfig"
 
 [install_scripts]
 post_install = "ldconfig"
@@ -1171,7 +1169,6 @@ post_install = "ldconfig"
     #[test]
     fn test_old_backup_rejected() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1189,7 +1186,6 @@ files = ["/etc/test.conf"]
     #[test]
     fn test_old_split_rejected() {
         let toml_str = r#"
-[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -1221,7 +1217,6 @@ install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
     #[test]
     fn test_main_package_in_multi_inherits_description() {
         let toml_str = r#"
-[plan]
 name = "gcc"
 version = "14.2.0"
 release = 1
@@ -1232,10 +1227,10 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[lifecycle.fabricate]
-hooks.post_install = "ldconfig"
+[hooks]
+post_install = "ldconfig"
 
-[lifecycle.fabricate."gcc-doc"]
+[output."gcc-doc"]
 description = "GCC documentation"
 script = "true"
 "#;
@@ -1257,7 +1252,6 @@ script = "true"
     #[test]
     fn test_parse_mvp_section() {
         let toml_str = r#"
-[plan]
 name = "harfbuzz"
 version = "8.0.0"
 release = 1
@@ -1287,9 +1281,88 @@ script = "meson setup build -Dglib=disabled"
     }
 
     #[test]
+    fn test_from_file_loads_sibling_mvp_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.toml");
+        let mvp_path = dir.path().join("mvp.toml");
+
+        std::fs::write(
+            &plan_path,
+            r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &mvp_path,
+            r#"
+[dependencies]
+build = ["gcc", "make"]
+
+[lifecycle.configure]
+script = "echo mvp"
+"#,
+        )
+        .unwrap();
+
+        let manifest = PlanManifest::from_file(&plan_path).unwrap();
+        let mvp = manifest.mvp.as_ref().unwrap();
+        let deps = mvp.dependencies.as_ref().unwrap();
+        assert_eq!(
+            deps.build.as_deref(),
+            Some(&["gcc".to_string(), "make".to_string()][..])
+        );
+        assert_eq!(
+            mvp.lifecycle
+                .get("configure")
+                .map(|stage| stage.script.as_str()),
+            Some("echo mvp")
+        );
+    }
+
+    #[test]
+    fn test_from_file_rejects_inline_mvp_and_sibling_mvp_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.toml");
+        let mvp_path = dir.path().join("mvp.toml");
+
+        std::fs::write(
+            &plan_path,
+            r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[mvp.dependencies]
+build = ["gcc"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &mvp_path,
+            r#"
+[dependencies]
+build = ["make"]
+"#,
+        )
+        .unwrap();
+
+        assert!(PlanManifest::from_file(&plan_path).is_err());
+    }
+
+    #[test]
     fn test_defaults() {
         let toml_str = r#"
-[plan]
 name = "minimal"
 version = "1.0.0"
 release = 1
@@ -1311,7 +1384,6 @@ arch = "x86_64"
     #[test]
     fn test_skip_fhs_check_option() {
         let toml_str = r#"
-[plan]
 name = "kmod"
 version = "1.0.0"
 release = 1
@@ -1331,7 +1403,6 @@ skip_fhs_check = true
     #[test]
     fn test_parse_relations_section() {
         let toml_str = r#"
-[plan]
 name = "nginx"
 version = "1.0.0"
 release = 1
@@ -1353,7 +1424,6 @@ provides = ["http-server"]
     #[test]
     fn test_parse_sources_array() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1393,7 +1463,6 @@ uri = "git+https://github.com/foo/bar.git#v1.0"
     #[test]
     fn test_parse_epoch() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1413,7 +1482,6 @@ arch = "x86_64"
     #[test]
     fn test_parse_epoch_zero_omitted_from_filename() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1433,7 +1501,6 @@ arch = "x86_64"
     #[test]
     fn test_parse_pre_install_hook() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1441,9 +1508,9 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.fabricate]
-hooks.pre_install = "echo preparing"
-hooks.post_install = "ldconfig"
+[hooks]
+pre_install = "echo preparing"
+post_install = "ldconfig"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.fabricate {
@@ -1461,7 +1528,6 @@ hooks.post_install = "ldconfig"
     #[test]
     fn test_old_sources_table_rejected() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1480,7 +1546,6 @@ sha256 = ["abc123", "SKIP"]
     #[test]
     fn test_old_relations_in_dependencies_rejected() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1501,7 +1566,6 @@ provides = ["test-provider"]
     #[test]
     fn test_parse_lifecycle_fabricate() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1
@@ -1513,24 +1577,21 @@ arch = "x86_64"
 script = "true"
 
 [lifecycle.fabricate]
-hooks.post_install = "ldconfig"
-backup = ["/etc/test.conf"]
+script = "strip ${PART_DIR}/usr/bin/test"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Single(ref output)) => {
-                let hooks = output.hooks.as_ref().unwrap();
-                assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
-                assert_eq!(output.backup.as_ref().unwrap(), &["/etc/test.conf"]);
-            }
-            _ => panic!("expected Single from [lifecycle.fabricate]"),
-        }
+        assert_eq!(
+            manifest
+                .lifecycle
+                .get("fabricate")
+                .map(|stage| stage.script.as_str()),
+            Some("strip ${PART_DIR}/usr/bin/test")
+        );
     }
 
     #[test]
     fn test_lifecycle_package_rejected() {
         let toml_str = r#"
-[plan]
 name = "test"
 version = "1.0.0"
 release = 1

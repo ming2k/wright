@@ -1,4 +1,3 @@
-[plan]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -89,25 +88,27 @@ make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
-[lifecycle.fabricate]
-hooks.pre_install = """
+[hooks]
+pre_install = """
 echo "Preparing nginx installation..."
 """
-hooks.post_install = """
+post_install = """
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
 """
-hooks.post_upgrade = """
+post_upgrade = """
 systemctl reload nginx 2>/dev/null || true
 """
-hooks.pre_remove = """
+pre_remove = """
 systemctl stop nginx 2>/dev/null || true
 """
+
+[output]
 backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
 ]
 
-[lifecycle.fabricate.nginx-doc]
+[output.nginx-doc]
 description = "Nginx documentation files"
 script = """
 cd nginx-${PART_VERSION}

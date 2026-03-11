@@ -271,7 +271,6 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 # ==============================================================
 
 # ---- Package metadata (required) ----
-[plan]
 name = "nginx"                          # Package name, [a-z0-9][a-z0-9_+.-]*, max 64 chars
 version = "1.25.3"                      # Upstream version (free-form string)
 release = 1                             # Release number (integer, increment when build script changes)
@@ -388,34 +387,35 @@ make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
-# ---- Package output declaration (under lifecycle) ----
+# ---- Package output declaration ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
-# Single-package mode (bare [lifecycle.fabricate]):
-[lifecycle.fabricate]
-hooks.pre_install = "echo 'Preparing nginx...'"
-hooks.post_install = """
+[hooks]
+pre_install = "echo 'Preparing nginx...'"
+post_install = """
 # Create nginx user
 useradd -r -s /sbin/nologin -d /var/lib/nginx nginx 2>/dev/null || true
 """
-hooks.post_upgrade = """
+post_upgrade = """
 # Reload configuration
 systemctl reload nginx 2>/dev/null || true
 """
-hooks.pre_remove = """
+pre_remove = """
 systemctl stop nginx 2>/dev/null || true
 """
+
+[output]
 backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
 ]
 
 # ---- Multi-package mode ----
-# The parent [lifecycle.fabricate] table describes the main output.
+# The parent [output] table describes the main output metadata.
 # Each sub-table under it declares an additional output package.
-# Sub-packages inherit version, release, arch, and license from [plan] unless overridden.
+# Sub-packages inherit version, release, arch, and license from the parent manifest unless overridden.
 #
-# [lifecycle.fabricate.libfoo]
+# [output.libfoo]
 # description = "libfoo shared library"
 # script = "install -Dm755 libfoo.so ${PART_DIR}/usr/lib/libfoo.so"
 # hooks.post_install = "ldconfig"
@@ -594,7 +594,7 @@ bwrap \
 - `fetch` stage: **Does not enter dockyard** — handled directly by the build tool (downloads + local file copies)
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
-- `hooks` in `[lifecycle.fabricate]` (post_install, etc.): **Does not run in dockyard** — needs to modify the real system
+- `[hooks]` and per-output `hooks.*`: **Do not run in dockyard** — they modify the real system during install/upgrade/remove
 
 ---
 
@@ -856,7 +856,8 @@ packager = "wright 0.1.0"
 runtime = ["pcre2 >= 10.42"]
 link = ["openssl >= 3.0", "zlib >= 1.2"]
 
-backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+[backup]
+files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
 ---
@@ -1128,7 +1129,7 @@ Recommended hosting options:
 ### 14.1 Security Constraints
 
 - Build scripts **must never** run as root outside the dockyard
-- Package hooks (`hooks.post_install`, etc. in `[lifecycle.fabricate]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
+- Package hooks (`post_install`, etc. in `[hooks]` or `hooks.*` under `[output.<name>]`) are the **only** scripts that run as root on the real system; the user must be explicitly warned during installation
 - Executor `command` must be an absolute path pointing to an existing executable file
 - Source SHA-256 verification failure **must** abort the build; skipping is not allowed
 - Network access is **forbidden** in strict dockyard mode
