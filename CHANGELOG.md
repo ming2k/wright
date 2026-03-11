@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-03-12
+
+### Breaking Changes
+- Remove support for legacy plan schemas. Plans now use top-level package metadata plus `[hooks]`, `[output]`, and `[output.<name>]`; output metadata is no longer embedded in `[lifecycle.fabricate]`.
+
+### Features
+- Add optional sibling `mvp.toml` support as a restricted MVP overlay for `plan.toml`. The overlay only accepts MVP dependency and lifecycle override fields.
+
+### Changes
+- Simplify plan manifests by moving install/remove hooks out of `lifecycle` and keeping `[lifecycle.fabricate]` as the final build-stage script only.
+- Update fixtures, tests, and documentation to match the new manifest layout and recommended `plan.toml` + `mvp.toml` naming.
+
 ## [1.5.4] - 2026-03-11
 
 ### Changes
