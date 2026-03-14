@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-03-15
+
+### Changes
+- **Repository metadata moved to SQLite**: `wrepo` now stores repository metadata in `/var/lib/wright/repo/repo.db` by default, and creates the directory automatically if it does not exist.
+- **Resolvers now prefer `wbuild` package metadata**: package resolution reads `.PARTINFO` metadata produced by `wbuild` and registered in the repo database, rather than treating the plan tree as a repository source.
+- **`wbuild` now auto-registers built archives**: newly created `.wright.tar.zst` packages are added to the repo database immediately after a successful build; `wrepo sync` remains available for importing pre-existing archives.
+
+### Documentation
+- Update repository and CLI docs to describe the SQLite-backed repository catalog and binary-only `wrepo source` workflow.
+
 ## [1.7.1] - 2026-03-15
 
 ### Features
