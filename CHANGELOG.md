@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-03-15
+
+### Features
+- **`--version` flag**: `wright`, `wbuild`, and `wrepo` now support `--version` / `-V` to display the version from Cargo.toml.
+- **Git fetch progress bar**: replace multi-line log output during `git+` source fetches with a single-line indicatif progress bar, matching the HTTP download experience.
+
 ## [1.7.0] - 2026-03-15
 
 ### Breaking Changes
