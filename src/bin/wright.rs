@@ -78,15 +78,19 @@ enum Commands {
         #[arg(long)]
         nodeps: bool,
     },
-    /// Upgrade installed packages from local .wright.tar.zst files
+    /// Upgrade installed packages by name or from archive files
     Upgrade {
-        /// Package archive files to upgrade
+        /// Package names or archive files to upgrade
         #[arg(required = true)]
-        packages: Vec<PathBuf>,
+        packages: Vec<String>,
 
         /// Force upgrade even if version is not newer
         #[arg(long)]
         force: bool,
+
+        /// Target a specific version (implies --force for downgrades)
+        #[arg(long)]
+        version: Option<String>,
     },
     /// Remove installed packages
     Remove {
@@ -195,6 +199,11 @@ enum Commands {
         #[command(subcommand)]
         action: SourceAction,
     },
+    /// Manage local part repositories
+    Repo {
+        #[command(subcommand)]
+        action: RepoAction,
+    },
     /// Refresh repository indices from configured sources
     Sync,
     /// Show package transaction history (install, upgrade, remove)
@@ -236,6 +245,30 @@ enum SourceAction {
     },
     /// List configured repository sources
     List,
+}
+
+#[derive(Subcommand)]
+enum RepoAction {
+    /// Scan a directory and generate/update wright.index.toml
+    Sync {
+        /// Directory containing .wright.tar.zst files
+        dir: PathBuf,
+    },
+    /// List parts in the repository
+    List {
+        /// Show all versions of a specific part
+        name: Option<String>,
+    },
+    /// Remove a part entry from the repository index
+    Remove {
+        /// Part name
+        name: String,
+        /// Part version (e.g. "1.2.3" or "1.2.3-2" for specific release)
+        version: String,
+        /// Also delete the archive file from disk
+        #[arg(long)]
+        purge: bool,
+    },
 }
 
 fn parse_prefix_mode(s: &str) -> std::result::Result<PrefixMode, String> {
@@ -361,30 +394,65 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Upgrade { packages, force } => {
-            let pkg_paths: Vec<PathBuf> = packages
-                .iter()
-                .map(|p| {
-                    if p.exists() {
-                        p.clone()
-                    } else {
-                        std::env::current_dir().unwrap().join(p)
-                    }
-                })
-                .collect();
+        Commands::Upgrade {
+            packages,
+            force,
+            version: target_version,
+        } => {
+            use wright::repo::source::{pick_latest, pick_version};
 
-            for path in &pkg_paths {
-                if !path.exists() {
-                    eprintln!("error: file not found: {}", path.display());
+            for arg in &packages {
+                let path = PathBuf::from(arg);
+                if path.exists() {
+                    // Direct archive file path
+                    match transaction::upgrade_package(&db, &path, &root_dir, force) {
+                        Ok(()) => println!("upgraded: {}", path.display()),
+                        Err(e) => {
+                            eprintln!("error upgrading {}: {}", path.display(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                    continue;
+                }
+
+                // Resolve by name
+                let all_versions = resolver
+                    .resolve_all(arg)
+                    .context(format!("failed to resolve '{}'", arg))?;
+
+                if all_versions.is_empty() {
+                    eprintln!("error: no parts found for '{}'", arg);
                     std::process::exit(1);
                 }
-            }
 
-            for path in &pkg_paths {
-                match transaction::upgrade_package(&db, path, &root_dir, force) {
-                    Ok(()) => println!("upgraded: {}", path.display()),
+                let selected = if let Some(ref ver) = target_version {
+                    pick_version(&all_versions, ver)
+                } else {
+                    pick_latest(&all_versions)
+                };
+
+                let selected = match selected {
+                    Some(s) => s,
+                    None => {
+                        eprintln!(
+                            "error: version '{}' not found for '{}'",
+                            target_version.as_deref().unwrap_or("?"),
+                            arg
+                        );
+                        std::process::exit(1);
+                    }
+                };
+
+                // When --version is explicitly given, force the upgrade (allows downgrade)
+                let effective_force = force || target_version.is_some();
+                match transaction::upgrade_package(&db, &selected.path, &root_dir, effective_force)
+                {
+                    Ok(()) => println!(
+                        "upgraded: {} -> {}-{}",
+                        arg, selected.version, selected.release
+                    ),
                     Err(e) => {
-                        eprintln!("error upgrading {}: {}", path.display(), e);
+                        eprintln!("error upgrading {}: {}", arg, e);
                         std::process::exit(1);
                     }
                 }
@@ -687,49 +755,67 @@ fn main() -> Result<()> {
             }
         }
         Commands::Sysupgrade { dry_run } => {
+            use wright::part::version::Version;
+            use wright::repo::source::pick_latest;
+
             let packages = db.list_packages().context("failed to list packages")?;
             let mut upgraded = 0usize;
             let mut up_to_date = 0usize;
             let mut not_found = 0usize;
 
             for pkg in &packages {
-                match resolver.resolve(&pkg.name) {
-                    Ok(Some(resolved)) => {
-                        match wright::part::archive::read_partinfo(&resolved.path) {
-                            Ok(info) => {
-                                let is_newer =
-                                    info.version != pkg.version || info.release > pkg.release;
-                                if is_newer {
-                                    println!(
-                                        "upgrade: {} {}-{} -> {}-{}",
-                                        pkg.name,
-                                        pkg.version,
-                                        pkg.release,
-                                        info.version,
-                                        info.release
-                                    );
-                                    if !dry_run {
-                                        if let Err(e) = transaction::upgrade_package(
-                                            &db,
-                                            &resolved.path,
-                                            &root_dir,
-                                            false,
-                                        ) {
-                                            eprintln!("  error: {}", e);
+                match resolver.resolve_all(&pkg.name) {
+                    Ok(all_versions) if !all_versions.is_empty() => {
+                        if let Some(latest) = pick_latest(&all_versions) {
+                            let is_newer = {
+                                let new_ver = Version::parse(&latest.version).ok();
+                                let old_ver = Version::parse(&pkg.version).ok();
+                                match (new_ver, old_ver) {
+                                    (Some(nv), Some(ov)) => {
+                                        if latest.epoch != pkg.epoch {
+                                            latest.epoch > pkg.epoch
+                                        } else if nv != ov {
+                                            nv > ov
                                         } else {
-                                            upgraded += 1;
+                                            latest.release > pkg.release
                                         }
+                                    }
+                                    _ => {
+                                        latest.version != pkg.version
+                                            || latest.release > pkg.release
+                                    }
+                                }
+                            };
+
+                            if is_newer {
+                                println!(
+                                    "upgrade: {} {}-{} -> {}-{}",
+                                    pkg.name,
+                                    pkg.version,
+                                    pkg.release,
+                                    latest.version,
+                                    latest.release
+                                );
+                                if !dry_run {
+                                    if let Err(e) = transaction::upgrade_package(
+                                        &db,
+                                        &latest.path,
+                                        &root_dir,
+                                        false,
+                                    ) {
+                                        eprintln!("  error: {}", e);
                                     } else {
                                         upgraded += 1;
                                     }
                                 } else {
-                                    up_to_date += 1;
+                                    upgraded += 1;
                                 }
+                            } else {
+                                up_to_date += 1;
                             }
-                            Err(e) => eprintln!("warning: could not read {}: {}", pkg.name, e),
                         }
                     }
-                    Ok(None) => {
+                    Ok(_) => {
                         not_found += 1;
                     }
                     Err(e) => eprintln!("warning: resolver error for {}: {}", pkg.name, e),
@@ -737,13 +823,156 @@ fn main() -> Result<()> {
             }
 
             if dry_run {
-                println!("\n[dry-run] would upgrade {} package(s), {} up to date, {} not found in resolver",
-                    upgraded, up_to_date, not_found);
+                println!(
+                    "\n[dry-run] would upgrade {} part(s), {} up to date, {} not found",
+                    upgraded, up_to_date, not_found
+                );
             } else {
                 println!(
                     "\nupgraded {}, {} up to date, {} not found",
                     upgraded, up_to_date, not_found
                 );
+            }
+        }
+        Commands::Repo { action } => {
+            use wright::part::version::Version;
+
+            match action {
+                RepoAction::Sync { dir } => {
+                    if !dir.exists() {
+                        eprintln!("error: directory '{}' does not exist", dir.display());
+                        std::process::exit(1);
+                    }
+                    let index = repo::index::generate_index(&dir)
+                        .context("failed to generate index")?;
+                    repo::index::write_index(&index, &dir)
+                        .context("failed to write index")?;
+                    println!(
+                        "indexed {} part(s) in {}",
+                        index.parts.len(),
+                        dir.display()
+                    );
+                }
+                RepoAction::List { name } => {
+                    let mut found = false;
+                    for dir in &resolver.search_dirs {
+                        if let Some(index) =
+                            repo::index::read_index(dir).context("failed to read index")?
+                        {
+                            let mut entries: Vec<_> = if let Some(ref n) = name {
+                                index.parts.iter().filter(|e| e.name == *n).collect()
+                            } else {
+                                index.parts.iter().collect()
+                            };
+
+                            // Sort by name, then version descending
+                            entries.sort_by(|a, b| {
+                                a.name.cmp(&b.name).then_with(|| {
+                                    let av = Version::parse(&a.version).ok();
+                                    let bv = Version::parse(&b.version).ok();
+                                    match (bv, av) {
+                                        (Some(bv), Some(av)) => {
+                                            b.epoch.cmp(&a.epoch)
+                                                .then_with(|| bv.cmp(&av))
+                                                .then_with(|| b.release.cmp(&a.release))
+                                        }
+                                        _ => b.version.cmp(&a.version)
+                                            .then_with(|| b.release.cmp(&a.release)),
+                                    }
+                                })
+                            });
+
+                            for entry in &entries {
+                                let installed = db.get_package(&entry.name).ok().flatten();
+                                let tag = match &installed {
+                                    Some(pkg)
+                                        if pkg.version == entry.version
+                                            && pkg.release == entry.release =>
+                                    {
+                                        " [installed]"
+                                    }
+                                    _ => "",
+                                };
+                                println!(
+                                    "{} {}-{} ({}){}",
+                                    entry.name,
+                                    entry.version,
+                                    entry.release,
+                                    entry.arch,
+                                    tag
+                                );
+                                found = true;
+                            }
+                        }
+                    }
+                    if !found {
+                        if let Some(n) = name {
+                            println!("no parts found for '{}'", n);
+                        } else {
+                            println!("no parts in any repository (run 'wright repo sync <dir>' first)");
+                        }
+                    }
+                }
+                RepoAction::Remove {
+                    name,
+                    version,
+                    purge,
+                } => {
+                    // Parse version string: "1.2.3" or "1.2.3-2" (with release)
+                    let (target_ver, target_rel) = if let Some(pos) = version.rfind('-') {
+                        if let Ok(rel) = version[pos + 1..].parse::<u32>() {
+                            (&version[..pos], Some(rel))
+                        } else {
+                            (version.as_str(), None)
+                        }
+                    } else {
+                        (version.as_str(), None)
+                    };
+
+                    let mut removed = false;
+                    for dir in &resolver.search_dirs {
+                        if let Some(index) = repo::index::read_index(dir)? {
+                            let (to_remove, remaining): (Vec<_>, Vec<_>) =
+                                index.parts.into_iter().partition(|e| {
+                                    e.name == name
+                                        && e.version == target_ver
+                                        && target_rel.map_or(true, |r| e.release == r)
+                                });
+
+                            if to_remove.is_empty() {
+                                continue;
+                            }
+
+                            let updated = repo::index::RepoIndex { parts: remaining };
+                            repo::index::write_index(&updated, dir)
+                                .context("failed to write index")?;
+
+                            for entry in &to_remove {
+                                println!("removed: {} {}-{}", entry.name, entry.version, entry.release);
+                                if purge {
+                                    let file_path = dir.join(&entry.filename);
+                                    if file_path.exists() {
+                                        std::fs::remove_file(&file_path).context(format!(
+                                            "failed to delete {}",
+                                            file_path.display()
+                                        ))?;
+                                        println!("  deleted: {}", file_path.display());
+                                    }
+                                }
+                            }
+                            removed = true;
+                            break;
+                        }
+                    }
+
+                    if !removed {
+                        eprintln!(
+                            "error: {} {} not found in any repository index",
+                            name, version
+                        );
+                        std::process::exit(1);
+                    }
+                }
             }
         }
         Commands::Source { action } => {
@@ -878,7 +1107,7 @@ fn main() -> Result<()> {
                     }
                 } else {
                     println!(
-                        "{}: no index (run 'wbuild index {}')",
+                        "{}: no index (run 'wright repo sync {}')",
                         dir.display(),
                         dir.display()
                     );

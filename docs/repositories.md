@@ -1,6 +1,6 @@
 # Repositories
 
-Wright resolves packages by name from configured **sources** — directories
+Wright resolves parts by name from configured **sources** — directories
 containing `.wright.tar.zst` archives and an index file. This guide covers
 creating, indexing, and managing local repositories.
 
@@ -8,9 +8,9 @@ creating, indexing, and managing local repositories.
 
 | Term | What it is |
 |------|-----------|
-| **Source** | A configured directory (local) or URL (remote, future) where wright looks for packages |
-| **Index** | A `wright.index.toml` file listing every package in a source with its metadata and checksum |
-| **Resolver** | The component that finds a package archive by name — checks the index first, falls back to scanning archives |
+| **Source** | A configured directory (local) or URL (remote, future) where wright looks for parts |
+| **Index** | A `wright.index.toml` file listing every part in a source with its metadata and checksum |
+| **Resolver** | The component that finds a part archive by name — checks the index first, falls back to scanning archives |
 
 ## Quick Start
 
@@ -22,7 +22,7 @@ mkdir -p /var/lib/wright/myrepo
 cp *.wright.tar.zst /var/lib/wright/myrepo/
 
 # 3. Generate the index
-wbuild index /var/lib/wright/myrepo
+wright repo sync /var/lib/wright/myrepo
 
 # 4. Register as a source
 wright source add myrepo --path /var/lib/wright/myrepo
@@ -72,30 +72,59 @@ wright source list
 wright source remove myrepo
 ```
 
-## Indexing
+## Repository Management
+
+Use `wright repo` to manage local repositories directly.
+
+### Indexing
 
 The index (`wright.index.toml`) is what makes name-based resolution fast.
 Without it, the resolver must decompress and read `.PARTINFO` from every
 archive in the directory.
 
 ```bash
-wbuild index                              # index the default components_dir
-wbuild index /var/lib/wright/myrepo       # index a specific directory
+wright repo sync /var/lib/wright/myrepo   # generate/update index for a directory
+wbuild index /var/lib/wright/myrepo       # alternative: also works from wbuild
 ```
 
-**Re-run `wbuild index` whenever you add, remove, or update packages in a repo.**
+**Re-run `wright repo sync` whenever you add or update parts in a repo.**
 
-The index records for each package:
+The index records for each part:
 - Name, version, release, epoch, architecture
 - Description
 - Runtime and link dependencies
 - Provides, conflicts, replaces
 - Filename and SHA-256 checksum
 
+A single part name can have multiple versions in the index. The resolver
+collects all versions and picks the latest (or a user-specified version).
+
+### Listing available parts
+
+```bash
+wright repo list                   # all indexed parts
+wright repo list gcc               # all available versions of gcc
+```
+
+Output marks the currently installed version with `[installed]`:
+
+```
+gcc 15.1.0-1 (x86_64) [installed]
+gcc 14.2.0-3 (x86_64)
+gcc 14.2.0-2 (x86_64)
+```
+
+### Removing parts from the index
+
+```bash
+wright repo remove gcc 14.2.0-2           # remove index entry only
+wright repo remove gcc 14.2.0-2 --purge   # also delete the archive file
+```
+
 ### Example index entry
 
 ```toml
-[[packages]]
+[[parts]]
 name = "curl"
 version = "8.12.1"
 release = 1
@@ -115,22 +144,37 @@ link_deps = ["openssl", "zlib"]
 wright sync
 ```
 
-Reports the number of available packages from each indexed source. For local
+Reports the number of available parts from each indexed source. For local
 repos this simply reads the existing index files — there is nothing to download.
 
-## Searching Available Packages
+## Searching Available Parts
 
 ```bash
-wright search -a curl          # search available (indexed) packages
-wright search curl             # search installed packages only
+wright search -a curl          # search available (indexed) parts
+wright search curl             # search installed parts only
 ```
 
-Available package results show an `[installed]` tag if the package is already
+Available part results show an `[installed]` tag if the part is already
 on the system.
+
+## Upgrading
+
+With an indexed repository, upgrades work by name:
+
+```bash
+wright upgrade gcc                       # upgrade to the latest available version
+wright upgrade gcc --version 14.2.0      # switch to a specific version
+wright sysupgrade                        # upgrade all installed parts to latest
+wright sysupgrade -n                     # dry-run: preview without changes
+```
+
+The resolver finds all available versions across configured sources and picks
+the latest (or the version specified with `--version`). When `--version` is
+given, `--force` is implied so downgrades work without an extra flag.
 
 ## Multiple Repos
 
-When the same package exists in multiple sources, the source with the
+When the same part exists in multiple sources, the source with the
 higher `priority` wins. This lets you layer a local build repo on top of
 a shared team repo:
 
@@ -139,7 +183,7 @@ wright source add team   --path /mnt/shared/wright-repo --priority 100
 wright source add local  --path /var/lib/wright/myrepo   --priority 300
 ```
 
-Packages you build locally (priority 300) shadow the team repo (priority 100).
+Parts you build locally (priority 300) shadow the team repo (priority 100).
 
 ## Typical Workflows
 
@@ -149,12 +193,20 @@ Packages you build locally (priority 300) shadow the team repo (priority 100).
 wbuild run -i curl              # build and install in one step (no index needed)
 ```
 
+### Build, index, upgrade
+
+```bash
+wbuild run gcc                  # build updated gcc
+wright repo sync /var/lib/wright/components   # re-index
+wright upgrade gcc              # upgrade to the newly built version
+```
+
 ### Shared team repo
 
 ```bash
 # Builder machine
 wbuild run @core
-wbuild index /var/lib/wright/components
+wright repo sync /var/lib/wright/components
 
 # Developer machines
 wright source add builds --path /mnt/nfs/wright-components
@@ -166,6 +218,6 @@ wright install @base
 
 ```bash
 wbuild run -ic @qemu            # build, skip installed, install new packages
-wbuild index                    # update the index with newly built packages
-wright sync                     # refresh available package list
+wright repo sync /var/lib/wright/components   # update the index
+wright sync                     # refresh available part list
 ```

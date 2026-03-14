@@ -310,7 +310,7 @@ pub fn install_package(
 }
 
 /// Install a package with a specified install reason.
-fn install_package_with_reason(
+pub fn install_package_with_reason(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,

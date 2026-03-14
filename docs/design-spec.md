@@ -694,13 +694,19 @@ CREATE TABLE packages (
     name TEXT NOT NULL UNIQUE,
     version TEXT NOT NULL,
     release INTEGER NOT NULL,
+    epoch INTEGER NOT NULL DEFAULT 0,  -- Version epoch (higher epoch always wins)
     description TEXT,
     arch TEXT NOT NULL,
     license TEXT,
     url TEXT,
     installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    install_size INTEGER,          -- Disk usage after installation (bytes)
-    pkg_hash TEXT                   -- SHA-256 of the binary package
+    install_size INTEGER,              -- Disk usage after installation (bytes)
+    pkg_hash TEXT,                     -- SHA-256 of the .wright.tar.zst archive
+    install_scripts TEXT,              -- TOML-serialized install hooks
+    assumed INTEGER NOT NULL DEFAULT 0, -- 1 = externally provided (wright assume)
+    install_reason TEXT NOT NULL DEFAULT 'explicit' -- 'explicit' (user-requested) or 'dependency' (auto-resolved).
+                                                   -- Only `wright install` promotes dependency → explicit.
+                                                   -- Upgrades (wright upgrade, wbuild -icf) preserve existing value.
 );
 
 -- Package file manifest
@@ -712,21 +718,58 @@ CREATE TABLE files (
     file_type TEXT NOT NULL,        -- 'file', 'dir', 'symlink'
     file_mode INTEGER,             -- Permission bits
     file_size INTEGER,             -- File size
-    is_config BOOLEAN DEFAULT 0,   -- Whether this is a config file (preserved on upgrade)
+    is_config BOOLEAN DEFAULT 0,   -- Config file (preserved on upgrade)
     FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
 );
 
--- Runtime dependency relationships
+-- Dependency relationships
 CREATE TABLE dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     package_id INTEGER NOT NULL,
     depends_on TEXT NOT NULL,       -- Dependency package name
-    version_constraint TEXT,        -- Version constraint string
-    dep_type TEXT DEFAULT 'runtime', -- 'runtime' or 'link'
+    version_constraint TEXT,        -- e.g. ">= 3.0"
+    dep_type TEXT DEFAULT 'runtime', -- 'runtime', 'link', or 'build'
     FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
 );
 
--- Operation log (for rollback support)
+-- Optional (informational) dependencies, not enforced
+CREATE TABLE optional_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+);
+
+-- Virtual provides (e.g. http-server provided by nginx)
+CREATE TABLE provides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+);
+
+-- Package conflicts
+CREATE TABLE conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+);
+
+-- Shadowed files: records when a file owned by one package is overwritten
+-- by another (forced install). Used for conflict analysis and safe removal.
+CREATE TABLE shadowed_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL,
+    original_owner_id INTEGER NOT NULL,
+    shadowed_by_id INTEGER NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (original_owner_id) REFERENCES packages(id) ON DELETE CASCADE,
+    FOREIGN KEY (shadowed_by_id) REFERENCES packages(id) ON DELETE CASCADE
+);
+
+-- Operation log (for rollback support and history)
 CREATE TABLE transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -739,10 +782,15 @@ CREATE TABLE transactions (
 );
 
 -- Indexes
-CREATE INDEX idx_files_path ON files(path);
 CREATE INDEX idx_files_package ON files(package_id);
 CREATE INDEX idx_deps_package ON dependencies(package_id);
 CREATE INDEX idx_deps_on ON dependencies(depends_on);
+CREATE INDEX idx_opt_deps_package ON optional_dependencies(package_id);
+CREATE INDEX idx_provides_name ON provides(name);
+CREATE INDEX idx_provides_package ON provides(package_id);
+CREATE INDEX idx_conflicts_name ON conflicts(name);
+CREATE INDEX idx_conflicts_package ON conflicts(package_id);
+CREATE INDEX idx_shadowed_path ON shadowed_files(path);
 ```
 
 ### 8.3 Transactional Installation Flow

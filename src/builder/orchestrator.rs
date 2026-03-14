@@ -232,6 +232,13 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         eprintln!();
     }
 
+    // Derive the set of user-specified target names (for install_reason tracking).
+    let user_target_names: HashSet<String> = original_plans
+        .iter()
+        .filter_map(|p| PlanManifest::from_file(p).ok())
+        .map(|m| m.plan.name)
+        .collect();
+
     // 3. Execute builds
     execute_builds(
         config,
@@ -240,6 +247,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         &graph.build_set,
         &opts,
         &graph.bootstrap_excluded,
+        &user_target_names,
     )
 }
 
@@ -687,6 +695,7 @@ fn execute_builds(
     build_set: &HashSet<String>,
     opts: &BuildOptions,
     bootstrap_excluded: &HashMap<String, Vec<String>>,
+    user_target_names: &HashSet<String>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>();
     let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -787,6 +796,9 @@ fn execute_builds(
             let install_lock_clone = install_lock.clone();
             let compile_lock_clone = compile_lock.clone();
             let bootstrap_excluded_clone = bootstrap_excluded.clone();
+            let is_user_target = user_target_names.contains(
+                name.trim_end_matches(":bootstrap"),
+            );
 
             // Bootstrap tasks: build without cyclic deps, set env vars.
             // Full tasks that follow a bootstrap: force rebuild (archive exists
@@ -843,13 +855,26 @@ fn execute_builds(
 
                             match Database::open(&config_clone.general.db_path) {
                                 Ok(db) => {
+                                    // Determine install reason:
+                                    // - Already installed → preserve existing reason (upgrade path handles this)
+                                    // - New + user target → explicit
+                                    // - New + auto-resolved dep → dependency
+                                    let reason = if is_user_target {
+                                        "explicit"
+                                    } else {
+                                        "dependency"
+                                    };
+
                                     // 1. Install main package
-                                    if let Err(e) = crate::transaction::install_package(
-                                        &db,
-                                        &archive_path,
-                                        &PathBuf::from("/"),
-                                        true,
-                                    ) {
+                                    if let Err(e) =
+                                        crate::transaction::install_package_with_reason(
+                                            &db,
+                                            &archive_path,
+                                            &PathBuf::from("/"),
+                                            true,
+                                            reason,
+                                        )
+                                    {
                                         error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
                                         tx_clone.send(Err((name_clone, e.into()))).unwrap();
                                         return;
@@ -871,12 +896,15 @@ fn execute_builds(
                                                 "Automatically installing sub-package: {}",
                                                 sub_name
                                             );
-                                            if let Err(e) = crate::transaction::install_package(
-                                                &db,
-                                                &sub_archive_path,
-                                                &PathBuf::from("/"),
-                                                true,
-                                            ) {
+                                            if let Err(e) =
+                                                crate::transaction::install_package_with_reason(
+                                                    &db,
+                                                    &sub_archive_path,
+                                                    &PathBuf::from("/"),
+                                                    true,
+                                                    reason,
+                                                )
+                                            {
                                                 warn!("Automatic installation of sub-package '{}' failed: {:#}", sub_name, e);
                                             }
                                         }

@@ -28,6 +28,8 @@ wright [OPTIONS] <COMMAND>
 
 Install packages. Each argument can be a `.wright.tar.zst` file path, a package name (resolved from configured sources), or a `@kit` reference (expands to all packages in the named kit). Multiple kits can be combined freely — they are non-dependent, combinatory groupings and overlapping packages are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
 
+Packages explicitly listed by the user are marked as `explicit`; dependencies pulled in automatically are marked as `dependency`. If a package was previously installed as a dependency, explicitly installing it again promotes it to `explicit` so it won't be removed by cascade operations.
+
 | Flag | Description |
 |------|-------------|
 | `--force` | Reinstall even if already installed; overwrite conflicting files |
@@ -35,11 +37,18 @@ Install packages. Each argument can be a `.wright.tar.zst` file path, a package 
 
 #### `wright upgrade <PACKAGES...>`
 
-Upgrade from local `.wright.tar.zst` files.
+Upgrade installed packages by name or from archive files. When given a package name, the resolver searches all configured sources for available versions and picks the latest. When given a file path, upgrades directly from that archive.
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Allow downgrades |
+| `--force` | Allow downgrades or same-version reinstalls |
+| `--version <VERSION>` | Target a specific version instead of the latest (implies `--force` for downgrades) |
+
+```bash
+wright upgrade gcc                          # upgrade to latest available version
+wright upgrade gcc --version 14.2.0         # downgrade/switch to a specific version
+wright upgrade gcc-15.1.0-1-x86_64.wright.tar.zst  # upgrade from a file (still works)
+```
 
 #### `wright sysupgrade`
 
@@ -93,6 +102,36 @@ List installed packages.
 
 Show detailed info for an installed package.
 
+#### `wright repo sync <DIR>`
+
+Scan a directory of `.wright.tar.zst` archives and generate or update `wright.index.toml`. This replaces the need to use `wbuild index` for repository management.
+
+```bash
+wright repo sync /var/lib/wright/components
+```
+
+#### `wright repo list [NAME]`
+
+List all parts in the repository index. If a name is given, shows all available versions of that part. Installed versions are marked with `[installed]`.
+
+```bash
+wright repo list                   # list all indexed parts
+wright repo list gcc               # show all available versions of gcc
+```
+
+#### `wright repo remove <NAME> <VERSION> [--purge]`
+
+Remove a part entry from the repository index. The version can include a release number (e.g. `1.2.3-2`); without a release, all releases of that version are removed.
+
+| Flag | Description |
+|------|-------------|
+| `--purge` | Also delete the `.wright.tar.zst` archive file from disk |
+
+```bash
+wright repo remove gcc 14.2.0-2             # remove from index only
+wright repo remove gcc 14.2.0-2 --purge     # remove from index and delete archive
+```
+
 #### `wright source add <NAME> --path <PATH>`
 
 Add a new local repository source to `/etc/wright/repos.toml`.
@@ -118,7 +157,7 @@ List all configured repository sources with their type, priority, and path.
 
 #### `wright sync`
 
-Refresh repository indices from configured sources. Reports how many packages are available in each indexed source directory. For local repos, the index must be generated first with `wbuild index`.
+Refresh repository indices from configured sources. Reports how many packages are available in each indexed source directory. For local repos, the index must be generated first with `wright repo sync` or `wbuild index`.
 
 #### `wright search <KEYWORD>`
 
@@ -190,7 +229,7 @@ Build packages from `plan.toml` files. Targets can be plan names, paths, or `@as
 | `--clean` | Clear the build cache entry, working directory, and source tree before starting. Without `--clean`, the source tree (`src/`) is preserved across builds when the build key is unchanged, enabling incremental compilation. `--clean` forces a full re-extraction and recompile. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
-| `--install` (`-i`) | Automatically install each package after a successful build |
+| `--install` (`-i`) | Automatically install each package after a successful build. User-specified targets are marked `explicit`; auto-resolved dependencies are marked `dependency`. Upgrading an already-installed package preserves its existing install reason — use `wright install` to promote a dependency to explicit. |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 
 ##### Expansion scope

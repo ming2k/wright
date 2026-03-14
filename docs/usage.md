@@ -5,17 +5,16 @@ Wright is split into two tools: `wright` (system management) and `wbuild` (packa
 ## Typical Workflow
 
 ```
- plan.toml ──► wbuild run ──► .wright.tar.zst ──► wbuild index ──► wright sync ──► wright install
-  (source)      (build)         (packages)         (index repo)    (refresh)       (install)
+ plan.toml ──► wbuild run ──► .wright.tar.zst ──► wright repo sync ──► wright install/upgrade
+  (source)      (build)          (parts)            (index repo)         (manage system)
 ```
 
 1. **Write a plan** — define how to build a package in `plan.toml`
 2. **Build** — `wbuild run mypackage` compiles and creates `.wright.tar.zst` archives
-3. **Index** — `wbuild index` scans the built packages and generates `wright.index.toml`
-4. **Sync** — `wright sync` loads the index so the resolver knows what's available
-5. **Install** — `wright install mypackage` resolves the name from the index and installs
+3. **Index** — `wright repo sync <dir>` scans the built parts and generates `wright.index.toml`
+4. **Install or upgrade** — `wright install mypackage` or `wright upgrade mypackage` resolves the name from the index
 
-For quick iteration, `wbuild run -i mypackage` builds and installs in one step (skipping the index/sync cycle).
+For quick iteration, `wbuild run -i mypackage` builds and installs in one step (skipping the index cycle).
 
 ## Wright (System Administrator)
 
@@ -30,10 +29,13 @@ managing sources, indexing, and syncing.
 
 ```bash
 wright install hello-1.0.0-1-x86_64.wright.tar.zst   # from a file
-wright install curl                                    # by package name (resolved from sources)
+wright install curl                                    # by name (resolved from sources)
 wright install @base                                   # all packages in a kit
 wright install @base @devel curl                       # mix kits and packages
-wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst
+wright upgrade gcc                                     # upgrade to latest available version
+wright upgrade gcc --version 14.2.0                    # switch to a specific version
+wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst    # upgrade from a file
+wright sysupgrade                                      # upgrade everything to latest
 ```
 
 Wright handles dependencies, conflicts, and package replacements (renames) automatically during installation.
@@ -48,9 +50,9 @@ wright remove --cascade nginx      # Remove nginx and its orphan dependencies
 wright list --orphans              # Show auto-installed deps no longer needed
 ```
 
-When packages are installed, wright tracks whether each was explicitly requested or pulled in automatically as a dependency. `--cascade` uses this information to clean up dependencies that are no longer needed — similar to `apt autoremove` or `pacman -Rsu`.
+When packages are installed, wright tracks whether each was explicitly requested (`explicit`) or pulled in automatically as a dependency (`dependency`). `--cascade` uses this information to clean up dependencies that are no longer needed — similar to `apt autoremove` or `pacman -Rsu`.
 
-If you later explicitly install a package that was previously pulled in as a dependency, wright promotes it to "explicit" so it won't be removed by cascade operations.
+If you later explicitly install a package that was previously pulled in as a dependency, `wright install` promotes it to `explicit` so it won't be removed by cascade operations. Upgrading via `wright upgrade` or `wbuild run -icf` preserves the existing install reason — only `wright install` expresses the intent to "own" a package.
 
 ### Querying and Analysis
 
@@ -126,16 +128,17 @@ wbuild check hello              # validate syntax only
 wbuild checksum zlib            # download sources, fill in sha256
 ```
 
-### Repository Indexing
+### Repository Management
 
-After building packages, generate an index so `wright` can resolve packages by name:
+After building parts, generate an index so `wright` can resolve parts by name:
 
 ```bash
-wbuild index                    # index the default components directory
-wbuild index /path/to/repo      # index a specific directory
+wright repo sync /var/lib/wright/components   # index a directory
+wright repo list gcc                          # see all available versions
+wright repo remove gcc 14.2.0-2 --purge      # clean up old versions
 ```
 
-This creates a `wright.index.toml` in the target directory. With an index present, the resolver uses fast lookups instead of scanning every archive.
+This creates a `wright.index.toml` in the target directory. With an index present, the resolver uses fast lookups instead of scanning every archive. `wbuild index` also works as an alternative.
 
 ### Assembly Builds
 
@@ -147,8 +150,8 @@ ordering comes from the dependency graph in each plan.
 ```bash
 wbuild run @core                # build all plans in the "core" assembly
 wbuild run @core @devel         # combine multiple assemblies
-wbuild run -ic @qemu            # build and install, skipping already-installed packages
+wbuild run -ic @qemu            # build and install, skipping already-installed parts
 ```
 
-When used with `--install` (`-i`), packages already installed on the system
+When used with `--install` (`-i`), parts already installed on the system
 are automatically skipped. Use `--force` (`-f`) to rebuild them anyway.

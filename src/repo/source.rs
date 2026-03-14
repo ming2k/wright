@@ -1,8 +1,11 @@
+use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+
 use crate::config::{AssembliesConfig, RepoConfig, SourceConfig};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
+use crate::part::version::Version;
 use crate::util::download;
-use std::path::{Path, PathBuf};
 
 /// Strip path separators and dangerous components from a filename derived from a URL.
 pub fn sanitize_cache_filename(raw: &str) -> String {
@@ -38,6 +41,62 @@ pub struct ResolvedPart {
     pub name: String,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
+}
+
+/// A resolved part with full version information, for multi-version queries.
+#[derive(Debug, Clone)]
+pub struct ResolvedPartVersioned {
+    pub name: String,
+    pub version: String,
+    pub release: u32,
+    pub epoch: u32,
+    pub path: PathBuf,
+    pub dependencies: Vec<String>,
+}
+
+impl ResolvedPartVersioned {
+    /// Compare by (epoch, version, release). Returns ordering relative to `other`.
+    pub fn version_cmp(&self, other: &Self) -> Ordering {
+        if self.epoch != other.epoch {
+            return self.epoch.cmp(&other.epoch);
+        }
+        let self_ver = Version::parse(&self.version).ok();
+        let other_ver = Version::parse(&other.version).ok();
+        match (self_ver, other_ver) {
+            (Some(sv), Some(ov)) => {
+                let ord = sv.cmp(&ov);
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            _ => {
+                let ord = self.version.cmp(&other.version);
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+        self.release.cmp(&other.release)
+    }
+}
+
+/// From a list of resolved parts, pick the latest by (epoch, version, release).
+pub fn pick_latest(parts: &[ResolvedPartVersioned]) -> Option<&ResolvedPartVersioned> {
+    parts
+        .iter()
+        .max_by(|a, b| a.version_cmp(b))
+}
+
+/// From a list of resolved parts, find one matching a specific version string.
+/// If multiple releases exist for that version, returns the highest release.
+pub fn pick_version<'a>(
+    parts: &'a [ResolvedPartVersioned],
+    version: &str,
+) -> Option<&'a ResolvedPartVersioned> {
+    parts
+        .iter()
+        .filter(|p| p.version == version)
+        .max_by_key(|p| p.release)
 }
 
 impl SimpleResolver {
@@ -151,6 +210,67 @@ impl SimpleResolver {
             }
         }
         Ok(None)
+    }
+
+    /// Resolve all available versions of a part by name across all search dirs.
+    pub fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
+        let mut results = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for dir in &self.search_dirs {
+            if !dir.exists() {
+                continue;
+            }
+
+            // Try index first
+            if let Some(index) = crate::repo::index::read_index(dir)? {
+                for entry in index.parts.iter().filter(|e| e.name == name) {
+                    let key = (entry.version.clone(), entry.release, entry.epoch);
+                    if seen.insert(key) {
+                        let path = dir.join(&entry.filename);
+                        if path.exists() {
+                            results.push(ResolvedPartVersioned {
+                                name: entry.name.clone(),
+                                version: entry.version.clone(),
+                                release: entry.release,
+                                epoch: entry.epoch,
+                                path,
+                                dependencies: entry.runtime_deps.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Fallback: scan archives
+            for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
+                let entry = entry.map_err(WrightError::IoError)?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("zst") {
+                    if let Ok(partinfo) = archive::read_partinfo(&path) {
+                        if partinfo.name == name {
+                            let key = (
+                                partinfo.version.clone(),
+                                partinfo.release,
+                                partinfo.epoch,
+                            );
+                            if seen.insert(key) {
+                                results.push(ResolvedPartVersioned {
+                                    name: partinfo.name,
+                                    version: partinfo.version,
+                                    release: partinfo.release,
+                                    epoch: partinfo.epoch,
+                                    path,
+                                    dependencies: partinfo.runtime_deps,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     pub fn read_archive(&self, path: &Path) -> Result<ResolvedPart> {
