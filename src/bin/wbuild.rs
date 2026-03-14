@@ -11,7 +11,7 @@ use wright::part::version;
 use wright::plan::manifest::PlanManifest;
 
 #[derive(Parser)]
-#[command(name = "wbuild", about = "wright package constructor")]
+#[command(name = "wbuild", about = "wright package constructor", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

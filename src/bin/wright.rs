@@ -35,7 +35,7 @@ fn print_paged(content: &str) {
 }
 
 #[derive(Parser)]
-#[command(name = "wright", about = "wright system administrator")]
+#[command(name = "wright", about = "wright system administrator", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

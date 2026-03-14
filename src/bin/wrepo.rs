@@ -8,7 +8,7 @@ use wright::config::GlobalConfig;
 use wright::repo;
 
 #[derive(Parser)]
-#[command(name = "wrepo", about = "wright repository manager")]
+#[command(name = "wrepo", about = "wright repository manager", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
