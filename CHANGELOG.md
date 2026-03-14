@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-03-15
+
+### Breaking Changes
+- **New `wrepo` binary**: repository management is now handled by a dedicated `wrepo` tool. The following commands have been removed from `wright` and `wbuild`:
+  - `wright repo sync/list/remove` → `wrepo sync/list/remove`
+  - `wright source add/remove/list` → `wrepo source add/remove/list`
+  - `wright sync` → removed (`wrepo sync` prints stats after indexing)
+  - `wright search --available` → `wrepo search` (`wright search` now only searches installed packages)
+  - `wbuild index` → `wrepo sync` (eliminates duplication)
+
+### Features
+- **Three-tool architecture**: each binary now has a single clear responsibility:
+  - `wbuild` — package constructor (plan.toml → .wright.tar.zst)
+  - `wrepo` — repository manager (indexing, searching, source configuration)
+  - `wright` — system administrator (install, remove, upgrade, query)
+- **`wrepo sync` defaults to `components_dir`**: no directory argument needed for the common case (`wrepo sync` indexes `/var/lib/wright/components` by default)
+
+### Documentation
+- Rewrite usage.md with tool-by-tool structure, coordination workflows, and boundary summary table
+- Rewrite architecture.md with three-binary diagram, module ownership matrix, and cross-tool coordination section
+- Update getting-started.md with three-binary install instructions and `wrepo sync` workflow
+- Update cli-reference.md with `wrepo` as a top-level section
+- Update repositories.md for `wrepo` commands throughout
+
 ## [1.6.1] - 2026-03-15
 
 ### Features
