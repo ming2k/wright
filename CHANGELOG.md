@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-03-15
+
+### Features
+- **Local repository management**: add `wright repo sync/list/remove` commands. `wright repo sync <dir>` generates the repository index directly from wright, replacing the need for `wbuild index` in the typical workflow. `wright repo list [name]` shows all available versions with `[installed]` markers. `wright repo remove` removes index entries with optional `--purge` to delete archive files.
+- **Name-based upgrades**: `wright upgrade` now accepts package names in addition to file paths. The resolver finds the latest version from all configured sources. Use `--version` to target a specific version (enables downgrades).
+- **Multi-version resolver**: `resolve_all()` returns all available versions of a part across sources, with `pick_latest()` and `pick_version()` helpers.
+
+### Fixes
+- **install_reason tracking for wbuild**: `wbuild run -i` now correctly marks user-specified targets as `explicit` and auto-resolved dependencies as `dependency`. Previously all packages were marked `explicit`.
+- **Upgrade preserves install_reason**: upgrading a package via `wright upgrade` or `wbuild run -icf` no longer changes its install reason. Only `wright install` promotes a dependency to explicit — this is the only command that expresses intent to "own" a package.
+- **sysupgrade version comparison**: fix naive version comparison to use proper epoch → version → release ordering, and pick the latest from all available versions instead of the first match.
+
+### Documentation
+- Update cli-reference, repositories, usage, and design-spec docs to reflect new commands and install_reason semantics.
+- Sync database schema documentation in design-spec with actual schema (add epoch, assumed, install_scripts, install_reason columns; add optional_dependencies, provides, conflicts, shadowed_files tables).
+
 ## [1.6.0] - 2026-03-12
 
 ### Breaking Changes
