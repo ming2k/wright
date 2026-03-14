@@ -14,7 +14,7 @@ use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::repo::source::sanitize_cache_filename;
-use crate::util::{checksum, compress, download};
+use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {
     pub pkg_dir: PathBuf,
@@ -934,27 +934,26 @@ impl Builder {
             .remote_anonymous(&git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
-        // Progress callbacks: log transfer stats so long fetches aren't silent.
-        let display_url = git_url.clone();
-        let mut last_pct = 0u32;
+        // Progress bar for git fetch, similar to HTTP downloads.
+        let pb = progress::MULTI.add(indicatif::ProgressBar::new(0));
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} objects ({msg})")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb.set_prefix(format!("git fetch {}", git_url));
+
+        let pb_clone = pb.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.transfer_progress(move |stats| {
-            let total = stats.total_objects();
+            let total = stats.total_objects() as u64;
             if total == 0 {
                 return true;
             }
-            let pct = (stats.received_objects() * 100 / total) as u32;
-            // Log at every 10% milestone to avoid flooding the log.
-            if pct / 10 > last_pct / 10 {
-                last_pct = pct;
-                info!(
-                    "git fetch {}: {}/{} objects ({} KiB)",
-                    display_url,
-                    stats.received_objects(),
-                    total,
-                    stats.received_bytes() / 1024,
-                );
-            }
+            pb_clone.set_length(total);
+            pb_clone.set_position(stats.received_objects() as u64);
+            pb_clone.set_message(format!("{} KiB", stats.received_bytes() / 1024));
             true
         });
 
@@ -963,13 +962,15 @@ impl Builder {
         fetch_opts.download_tags(git2::AutotagOption::All);
 
         info!("Fetching from remote: {}", git_url);
-        remote
+        let fetch_result = remote
             .fetch(
                 &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
                 Some(&mut fetch_opts),
                 None,
             )
-            .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)))?;
+            .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)));
+        pb.finish_and_clear();
+        fetch_result?;
 
         // Resolve the ref to a commit
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
