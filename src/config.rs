@@ -33,6 +33,8 @@ pub struct GeneralConfig {
     pub assemblies_dir: PathBuf,
     #[serde(default = "default_kits_dir")]
     pub kits_dir: PathBuf,
+    #[serde(default = "default_repo_dir")]
+    pub repo_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -163,6 +165,7 @@ fn default_general() -> GeneralConfig {
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
         kits_dir: default_kits_dir(),
+        repo_dir: default_repo_dir(),
     }
 }
 
@@ -233,6 +236,9 @@ fn default_assemblies_dir() -> PathBuf {
 }
 fn default_kits_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/kits")
+}
+fn default_repo_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/repo")
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright-build")

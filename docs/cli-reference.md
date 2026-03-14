@@ -317,7 +317,7 @@ wrepo [OPTIONS] <COMMAND>
 
 #### `wrepo sync [DIR]`
 
-Scan a directory of `.wright.tar.zst` archives and generate or update `wright.index.toml`. Defaults to `components_dir` (`/var/lib/wright/components`) if no directory is given.
+Import a directory of `.wright.tar.zst` archives into the repository SQLite catalog. Defaults to `components_dir` (`/var/lib/wright/components`) if no directory is given.
 
 ```bash
 wrepo sync                              # index the default components_dir
@@ -326,7 +326,7 @@ wrepo sync /var/lib/wright/myrepo       # index a specific directory
 
 #### `wrepo list [NAME]`
 
-List all parts in the repository index. If a name is given, shows all available versions of that part. Installed versions are marked with `[installed]`.
+List all parts in the repository catalog. If a name is given, shows all available versions of that part. Installed versions are marked with `[installed]`.
 
 ```bash
 wrepo list                   # list all indexed parts
@@ -335,7 +335,7 @@ wrepo list gcc               # show all available versions of gcc
 
 #### `wrepo search <KEYWORD>`
 
-Search available (indexed) packages by keyword (name and description). Installed packages are marked with `[installed]`.
+Search available packages in the repository catalog by keyword (name and description). Installed packages are marked with `[installed]`.
 
 ```bash
 wrepo search curl
@@ -343,7 +343,7 @@ wrepo search curl
 
 #### `wrepo remove <NAME> <VERSION> [--purge]`
 
-Remove a part entry from the repository index. The version can include a release number (e.g. `1.2.3-2`); without a release, all releases of that version are removed.
+Remove a part entry from the repository catalog. The version can include a release number (e.g. `1.2.3-2`); without a release, all releases of that version are removed.
 
 | Flag | Description |
 |------|-------------|
@@ -360,7 +360,6 @@ Add a new local repository source to `/etc/wright/repos.toml`.
 
 | Flag | Description |
 |------|-------------|
-| `--type <TYPE>` | Source type: `local` or `hold` (default: `local`) |
 | `--path <PATH>` | Local directory path (required) |
 | `--priority <N>` | Priority — higher number is preferred (default: `100`) |
 

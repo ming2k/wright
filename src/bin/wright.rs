@@ -202,7 +202,6 @@ enum Commands {
     },
 }
 
-
 fn parse_prefix_mode(s: &str) -> std::result::Result<PrefixMode, String> {
     match s {
         "indent" => Ok(PrefixMode::Indent),
@@ -256,9 +255,12 @@ fn main() -> Result<()> {
     let mut resolver =
         wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("packages"));
     resolver.load_from_config(&repo_config);
+    resolver.set_repo_dir(config.general.repo_dir.clone());
     resolver.add_search_dir(config.general.cache_dir.join("packages"));
     resolver.add_search_dir(config.general.components_dir.clone());
-    resolver.add_search_dir(std::env::current_dir()?);
+    if let Ok(cwd) = std::env::current_dir() {
+        resolver.add_search_dir(cwd);
+    }
     resolver.add_plans_dir(config.general.plans_dir.clone());
 
     match cli.command {

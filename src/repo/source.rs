@@ -35,6 +35,7 @@ pub struct SimpleResolver {
     pub cache_dir: PathBuf,
     pub assemblies: AssembliesConfig,
     pub download_timeout: u64,
+    pub repo_dir: Option<PathBuf>,
 }
 
 pub struct ResolvedPart {
@@ -82,9 +83,7 @@ impl ResolvedPartVersioned {
 
 /// From a list of resolved parts, pick the latest by (epoch, version, release).
 pub fn pick_latest(parts: &[ResolvedPartVersioned]) -> Option<&ResolvedPartVersioned> {
-    parts
-        .iter()
-        .max_by(|a, b| a.version_cmp(b))
+    parts.iter().max_by(|a, b| a.version_cmp(b))
 }
 
 /// From a list of resolved parts, find one matching a specific version string.
@@ -110,6 +109,7 @@ impl SimpleResolver {
                 assemblies: std::collections::HashMap::new(),
             },
             download_timeout: 300,
+            repo_dir: None,
         }
     }
 
@@ -119,14 +119,16 @@ impl SimpleResolver {
                 continue;
             }
             match source.type_.as_str() {
-                "local" | "hold" => {
+                "local" => {
                     if let Some(ref path) = source.path {
-                        if source.type_ == "local" {
-                            self.add_search_dir(path.clone());
-                        } else {
-                            self.add_plans_dir(path.clone());
-                        }
+                        self.add_search_dir(path.clone());
                     }
+                }
+                "hold" => {
+                    tracing::debug!(
+                        "ignoring hold source '{}' for binary package resolver",
+                        source.name
+                    );
                 }
                 "remote" => {
                     if source.url.is_some() {
@@ -146,6 +148,10 @@ impl SimpleResolver {
 
     pub fn add_plans_dir(&mut self, path: PathBuf) {
         self.plans_dirs.push(path);
+    }
+
+    pub fn set_repo_dir(&mut self, path: PathBuf) {
+        self.repo_dir = Some(path);
     }
 
     pub fn load_assemblies(&mut self, config: AssembliesConfig) {
@@ -173,26 +179,29 @@ impl SimpleResolver {
     }
 
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
+        // Try repo DB first (indexed lookup)
+        if let Some(ref repo_dir) = self.repo_dir {
+            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_dir) {
+                if let Ok(Some(entry)) = repo_db.find_package(name) {
+                    for dir in &self.search_dirs {
+                        let path = dir.join(&entry.filename);
+                        if path.exists() {
+                            return Ok(Some(ResolvedPart {
+                                name: entry.name,
+                                path,
+                                dependencies: entry.runtime_deps,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: scan archives directly
         for dir in &self.search_dirs {
             if !dir.exists() {
                 continue;
             }
-
-            // Try index first (fast path)
-            if let Some(index) = crate::repo::index::read_index(dir)? {
-                if let Some(entry) = index.parts.iter().find(|e| e.name == name) {
-                    let path = dir.join(&entry.filename);
-                    if path.exists() {
-                        return Ok(Some(ResolvedPart {
-                            name: entry.name.clone(),
-                            path,
-                            dependencies: entry.runtime_deps.clone(),
-                        }));
-                    }
-                }
-            }
-
-            // Fallback: scan archives directly
             for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
                 let entry = entry.map_err(WrightError::IoError)?;
                 let path = entry.path();
@@ -217,43 +226,45 @@ impl SimpleResolver {
         let mut results = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        for dir in &self.search_dirs {
-            if !dir.exists() {
-                continue;
-            }
-
-            // Try index first
-            if let Some(index) = crate::repo::index::read_index(dir)? {
-                for entry in index.parts.iter().filter(|e| e.name == name) {
-                    let key = (entry.version.clone(), entry.release, entry.epoch);
-                    if seen.insert(key) {
-                        let path = dir.join(&entry.filename);
-                        if path.exists() {
-                            results.push(ResolvedPartVersioned {
-                                name: entry.name.clone(),
-                                version: entry.version.clone(),
-                                release: entry.release,
-                                epoch: entry.epoch,
-                                path,
-                                dependencies: entry.runtime_deps.clone(),
-                            });
+        // Try repo DB first
+        if let Some(ref repo_dir) = self.repo_dir {
+            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_dir) {
+                if let Ok(entries) = repo_db.find_all_versions(name) {
+                    for entry in entries {
+                        let key = (entry.version.clone(), entry.release, entry.epoch);
+                        if seen.insert(key) {
+                            for dir in &self.search_dirs {
+                                let path = dir.join(&entry.filename);
+                                if path.exists() {
+                                    results.push(ResolvedPartVersioned {
+                                        name: entry.name.clone(),
+                                        version: entry.version.clone(),
+                                        release: entry.release,
+                                        epoch: entry.epoch,
+                                        path,
+                                        dependencies: entry.runtime_deps.clone(),
+                                    });
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
 
-            // Fallback: scan archives
+        // Fallback: scan archives for anything not already found
+        for dir in &self.search_dirs {
+            if !dir.exists() {
+                continue;
+            }
             for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
                 let entry = entry.map_err(WrightError::IoError)?;
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("zst") {
                     if let Ok(partinfo) = archive::read_partinfo(&path) {
                         if partinfo.name == name {
-                            let key = (
-                                partinfo.version.clone(),
-                                partinfo.release,
-                                partinfo.epoch,
-                            );
+                            let key = (partinfo.version.clone(), partinfo.release, partinfo.epoch);
                             if seen.insert(key) {
                                 results.push(ResolvedPartVersioned {
                                     name: partinfo.name,
@@ -338,5 +349,44 @@ impl SimpleResolver {
             }
         }
         Ok(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SimpleResolver;
+    use crate::config::{RepoConfig, SourceConfig};
+    use std::path::PathBuf;
+
+    #[test]
+    fn load_from_config_ignores_hold_sources_for_binary_resolution() {
+        let mut resolver = SimpleResolver::new(PathBuf::from("/tmp/cache"));
+        let config = RepoConfig {
+            source: vec![
+                SourceConfig {
+                    name: "local-repo".to_string(),
+                    type_: "local".to_string(),
+                    path: Some(PathBuf::from("/repo")),
+                    url: None,
+                    priority: 100,
+                    gpg_key: None,
+                    enabled: true,
+                },
+                SourceConfig {
+                    name: "hold-tree".to_string(),
+                    type_: "hold".to_string(),
+                    path: Some(PathBuf::from("/plans")),
+                    url: None,
+                    priority: 100,
+                    gpg_key: None,
+                    enabled: true,
+                },
+            ],
+        };
+
+        resolver.load_from_config(&config);
+
+        assert_eq!(resolver.search_dirs, vec![PathBuf::from("/repo")]);
+        assert!(resolver.plans_dirs.is_empty());
     }
 }

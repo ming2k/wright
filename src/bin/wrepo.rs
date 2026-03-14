@@ -28,12 +28,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scan a directory and generate/update wright.index.toml
+    /// Import packages from a directory of .wright.tar.zst archives
     Sync {
         /// Directory containing .wright.tar.zst files (default: components_dir)
         dir: Option<PathBuf>,
     },
-    /// List parts available in indexed repositories
+    /// List parts available in the repository
     List {
         /// Show all versions of a specific part
         name: Option<String>,
@@ -43,7 +43,7 @@ enum Commands {
         /// Search keyword (matches name and description)
         keyword: String,
     },
-    /// Remove a part entry from the repository index
+    /// Remove a part entry from the repository
     Remove {
         /// Part name
         name: String,
@@ -66,10 +66,6 @@ enum SourceAction {
     Add {
         /// Unique source name
         name: String,
-
-        /// Source type: local or hold
-        #[arg(long, default_value = "local")]
-        r#type: String,
 
         /// Local directory path
         #[arg(long)]
@@ -102,24 +98,10 @@ fn main() -> Result<()> {
     };
 
     if cli.verbose > 0 {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
     let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
-
-    let repo_config =
-        wright::config::RepoConfig::load(None).context("failed to load repo config")?;
-
-    let mut resolver =
-        wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("packages"));
-    resolver.load_from_config(&repo_config);
-    resolver.add_search_dir(config.general.cache_dir.join("packages"));
-    resolver.add_search_dir(config.general.components_dir.clone());
-
-    let db_path = config.general.db_path.clone();
-    let db = wright::database::Database::open(&db_path).context("failed to open database")?;
 
     match cli.command {
         Commands::Sync { dir } => {
@@ -128,114 +110,77 @@ fn main() -> Result<()> {
                 eprintln!("error: directory '{}' does not exist", dir.display());
                 std::process::exit(1);
             }
-            let index = repo::index::generate_index(&dir)
-                .context("failed to generate index")?;
-            repo::index::write_index(&index, &dir)
-                .context("failed to write index")?;
-            println!(
-                "indexed {} part(s) in {}",
-                index.parts.len(),
-                dir.display()
-            );
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+                .context("failed to open repo database")?;
+            let count = repo_db
+                .sync_from_archives(&dir)
+                .context("failed to sync archives")?;
+            println!("indexed {} part(s) from {}", count, dir.display());
         }
         Commands::List { name } => {
-            use wright::part::version::Version;
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+                .context("failed to open repo database")?;
+            let db_path = config.general.db_path.clone();
+            let db =
+                wright::database::Database::open(&db_path).context("failed to open database")?;
 
-            let mut found = false;
-            for dir in &resolver.search_dirs {
-                if let Some(index) =
-                    repo::index::read_index(dir).context("failed to read index")?
-                {
-                    let mut entries: Vec<_> = if let Some(ref n) = name {
-                        index.parts.iter().filter(|e| e.name == *n).collect()
-                    } else {
-                        index.parts.iter().collect()
-                    };
+            let entries = repo_db
+                .list_packages(name.as_deref())
+                .context("failed to list packages")?;
 
-                    entries.sort_by(|a, b| {
-                        a.name.cmp(&b.name).then_with(|| {
-                            let av = Version::parse(&a.version).ok();
-                            let bv = Version::parse(&b.version).ok();
-                            match (bv, av) {
-                                (Some(bv), Some(av)) => {
-                                    b.epoch.cmp(&a.epoch)
-                                        .then_with(|| bv.cmp(&av))
-                                        .then_with(|| b.release.cmp(&a.release))
-                                }
-                                _ => b.version.cmp(&a.version)
-                                    .then_with(|| b.release.cmp(&a.release)),
-                            }
-                        })
-                    });
-
-                    for entry in &entries {
-                        let installed = db.get_package(&entry.name).ok().flatten();
-                        let tag = match &installed {
-                            Some(pkg)
-                                if pkg.version == entry.version
-                                    && pkg.release == entry.release =>
-                            {
-                                " [installed]"
-                            }
-                            _ => "",
-                        };
-                        println!(
-                            "{} {}-{} ({}){}",
-                            entry.name,
-                            entry.version,
-                            entry.release,
-                            entry.arch,
-                            tag
-                        );
-                        found = true;
-                    }
-                }
-            }
-            if !found {
+            if entries.is_empty() {
                 if let Some(n) = name {
                     println!("no parts found for '{}'", n);
                 } else {
-                    println!("no parts in any repository (run 'wrepo sync' first)");
+                    println!("no parts in repository (run 'wrepo sync' first)");
+                }
+            } else {
+                for entry in &entries {
+                    let installed = db.get_package(&entry.name).ok().flatten();
+                    let tag = match &installed {
+                        Some(pkg)
+                            if pkg.version == entry.version && pkg.release == entry.release =>
+                        {
+                            " [installed]"
+                        }
+                        _ => "",
+                    };
+                    println!(
+                        "{} {}-{} ({}){}",
+                        entry.name, entry.version, entry.release, entry.arch, tag
+                    );
                 }
             }
         }
         Commands::Search { keyword } => {
-            let mut found = false;
-            for dir in &resolver.search_dirs {
-                if let Some(index) =
-                    repo::index::read_index(dir).context("failed to read repo index")?
-                {
-                    for entry in &index.parts {
-                        if entry.name.contains(&keyword)
-                            || entry
-                                .description
-                                .to_lowercase()
-                                .contains(&keyword.to_lowercase())
-                        {
-                            let installed = db.get_package(&entry.name).ok().flatten();
-                            let tag = if installed.is_some() {
-                                " [installed]"
-                            } else {
-                                ""
-                            };
-                            println!(
-                                "{} {}-{} - {}{}",
-                                entry.name,
-                                entry.version,
-                                entry.release,
-                                entry.description,
-                                tag
-                            );
-                            found = true;
-                        }
-                    }
-                }
-            }
-            if !found {
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+                .context("failed to open repo database")?;
+            let db_path = config.general.db_path.clone();
+            let db =
+                wright::database::Database::open(&db_path).context("failed to open database")?;
+
+            let entries = repo_db
+                .search_packages(&keyword)
+                .context("failed to search packages")?;
+
+            if entries.is_empty() {
                 println!(
                     "no available packages found matching '{}' (run 'wrepo sync' first?)",
                     keyword
                 );
+            } else {
+                for entry in &entries {
+                    let installed = db.get_package(&entry.name).ok().flatten();
+                    let tag = if installed.is_some() {
+                        " [installed]"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "{} {}-{} - {}{}",
+                        entry.name, entry.version, entry.release, entry.description, tag
+                    );
+                }
             }
         }
         Commands::Remove {
@@ -253,48 +198,38 @@ fn main() -> Result<()> {
                 (version.as_str(), None)
             };
 
-            let mut removed = false;
-            for dir in &resolver.search_dirs {
-                if let Some(index) = repo::index::read_index(dir)? {
-                    let (to_remove, remaining): (Vec<_>, Vec<_>) =
-                        index.parts.into_iter().partition(|e| {
-                            e.name == name
-                                && e.version == target_ver
-                                && target_rel.map_or(true, |r| e.release == r)
-                        });
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+                .context("failed to open repo database")?;
 
-                    if to_remove.is_empty() {
-                        continue;
-                    }
+            // Get filename before removal if purge is requested
+            let filename = if purge {
+                repo_db.get_filename(&name, target_ver, target_rel)?
+            } else {
+                None
+            };
 
-                    let updated = repo::index::RepoIndex { parts: remaining };
-                    repo::index::write_index(&updated, dir)
-                        .context("failed to write index")?;
+            let removed = repo_db
+                .remove_package(&name, target_ver, target_rel)
+                .context("failed to remove package")?;
 
-                    for entry in &to_remove {
-                        println!("removed: {} {}-{}", entry.name, entry.version, entry.release);
-                        if purge {
-                            let file_path = dir.join(&entry.filename);
-                            if file_path.exists() {
-                                std::fs::remove_file(&file_path).context(format!(
-                                    "failed to delete {}",
-                                    file_path.display()
-                                ))?;
-                                println!("  deleted: {}", file_path.display());
-                            }
-                        }
-                    }
-                    removed = true;
-                    break;
-                }
+            if removed.is_empty() {
+                eprintln!("error: {} {} not found in repository", name, version);
+                std::process::exit(1);
             }
 
-            if !removed {
-                eprintln!(
-                    "error: {} {} not found in any repository index",
-                    name, version
-                );
-                std::process::exit(1);
+            for (n, v, r) in &removed {
+                println!("removed: {} {}-{}", n, v, r);
+            }
+
+            if purge {
+                if let Some(fname) = filename {
+                    let file_path = config.general.components_dir.join(&fname);
+                    if file_path.exists() {
+                        std::fs::remove_file(&file_path)
+                            .context(format!("failed to delete {}", file_path.display()))?;
+                        println!("  deleted: {}", file_path.display());
+                    }
+                }
             }
         }
         Commands::Source { action } => {
@@ -327,15 +262,9 @@ fn main() -> Result<()> {
                 }
                 SourceAction::Add {
                     name,
-                    r#type,
                     path,
                     priority,
                 } => {
-                    let type_str = r#type;
-                    if type_str != "local" && type_str != "hold" {
-                        eprintln!("error: type must be 'local' or 'hold'");
-                        std::process::exit(1);
-                    }
                     if !path.exists() {
                         eprintln!("warning: path '{}' does not exist yet", path.display());
                     }
@@ -359,13 +288,13 @@ fn main() -> Result<()> {
                         content.push('\n');
                     }
                     content.push_str(&format!(
-                        "\n[[source]]\nname = \"{}\"\ntype = \"{}\"\npath = \"{}\"\npriority = {}\n",
-                        name, type_str, path.display(), priority
+                        "\n[[source]]\nname = \"{}\"\ntype = \"local\"\npath = \"{}\"\npriority = {}\n",
+                        name, path.display(), priority
                     ));
 
-                    // Ensure parent directory exists
                     if let Some(parent) = repos_path.parent() {
-                        std::fs::create_dir_all(parent).context("failed to create config directory")?;
+                        std::fs::create_dir_all(parent)
+                            .context("failed to create config directory")?;
                     }
                     std::fs::write(&repos_path, &content).context("failed to write repos.toml")?;
                     println!("added source '{}' -> {}", name, path.display());
