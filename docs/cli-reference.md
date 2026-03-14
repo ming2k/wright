@@ -1,8 +1,12 @@
 # CLI Reference
 
-Wright is split into two specialized tools:
-- **`wright`**: System administrator for managing installed packages and system health.
-- **`wbuild`**: Package constructor for building and validating plans.
+Wright is split into three specialized tools:
+
+| Tool | Role |
+|------|------|
+| **`wbuild`** | Package constructor — build and validate plans |
+| **`wrepo`** | Repository manager — index, search, source configuration |
+| **`wright`** | System administrator — install, remove, upgrade, query |
 
 ---
 
@@ -102,70 +106,9 @@ List installed packages.
 
 Show detailed info for an installed package.
 
-#### `wright repo sync <DIR>`
-
-Scan a directory of `.wright.tar.zst` archives and generate or update `wright.index.toml`. This replaces the need to use `wbuild index` for repository management.
-
-```bash
-wright repo sync /var/lib/wright/components
-```
-
-#### `wright repo list [NAME]`
-
-List all parts in the repository index. If a name is given, shows all available versions of that part. Installed versions are marked with `[installed]`.
-
-```bash
-wright repo list                   # list all indexed parts
-wright repo list gcc               # show all available versions of gcc
-```
-
-#### `wright repo remove <NAME> <VERSION> [--purge]`
-
-Remove a part entry from the repository index. The version can include a release number (e.g. `1.2.3-2`); without a release, all releases of that version are removed.
-
-| Flag | Description |
-|------|-------------|
-| `--purge` | Also delete the `.wright.tar.zst` archive file from disk |
-
-```bash
-wright repo remove gcc 14.2.0-2             # remove from index only
-wright repo remove gcc 14.2.0-2 --purge     # remove from index and delete archive
-```
-
-#### `wright source add <NAME> --path <PATH>`
-
-Add a new local repository source to `/etc/wright/repos.toml`.
-
-| Flag | Description |
-|------|-------------|
-| `--type <TYPE>` | Source type: `local` or `hold` (default: `local`) |
-| `--path <PATH>` | Local directory path (required) |
-| `--priority <N>` | Priority — higher number is preferred (default: `100`) |
-
-```bash
-wright source add myrepo --path /var/lib/wright/myrepo
-wright source add myrepo --path /var/lib/wright/myrepo --priority 300
-```
-
-#### `wright source remove <NAME>`
-
-Remove a repository source from `/etc/wright/repos.toml`.
-
-#### `wright source list`
-
-List all configured repository sources with their type, priority, and path.
-
-#### `wright sync`
-
-Refresh repository indices from configured sources. Reports how many packages are available in each indexed source directory. For local repos, the index must be generated first with `wright repo sync` or `wbuild index`.
-
 #### `wright search <KEYWORD>`
 
-Search packages by keyword (name and description).
-
-| Flag | Description |
-|------|-------------|
-| `--available` (`-a`) | Search available (indexed) packages instead of installed ones |
+Search installed packages by keyword (name and description). Use `wrepo search` to search available (indexed) packages.
 
 #### `wright files <PACKAGE>`
 
@@ -350,17 +293,86 @@ Analyze the **static** dependency tree of a plan in the hold tree. Shows what *w
 |------|-------------|
 | `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
 
-#### `wbuild index [PATH]`
-
-Generate a repository index (`wright.index.toml`) from all `.wright.tar.zst` packages in a directory. Defaults to `components_dir` if no path is given.
-
-The index records each package's name, version, architecture, dependencies, and SHA-256 checksum. Once generated, the resolver uses it for fast lookups instead of scanning every archive.
-
-```bash
-wbuild index                              # index the default components dir
-wbuild index /var/lib/wright/components   # index a specific directory
-```
-
 #### `wbuild checksum [TARGETS]...`
 
 Download sources and update SHA256 checksums in `plan.toml`. Only updates the specified plans — no dependency cascade is applied (unlike `wbuild run`, checksum is a per-plan metadata operation).
+
+---
+
+## Wrepo (Repository Manager)
+
+```
+wrepo [OPTIONS] <COMMAND>
+```
+
+### Global Options
+
+| Flag | Description |
+|------|-------------|
+| `--config <PATH>` | Path to config file |
+| `-v` / `--verbose` | Increase log verbosity; use twice (`-vv`) for trace-level logs |
+| `--quiet` | Reduce output to warnings and errors only |
+
+### Commands
+
+#### `wrepo sync [DIR]`
+
+Scan a directory of `.wright.tar.zst` archives and generate or update `wright.index.toml`. Defaults to `components_dir` (`/var/lib/wright/components`) if no directory is given.
+
+```bash
+wrepo sync                              # index the default components_dir
+wrepo sync /var/lib/wright/myrepo       # index a specific directory
+```
+
+#### `wrepo list [NAME]`
+
+List all parts in the repository index. If a name is given, shows all available versions of that part. Installed versions are marked with `[installed]`.
+
+```bash
+wrepo list                   # list all indexed parts
+wrepo list gcc               # show all available versions of gcc
+```
+
+#### `wrepo search <KEYWORD>`
+
+Search available (indexed) packages by keyword (name and description). Installed packages are marked with `[installed]`.
+
+```bash
+wrepo search curl
+```
+
+#### `wrepo remove <NAME> <VERSION> [--purge]`
+
+Remove a part entry from the repository index. The version can include a release number (e.g. `1.2.3-2`); without a release, all releases of that version are removed.
+
+| Flag | Description |
+|------|-------------|
+| `--purge` | Also delete the `.wright.tar.zst` archive file from disk |
+
+```bash
+wrepo remove gcc 14.2.0-2             # remove from index only
+wrepo remove gcc 14.2.0-2 --purge     # remove from index and delete archive
+```
+
+#### `wrepo source add <NAME> --path <PATH>`
+
+Add a new local repository source to `/etc/wright/repos.toml`.
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Source type: `local` or `hold` (default: `local`) |
+| `--path <PATH>` | Local directory path (required) |
+| `--priority <N>` | Priority — higher number is preferred (default: `100`) |
+
+```bash
+wrepo source add myrepo --path /var/lib/wright/myrepo
+wrepo source add myrepo --path /var/lib/wright/myrepo --priority 300
+```
+
+#### `wrepo source remove <NAME>`
+
+Remove a repository source from `/etc/wright/repos.toml`.
+
+#### `wrepo source list`
+
+List all configured repository sources with their type, priority, and path.

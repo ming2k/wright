@@ -1,8 +1,9 @@
 # Repositories
 
 Wright resolves parts by name from configured **sources** — directories
-containing `.wright.tar.zst` archives and an index file. This guide covers
-creating, indexing, and managing local repositories.
+containing `.wright.tar.zst` archives and an index file.
+
+Repository management is handled by the dedicated `wrepo` tool.
 
 ## Concepts
 
@@ -14,38 +15,42 @@ creating, indexing, and managing local repositories.
 
 ## Quick Start
 
+The default local repository is `components_dir` (`/var/lib/wright/components`
+by default). Packages built by `wbuild` are placed there automatically, so the
+simplest workflow is:
+
 ```bash
-# 1. Create a repo directory
+# 1. Build packages (output goes to components_dir)
+wbuild run curl
+
+# 2. Index the default repo
+wrepo sync
+
+# 3. Install by name
+wright install curl
+```
+
+For a custom repo directory, specify the path explicitly:
+
+```bash
 mkdir -p /var/lib/wright/myrepo
-
-# 2. Build packages into it (or copy existing archives)
 cp *.wright.tar.zst /var/lib/wright/myrepo/
-
-# 3. Generate the index
-wright repo sync /var/lib/wright/myrepo
-
-# 4. Register as a source
-wright source add myrepo --path /var/lib/wright/myrepo
-
-# 5. Verify
-wright sync
-wright search -a curl
-
-# 6. Install by name
+wrepo sync /var/lib/wright/myrepo
+wrepo source add myrepo --path /var/lib/wright/myrepo
 wright install curl
 ```
 
 ## Managing Sources
 
-Sources are stored in `/etc/wright/repos.toml`. Use the `wright source`
+Sources are stored in `/etc/wright/repos.toml`. Use the `wrepo source`
 commands to manage them without editing the file by hand.
 
 ### Add a source
 
 ```bash
-wright source add myrepo --path /var/lib/wright/myrepo
-wright source add myrepo --path /var/lib/wright/myrepo --priority 300
-wright source add holdtree --type hold --path /var/lib/wright/plans
+wrepo source add myrepo --path /var/lib/wright/myrepo
+wrepo source add myrepo --path /var/lib/wright/myrepo --priority 300
+wrepo source add holdtree --type hold --path /var/lib/wright/plans
 ```
 
 If you keep plans in a user-owned tree instead of the system default, point
@@ -61,7 +66,7 @@ the hold source at that directory instead, for example
 ### List sources
 
 ```bash
-wright source list
+wrepo source list
 # myrepo          local    pri=300  /var/lib/wright/myrepo
 # holdtree        hold     pri=100  /var/lib/wright/plans
 ```
@@ -69,25 +74,21 @@ wright source list
 ### Remove a source
 
 ```bash
-wright source remove myrepo
+wrepo source remove myrepo
 ```
 
-## Repository Management
-
-Use `wright repo` to manage local repositories directly.
-
-### Indexing
+## Indexing
 
 The index (`wright.index.toml`) is what makes name-based resolution fast.
 Without it, the resolver must decompress and read `.PARTINFO` from every
 archive in the directory.
 
 ```bash
-wright repo sync /var/lib/wright/myrepo   # generate/update index for a directory
-wbuild index /var/lib/wright/myrepo       # alternative: also works from wbuild
+wrepo sync                          # index the default components_dir
+wrepo sync /var/lib/wright/myrepo   # index a specific directory
 ```
 
-**Re-run `wright repo sync` whenever you add or update parts in a repo.**
+**Re-run `wrepo sync` whenever you add or update parts in a repo.**
 
 The index records for each part:
 - Name, version, release, epoch, architecture
@@ -99,11 +100,12 @@ The index records for each part:
 A single part name can have multiple versions in the index. The resolver
 collects all versions and picks the latest (or a user-specified version).
 
-### Listing available parts
+## Listing and Searching
 
 ```bash
-wright repo list                   # all indexed parts
-wright repo list gcc               # all available versions of gcc
+wrepo list                   # all indexed parts
+wrepo list gcc               # all available versions of gcc
+wrepo search curl            # search by keyword (name + description)
 ```
 
 Output marks the currently installed version with `[installed]`:
@@ -114,11 +116,11 @@ gcc 14.2.0-3 (x86_64)
 gcc 14.2.0-2 (x86_64)
 ```
 
-### Removing parts from the index
+## Removing Parts from the Index
 
 ```bash
-wright repo remove gcc 14.2.0-2           # remove index entry only
-wright repo remove gcc 14.2.0-2 --purge   # also delete the archive file
+wrepo remove gcc 14.2.0-2           # remove index entry only
+wrepo remove gcc 14.2.0-2 --purge   # also delete the archive file
 ```
 
 ### Example index entry
@@ -137,25 +139,6 @@ install_size = 1234567
 runtime_deps = ["glibc", "openssl", "zlib"]
 link_deps = ["openssl", "zlib"]
 ```
-
-## Syncing
-
-```bash
-wright sync
-```
-
-Reports the number of available parts from each indexed source. For local
-repos this simply reads the existing index files — there is nothing to download.
-
-## Searching Available Parts
-
-```bash
-wright search -a curl          # search available (indexed) parts
-wright search curl             # search installed parts only
-```
-
-Available part results show an `[installed]` tag if the part is already
-on the system.
 
 ## Upgrading
 
@@ -179,8 +162,8 @@ higher `priority` wins. This lets you layer a local build repo on top of
 a shared team repo:
 
 ```bash
-wright source add team   --path /mnt/shared/wright-repo --priority 100
-wright source add local  --path /var/lib/wright/myrepo   --priority 300
+wrepo source add team   --path /mnt/shared/wright-repo --priority 100
+wrepo source add local  --path /var/lib/wright/myrepo   --priority 300
 ```
 
 Parts you build locally (priority 300) shadow the team repo (priority 100).
@@ -197,7 +180,7 @@ wbuild run -i curl              # build and install in one step (no index needed
 
 ```bash
 wbuild run gcc                  # build updated gcc
-wright repo sync /var/lib/wright/components   # re-index
+wrepo sync                      # re-index
 wright upgrade gcc              # upgrade to the newly built version
 ```
 
@@ -206,11 +189,10 @@ wright upgrade gcc              # upgrade to the newly built version
 ```bash
 # Builder machine
 wbuild run @core
-wright repo sync /var/lib/wright/components
+wrepo sync
 
 # Developer machines
-wright source add builds --path /mnt/nfs/wright-components
-wright sync
+wrepo source add builds --path /mnt/nfs/wright-components
 wright install @base
 ```
 
@@ -218,6 +200,13 @@ wright install @base
 
 ```bash
 wbuild run -ic @qemu            # build, skip installed, install new packages
-wright repo sync /var/lib/wright/components   # update the index
-wright sync                     # refresh available part list
+wrepo sync                      # update the index
 ```
+
+## Tool Reference
+
+| Tool | Role |
+|------|------|
+| `wright` | System administrator — install, remove, upgrade, query |
+| `wbuild` | Package builder — build from plan.toml |
+| `wrepo` | Repository manager — index, search, source management |

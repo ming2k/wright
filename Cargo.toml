@@ -13,6 +13,10 @@ path = "src/bin/wright.rs"
 name = "wbuild"
 path = "src/bin/wbuild.rs"
 
+[[bin]]
+name = "wrepo"
+path = "src/bin/wrepo.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
