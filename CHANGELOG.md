@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-03-18
+
+### Changes
+- **Dependency inspection clarity**: `wbuild deps` now clearly identifies plan-manifest output, while `wright deps` clearly identifies installed-database output.
+- **CLI surface refactor**: command help and output were tightened across `wright`, `wbuild`, and `wrepo` to better match each tool's scope.
+- **Documentation refresh**: CLI and workflow documentation were updated to reflect the current dependency, repository, and tool-boundary model.
+
 ## [1.7.2] - 2026-03-15
 
 ### Changes
