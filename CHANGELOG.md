@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-03-18
+
+### Changes
+- **Repository source configuration**: refine source handling and related defaults across repository resolution paths.
+- **Docs and config sync**: update configuration and repository docs to match the latest source configuration behavior.
+
 ## [1.7.5] - 2026-03-18
 
 ### Changes
