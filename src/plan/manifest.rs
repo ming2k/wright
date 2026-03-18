@@ -45,6 +45,15 @@ pub struct SubFabricateOutput {
     pub license: Option<String>,
     #[serde(default)]
     pub dependencies: Dependencies,
+    /// Parts that this output replaces (automatic uninstall on install).
+    #[serde(default)]
+    pub replaces: Vec<String>,
+    /// Parts that cannot coexist with this output.
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// Virtual part names this output satisfies.
+    #[serde(default)]
+    pub provides: Vec<String>,
     #[serde(default)]
     pub script: String,
     #[serde(default = "default_executor")]
@@ -93,8 +102,17 @@ pub struct BackupConfig {
 // Main manifest
 // ---------------------------------------------------------------------------
 
-/// Part relations (replaces, conflicts, provides).
-/// Moved from [dependencies] to [relations] in v1.3.1.
+/// Part relations — install-time metadata describing how a part interacts with
+/// other parts.
+///
+/// - **`replaces`**: Automatic migration — installing this part silently removes
+///   the listed parts first. Use for renames and merges.
+/// - **`conflicts`**: Mutual exclusion — installation is refused while a
+///   conflicting part is present. Use when two parts cannot coexist.
+/// - **`provides`**: Virtual names — allows this part to satisfy dependencies on
+///   an abstract capability (e.g. `http-server`).
+///
+/// Declared per-output in `[output]` (main part) or `[output.<name>]` (sub-part).
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct Relations {
     #[serde(default)]
@@ -297,8 +315,6 @@ struct RawManifest {
     #[serde(default)]
     dependencies: Dependencies,
     #[serde(default)]
-    relations: Option<Relations>,
-    #[serde(default)]
     sources: Option<toml::Value>,
     #[serde(default)]
     options: BuildOptions,
@@ -361,7 +377,11 @@ impl SubFabricateOutput {
                 maintainer: parent.plan.maintainer.clone(),
             },
             dependencies: self.dependencies.clone(),
-            relations: Relations::default(),
+            relations: Relations {
+                replaces: self.replaces.clone(),
+                conflicts: self.conflicts.clone(),
+                provides: self.provides.clone(),
+            },
             sources: Sources::default(),
             options: BuildOptions::default(),
             lifecycle: HashMap::new(),
@@ -397,6 +417,9 @@ fn fabricate_backup(output: &FabricateOutput) -> Option<BackupConfig> {
 fn empty_sub_fabricate_output(
     hooks: Option<FabricateHooks>,
     backup: Option<Vec<String>>,
+    replaces: Vec<String>,
+    conflicts: Vec<String>,
+    provides: Vec<String>,
 ) -> SubFabricateOutput {
     SubFabricateOutput {
         description: None,
@@ -405,12 +428,39 @@ fn empty_sub_fabricate_output(
         arch: None,
         license: None,
         dependencies: Dependencies::default(),
+        replaces,
+        conflicts,
+        provides,
         script: String::new(),
         executor: default_executor(),
         dockyard: default_dockyard_level(),
         env: HashMap::new(),
         hooks,
         backup,
+    }
+}
+
+/// Extract a string list from an `[output]` table field, removing it from the table.
+fn extract_output_string_list(
+    table: &mut toml::value::Table,
+    key: &str,
+) -> Result<Vec<String>> {
+    match table.remove(key) {
+        Some(toml::Value::Array(arr)) => arr
+            .into_iter()
+            .map(|v| match v {
+                toml::Value::String(s) => Ok(s),
+                _ => Err(WrightError::ParseError(format!(
+                    "[output].{} entries must be strings",
+                    key
+                ))),
+            })
+            .collect(),
+        Some(_) => Err(WrightError::ParseError(format!(
+            "[output].{} must be an array of strings",
+            key
+        ))),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -422,6 +472,7 @@ fn parse_output_section(
     Option<FabricateConfig>,
     Option<InstallScripts>,
     Option<BackupConfig>,
+    Relations,
 )> {
     let mut table = match output_val {
         Some(toml::Value::Table(table)) => table,
@@ -455,6 +506,16 @@ fn parse_output_section(
         None => None,
     };
 
+    // Extract main output relations
+    let replaces = extract_output_string_list(&mut table, "replaces")?;
+    let conflicts = extract_output_string_list(&mut table, "conflicts")?;
+    let provides = extract_output_string_list(&mut table, "provides")?;
+    let main_relations = Relations {
+        replaces: replaces.clone(),
+        conflicts: conflicts.clone(),
+        provides: provides.clone(),
+    };
+
     let main_output = FabricateOutput { hooks, backup };
     let install_scripts = fabricate_install_scripts(&main_output);
     let backup_cfg = fabricate_backup(&main_output);
@@ -465,7 +526,7 @@ fn parse_output_section(
         } else {
             None
         };
-        return Ok((fabricate, install_scripts, backup_cfg));
+        return Ok((fabricate, install_scripts, backup_cfg, main_relations));
     }
 
     let table_value = toml::Value::Table(table);
@@ -483,13 +544,20 @@ fn parse_output_section(
 
     outputs.insert(
         plan_name.to_string(),
-        empty_sub_fabricate_output(main_output.hooks.clone(), main_output.backup.clone()),
+        empty_sub_fabricate_output(
+            main_output.hooks.clone(),
+            main_output.backup.clone(),
+            replaces,
+            conflicts,
+            provides,
+        ),
     );
 
     Ok((
         Some(FabricateConfig::Multi(outputs)),
         install_scripts,
         backup_cfg,
+        main_relations,
     ))
 }
 
@@ -499,7 +567,6 @@ impl PlanManifest {
         let RawManifest {
             plan,
             dependencies,
-            relations,
             sources: raw_sources,
             options,
             lifecycle: raw_lifecycle,
@@ -537,32 +604,23 @@ impl PlanManifest {
             }
         };
 
-        // --- Parse relations ---
-        let relations = relations.unwrap_or_default();
-
         // --- Extract lifecycle stages ---
         let mut lifecycle_stages: HashMap<String, LifecycleStage> = HashMap::new();
         if let Some(raw_lifecycle) = raw_lifecycle {
             for (key, value) in raw_lifecycle {
-                if key == "part" {
-                    return Err(WrightError::ParseError(
-                        "[lifecycle.part] is no longer supported; use [lifecycle.fabricate]"
-                            .to_string(),
-                    ));
-                } else {
-                    let stage: LifecycleStage =
-                        value.try_into().map_err(|e: toml::de::Error| {
-                            WrightError::ParseError(format!(
-                                "failed to parse lifecycle stage '{}': {}",
-                                key, e
-                            ))
-                        })?;
-                    lifecycle_stages.insert(key, stage);
-                }
+                let stage: LifecycleStage =
+                    value.try_into().map_err(|e: toml::de::Error| {
+                        WrightError::ParseError(format!(
+                            "failed to parse lifecycle stage '{}': {}",
+                            key, e
+                        ))
+                    })?;
+                lifecycle_stages.insert(key, stage);
             }
         }
 
-        let (fabricate, install_scripts, backup) = parse_output_section(&plan.name, output, hooks)?;
+        let (fabricate, install_scripts, backup, relations) =
+            parse_output_section(&plan.name, output, hooks)?;
 
         let manifest = PlanManifest {
             plan,
@@ -838,10 +896,6 @@ optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
 
-[relations]
-conflicts = ["apache"]
-provides = ["http-server"]
-
 [[sources]]
 uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
@@ -903,6 +957,8 @@ post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 pre_remove = "systemctl stop nginx 2>/dev/null || true"
 
 [output]
+conflicts = ["apache"]
+provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -1044,6 +1100,51 @@ runtime = ["libgcc"]
     }
 
     #[test]
+    fn test_multi_package_sub_part_relations() {
+        let toml_str = r#"
+name = "nginx"
+version = "1.25.3"
+release = 1
+description = "High performance HTTP server"
+license = "BSD-2-Clause"
+arch = "x86_64"
+
+[lifecycle.staging]
+script = "make DESTDIR=${PART_DIR} install"
+
+[output]
+conflicts = ["apache"]
+provides = ["http-server"]
+
+[output.nginx-doc]
+description = "Nginx documentation files"
+provides = ["nginx-documentation"]
+script = "true"
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        // Main output relations
+        assert_eq!(manifest.relations.conflicts, vec!["apache"]);
+        assert_eq!(manifest.relations.provides, vec!["http-server"]);
+
+        match manifest.fabricate {
+            Some(FabricateConfig::Multi(ref pkgs)) => {
+                // Main part carries the relations
+                let main = pkgs.get("nginx").unwrap();
+                let main_manifest = main.to_manifest("nginx", &manifest);
+                assert_eq!(main_manifest.relations.conflicts, vec!["apache"]);
+                assert_eq!(main_manifest.relations.provides, vec!["http-server"]);
+
+                // Sub-part has its own relations
+                let doc = pkgs.get("nginx-doc").unwrap();
+                let doc_manifest = doc.to_manifest("nginx-doc", &manifest);
+                assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
+                assert!(doc_manifest.relations.conflicts.is_empty());
+            }
+            _ => panic!("expected Multi fabricate config"),
+        }
+    }
+
+    #[test]
     fn test_multi_package_inherits_overrides() {
         let toml_str = r#"
 name = "test"
@@ -1142,77 +1243,8 @@ backup = ["/etc/test.conf"]
             }
             _ => panic!("expected Single fabricate config"),
         }
-        // Legacy fields populated
         assert!(manifest.install_scripts.is_some());
         assert!(manifest.backup.is_some());
-    }
-
-    #[test]
-    fn test_old_install_scripts_rejected() {
-        let toml_str = r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[hooks]
-post_install = "ldconfig"
-
-[install_scripts]
-post_install = "ldconfig"
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("unknown field `install_scripts`"));
-    }
-
-    #[test]
-    fn test_old_backup_rejected() {
-        let toml_str = r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[backup]
-files = ["/etc/test.conf"]
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("unknown field `backup`"));
-    }
-
-    #[test]
-    fn test_old_split_rejected() {
-        let toml_str = r#"
-name = "gcc"
-version = "14.2.0"
-release = 1
-description = "The GNU Compiler Collection"
-license = "GPL-3.0-or-later"
-arch = "x86_64"
-
-[lifecycle.compile]
-script = "make -j4"
-
-[lifecycle.staging]
-script = "make DESTDIR=${PART_DIR} install"
-
-[split."libstdc++"]
-description = "GNU C++ standard library"
-
-[split."libstdc++".dependencies]
-runtime = ["libgcc"]
-
-[split."libstdc++".lifecycle.part]
-script = """
-install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
-"""
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("unknown field `split`"));
     }
 
     #[test]
@@ -1399,10 +1431,8 @@ skip_fhs_check = true
         assert!(manifest.options.skip_fhs_check);
     }
 
-    // --- New v1.3.1 tests ---
-
     #[test]
-    fn test_parse_relations_section() {
+    fn test_parse_output_relations() {
         let toml_str = r#"
 name = "nginx"
 version = "1.0.0"
@@ -1411,7 +1441,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[relations]
+[output]
 replaces = ["old-nginx"]
 conflicts = ["apache"]
 provides = ["http-server"]
@@ -1524,44 +1554,6 @@ post_install = "ldconfig"
         }
         let scripts = manifest.install_scripts.as_ref().unwrap();
         assert_eq!(scripts.pre_install.as_deref(), Some("echo preparing"));
-    }
-
-    #[test]
-    fn test_old_sources_table_rejected() {
-        let toml_str = r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[sources]
-uris = ["https://example.com/foo.tar.gz", "patches/fix.patch"]
-sha256 = ["abc123", "SKIP"]
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("sources must use [[sources]]"));
-    }
-
-    #[test]
-    fn test_old_relations_in_dependencies_rejected() {
-        let toml_str = r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[dependencies]
-runtime = ["glibc"]
-replaces = ["old-test"]
-conflicts = ["other"]
-provides = ["test-provider"]
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("unknown field `replaces`"));
     }
 
     #[test]

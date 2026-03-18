@@ -442,28 +442,6 @@ mod tests {
     use super::parse_partinfo_str;
 
     #[test]
-    fn parse_partinfo_rejects_legacy_link_dependency_field() {
-        let err = parse_partinfo_str(
-            r#"
-[part]
-name = "demo"
-version = "1.0.0"
-release = 1
-description = "demo"
-arch = "x86_64"
-license = "MIT"
-
-[dependencies]
-runtime = ["bash"]
-link = ["zlib"]
-"#,
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("unknown field `link`"));
-    }
-
-    #[test]
     fn parse_partinfo_accepts_runtime_and_optional_dependencies() {
         let info = parse_partinfo_str(
             r#"

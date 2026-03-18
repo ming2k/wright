@@ -18,10 +18,6 @@ optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
 
-[relations]
-conflicts = ["apache"]
-provides = ["http-server"]
-
 [[sources]]
 uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
@@ -103,6 +99,8 @@ systemctl stop nginx 2>/dev/null || true
 """
 
 [output]
+conflicts = ["apache"]
+provides = ["http-server"]
 backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",

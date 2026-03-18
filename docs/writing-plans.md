@@ -101,28 +101,6 @@ optional = [
 ]
 ```
 
-### `[relations]`
-
-Part relations describe how this part interacts with other parts. All fields default to empty lists if omitted.
-
-| Field       | Type            | Description                          |
-|-------------|-----------------|--------------------------------------|
-| `replaces`  | list of strings | Parts that this one replaces (automatically uninstalled) |
-| `conflicts` | list of strings | Parts that cannot be installed alongside this one |
-| `provides`  | list of strings | Virtual parts this one provides   |
-
-```toml
-[relations]
-replaces = ["old-nginx"]
-conflicts = ["apache"]
-provides = ["http-server"]
-```
-
-#### `replaces` vs `conflicts`
-
-- **`replaces`**: Use this for part renames or merges. If a part in this list is already installed, Wright will **automatically uninstall** it before installing the current part.
-- **`conflicts`**: Use this when two parts provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the part if a conflicting one is already present.
-
 ### `[[sources]]`
 
 Sources use TOML's array-of-tables syntax. Each `[[sources]]` entry declares a single source with its URI and checksum:
@@ -351,27 +329,66 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 | `pre_remove`         | string | Run before part removal |
 | `post_remove`        | string | Run after part removal  |
 
-### `[output]` — Output Metadata
+### `[output]` — Output Metadata & Part Relations
 
 `[output]` defines install-time metadata for the main part, and
 `[output.<name>]` declares additional split outputs.
 
+Each output carries its own **part relations** — install-time metadata
+describing how a part interacts with other parts in the system.
+
 ```toml
 [output]
+conflicts = ["apache"]
+provides = ["http-server"]
+replaces = ["old-nginx"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 [output."nginx-doc"]
 description = "Nginx documentation"
+provides = ["nginx-documentation"]
 script = "..."
 ```
 
 | Field          | Type            | Description                              |
 |----------------|-----------------|------------------------------------------|
+| `replaces`     | list of strings | Parts this output replaces (auto-removed on install) |
+| `conflicts`    | list of strings | Parts that cannot coexist with this output |
+| `provides`     | list of strings | Virtual part names this output satisfies |
 | `backup`       | list of strings | Config files preserved across upgrades   |
 | `description`  | string          | Sub-part description (multi-output mode) |
 | `script`       | string          | Script to select/install files into the sub-part (multi-output mode) |
 | `hooks.*`      | table/fields    | Transaction hooks for a sub-part      |
 | `dependencies` | table           | Sub-part dependencies (multi-output mode) |
+
+#### Part Relations
+
+Relations are **per-output**, not per-plan. In multi-output mode, each
+sub-part declares its own relations independently.
+
+- **`replaces`** — Automatic migration. When installing this part, Wright
+  silently removes any installed part whose name appears in this list.
+  Use for part renames and merges (e.g. `nginx-mainline` replaces `nginx`).
+
+- **`conflicts`** — Mutual exclusion. Wright refuses to install this part
+  while a conflicting part is present (or vice versa). Use when two parts
+  provide overlapping functionality and cannot coexist (e.g. `nginx` and
+  `apache` both binding port 80). Conflicts are **bidirectional** — if A
+  conflicts with B, installing B when A is present is also refused.
+
+- **`provides`** — Virtual names. Allows this part to satisfy dependencies
+  on an abstract capability rather than a concrete part name. Multiple parts
+  can provide the same virtual name (e.g. both `nginx` and `apache` provide
+  `http-server`), enabling consumers to depend on the capability without
+  coupling to a specific implementation.
+
+##### `replaces` vs `conflicts`
+
+| | `replaces` | `conflicts` |
+|---|---|---|
+| **Intent** | Part rename / merge | Mutual exclusion |
+| **On install** | Old part auto-removed | Install refused |
+| **Direction** | One-way (new replaces old) | Bidirectional |
 
 #### Backup files
 
@@ -743,10 +760,6 @@ optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
 
-[relations]
-conflicts = ["apache"]
-provides = ["http-server"]
-
 [[sources]]
 uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
@@ -799,6 +812,8 @@ post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 pre_remove = "systemctl stop nginx 2>/dev/null || true"
 
 [output]
+conflicts = ["apache"]
+provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
