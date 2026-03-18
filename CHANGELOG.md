@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-03-18
+
+### Changes
+- **`wbuild deps` summary improvements**: plan dependency output now reports repeated nodes separately from true dependency cycles.
+- **Dependency graph tuning**: staged `wbuild` dependency expansion behavior was refined for clearer build-graph handling.
+
 ## [1.7.3] - 2026-03-18
 
 ### Changes
