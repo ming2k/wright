@@ -37,13 +37,13 @@ sources are ranked by the `priority` field (higher number = preferred).
 ### assembly definitions
 
 Assemblies group **plans** for batch building with `wbuild run @name`.
-Kits group **packages** for batch installation with `wright install @name`.
+Kits group **parts** for batch installation with `wright install @name`.
 
 Both are **non-dependent, combinatory groupings** — membership in an assembly or
 kit implies no dependency relationship between the items. The items are
 independent units that happen to be bundled together for convenience (like a
 kit of parts for a build). Actual dependency resolution is handled separately
-by the build system and package manager.
+by the build system and system manager.
 
 This means assemblies and kits are freely composable: you can combine
 multiple groups in one command (`wbuild run @core @devel`, `wright install @base @gui`),
@@ -58,7 +58,7 @@ related assemblies logically.
 # /var/lib/wright/assemblies/qemu.toml
 [[assembly]]
 name = "qemu-base"
-description = "Core QEMU system emulator package."
+description = "Core QEMU system emulator part."
 plans = ["qemu"]
 
 [[assembly]]
@@ -72,7 +72,7 @@ description = "User-mode networking support for QEMU."
 plans = ["libslirp"]
 ```
 
-### kits (package groups)
+### kits (part groups)
 
 Kit definitions are loaded from all `*.toml` files in `kits_dir`
 (default: `/var/lib/wright/kits/`). Each file can contain multiple
@@ -83,14 +83,14 @@ assemblies and `[[source]]`.
 # /var/lib/wright/kits/base.toml
 [[kit]]
 name = "base"
-description = "Base system packages"
-packages = ["glibc", "coreutils", "bash", "libgcc", "libstdc++"]
+description = "Base system parts"
+parts = ["glibc", "coreutils", "bash", "libgcc", "libstdc++"]
 
 [[kit]]
 name = "devel"
 description = "Development tools"
-packages = ["gcc", "binutils", "make"]
-includes = ["base"]   # inherit all packages from @base
+parts = ["gcc", "binutils", "make"]
+includes = ["base"]   # inherit all part names from @base
 ```
 
 ### executor definitions
@@ -118,20 +118,20 @@ from a layer are inherited from the layer below.
 
 | Use Case | Config | Cache | Database |
 |----------|--------|-------|----------|
-| **System (root)** | `/etc/wright/wright.toml` | `/var/lib/wright/cache` | `/var/lib/wright/db/packages.db` |
-| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `~/.local/state/wright/packages.db` |
+| **System (root)** | `/etc/wright/wright.toml` | `/var/lib/wright/cache` | `/var/lib/wright/db/parts.db` |
+| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `~/.local/state/wright/parts.db` |
 
 ```toml
 [general]
 arch = "x86_64"                         # System architecture
 plans_dir = "/var/lib/wright/plans"      # Plan definitions
-components_dir = "/var/lib/wright/components" # Built package archives
+components_dir = "/var/lib/wright/components" # Built part archives
 cache_dir = "/var/lib/wright/cache"       # Downloaded sources cache
-db_path = "/var/lib/wright/db/packages.db" # Installed package database
+db_path = "/var/lib/wright/db/parts.db" # Installed part database
 log_dir = "/var/log/wright"               # Operation logs (build logs are under build_dir/<name>-<version>/log)
 executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
 assemblies_dir = "/var/lib/wright/assemblies" # Assembly definitions (*.toml)
-kits_dir = "/var/lib/wright/kits"             # Kit (package group) definitions (*.toml)
+kits_dir = "/var/lib/wright/kits"             # Kit (part group) definitions (*.toml)
 
 [build]
 build_dir = "/var/tmp/wright-build"       # Build working directory
@@ -166,13 +166,13 @@ plans_dir = "/home/alice/wright/plans"
 |-------|------|---------|-------------|
 | `arch` | string | `"x86_64"` | Target architecture |
 | `plans_dir` | path | `/var/lib/wright/plans` | Root directory for plan definitions. Override this for non-root use if your plans live outside `/var/lib/wright/plans`. |
-| `components_dir` | path | `/var/lib/wright/components` | Built package archives (`.wright.tar.zst`) |
+| `components_dir` | path | `/var/lib/wright/components` | Built part archives (`.wright.tar.zst`) |
 | `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
-| `db_path` | path | `/var/lib/wright/db/packages.db` | Installed package database (SQLite) |
+| `db_path` | path | `/var/lib/wright/db/parts.db` | Installed part database (SQLite) |
 | `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |
 | `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
 | `assemblies_dir` | path | `/var/lib/wright/assemblies` | Assembly definition files (`*.toml`) |
-| `kits_dir` | path | `/var/lib/wright/kits` | Kit (package group) definition files (`*.toml`) |
+| `kits_dir` | path | `/var/lib/wright/kits` | Kit (part group) definition files (`*.toml`) |
 
 ### `[build]` section
 
@@ -199,7 +199,7 @@ plans_dir = "/home/alice/wright/plans"
 
 ## repos.toml
 
-Repository source configuration at `/etc/wright/repos.toml`. Defines where wright looks for packages.
+Repository source configuration at `/etc/wright/repos.toml`. Defines where wright looks for parts.
 
 ```toml
 # Local hold tree
@@ -218,11 +218,11 @@ priority = 200
 gpg_key = "/etc/wright/keys/official.gpg"
 enabled = true
 
-# Local binary package cache
+# Local binary part cache
 [[source]]
 name = "local"
 type = "local"
-path = "/var/lib/wright/cache/packages"
+path = "/var/lib/wright/cache/parts"
 priority = 300
 ```
 
@@ -234,7 +234,7 @@ priority = 300
 | `type` | string | `"hold"`, `"remote"`, or `"local"` |
 | `path` | path | Local path (for `hold` and `local` types) |
 | `url` | string | Repository URL (for `remote` type) |
-| `priority` | integer | Higher number = preferred when multiple sources have the same package |
+| `priority` | integer | Higher number = preferred when multiple sources have the same part |
 | `gpg_key` | path | GPG public key for signature verification (optional) |
 | `enabled` | boolean | Whether this source is active (default: `true`) |
 
@@ -300,7 +300,7 @@ default_dockyard = "strict"
 | `delivery` | string | How scripts are passed: `"tempfile"` (write to file, pass path) or `"stdin"` (pipe via stdin) |
 | `tempfile_extension` | string | File extension for temp scripts (used with `tempfile` delivery) |
 | `required_paths` | string[] | Additional paths to bind-mount read-only inside the dockyard |
-| `default_dockyard` | string | Default dockyard isolation level if not specified by the package stage |
+| `default_dockyard` | string | Default dockyard isolation level if not specified by the plan stage |
 
 ### Custom executors
 

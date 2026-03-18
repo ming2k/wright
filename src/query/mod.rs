@@ -14,7 +14,7 @@ pub enum PrefixMode {
     Indent,
     /// Flat list with a depth number prefix
     Depth,
-    /// Bare package names (deduplicated, no tree chrome)
+    /// Bare part names (deduplicated, no tree chrome)
     None,
 }
 
@@ -39,7 +39,7 @@ pub struct TreeStats {
 impl TreeStats {
     pub fn write_summary(&self, out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
         let line = format!(
-            "{} packages, max depth {}, {} not installed, {} cycles",
+            "{} parts, max depth {}, {} not installed, {} cycles",
             self.total, self.max_depth_seen, self.not_installed, self.cycles,
         );
         if color {
@@ -118,7 +118,7 @@ fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Resul
 
 // ─── forward dependency tree ─────────────────────────────────────────────────
 
-/// Render the forward dependency tree for a package into a writer.
+/// Render the forward dependency tree for a part into a writer.
 pub fn write_dep_tree(
     db: &Database,
     name: &str,
@@ -128,7 +128,7 @@ pub fn write_dep_tree(
     let mut visited = std::collections::HashSet::new();
     let mut ancestors = std::collections::HashSet::new();
     let mut stats = TreeStats::default();
-    stats.total = 1; // root package
+    stats.total = 1; // root part
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
     write_dep_tree_inner(
@@ -225,7 +225,7 @@ fn write_dep_tree_inner(
             if current_depth > stats.max_depth_seen {
                 stats.max_depth_seen = current_depth;
             }
-            let installed = db.get_package(&dep.name).unwrap_or(None).is_some();
+            let installed = db.get_part(&dep.name).unwrap_or(None).is_some();
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_pkg_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
@@ -241,7 +241,7 @@ fn write_dep_tree_inner(
             write_dup_tag(out, opts.color)?;
             writeln!(out)?;
         } else {
-            let installed = db.get_package(&dep.name).unwrap_or(None).is_some();
+            let installed = db.get_part(&dep.name).unwrap_or(None).is_some();
             stats.total += 1;
             if current_depth > stats.max_depth_seen {
                 stats.max_depth_seen = current_depth;
@@ -318,7 +318,7 @@ fn write_line_prefix(
 
 // ─── reverse dependency tree ─────────────────────────────────────────────────
 
-/// Render the reverse dependency tree for a package into a writer.
+/// Render the reverse dependency tree for a part into a writer.
 pub fn write_reverse_dep_tree(
     db: &Database,
     name: &str,
@@ -461,15 +461,15 @@ pub fn write_system_tree(
     opts: &TreeOptions,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
-    let roots = db.get_root_packages()?;
+    let roots = db.get_root_parts()?;
     if roots.is_empty() {
-        let all = db.list_packages()?;
+        let all = db.list_parts()?;
         if all.is_empty() {
-            writeln!(out, "No packages installed.")?;
+            writeln!(out, "No parts installed.")?;
         } else {
             writeln!(
                 out,
-                "No root packages found; the system may have circular dependencies."
+                "No root parts found; the system may have circular dependencies."
             )?;
         }
         return Ok(TreeStats::default());
@@ -513,21 +513,21 @@ pub fn write_system_tree(
 
 // ─── health-check functions (unchanged) ──────────────────────────────────────
 
-/// Check all installed packages for broken dependencies.
+/// Check all installed parts for broken dependencies.
 pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
-    let all_packages = db.list_packages()?;
+    let all_parts = db.list_parts()?;
     let mut broken = Vec::new();
 
-    for pkg in all_packages {
+    for pkg in all_parts {
         let deps = db.get_dependencies(pkg.id)?;
         for dep in deps {
-            if db.get_package(&dep.name)?.is_none() && db.find_providers(&dep.name)?.is_empty() {
+            if db.get_part(&dep.name)?.is_none() && db.find_providers(&dep.name)?.is_empty() {
                 let constraint_str = dep
                     .constraint
                     .map(|c| format!(" ({})", c))
                     .unwrap_or_default();
                 broken.push(format!(
-                    "Package '{}' has a broken dependency: '{}'{} not found",
+                    "Part '{}' has a broken dependency: '{}'{} not found",
                     pkg.name, dep.name, constraint_str
                 ));
             }
@@ -539,14 +539,14 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
 
 /// Check for circular dependencies in the installed database.
 pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
-    let all_packages = db.list_packages()?;
+    let all_parts = db.list_parts()?;
     let mut issues = Vec::new();
 
-    for pkg in all_packages {
+    for pkg in all_parts {
         if let Err(e) = db.get_recursive_dependents(&pkg.name) {
             if e.to_string().contains("circular") {
                 issues.push(format!(
-                    "Circular dependency detected involving package '{}'",
+                    "Circular dependency detected involving part '{}'",
                     pkg.name
                 ));
             }
@@ -556,10 +556,10 @@ pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
     Ok(issues)
 }
 
-/// Check if multiple packages claim ownership of the same file.
+/// Check if multiple parts claim ownership of the same file.
 pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
     let mut stmt = db.connection().prepare(
-        "SELECT path, COUNT(package_id) as count FROM files
+        "SELECT path, COUNT(part_id) as count FROM files
          WHERE file_type != 'dir'
          GROUP BY path HAVING count > 1",
     )?;
@@ -575,14 +575,14 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
     for path in rows {
         // Find who the owners are
         let mut owner_stmt = db.connection().prepare(
-            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id WHERE f.path = ?1",
+            "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id WHERE f.path = ?1",
         )?;
         let owners = owner_stmt
             .query_map(params![path], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         issues.push(format!(
-            "File conflict: '{}' is claimed by multiple packages: {}",
+            "File conflict: '{}' is claimed by multiple parts: {}",
             path,
             owners.join(", ")
         ));

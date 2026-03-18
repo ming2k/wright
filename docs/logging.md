@@ -8,7 +8,7 @@ settings affect log locations.
 Wright has two logging channels:
 
 - **CLI logs**: structured logs from `wright` and `wbuild` themselves.
-- **Build logs**: per-stage stdout/stderr captured for package builds.
+- **Build logs**: per-stage stdout/stderr captured for part builds.
 
 They are configured separately.
 

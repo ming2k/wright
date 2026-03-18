@@ -4,9 +4,18 @@ Wright is split into three specialized tools:
 
 | Tool | Role |
 |------|------|
-| **`wbuild`** | Package constructor — build and validate plans |
+| **`wbuild`** | Part constructor — build and validate plans |
 | **`wrepo`** | Repository manager — index, search, source configuration |
 | **`wright`** | System administrator — install, remove, upgrade, query |
+
+Running `cargo build` or `cargo build --release` also generates man pages for these tools in `target/man/`.
+To install them for `man(1)`:
+
+```sh
+install -Dm644 target/man/wright.1 /usr/share/man/man1/wright.1
+install -Dm644 target/man/wbuild.1 /usr/share/man/man1/wbuild.1
+install -Dm644 target/man/wrepo.1 /usr/share/man/man1/wrepo.1
+```
 
 ---
 
@@ -30,18 +39,25 @@ wright [OPTIONS] <COMMAND>
 
 #### `wright install <PACKAGES...>`
 
-Install packages. Each argument can be a `.wright.tar.zst` file path, a package name (resolved from configured sources), or a `@kit` reference (expands to all packages in the named kit). Multiple kits can be combined freely — they are non-dependent, combinatory groupings and overlapping packages are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
+Install parts. Each argument can be a `.wright.tar.zst` file path, a part name (resolved from configured sources), or a `@kit` reference (expands to all parts in the named kit). Multiple kits can be combined freely — they are non-dependent, combinatory groupings and overlapping parts are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
 
-Packages explicitly listed by the user are marked as `explicit`; dependencies pulled in automatically are marked as `dependency`. If a package was previously installed as a dependency, explicitly installing it again promotes it to `explicit` so it won't be removed by cascade operations.
+Parts explicitly listed by the user are marked as `explicit`; dependencies pulled in automatically are marked as `dependency`. If a part was previously installed as a dependency, explicitly installing it again promotes it to `explicit` so it won't be removed by cascade operations.
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Reinstall even if already installed; overwrite conflicting files |
 | `--nodeps` | Skip dependency checks |
 
+```bash
+wright install zlib
+wright install zlib openssl
+wright install @base-devel
+wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
+```
+
 #### `wright upgrade <PACKAGES...>`
 
-Upgrade installed packages by name or from archive files. When given a package name, the resolver searches all configured sources for available versions and picks the latest. When given a file path, upgrades directly from that archive.
+Upgrade installed parts by name or from archive files. When given a part name, the resolver searches all configured sources for available versions and picks the latest. When given a file path, upgrades directly from that archive.
 
 | Flag | Description |
 |------|-------------|
@@ -56,32 +72,52 @@ wright upgrade gcc-15.1.0-1-x86_64.wright.tar.zst  # upgrade from a file (still 
 
 #### `wright sysupgrade`
 
-Upgrade all installed packages to the latest available versions found by the resolver.
+Upgrade all installed parts to the latest available versions found by the resolver.
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` (`-n`) | Preview what would be upgraded without making changes |
 
+```bash
+wright sysupgrade
+wright sysupgrade --dry-run
+```
+
 #### `wright remove <PACKAGES...>`
 
-Remove installed packages by name. Refuses to remove a package if other installed packages depend on it. **Link dependencies** provide CRITICAL protection and block removal unless `--force` is used.
+Remove installed parts by name. Refuses to remove a part if other installed parts depend on it. **Link dependencies** provide CRITICAL protection and block removal unless `--force` is used.
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Remove even if other packages depend on this one (bypasses safety) |
-| `--recursive` (`-r`) | Also remove all packages that depend on the target (leaf-first order) |
-| `--cascade` (`-c`) | Also remove orphan dependencies — auto-installed packages that are no longer needed by anything else |
+| `--force` | Remove even if other installed parts depend on this one (bypasses safety) |
+| `--recursive` (`-r`) | Also remove all installed parts that depend on the target (leaf-first order) |
+| `--cascade` (`-c`) | Also remove orphan dependencies — auto-installed parts that are no longer needed by anything else |
+
+```bash
+wright remove zlib
+wright remove zlib --recursive
+wright remove zlib --cascade
+```
 
 #### `wright deps [PACKAGE]`
 
-Analyze dependency relationships of **installed** packages.
+Analyze dependency relationships of **installed** parts.
 
 | Flag | Description |
 |------|-------------|
-| `--reverse` (`-r`) | Show reverse dependencies (what depends on this package) |
+| `--reverse` (`-r`) | Show reverse dependencies (what depends on this part) |
 | `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
-| `--filter <PATTERN>` (`-f`) | Only show packages whose name contains the pattern |
-| `--all` (`-a`) | Show dependency tree for all installed packages |
+| `--filter <PATTERN>` (`-f`) | Only show parts whose name contains the pattern |
+| `--all` (`-a`) | Show dependency tree for all installed parts |
+| `--prefix <MODE>` | Output prefix style: `indent`, `depth`, or `none` |
+| `--prune <PACKAGE>` | Hide the subtree of the named part; may be repeated |
+
+```bash
+wright deps zlib
+wright deps zlib --reverse
+wright deps --all --depth 2
+wright deps zlib --prefix depth
+```
 
 #### `wright doctor`
 
@@ -94,45 +130,75 @@ Perform a full system health check. Diagnoses:
 
 #### `wright list`
 
-List installed packages.
+List installed parts.
 
 | Flag | Description |
 |------|-------------|
-| `--roots` (`-r`) | Show only top-level packages with no installed dependents |
-| `--assumed` (`-a`) | Show only assumed (externally provided) packages |
-| `--orphans` (`-o`) | Show only orphan packages — auto-installed dependencies no longer needed by any package |
+| `--roots` (`-r`) | Show only top-level parts with no installed dependents |
+| `--assumed` (`-a`) | Show only assumed (externally provided) parts |
+| `--orphans` (`-o`) | Show only orphan parts — auto-installed dependencies no longer needed by any part |
+
+```bash
+wright list
+wright list --roots
+wright list --orphans
+wright list --assumed
+```
 
 #### `wright query <PACKAGE>`
 
-Show detailed info for an installed package.
+Show detailed info for an installed part.
+
+```bash
+wright query zlib
+```
 
 #### `wright search <KEYWORD>`
 
-Search installed packages by keyword (name and description). Use `wrepo search` to search available (indexed) packages.
+Search installed parts by keyword (name and description). Use `wrepo search` to search available indexed parts.
+
+```bash
+wright search ssl
+wright search python
+```
 
 #### `wright files <PACKAGE>`
 
-List files owned by a package.
+List files owned by a part.
+
+```bash
+wright files zlib
+```
 
 #### `wright owner <FILE>`
 
-Find which package owns a file.
+Find which part owns a file.
+
+```bash
+wright owner /usr/bin/awk
+wright owner /usr/lib/libz.so
+```
 
 #### `wright assume <NAME> <VERSION>`
 
-Register an externally-provided package so that dependency checks treat it as satisfied. No files are tracked — wright will not manage, verify, or remove any files for an assumed package.
+Register an externally-provided part so that dependency checks treat it as satisfied. No files are tracked — wright will not manage, verify, or remove any files for an assumed part.
 
-This is intended for **bootstrapping scenarios** where core system packages (glibc, gcc, binutils, etc.) already exist on the target but were not installed through wright. Without assuming them, installing any package that lists them as dependencies would fail with an unresolved dependency error.
+This is intended for **bootstrapping scenarios** where core system parts (glibc, gcc, binutils, etc.) already exist on the target but were not installed through wright. Without assuming them, installing any part that lists them as dependencies would fail with an unresolved dependency error.
 
-Assuming a package is **idempotent** — running it again with a different version simply updates the recorded version.
+Assuming a part is **idempotent** — running it again with a different version simply updates the recorded version.
 
-Assumed packages are shown with an `[external]` tag in `wright list`.
+Assumed parts are shown with an `[external]` tag in `wright list`.
 
-When a real package is installed via `wright install`, any existing assumed record for that package is **automatically replaced** — no manual removal is needed.
+When a real part is installed via `wright install`, any existing assumed record for that part is **automatically replaced** — no manual removal is needed.
+
+```bash
+wright assume glibc 2.41
+wright assume gcc 15.1.0
+```
 
 #### `wright unassume <NAME>`
 
-Remove an assumed package record. This only works on packages marked as assumed (i.e. registered via `wright assume`); it will not remove normally installed packages.
+Remove an assumed part record. This only works on parts marked as assumed (i.e. registered via `wright assume`); it will not remove normally installed parts.
 
 ```sh
 wright unassume glibc
@@ -140,11 +206,25 @@ wright unassume glibc
 
 #### `wright verify [PACKAGE]`
 
-Verify installed file integrity (SHA-256 checksums). Omit the package name to verify all installed packages. For a full dependency and integrity health check, use `wright doctor`.
+Verify installed file integrity (SHA-256 checksums). Omit the part name to verify all installed parts. For a full dependency and integrity health check, use `wright doctor`.
+
+```bash
+wright verify
+wright verify zlib
+```
+
+#### `wright history [PACKAGE]`
+
+Show part transaction history. Omit the part name to show all recorded transactions.
+
+```bash
+wright history
+wright history zlib
+```
 
 ---
 
-## Wbuild (Package Constructor)
+## Wbuild (Part Constructor)
 
 ```
 wbuild [OPTIONS] <COMMAND> [TARGETS]...
@@ -164,28 +244,28 @@ wbuild [OPTIONS] <COMMAND> [TARGETS]...
 
 #### `wbuild run [TARGETS]...`
 
-Build packages from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. When used with `--install` (`-i`), packages already installed on the system are automatically skipped.
+Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. When used with `--install` (`-i`), parts already installed on the system are automatically skipped.
 
 | Flag | Description |
 |------|-------------|
 | `--stage <STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage check --stage staging --stage fabricate`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
 | `--clean` | Clear the build cache entry, working directory, and source tree before starting. Without `--clean`, the source tree (`src/`) is preserved across builds when the build key is unchanged, enabling incremental compilation. `--clean` forces a full re-extraction and recompile. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
-| `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only packages with no dependency relationship run simultaneously. Controls package-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
-| `--install` (`-i`) | Automatically install each package after a successful build. User-specified targets are marked `explicit`; auto-resolved dependencies are marked `dependency`. Upgrading an already-installed package preserves its existing install reason — use `wright install` to promote a dependency to explicit. |
+| `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only parts with no dependency relationship run simultaneously. Controls part-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
+| `--install` (`-i`) | Automatically install each built part after success. User-specified targets are marked `explicit`; auto-resolved dependencies are marked `dependency`. Upgrading an already-installed part preserves its existing install reason — use `wright install` to promote a dependency to explicit. |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 
 ##### Expansion scope
 
-These three flags control **which packages** are added to the build set. They are additive and composable. When none are given, the default applies.
+These three flags control **which parts** are added to the build set. They are additive and composable. When none are given, the default applies.
 
 | Flag | Description |
 |------|-------------|
-| `--self` (`-s`) | Include the listed packages themselves |
+| `--self` (`-s`) | Include the listed targets themselves |
 | `--deps` (`-d`) | Include missing upstream dependencies (build + link, not yet installed) |
-| `--dependents` | Include packages that link against the target |
+| `--dependents` | Include parts that link against the target |
 
-| Flags used | Listed packages | Missing upstream deps | Downstream link cascade |
+| Flags used | Listed targets | Missing upstream deps | Downstream link cascade |
 |------------|-----------------|-----------------------|------------------------|
 | (default) | ✓ | ✓ | ✗ |
 | `--self` | ✓ | ✗ | ✗ |
@@ -197,11 +277,11 @@ These three flags control **which packages** are added to the build set. They ar
 
 ##### Force-rebuild modifiers
 
-These two flags are **force-rebuild escalators** — they extend the scope of the corresponding expansion flags to include packages that would otherwise be skipped (already installed or non-link dependents).
+These two flags are **force-rebuild escalators** — they extend the scope of the corresponding expansion flags to include parts that would otherwise be skipped (already installed or non-link dependents).
 
 | Flag | What it does | Compared to its scope counterpart |
 |------|--------------|-----------------------------------|
-| `-D` / `--rebuild-dependencies` | Force-rebuild ALL upstream dependencies, including already-installed ones | Like `--deps` but does not skip installed packages |
+| `-D` / `--rebuild-dependencies` | Force-rebuild ALL upstream dependencies, including already-installed ones | Like `--deps` but does not skip installed parts |
 | `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
 
 `-D` and `-R` can be combined with scope flags:
@@ -223,7 +303,7 @@ wbuild run gtk4 --self
 # Only build gtk4's missing deps — don't rebuild gtk4 itself (pre-stage deps)
 wbuild run gtk4 --deps
 
-# gtk4 already updated — cascade rebuild to packages that link against it, skip gtk4 itself
+# gtk4 already updated — cascade rebuild to parts that link against it, skip gtk4 itself
 wbuild run gtk4 --dependents
 
 # Rebuild gtk4 AND cascade to its link-dependents (full ABI rebuild)
@@ -235,7 +315,7 @@ wbuild run gtk4 --self --deps --dependents
 # Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
 wbuild run gtk4 --deps -D
 
-# gtk4 ABI changed, force-rebuild every package that depends on it (not just link deps)
+# gtk4 ABI changed, force-rebuild every part that depends on it (not just link deps)
 wbuild run gtk4 --dependents -R
 
 # Build freetype using its [mvp.dependencies] set (e.g. to test the MVP phase manually)
@@ -249,13 +329,13 @@ wbuild run freetype --mvp --stage configure
 
 When multiple dockyards run in parallel, non-compile stages (configure, staging, fabricate, etc.) execute concurrently with CPU cores partitioned across active builds. However, **compile stages are serialized** behind a semaphore — only one dockyard compiles at a time, and the active compile gets access to all available CPU cores.
 
-This eliminates the "long-tail effect" where light packages finish quickly and leave their allocated cores idle while heavy compiles (python, perl, gcc) continue with only a fraction of available cores. The result is better CPU utilization and faster wall-clock times for multi-package builds.
+This eliminates the "long-tail effect" where light parts finish quickly and leave their allocated cores idle while heavy compiles (python, perl, gcc) continue with only a fraction of available cores. The result is better CPU utilization and faster wall-clock times for multi-part builds.
 
 The behavior is automatic and requires no configuration.
 
 ##### Output control
 
-By default `wbuild run` is quiet about subprocess I/O — build tool output (make, cmake, etc.) is captured to per-stage `.log` files only. The **Construction Plan** and per-package `[done]` completion lines are written to stderr.
+By default `wbuild run` is quiet about subprocess I/O — build tool output (make, cmake, etc.) is captured to per-stage `.log` files only. The **Construction Plan** and per-part `[done]` completion lines are written to stderr.
 
 | Mode | Subprocess output | Construction Plan / done lines | Log level |
 |------|:-----------------:|:-----------------------------:|-----------:|
@@ -265,7 +345,7 @@ By default `wbuild run` is quiet about subprocess I/O — build tool output (mak
 | `--verbose` (`-v`), multiple dockyards | echoed to terminal (may interleave) | shown | debug |
 | `--quiet` | captured only | hidden | warn |
 
-Before building, `wbuild run` displays a **Construction Plan** listing all packages to be built and the reason:
+Before building, `wbuild run` displays a **Construction Plan** listing all parts to be built and the reason:
 
 | Label | Meaning |
 |-------|---------:|
@@ -321,7 +401,7 @@ Import a directory of `.wright.tar.zst` archives into the repository SQLite cata
 
 ```bash
 wrepo sync                              # index the default components_dir
-wrepo sync /var/lib/wright/myrepo       # index a specific directory
+wrepo sync ./components                 # index a specific directory
 ```
 
 #### `wrepo list [NAME]`
@@ -330,15 +410,16 @@ List all parts in the repository catalog. If a name is given, shows all availabl
 
 ```bash
 wrepo list                   # list all indexed parts
-wrepo list gcc               # show all available versions of gcc
+wrepo list zlib              # show all available versions of zlib
 ```
 
 #### `wrepo search <KEYWORD>`
 
-Search available packages in the repository catalog by keyword (name and description). Installed packages are marked with `[installed]`.
+Search available parts in the repository catalog by keyword (name and description). Installed parts are marked with `[installed]`.
 
 ```bash
-wrepo search curl
+wrepo search zlib
+wrepo search ssl
 ```
 
 #### `wrepo remove <NAME> <VERSION> [--purge]`
@@ -350,13 +431,13 @@ Remove a part entry from the repository catalog. The version can include a relea
 | `--purge` | Also delete the `.wright.tar.zst` archive file from disk |
 
 ```bash
-wrepo remove gcc 14.2.0-2             # remove from index only
-wrepo remove gcc 14.2.0-2 --purge     # remove from index and delete archive
+wrepo remove zlib 1.3.1               # remove from index only
+wrepo remove zlib 1.3.1-2 --purge     # remove from index and delete archive
 ```
 
 #### `wrepo source add <NAME> --path <PATH>`
 
-Add a new local repository source to `/etc/wright/repos.toml`.
+Add a new local repository source to `/etc/wright/repos.toml`. Higher priority sources are preferred during resolution.
 
 | Flag | Description |
 |------|-------------|
@@ -364,14 +445,22 @@ Add a new local repository source to `/etc/wright/repos.toml`.
 | `--priority <N>` | Priority — higher number is preferred (default: `100`) |
 
 ```bash
-wrepo source add myrepo --path /var/lib/wright/myrepo
-wrepo source add myrepo --path /var/lib/wright/myrepo --priority 300
+wrepo source add local --path /srv/wright/repo
+wrepo source add cache --path ./repo --priority 200
 ```
 
 #### `wrepo source remove <NAME>`
 
 Remove a repository source from `/etc/wright/repos.toml`.
 
+```bash
+wrepo source remove local
+```
+
 #### `wrepo source list`
 
 List all configured repository sources with their type, priority, and path.
+
+```bash
+wrepo source list
+```

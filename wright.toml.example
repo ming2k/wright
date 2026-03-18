@@ -11,7 +11,7 @@
 # Copy this file to any of the locations above and uncomment what you need.
 
 [general]
-# Target architecture for built packages.
+# Target architecture for built parts.
 arch = "x86_64"
 
 # Root directory where plan definitions (plan.toml files) are stored.
@@ -25,9 +25,8 @@ components_dir = "/var/lib/wright/components"
 # Non-root default: ~/.cache/wright
 cache_dir = "/var/lib/wright/cache"
 
-# SQLite database tracking installed packages.
-# Non-root default: ~/.local/state/wright/packages.db
-db_path = "/var/lib/wright/db/packages.db"
+# SQLite database tracking installed parts.
+db_path = "/var/lib/wright/db/parts.db"
 
 # Operation and build logs are written here.
 # Non-root default: ~/.local/state/wright
@@ -51,7 +50,7 @@ build_dir = "/var/tmp/wright-build"
 # Options: "none", "relaxed", "strict"
 default_sandbox = "strict"
 
-# Maximum number of packages built concurrently. Wright only runs packages
+# Maximum number of parts built concurrently. Wright only runs parts
 # in parallel when they have no dependency relationship; ordering is always
 # enforced automatically. 0 (default) auto-detects from the host CPU count.
 # Can be overridden per-invocation with --workers / -w on the CLI.

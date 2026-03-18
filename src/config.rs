@@ -124,7 +124,7 @@ pub struct Kit {
     pub name: String,
     pub description: Option<String>,
     #[serde(default)]
-    pub packages: Vec<String>,
+    pub parts: Vec<String>,
     #[serde(default)]
     pub includes: Vec<String>,
 }
@@ -156,7 +156,13 @@ fn default_general() -> GeneralConfig {
         } else {
             default_cache_dir()
         },
-        db_path: default_db_path(),
+        db_path: if use_xdg {
+            get_xdg_state()
+                .unwrap_or_else(default_log_dir)
+                .join("parts.db")
+        } else {
+            default_db_path()
+        },
         log_dir: if use_xdg {
             get_xdg_state().unwrap_or_else(default_log_dir)
         } else {
@@ -223,7 +229,7 @@ fn default_cache_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/cache")
 }
 fn default_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/db/packages.db")
+    PathBuf::from("/var/lib/wright/db/parts.db")
 }
 fn default_log_dir() -> PathBuf {
     PathBuf::from("/var/log/wright")
@@ -370,29 +376,29 @@ impl KitsConfig {
     }
 
     pub fn resolve(&self, name: &str) -> Vec<String> {
-        let mut packages = Vec::new();
+        let mut parts = Vec::new();
         let mut visited = std::collections::HashSet::new();
-        self.collect(name, &mut packages, &mut visited);
-        packages
+        self.collect(name, &mut parts, &mut visited);
+        parts
     }
 
     fn collect(
         &self,
         name: &str,
-        packages: &mut Vec<String>,
+        parts: &mut Vec<String>,
         visited: &mut std::collections::HashSet<String>,
     ) {
         if !visited.insert(name.to_string()) {
             return;
         }
         if let Some(kit) = self.kits.get(name) {
-            for pkg in &kit.packages {
-                if !packages.contains(pkg) {
-                    packages.push(pkg.clone());
+            for pkg in &kit.parts {
+                if !parts.contains(pkg) {
+                    parts.push(pkg.clone());
                 }
             }
             for include in &kit.includes {
-                self.collect(include, packages, visited);
+                self.collect(include, parts, visited);
             }
         }
     }

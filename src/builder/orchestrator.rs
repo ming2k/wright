@@ -37,7 +37,7 @@ pub struct BuildOptions {
     /// Ignored for metadata-only operations and when explicit `--stage` selection is used.
     pub skip_check: bool,
     /// Max number of concurrently active dockyards.
-    /// Only packages with no dependency relationship (direct or indirect)
+    /// Only parts with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
     pub dockyards: usize,
     pub rebuild_dependents: bool,
@@ -46,11 +46,11 @@ pub struct BuildOptions {
     pub depth: Option<usize>,
     pub verbose: bool,
     pub quiet: bool,
-    /// --self (-s): include the listed packages themselves in the build.
+    /// --self (-s): include the listed parts themselves in the build.
     pub include_self: bool,
     /// --deps (-d): include missing upstream dependencies in the build.
     pub include_deps: bool,
-    /// --dependents: include downstream link-rebuild dependents (not the listed packages themselves).
+    /// --dependents: include downstream link-rebuild dependents (not the listed parts themselves).
     pub include_dependents: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
@@ -116,7 +116,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         false
     };
 
-    // Save the originally listed packages so we can optionally exclude them later.
+    // Save the originally listed parts so we can optionally exclude them later.
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
     // Use a scoped block to ensure the database handle (and its flock) is released
@@ -126,12 +126,12 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         let db = Database::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
-        // 1a2. When --install is used without --force, skip packages that are
+        // 1a2. When --install is used without --force, skip parts that are
         //      already installed at the same version+release.
         if opts.is_build_op() && opts.install && !opts.force {
             plans_to_build.retain(|path| {
                 if let Ok(manifest) = PlanManifest::from_file(path) {
-                    match db.get_package(&manifest.plan.name) {
+                    match db.get_part(&manifest.plan.name) {
                         Ok(Some(pkg)) => {
                             info!(
                                 "Skipping {} (already installed at {}-{})",
@@ -146,7 +146,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
                 }
             });
             if plans_to_build.is_empty() {
-                info!("Nothing to build: all packages are already installed.");
+                info!("Nothing to build: all parts are already installed.");
                 return Ok(());
             }
         }
@@ -164,7 +164,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         }
     }
 
-    // 1c. Downward expansion: cascade link rebuilds to packages that depend on the targets.
+    // 1c. Downward expansion: cascade link rebuilds to parts that depend on the targets.
     let reasons = if opts.is_build_op() && do_dependents {
         expand_rebuild_deps(
             &mut plans_to_build,
@@ -180,7 +180,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             .collect()
     };
 
-    // 1d. If --self was not requested, remove the originally-listed packages from the
+    // 1d. If --self was not requested, remove the originally-listed parts from the
     //     build set. Their metadata was still used above to find deps/dependents.
     if opts.is_build_op() && !do_self {
         plans_to_build.retain(|p| !original_plans.contains(p));
@@ -420,7 +420,7 @@ fn expand_missing_dependencies(
                 }
 
                 if !build_set.contains(&dep_name) {
-                    if force_all || db.get_package(&dep_name)?.is_none() {
+                    if force_all || db.get_part(&dep_name)?.is_none() {
                         if let Some(plan_path) = all_plans.get(&dep_name) {
                             info!(
                                 "{} dependency (depth {}): {}",
@@ -442,8 +442,8 @@ fn expand_missing_dependencies(
         }
 
         // Ensure the full transitive runtime dependency closure of every build
-        // dependency is present.  A build dep like python-sphinx is useless if
-        // any package in its runtime dep tree (python-requests → python-urllib3 …)
+        // dependency is present. A build dep like python-sphinx is useless if
+        // any part in its runtime dep tree (python-requests → python-urllib3 …)
         // is missing.  We use BFS to expand the complete closure.
         if !force_all {
             let snapshot: Vec<PathBuf> = plans_to_build
@@ -478,7 +478,7 @@ fn expand_missing_dependencies(
                                         continue;
                                     }
                                     if !build_set.contains(&rdep_name)
-                                        && db.get_package(&rdep_name)?.is_none()
+                                        && db.get_part(&rdep_name)?.is_none()
                                     {
                                         if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                             info!("Auto-resolving missing transitive runtime dep of build dep {} (depth {}): {}",
@@ -633,7 +633,7 @@ fn build_dep_map(
     let mut build_set = HashSet::new();
     let mut bootstrap_excluded = HashMap::new();
 
-    // 1. Create a mapping of EVERY package name (main and splits) to its providing plan name.
+    // 1. Create a mapping of every part name (main and splits) to its providing plan name.
     let mut pkg_to_plan = HashMap::new();
     for (plan_name, path) in all_plans {
         pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
@@ -847,7 +847,7 @@ fn execute_builds(
                         // Success! Now install if requested
                         if effective_opts.install {
                             let _guard = install_lock_clone.lock().unwrap();
-                            debug!("Automatically installing built package: {}", name_clone);
+                            debug!("Automatically installing built part: {}", name_clone);
 
                             let output_dir = config_clone.general.components_dir.clone();
                             let archive_path = output_dir.join(manifest.archive_filename());
@@ -864,8 +864,8 @@ fn execute_builds(
                                         "dependency"
                                     };
 
-                                    // 1. Install main package
-                                    if let Err(e) = crate::transaction::install_package_with_reason(
+                                    // 1. Install main part
+                                    if let Err(e) = crate::transaction::install_part_with_reason(
                                         &db,
                                         &archive_path,
                                         &PathBuf::from("/"),
@@ -877,7 +877,7 @@ fn execute_builds(
                                         return;
                                     }
 
-                                    // 2. Install all sub-packages
+                                    // 2. Install all sub-parts
                                     if let Some(FabricateConfig::Multi(ref pkgs)) =
                                         manifest.fabricate
                                     {
@@ -890,11 +890,11 @@ fn execute_builds(
                                             let sub_archive_path =
                                                 output_dir.join(sub_manifest.archive_filename());
                                             debug!(
-                                                "Automatically installing sub-package: {}",
+                                                "Automatically installing sub-part: {}",
                                                 sub_name
                                             );
                                             if let Err(e) =
-                                                crate::transaction::install_package_with_reason(
+                                                crate::transaction::install_part_with_reason(
                                                     &db,
                                                     &sub_archive_path,
                                                     &PathBuf::from("/"),
@@ -902,7 +902,7 @@ fn execute_builds(
                                                     reason,
                                                 )
                                             {
-                                                warn!("Automatic installation of sub-package '{}' failed: {:#}", sub_name, e);
+                                                warn!("Automatic installation of sub-part '{}' failed: {:#}", sub_name, e);
                                             }
                                         }
                                     }
@@ -1063,7 +1063,7 @@ fn lint_dependency_graph(
 }
 
 // ---------------------------------------------------------------------------
-// Single package build
+// Single part build
 // ---------------------------------------------------------------------------
 
 fn build_one(
@@ -1091,7 +1091,7 @@ fn build_one(
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for sub_name in pkgs.keys() {
                 if sub_name != &manifest.plan.name {
-                    println!("  sub-package: {}", sub_name);
+                    println!("  sub-part: {}", sub_name);
                 }
             }
         }
@@ -1141,7 +1141,7 @@ fn build_one(
     if !bootstrap_excl.is_empty() || opts.mvp {
         if manifest.mvp.is_none() && !bootstrap_excl.is_empty() {
             warn!(
-                "Package '{}' declares no [mvp.dependencies]; \
+                "Plan '{}' declares no [mvp.dependencies]; \
                  cannot compute MVP deps for cycle breaking.",
                 manifest.plan.name
             );
@@ -1220,7 +1220,7 @@ fn build_one(
                 }
                 let sub_pkg_dir = result.split_pkg_dirs.get(sub_name).ok_or_else(|| {
                     WrightError::BuildError(format!(
-                        "missing sub-package pkg_dir for '{}'",
+                        "missing sub-part pkg_dir for '{}'",
                         sub_name
                     ))
                 })?;
@@ -1250,7 +1250,7 @@ fn register_in_repo(repo_dir: &Path, archive_path: &Path) {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        repo_db.register_package(&partinfo, filename, &sha256)?;
+        repo_db.register_part(&partinfo, filename, &sha256)?;
         Ok(())
     };
     if let Err(e) = do_register() {

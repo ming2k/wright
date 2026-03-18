@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 
 use rusqlite::params;
 
-use crate::database::{Database, DepType, Dependency, FileEntry, FileType, NewPackage};
+use crate::database::{Database, DepType, Dependency, FileEntry, FileType, NewPart};
 use crate::error::{Result, WrightError};
 use crate::part::archive::{self, PartInfo};
 use crate::part::version::{self, Version};
@@ -102,18 +102,18 @@ fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))
 }
 
-/// Replace provides and conflicts rows for a package (used during upgrade).
+/// Replace provides and conflicts rows for a part (used during upgrade).
 fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PartInfo) -> Result<()> {
     // Delete old rows
     db.connection()
         .execute(
-            "DELETE FROM provides WHERE package_id = ?1",
+            "DELETE FROM provides WHERE part_id = ?1",
             params![pkg_id],
         )
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
     db.connection()
         .execute(
-            "DELETE FROM conflicts WHERE package_id = ?1",
+            "DELETE FROM conflicts WHERE part_id = ?1",
             params![pkg_id],
         )
         .map_err(|e| {
@@ -133,8 +133,8 @@ fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PartInf
 // Install flow
 // ---------------------------------------------------------------------------
 
-/// Install multiple packages with automatic dependency resolution.
-pub fn install_packages(
+/// Install multiple parts with automatic dependency resolution.
+pub fn install_parts(
     db: &Database,
     archives: &[PathBuf],
     root_dir: &Path,
@@ -175,7 +175,7 @@ pub fn install_packages(
                 #[allow(clippy::map_entry)]
                 if !resolved_map.contains_key(&dep_name) {
                     // Check if already installed
-                    if let Some(installed) = db.get_package(&dep_name)? {
+                    if let Some(installed) = db.get_part(&dep_name)? {
                         // Version constraint enforcement (Step 5f)
                         if let Some(ref c) = constraint {
                             let installed_ver = Version::parse(&installed.version)?;
@@ -234,9 +234,9 @@ pub fn install_packages(
     for name in sorted_names {
         let is_target = target_set.contains(&name);
 
-        if let Some(existing) = db.get_package(&name)? {
+        if let Some(existing) = db.get_part(&name)? {
             if is_target && existing.install_reason == "dependency" {
-                // User explicitly installing a package that was previously pulled as a dep
+                // User explicitly installing a part that was previously pulled as a dep
                 info!("Promoting {} from dependency to explicit", name);
                 db.set_install_reason(&name, "explicit")?;
             }
@@ -244,7 +244,7 @@ pub fn install_packages(
                 // Force reinstall via upgrade path (atomic — keeps old if new fails)
                 info!("Force reinstalling {}", name);
                 let pkg = resolved_map.get(&name).unwrap();
-                upgrade_package(db, &pkg.path, root_dir, true)?;
+                upgrade_part(db, &pkg.path, root_dir, true)?;
             }
             continue;
         }
@@ -257,7 +257,7 @@ pub fn install_packages(
             pkg.path.display(),
             reason
         );
-        install_package_with_reason(db, &pkg.path, root_dir, force, reason)?;
+        install_part_with_reason(db, &pkg.path, root_dir, force, reason)?;
     }
 
     Ok(())
@@ -299,18 +299,18 @@ fn visit_resolved(
     Ok(())
 }
 
-/// Install a package from a .wright.tar.zst archive.
-pub fn install_package(
+/// Install a part from a .wright.tar.zst archive.
+pub fn install_part(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_package_with_reason(db, archive_path, root_dir, force, "explicit")
+    install_part_with_reason(db, archive_path, root_dir, force, "explicit")
 }
 
-/// Install a package with a specified install reason.
-pub fn install_package_with_reason(
+/// Install a part with a specified install reason.
+pub fn install_part_with_reason(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,
@@ -323,33 +323,33 @@ pub fn install_package_with_reason(
 
     let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
 
-    // --- Handle Replaces (Package Renaming) ---
+    // --- Handle Replaces (Part Renaming) ---
     for replaced_name in &pkginfo.replaces {
-        if db.get_package(replaced_name)?.is_some() {
+        if db.get_part(replaced_name)?.is_some() {
             info!(
-                "Package {} is replaced by {}. Removing {}...",
+                "Part {} is replaced by {}. Removing {}...",
                 replaced_name, pkginfo.name, replaced_name
             );
-            remove_package(db, replaced_name, root_dir, true)?;
+            remove_part(db, replaced_name, root_dir, true)?;
         }
     }
 
     // --- Handle Conflicts (bidirectional) ---
     if !force {
-        // 1. New package declares conflicts → check if those are installed (or provided)
+        // 1. New part declares conflicts -> check if those are installed (or provided)
         for conflict_name in &pkginfo.conflicts {
-            if db.get_package(conflict_name)?.is_some() {
+            if db.get_part(conflict_name)?.is_some() {
                 return Err(WrightError::DependencyError(format!(
-                    "package conflict detected: '{}' conflicts with installed package '{}'. \
+                    "part conflict detected: '{}' conflicts with installed part '{}'. \
                      Please remove it first or use --force.",
                     pkginfo.name, conflict_name
                 )));
             }
-            // Check if any installed package provides the conflicted name
+            // Check if any installed part provides the conflicted name
             let providers = db.find_providers(conflict_name)?;
             if !providers.is_empty() {
                 return Err(WrightError::DependencyError(format!(
-                    "package conflict detected: '{}' conflicts with '{}' (provided by {}). \
+                    "part conflict detected: '{}' conflicts with '{}' (provided by {}). \
                      Please remove it first or use --force.",
                     pkginfo.name,
                     conflict_name,
@@ -357,22 +357,22 @@ pub fn install_package_with_reason(
                 )));
             }
         }
-        // 2. Already-installed packages declare conflicts against this new package name
-        let reverse_conflicts = db.find_conflicting_packages(&pkginfo.name)?;
+        // 2. Already-installed parts declare conflicts against this new part name
+        let reverse_conflicts = db.find_conflicting_parts(&pkginfo.name)?;
         if !reverse_conflicts.is_empty() {
             return Err(WrightError::DependencyError(format!(
-                "package conflict detected: installed package(s) {} conflict with '{}'. \
+                "part conflict detected: installed part(s) {} conflict with '{}'. \
                  Please remove them first or use --force.",
                 reverse_conflicts.join(", "),
                 pkginfo.name
             )));
         }
-        // 3. Already-installed packages declare conflicts against names this package provides
+        // 3. Already-installed parts declare conflicts against names this part provides
         for prov in &pkginfo.provides {
-            let reverse = db.find_conflicting_packages(prov)?;
+            let reverse = db.find_conflicting_parts(prov)?;
             if !reverse.is_empty() {
                 return Err(WrightError::DependencyError(format!(
-                    "package conflict detected: installed package(s) {} conflict with '{}' (provided by '{}'). \
+                    "part conflict detected: installed part(s) {} conflict with '{}' (provided by '{}'). \
                      Please remove them first or use --force.",
                     reverse.join(", "), prov, pkginfo.name
                 )));
@@ -381,15 +381,15 @@ pub fn install_package_with_reason(
     }
 
     // Check if already installed (with same name)
-    if db.get_package(&pkginfo.name)?.is_some() {
+    if db.get_part(&pkginfo.name)?.is_some() {
         if force {
             debug!(
-                "Package {} already installed, attempting upgrade/reinstall",
+                "Part {} already installed, attempting upgrade/reinstall",
                 pkginfo.name
             );
-            return upgrade_package(db, archive_path, root_dir, true);
+            return upgrade_part(db, archive_path, root_dir, true);
         }
-        return Err(WrightError::PackageAlreadyInstalled(pkginfo.name.clone()));
+        return Err(WrightError::PartAlreadyInstalled(pkginfo.name.clone()));
     }
 
     // Read hooks from .HOOKS
@@ -467,7 +467,7 @@ pub fn install_package_with_reason(
 
     // Record in database
     let pkg_hash = checksum::sha256_file(archive_path).ok();
-    let pkg_id = db.insert_package(NewPackage {
+    let pkg_id = db.insert_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
         release: pkginfo.release,
@@ -484,7 +484,7 @@ pub fn install_package_with_reason(
 
     // Record shadows
     for (path, owner_name) in shadows {
-        if let Some(owner_pkg) = db.get_package(&owner_name)? {
+        if let Some(owner_pkg) = db.get_part(&owner_name)? {
             let _ = db.record_shadowed_file(&path, owner_pkg.id, pkg_id);
         }
     }
@@ -499,14 +499,6 @@ pub fn install_package_with_reason(
             name,
             constraint: constraint.map(|c| c.to_string()),
             dep_type: DepType::Runtime,
-        });
-    }
-    for d in &pkginfo.link_deps {
-        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency {
-            name,
-            constraint: constraint.map(|c| c.to_string()),
-            dep_type: DepType::Link,
         });
     }
 
@@ -548,32 +540,32 @@ pub fn install_package_with_reason(
 // Remove flow
 // ---------------------------------------------------------------------------
 
-/// Remove an installed package.
+/// Remove an installed part.
 ///
-/// By default, removal is denied if other installed packages depend on this one.
+/// By default, removal is denied if other installed parts depend on this one.
 /// Use `force` to override this check.
-pub fn remove_package(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
+pub fn remove_part(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
     let pkg = db
-        .get_package(name)?
-        .ok_or_else(|| WrightError::PackageNotFound(name.to_string()))?;
+        .get_part(name)?
+        .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
-    // Check if other packages depend on this one (by name or via provides)
+    // Check if other parts depend on this one (by name or via provides)
     let mut dependents = db.get_dependents(name)?;
 
-    // Also check virtual provides: if this package provides "foo" and someone
+    // Also check virtual provides: if this part provides "foo" and someone
     // depends on "foo", we need to block removal unless another provider exists.
     let provides_list = db.get_provides(pkg.id)?;
     for virtual_name in &provides_list {
         let virtual_dependents = db.get_dependents(virtual_name)?;
         for (dep_name, dep_type) in virtual_dependents {
-            // Check if another package also provides this virtual name
+            // Check if another part also provides this virtual name
             let other_providers: Vec<String> = db
                 .find_providers(virtual_name)?
                 .into_iter()
                 .filter(|p| p != name)
                 .collect();
             if other_providers.is_empty() {
-                // This package is the last provider — block removal
+                // This part is the last provider — block removal
                 if !dependents.iter().any(|(n, _)| n == &dep_name) {
                     dependents.push((dep_name, dep_type));
                 }
@@ -605,7 +597,7 @@ pub fn remove_package(db: &Database, name: &str, root_dir: &Path, force: bool) -
             if !link_dependents.is_empty() {
                 return Err(WrightError::DependencyError(format!(
                     "CRITICAL: Cannot remove '{}' because it is a LINK dependency of: {}. \
-                     Removing it will cause these packages to CRASH. Use --force to override.",
+                     Removing it will cause these parts to CRASH. Use --force to override.",
                     name,
                     link_dependents.join(", ")
                 )));
@@ -683,7 +675,7 @@ pub fn remove_package(db: &Database, name: &str, root_dir: &Path, force: bool) -
     }
 
     // Remove from database
-    db.remove_package(name)?;
+    db.remove_part(name)?;
     db.update_transaction_status(tx_id, "completed")?;
 
     info!("Removed {}", name);
@@ -694,7 +686,7 @@ pub fn remove_package(db: &Database, name: &str, root_dir: &Path, force: bool) -
 // Cascade remove
 // ---------------------------------------------------------------------------
 
-/// Compute the full list of packages that would be cascade-removed when removing `name`.
+/// Compute the full list of parts that would be cascade-removed when removing `name`.
 /// Returns orphan dependency names in leaf-first order (safe removal order).
 pub fn cascade_remove_list(db: &Database, name: &str) -> Result<Vec<String>> {
     let mut result = Vec::new();
@@ -727,8 +719,8 @@ fn cascade_collect(
 // Upgrade flow (Step 5g)
 // ---------------------------------------------------------------------------
 
-/// Upgrade an installed package to a new version from archive.
-pub fn upgrade_package(
+/// Upgrade an installed part to a new version from archive.
+pub fn upgrade_part(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,
@@ -739,10 +731,10 @@ pub fn upgrade_package(
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
 
-    // 2. Check old package exists
-    let old_pkg = db.get_package(&pkginfo.name)?.ok_or_else(|| {
+    // 2. Check old part exists
+    let old_pkg = db.get_part(&pkginfo.name)?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
-            "package '{}' is not installed, use install instead",
+            "part '{}' is not installed, use install instead",
             pkginfo.name
         ))
     })?;
@@ -774,7 +766,7 @@ pub fn upgrade_package(
     // 4. Collect new file entries
     let new_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
-    // Check for conflicts with OTHER packages
+    // Check for conflicts with OTHER parts
     for entry in &new_entries {
         if entry.file_type == FileType::File {
             if let Some(owner) = db.find_owner(&entry.path)? {
@@ -926,7 +918,7 @@ pub fn upgrade_package(
 
     // 9. Update DB
     let pkg_hash = checksum::sha256_file(archive_path).ok();
-    db.update_package(NewPackage {
+    db.update_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
         release: pkginfo.release,
@@ -941,7 +933,7 @@ pub fn upgrade_package(
         ..Default::default()
     })?;
 
-    let updated_pkg = db.get_package(&pkginfo.name)?.unwrap();
+    let updated_pkg = db.get_part(&pkginfo.name)?.unwrap();
     db.replace_files(updated_pkg.id, &new_entries)?;
 
     let mut deps = Vec::new();
@@ -953,19 +945,11 @@ pub fn upgrade_package(
             dep_type: DepType::Runtime,
         });
     }
-    for d in &pkginfo.link_deps {
-        let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
-        deps.push(Dependency {
-            name,
-            constraint: constraint.map(|c| c.to_string()),
-            dep_type: DepType::Link,
-        });
-    }
     db.replace_dependencies(updated_pkg.id, &deps)?;
     db.replace_optional_dependencies(updated_pkg.id, &pkginfo.optional_deps)?;
 
     // Replace provides/conflicts (delete old + insert new via ON DELETE CASCADE
-    // won't fire for update_package, so manually clear and re-insert)
+    // won't fire for update_part, so manually clear and re-insert)
     self_replace_provides_conflicts(db, updated_pkg.id, &pkginfo)?;
 
     db.update_transaction_status(tx_id, "completed")?;
@@ -992,11 +976,11 @@ pub fn upgrade_package(
 // Verify
 // ---------------------------------------------------------------------------
 
-/// Verify installed package file integrity.
-pub fn verify_package(db: &Database, name: &str, root_dir: &Path) -> Result<Vec<String>> {
+/// Verify installed part file integrity.
+pub fn verify_part(db: &Database, name: &str, root_dir: &Path) -> Result<Vec<String>> {
     let pkg = db
-        .get_package(name)?
-        .ok_or_else(|| WrightError::PackageNotFound(name.to_string()))?;
+        .get_part(name)?
+        .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
     let files = db.get_files(pkg.id)?;
     let mut issues = Vec::new();
@@ -1150,7 +1134,7 @@ fn backup_existing_path(
 }
 
 /// Collect the absolute paths of all regular files declared as config files
-/// (`[backup]` in `plan.toml`) in the new package.  These will be written as
+/// (`[backup]` in `plan.toml`) in the new part. These will be written as
 /// `<path>.wnew` during upgrade rather than overwriting the live file.
 fn collect_config_paths(new_entries: &[crate::database::FileEntry]) -> HashSet<String> {
     use crate::database::FileType;
@@ -1164,7 +1148,7 @@ fn collect_config_paths(new_entries: &[crate::database::FileEntry]) -> HashSet<S
 /// Copy files from extracted archive to root directory.
 ///
 /// `config_paths` is the set of absolute paths declared as config files via
-/// `[backup]` in the package plan. During an upgrade those files are written
+/// `[backup]` in the part plan. During an upgrade those files are written
 /// as `<path>.wnew` only when a live path already exists, giving the user a
 /// chance to review and merge changes. If the path does not exist yet, the new
 /// file is installed directly. On a fresh install this set is empty and every
@@ -1424,7 +1408,7 @@ mod tests {
         }
 
         let pkginfo = format!(
-            r#"[package]
+            r#"[part]
 name = "{name}"
 version = "{version}"
 release = {release}
@@ -1447,17 +1431,17 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
+        install_part(&db, &archive, root.path(), false).unwrap();
 
-        let pkg = db.get_package("hello").unwrap().unwrap();
-        assert_eq!(pkg.name, "hello");
-        assert_eq!(pkg.version, "1.0.0");
+        let part = db.get_part("hello").unwrap().unwrap();
+        assert_eq!(part.name, "hello");
+        assert_eq!(part.version, "1.0.0");
 
         // Verify file exists
         assert!(root.path().join("usr/bin/hello").exists());
 
         // Verify DB has file entry
-        let files = db.get_files(pkg.id).unwrap();
+        let files = db.get_files(part.id).unwrap();
         assert!(files.iter().any(|f| f.path == "/usr/bin/hello"));
 
         let _ = std::fs::remove_file(&archive);
@@ -1468,13 +1452,13 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
+        install_part(&db, &archive, root.path(), false).unwrap();
         assert!(root.path().join("usr/bin/hello").exists());
 
-        remove_package(&db, "hello", root.path(), false).unwrap();
+        remove_part(&db, "hello", root.path(), false).unwrap();
 
         assert!(!root.path().join("usr/bin/hello").exists());
-        assert!(db.get_package("hello").unwrap().is_none());
+        assert!(db.get_part("hello").unwrap().is_none());
 
         let _ = std::fs::remove_file(&archive);
     }
@@ -1484,8 +1468,8 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
-        let result = install_package(&db, &archive, root.path(), false);
+        install_part(&db, &archive, root.path(), false).unwrap();
+        let result = install_part(&db, &archive, root.path(), false);
         assert!(result.is_err());
 
         let _ = std::fs::remove_file(&archive);
@@ -1494,7 +1478,7 @@ build_date = "1970-01-01T00:00:00Z"
     #[test]
     fn test_remove_nonexistent() {
         let (db, root) = setup_test();
-        let result = remove_package(&db, "nonexistent", root.path(), false);
+        let result = remove_part(&db, "nonexistent", root.path(), false);
         assert!(result.is_err());
     }
 
@@ -1503,14 +1487,14 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
+        install_part(&db, &archive, root.path(), false).unwrap();
 
-        let issues = verify_package(&db, "hello", root.path()).unwrap();
+        let issues = verify_part(&db, "hello", root.path()).unwrap();
         assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
 
         // Tamper with a file
         std::fs::write(root.path().join("usr/bin/hello"), b"tampered").unwrap();
-        let issues = verify_package(&db, "hello", root.path()).unwrap();
+        let issues = verify_part(&db, "hello", root.path()).unwrap();
         assert!(issues.iter().any(|i| i.contains("MODIFIED")));
 
         let _ = std::fs::remove_file(&archive);
@@ -1554,7 +1538,7 @@ build_date = "1970-01-01T00:00:00Z"
     fn test_version_constraint_check() {
         let db = Database::open_in_memory().unwrap();
         // Simulate installed dependency with version 1.0.0
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "libfoo",
             version: "1.0.0",
             release: 1,
@@ -1566,7 +1550,7 @@ build_date = "1970-01-01T00:00:00Z"
         .unwrap();
 
         // Check that >= 2.0 is NOT satisfied by 1.0.0
-        let installed = db.get_package("libfoo").unwrap().unwrap();
+        let installed = db.get_part("libfoo").unwrap().unwrap();
         let installed_ver = Version::parse(&installed.version).unwrap();
         let constraint = VersionConstraint::parse(">= 2.0").unwrap();
         assert!(!constraint.satisfies(&installed_ver));
@@ -1581,8 +1565,8 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
-        let result = upgrade_package(&db, &archive, root.path(), false);
+        install_part(&db, &archive, root.path(), false).unwrap();
+        let result = upgrade_part(&db, &archive, root.path(), false);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
@@ -1599,9 +1583,9 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        install_package(&db, &archive, root.path(), false).unwrap();
+        install_part(&db, &archive, root.path(), false).unwrap();
         // Force upgrade to same version should succeed
-        let result = upgrade_package(&db, &archive, root.path(), true);
+        let result = upgrade_part(&db, &archive, root.path(), true);
         assert!(
             result.is_ok(),
             "Force upgrade should succeed, got: {:?}",
@@ -1609,7 +1593,7 @@ build_date = "1970-01-01T00:00:00Z"
         );
 
         // Package should still be installed
-        let pkg = db.get_package("hello").unwrap().unwrap();
+        let pkg = db.get_part("hello").unwrap().unwrap();
         assert_eq!(pkg.version, "1.0.0");
         assert!(root.path().join("usr/bin/hello").exists());
 
@@ -1621,7 +1605,7 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        let result = upgrade_package(&db, &archive, root.path(), false);
+        let result = upgrade_part(&db, &archive, root.path(), false);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("not installed"));
@@ -1638,7 +1622,7 @@ build_date = "1970-01-01T00:00:00Z"
         let new_release: u32 = 2;
         let old_release: u32 = 1;
 
-        // This is the same condition used in upgrade_package
+        // This is the same condition used in upgrade_part
         let rejected = new_ver < old_ver || (new_ver == old_ver && new_release <= old_release);
         assert!(rejected, "Downgrade 2.0.0-1 -> 1.0.0-2 should be rejected");
 
@@ -1661,7 +1645,7 @@ build_date = "1970-01-01T00:00:00Z"
 
         // Package A (to be upgraded)
         let a_id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "pkgA",
                 version: "1.0.0",
                 release: 1,
@@ -1674,7 +1658,7 @@ build_date = "1970-01-01T00:00:00Z"
 
         // Package B (shares a file with A)
         let b_id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "pkgB",
                 version: "1.0.0",
                 release: 1,
@@ -1739,7 +1723,7 @@ build_date = "1970-01-01T00:00:00Z"
             out_dir.path(),
         );
 
-        upgrade_package(&db, &archive, root.path(), false).unwrap();
+        upgrade_part(&db, &archive, root.path(), false).unwrap();
 
         assert!(shared_path.exists(), "shared file should not be deleted");
         assert!(!old_path.exists(), "old-only file should be removed");
@@ -1768,7 +1752,7 @@ build_date = "1970-01-01T00:00:00Z"
             out_dir.path(),
         );
 
-        let result = install_package(&db, &archive, root.path(), false);
+        let result = install_part(&db, &archive, root.path(), false);
         assert!(result.is_err());
 
         // Rollback should restore original content
@@ -1781,7 +1765,7 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
 
         let pkg_id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "linkpkg",
                 version: "1.0.0",
                 release: 1,
@@ -1833,7 +1817,7 @@ build_date = "1970-01-01T00:00:00Z"
         let rebuilt = out_dir.path().join("linkpkg-2.0.0-1.wright.tar.zst");
         crate::util::compress::create_tar_zst(temp_unpack.path(), &rebuilt).unwrap();
 
-        let result = upgrade_package(&db, &rebuilt, root.path(), false);
+        let result = upgrade_part(&db, &rebuilt, root.path(), false);
         assert!(result.is_err());
 
         let target = std::fs::read_link(&link_path).unwrap();
@@ -1845,7 +1829,7 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
 
         let pkg_id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "linkpkg",
                 version: "1.0.0",
                 release: 1,
@@ -1877,7 +1861,7 @@ build_date = "1970-01-01T00:00:00Z"
         )
         .unwrap();
 
-        let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
+        let issues = verify_part(&db, "linkpkg", root.path()).unwrap();
         assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
 
         // Change symlink target
@@ -1886,7 +1870,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::remove_file(&link_path).unwrap();
         std::os::unix::fs::symlink("target1-renamed", &link_path).unwrap();
 
-        let issues = verify_package(&db, "linkpkg", root.path()).unwrap();
+        let issues = verify_part(&db, "linkpkg", root.path()).unwrap();
         assert!(issues.iter().any(|i| i.contains("MODIFIED")));
     }
 
@@ -1908,7 +1892,7 @@ build_date = "1970-01-01T00:00:00Z"
             std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
             std::fs::write(dir.join(conf_rel), content).unwrap();
             let pkginfo = format!(
-                "[package]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
+                "[part]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
                  description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n\
                  [backup]\nfiles = [\"/etc/myapp/myapp.conf\"]\n"
@@ -1922,14 +1906,14 @@ build_date = "1970-01-01T00:00:00Z"
         let out_dir = tempfile::tempdir().unwrap();
         let v1_dir = tempfile::tempdir().unwrap();
         let v1 = make_archive(v1_dir.path(), "myapp", "1.0.0", conf_v1, out_dir.path());
-        install_package(&db, &v1, root.path(), false).unwrap();
+        install_part(&db, &v1, root.path(), false).unwrap();
 
         let live_conf = root.path().join(conf_rel);
         assert_eq!(std::fs::read(&live_conf).unwrap(), conf_v1);
 
         let v2_dir = tempfile::tempdir().unwrap();
         let v2 = make_archive(v2_dir.path(), "myapp", "2.0.0", conf_v2, out_dir.path());
-        upgrade_package(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false).unwrap();
 
         // Live file must be untouched
         assert_eq!(
@@ -1972,7 +1956,7 @@ build_date = "1970-01-01T00:00:00Z"
                 ""
             };
             let pkginfo = format!(
-                "[package]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
+                "[part]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
                  description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{backup_section}"
             );
@@ -1987,7 +1971,7 @@ build_date = "1970-01-01T00:00:00Z"
         // v1 does not contain the config path at all.
         let v1_dir = tempfile::tempdir().unwrap();
         let v1 = make_archive(v1_dir.path(), "myapp", "1.0.0", false, b"", out_dir.path());
-        install_package(&db, &v1, root.path(), false).unwrap();
+        install_part(&db, &v1, root.path(), false).unwrap();
 
         let live_conf = root.path().join(conf_rel);
         assert!(
@@ -2005,7 +1989,7 @@ build_date = "1970-01-01T00:00:00Z"
             conf_v2,
             out_dir.path(),
         );
-        upgrade_package(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false).unwrap();
 
         assert_eq!(
             std::fs::read(&live_conf).unwrap(),
@@ -2030,25 +2014,25 @@ build_date = "1970-01-01T00:00:00Z"
         let v1_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(v1_dir.path().join("usr/bin")).unwrap();
         std::fs::write(v1_dir.path().join("usr/bin/mytool"), b"v1").unwrap();
-        let pkginfo_v1 = "[package]\nname = \"mypkg\"\nversion = \"1.0.0\"\nrelease = 1\n\
+        let pkginfo_v1 = "[part]\nname = \"mypkg\"\nversion = \"1.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
         std::fs::write(v1_dir.path().join(".PARTINFO"), pkginfo_v1).unwrap();
         let v1 = out_dir.path().join("mypkg-1.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v1_dir.path(), &v1).unwrap();
-        install_package(&db, &v1, root.path(), false).unwrap();
+        install_part(&db, &v1, root.path(), false).unwrap();
 
         // v2: updated binary
         let v2_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(v2_dir.path().join("usr/bin")).unwrap();
         std::fs::write(v2_dir.path().join("usr/bin/mytool"), b"v2").unwrap();
-        let pkginfo_v2 = "[package]\nname = \"mypkg\"\nversion = \"2.0.0\"\nrelease = 1\n\
+        let pkginfo_v2 = "[part]\nname = \"mypkg\"\nversion = \"2.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
         std::fs::write(v2_dir.path().join(".PARTINFO"), pkginfo_v2).unwrap();
         let v2 = out_dir.path().join("mypkg-2.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v2_dir.path(), &v2).unwrap();
-        upgrade_package(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false).unwrap();
 
         let bin = root.path().join("usr/bin/mytool");
         assert_eq!(

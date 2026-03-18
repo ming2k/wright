@@ -1,88 +1,12 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+use wright::cli::wrepo::{Cli, Commands, SourceAction};
 use wright::config::GlobalConfig;
 use wright::repo;
-
-#[derive(Parser)]
-#[command(name = "wrepo", about = "wright repository manager", version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-
-    /// Path to config file
-    #[arg(long, global = true)]
-    config: Option<PathBuf>,
-
-    /// Increase verbosity (-v or -vv)
-    #[arg(long, short, action = clap::ArgAction::Count, global = true)]
-    verbose: u8,
-
-    /// Suppress non-error output
-    #[arg(long, short, global = true)]
-    quiet: bool,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Import packages from a directory of .wright.tar.zst archives
-    Sync {
-        /// Directory containing .wright.tar.zst files (default: components_dir)
-        dir: Option<PathBuf>,
-    },
-    /// List parts available in the repository
-    List {
-        /// Show all versions of a specific part
-        name: Option<String>,
-    },
-    /// Search available parts by keyword
-    Search {
-        /// Search keyword (matches name and description)
-        keyword: String,
-    },
-    /// Remove a part entry from the repository
-    Remove {
-        /// Part name
-        name: String,
-        /// Part version (e.g. "1.2.3" or "1.2.3-2" for specific release)
-        version: String,
-        /// Also delete the archive file from disk
-        #[arg(long)]
-        purge: bool,
-    },
-    /// Manage repository sources
-    Source {
-        #[command(subcommand)]
-        action: SourceAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum SourceAction {
-    /// Add a new repository source
-    Add {
-        /// Unique source name
-        name: String,
-
-        /// Local directory path
-        #[arg(long)]
-        path: PathBuf,
-
-        /// Priority (higher = preferred)
-        #[arg(long, default_value = "100")]
-        priority: i32,
-    },
-    /// Remove a repository source
-    Remove {
-        /// Source name to remove
-        name: String,
-    },
-    /// List configured repository sources
-    List,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -125,8 +49,8 @@ fn main() -> Result<()> {
                 wright::database::Database::open(&db_path).context("failed to open database")?;
 
             let entries = repo_db
-                .list_packages(name.as_deref())
-                .context("failed to list packages")?;
+                .list_parts(name.as_deref())
+                .context("failed to list parts")?;
 
             if entries.is_empty() {
                 if let Some(n) = name {
@@ -136,7 +60,7 @@ fn main() -> Result<()> {
                 }
             } else {
                 for entry in &entries {
-                    let installed = db.get_package(&entry.name).ok().flatten();
+                    let installed = db.get_part(&entry.name).ok().flatten();
                     let tag = match &installed {
                         Some(pkg)
                             if pkg.version == entry.version && pkg.release == entry.release =>
@@ -160,17 +84,17 @@ fn main() -> Result<()> {
                 wright::database::Database::open(&db_path).context("failed to open database")?;
 
             let entries = repo_db
-                .search_packages(&keyword)
-                .context("failed to search packages")?;
+                .search_parts(&keyword)
+                .context("failed to search parts")?;
 
             if entries.is_empty() {
                 println!(
-                    "no available packages found matching '{}' (run 'wrepo sync' first?)",
+                    "no available parts found matching '{}' (run 'wrepo sync' first?)",
                     keyword
                 );
             } else {
                 for entry in &entries {
-                    let installed = db.get_package(&entry.name).ok().flatten();
+                    let installed = db.get_part(&entry.name).ok().flatten();
                     let tag = if installed.is_some() {
                         " [installed]"
                     } else {
@@ -209,8 +133,8 @@ fn main() -> Result<()> {
             };
 
             let removed = repo_db
-                .remove_package(&name, target_ver, target_rel)
-                .context("failed to remove package")?;
+                .remove_part(&name, target_ver, target_rel)
+                .context("failed to remove part")?;
 
             if removed.is_empty() {
                 eprintln!("error: {} {} not found in repository", name, version);

@@ -28,7 +28,7 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 │   ├── include/    # C/C++ header files
 │   └── local/      # User-installed software (NOT managed by Wright)
 ├── etc/            # System configuration files
-│   ├── wright/     # Wright package manager configuration
+│   ├── wright/     # Wright system configuration
 │   ├── sv/         # runit service definitions
 │   └── ...
 ├── var/
@@ -52,15 +52,15 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 ### 1.2 Key Design Decisions
 
-**usrmerge**: `/bin`, `/sbin`, and `/lib` are all symlinks to their counterparts under `/usr/`. All packages must install files under `/usr/`. This eliminates the historical split between `/bin` and `/usr/bin`.
+**usrmerge**: `/bin`, `/sbin`, and `/lib` are all symlinks to their counterparts under `/usr/`. All parts must install files under `/usr/`. This eliminates the historical split between `/bin` and `/usr/bin`.
 
 **sbin merged into bin**: `/sbin` and `/usr/sbin` both resolve to `/usr/bin`. There is no separate `sbin` directory. Root-only tools (e.g. `mount`, `ip`) live in `/usr/bin` like everything else; privilege is enforced by permissions, not path.
 
-**lib64 handling**: On musl systems, `/lib64` is a symlink to `/usr/lib` — musl does not distinguish `lib` from `lib64`. On glibc multi-arch systems, `/lib64` may point to `/usr/lib64` instead, and `/usr/lib64/` holds the secondary architecture's libraries. All packages should target `/usr/lib/` unless explicitly building for a secondary architecture.
+**lib64 handling**: On musl systems, `/lib64` is a symlink to `/usr/lib` — musl does not distinguish `lib` from `lib64`. On glibc multi-arch systems, `/lib64` may point to `/usr/lib64` instead, and `/usr/lib64/` holds the secondary architecture's libraries. All parts should target `/usr/lib/` unless explicitly building for a secondary architecture.
 
-**No /usr/local pollution**: `/usr/local/` is reserved for software manually compiled and installed by the user. Packages managed by Wright must never install files there.
+**No /usr/local pollution**: `/usr/local/` is reserved for software manually compiled and installed by the user. Parts managed by Wright must never install files there.
 
-**opt for third-party trees**: `/opt` is available for self-contained third-party software (e.g. proprietary bundles, Flatpak runtimes) that cannot conform to standard FHS paths. Native Wright packages do not install into `/opt`.
+**opt for third-party trees**: `/opt` is available for self-contained third-party software (e.g. proprietary bundles, Flatpak runtimes) that cannot conform to standard FHS paths. Native Wright parts do not install into `/opt`.
 
 ### 1.3 Package File Installation Conventions
 
@@ -85,7 +85,7 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 ### 2.1 Core Philosophy
 
-Splitting a package (split package) involves dividing the build products of a single upstream source package into multiple independent binary packages. Splitting increases complexity and should only be done when truly necessary.
+Splitting a part (split part) involves dividing the build products of a single upstream source plan into multiple independent binary parts. Splitting increases complexity and should only be done when truly necessary.
 
 ### 2.2 Criteria for Splitting
 
@@ -95,7 +95,7 @@ Consider the following factors:
 
 1.  **Runtime vs. Build-time**: Many programs only need a library's `.so` file, not the compiler itself.
 2.  **Size Difference**: A subset is huge and unnecessary for most users.
-3.  **Dependency Propagation**: Not splitting causes many packages to pull in heavy, unnecessary components.
+3.  **Dependency Propagation**: Not splitting causes many parts to pull in heavy, unnecessary components.
 4.  **Hardware/Scenario Specificity**: Firmware, drivers, etc., are only relevant to specific hardware.
 
 ### 2.3 Typical Splitting Cases
@@ -118,11 +118,11 @@ gcc (source)
 **Why it must be split:**
 
 - `libstdc++` and `libgcc` are runtime dependencies for almost all C++ programs. Without splitting, installing any C++ program would pull in the entire GCC compiler (100MB+), which is unacceptable.
-- Conversely, many packages need `libstdc++.so` but not `g++`.
+- Conversely, many parts need `libstdc++.so` but not `g++`.
 - The same applies to small runtime libraries like `libgomp` and `libatomic`—they are needed for execution, not for compilation.
 
 ```toml
-# gcc/plan.toml multi-package example
+# gcc/plan.toml multi-part example
 [output."libstdc++"]
 description = "GNU C++ standard library runtime"
 script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PART_DIR}/usr/lib/"
@@ -174,12 +174,12 @@ linux-firmware (source, ~800MB+)
 
 **Why it must be split:**
 
-- 800MB of firmware is mostly wasted on a personal system—a machine usually only needs 2-3 subpackages.
+- 800MB of firmware is mostly wasted on a personal system—a machine usually only needs 2-3 sub-parts.
 - There are almost no dependencies between firmware files, making them ideal for splitting.
 - By splitting by hardware vendor/type, users only install the firmware their hardware requires.
 
 ```toml
-# linux-firmware/plan.toml multi-package example
+# linux-firmware/plan.toml multi-part example
 [output.amdgpu]
 description = "AMD GPU firmware"
 script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PART_DIR}/usr/lib/firmware/amdgpu/"
@@ -215,10 +215,10 @@ install -Dm644 ${BUILD_DIR}/rtw89/* ${PART_DIR}/usr/lib/firmware/rtw89/
 
 | Scenario | Reason |
 |----------|--------|
-| `-dev` packages (for personal/small team use) | Disk space is far less important than maintenance complexity (see 2.5) |
+| `-dev` parts (for personal/small team use) | Disk space is far less important than maintenance complexity (see 2.5) |
 | Small libraries | Space saved doesn't justify increased dependency complexity |
 | Tightly coupled components | Components almost always used together should not be split |
-| Packages with a single use case | No diverse user base, no beneficiaries of splitting |
+| Parts with a single use case | No diverse user base, no beneficiaries of splitting |
 
 ### 2.5 Recommendations for -dev Splitting
 
@@ -234,11 +234,11 @@ However, for Wright's target users (personal or small team maintained custom dis
 3.  **Debug-friendly**: Header files are often useful during troubleshooting.
 4.  **Negligible Disk Overhead**: Headers and `.pc` files typically take up only a few hundred KB.
 
-**Exception**: If a package's development files are exceptionally large (e.g., Qt, LLVM headers over 50MB), consider splitting.
+**Exception**: If a part's development files are exceptionally large (e.g., Qt, LLVM headers over 50MB), consider splitting.
 
-### 2.6 Multi-Package Practice
+### 2.6 Multi-Part Practice
 
-Use `[lifecycle.fabricate.<name>]` sub-tables in `plan.toml` to define sub-packages:
+Use `[lifecycle.fabricate.<name>]` sub-tables in `plan.toml` to define sub-parts:
 
 ```toml
 # Example: Splitting large documentation only
@@ -260,7 +260,7 @@ hooks.post_install = "ldconfig"
 | Question | Answer "Yes" → Split | Answer "No" → Don't Split |
 |----------|----------------------|---------------------------|
 | Does the subset of files have an independent user group? | Split | Don't Split |
-| Does the subset exceed 30% of the main package's size? | Split | Don't Split |
+| Does the subset exceed 30% of the main part's size? | Split | Don't Split |
 | Does splitting reduce at least 2 unnecessary dependency chains? | Split | Don't Split |
 | Is the subset truly unnecessary at runtime? | Split | Don't Split |
 
@@ -272,22 +272,20 @@ Consider splitting when at least two "Yes" answers are met.
 
 ### 3.1 Strict Protection of Runtime Dependencies
 
-By default, Wright **prohibits the removal of software that other installed packages depend on**.
+By default, Wright **prohibits the removal of software that other installed parts depend on**.
 
-Specifically, for **link dependencies**, Wright enforces even stricter protection:
-- If you attempt to remove a library that other packages depend on via `link` (e.g., `openssl`), the removal will be **blocked** with a **CRITICAL** error.
-- This is because the absence of a `link` dependency causes dependent programs to crash immediately due to missing shared libraries.
+Removal protection follows recorded installed/runtime dependencies. If removing a part would break installed parts, Wright blocks the removal unless forced.
 
 ```
 $ wright remove openssl
-error: CRITICAL: Cannot remove 'openssl' because it is a LINK dependency of: curl, nginx, git. Removing it will cause these packages to CRASH. Use --force to override.
+error: CRITICAL: Cannot remove 'openssl' because it is a LINK dependency of: curl, nginx, git. Removing it will cause these parts to CRASH. Use --force to override.
 ```
 
 ### 3.2 Dependency Declaration Principles
 
-- **runtime**: Packages that must exist at runtime. E.g., script interpreters, non-linked libraries. Declare only direct dependencies, not transitive ones.
-- **build**: Required only during build time; not recorded in binary packages. E.g., compilers, build tools.
-- **link**: Required at build time (headers/libs) and runtime (shared libraries). **Key Point**: When a `link` dependency is updated, Wright automatically triggers a rebuild of this package to ensure binary compatibility (ABI match).
+- **runtime**: Parts that must exist at runtime. E.g., script interpreters, shared libraries, helper binaries. Declare only direct dependencies, not transitive ones.
+- **build**: Required only during build time; not recorded in binary parts. E.g., compilers, build tools.
+- **link**: ABI-sensitive build edge used for rebuild propagation. It may overlap with `runtime`, and often should for shared libraries. **Key Point**: When a `link` dependency is updated, Wright automatically triggers a rebuild of this part to ensure binary compatibility (ABI match). `link` alone does not make the dependency a recorded runtime requirement.
 - **optional**: Enhances functionality but is not mandatory; provided as informational only.
 
 ```toml
@@ -306,7 +304,7 @@ Circular dependencies (A → B → A) are detected and rejected by Wright's depe
 
 1.  Determine if it's a true runtime circular dependency (usually it's not).
 2.  Change one direction to `optional` or handle it in `build` dependencies.
-3.  If necessary, consider merging them into a single package.
+3.  If necessary, consider merging them into a single part.
 
 ---
 
@@ -339,7 +337,7 @@ When encountering compatibility issues, prioritize submitting patches upstream; 
 
 ### 4.3 runit Service Packaging
 
-Packages providing daemons must include a runit service directory:
+Parts providing daemons must include a runit service directory:
 
 ```
 /etc/sv/{service}/run          # Required, service start script
@@ -364,7 +362,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 ---
 
-## 5. Repository Tiers and Package Categories
+## 5. Repository Tiers and Part Categories
 
 ### 5.1 Four-Tier Repository Structure
 
@@ -372,8 +370,8 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 |------|------|---------|---------------|
 | **core** | Core System | Toolchain, libc, kernel, init, essential utilities | Extremely conservative, security fixes only |
 | **base** | Base System | Networking tools, filesystem tools, common libraries, Wright itself | Stable versions, promoted after testing against core |
-| **extra** | Extra Packages | Servers, language runtimes, development tools | Track stable upstream |
-| **community**| Community | User-contributed packages | No stability guarantees |
+| **extra** | Extra Parts | Servers, language runtimes, development tools | Track stable upstream |
+| **community**| Community | User-contributed parts | No stability guarantees |
 
 ### 5.2 Software NOT Included in Native Repositories
 

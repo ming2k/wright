@@ -1,10 +1,10 @@
 # Writing Plans
 
-A **plan** is a directory containing a `plan.toml` file that describes how to fetch, build, and package a piece of software. This guide is the complete reference for plan authors.
+A **plan** is a directory containing a `plan.toml` file that describes how to fetch, build, and produce a **part** from a piece of software. This guide is the complete reference for plan authors.
 
 ## Directory Structure
 
-Plans live in a flat directory tree. Each plan is a directory named after the package:
+Plans live in a flat directory tree. Each plan is a directory named after the part:
 
 ```
 plans/
@@ -34,7 +34,7 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 
 | Field         | Type     | Required | Default | Description                        |
 |---------------|----------|----------|---------|------------------------------------|
-| `name`        | string   | yes      | —       | Package name                       |
+| `name`        | string   | yes      | —       | Part name                          |
 | `version`     | string   | yes      | —       | Upstream version (free-form)       |
 | `release`     | integer  | yes      | —       | Build revision (must be >= 1)      |
 | `epoch`       | integer  | no       | `0`     | Version epoch — overrides version comparison (see below) |
@@ -46,16 +46,16 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 
 #### Epoch
 
-The `epoch` field forces a package to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
+The `epoch` field forces a part to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
 
 ```toml
 name = "example"
 version = "1.0.0"
 release = 1
-description = "Example package"
+description = "Example part"
 license = "MIT"
 arch = "x86_64"
-epoch = 1       # This will upgrade over any epoch=0 package, even "9999.0"
+epoch = 1       # This will upgrade over any epoch=0 part, even "9999.0"
 ```
 
 Epoch defaults to `0` and is omitted from archive filenames and `.PARTINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
@@ -68,13 +68,17 @@ All fields default to empty lists if omitted.
 |-------------|---------------------------------|--------------------------------------|
 | `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
 | `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
-| `link`      | list of strings                 | Shared library dependencies. Triggers rebuild on update. |
+| `link`      | list of strings                 | ABI-sensitive linked dependencies. Triggers rebuild on update. |
 | `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
 
 #### `link` dependencies vs `runtime`
 
-- **`link`**: Use this for shared libraries (`.so`) that your program links against. Wright will **automatically rebuild** your package whenever a `link` dependency is updated, ensuring ABI compatibility. It also provides CRITICAL protection against removal.
-- **`runtime`**: Use this for tools or scripts called at runtime (e.g. a Python script needing `python`). Updating a `runtime` dependency does not trigger a rebuild.
+- **`link`**: Use this for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wbuild` concept, not an implicit install-time dependency.
+- **`runtime`**: Use this for anything that must exist after installation for the part to work.
+
+These lists may overlap, and overlap is often correct for shared libraries. If a library is both linked and required at runtime, declare it in both `link` and `runtime`.
+
+`wbuild` uses `link` for reverse rebuild expansion. `wright install` uses `runtime` from `.PARTINFO`. Do not rely on `link` alone to pull in runtime requirements.
 
 #### Version constraints
 
@@ -99,13 +103,13 @@ optional = [
 
 ### `[relations]`
 
-Package relations describe how this package interacts with other packages. All fields default to empty lists if omitted.
+Part relations describe how this part interacts with other parts. All fields default to empty lists if omitted.
 
 | Field       | Type            | Description                          |
 |-------------|-----------------|--------------------------------------|
-| `replaces`  | list of strings | Packages that this one replaces (automatically uninstalled) |
-| `conflicts` | list of strings | Packages that cannot be installed alongside this one |
-| `provides`  | list of strings | Virtual packages this one provides   |
+| `replaces`  | list of strings | Parts that this one replaces (automatically uninstalled) |
+| `conflicts` | list of strings | Parts that cannot be installed alongside this one |
+| `provides`  | list of strings | Virtual parts this one provides   |
 
 ```toml
 [relations]
@@ -116,8 +120,8 @@ provides = ["http-server"]
 
 #### `replaces` vs `conflicts`
 
-- **`replaces`**: Use this for package renames or merges. If a package in this list is already installed, Wright will **automatically uninstall** it before installing the current package.
-- **`conflicts`**: Use this when two packages provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the package if a conflicting one is already present.
+- **`replaces`**: Use this for part renames or merges. If a part in this list is already installed, Wright will **automatically uninstall** it before installing the current part.
+- **`conflicts`**: Use this when two parts provide similar functionality but cannot coexist (e.g. `nginx` and `apache` both wanting port 80). Wright will **refuse to install** the part if a conflicting one is already present.
 
 ### `[[sources]]`
 
@@ -210,11 +214,11 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`, or legacy `staging`-only plans). Use only for packages with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`, or legacy `staging`-only plans). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
-**CPU parallelism:** Wright pins each dockyard process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the dockyard already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific package, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
+**CPU parallelism:** Wright pins each dockyard process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the dockyard already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific part, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
 
 **Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
@@ -311,7 +315,7 @@ Allowed top-level fields in `mvp.toml`:
 - `lifecycle`
 - `lifecycle_order`
 
-Do not duplicate package metadata, sources, outputs, or hooks there. Also do
+Do not duplicate part metadata, sources, outputs, or hooks there. Also do
 not mix inline `[mvp]` in `plan.toml` with a sibling `mvp.toml`; choose one.
 
 ### `[lifecycle.fabricate]` — Final Build Stage
@@ -344,12 +348,12 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 | `pre_install`        | string | Run before first install   |
 | `post_install`       | string | Run after first install    |
 | `post_upgrade`       | string | Run after upgrade          |
-| `pre_remove`         | string | Run before package removal |
-| `post_remove`        | string | Run after package removal  |
+| `pre_remove`         | string | Run before part removal |
+| `post_remove`        | string | Run after part removal  |
 
 ### `[output]` — Output Metadata
 
-`[output]` defines install-time metadata for the main package, and
+`[output]` defines install-time metadata for the main part, and
 `[output.<name>]` declares additional split outputs.
 
 ```toml
@@ -364,10 +368,10 @@ script = "..."
 | Field          | Type            | Description                              |
 |----------------|-----------------|------------------------------------------|
 | `backup`       | list of strings | Config files preserved across upgrades   |
-| `description`  | string          | Sub-package description (multi-package mode) |
-| `script`       | string          | Script to select/install files into the sub-package (multi-package mode) |
-| `hooks.*`      | table/fields    | Transaction hooks for a sub-package      |
-| `dependencies` | table           | Sub-package dependencies (multi-package mode) |
+| `description`  | string          | Sub-part description (multi-output mode) |
+| `script`       | string          | Script to select/install files into the sub-part (multi-output mode) |
+| `hooks.*`      | table/fields    | Transaction hooks for a sub-part      |
+| `dependencies` | table           | Sub-part dependencies (multi-output mode) |
 
 #### Backup files
 
@@ -378,7 +382,7 @@ Files listed in `backup` are treated as **user-owned config files**:
   left intact so user customisations are never lost. The user can then diff the
   two files and merge changes manually. Files **not** listed in `backup` are
   overwritten directly.
-- **On remove:** config files are **not deleted**, even when the package is removed.
+- **On remove:** config files are **not deleted**, even when the part is removed.
 
 ## Default Lifecycle Pipeline
 
@@ -425,12 +429,12 @@ Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. 
 
 ## Phase-Based Cycles (MVP → Full)
 
-Some packages have genuine circular build-time dependencies. The classic example is `freetype` ↔ `harfbuzz`: freetype needs harfbuzz for OpenType shaping, and harfbuzz needs freetype for glyph rendering. These cycles cannot be broken by fixing dependency types — they are real.
+Some parts have genuine circular build-time dependencies. The classic example is `freetype` ↔ `harfbuzz`: freetype needs harfbuzz for OpenType shaping, and harfbuzz needs freetype for glyph rendering. These cycles cannot be broken by fixing dependency types — they are real.
 
 Wright resolves them automatically using a **two-pass build**:
 
-1. **MVP pass** — builds the package without the cyclic dependency (functional but reduced).
-2. **Full pass** — after the rest of the cycle is built, rebuilds the package with all dependencies.
+1. **MVP pass** — builds the part without the cyclic dependency (functional but reduced).
+2. **Full pass** — after the rest of the cycle is built, rebuilds the part with all dependencies.
 
 ### Declaring an MVP phase
 
@@ -476,7 +480,7 @@ cmake -B build \
 
 ### MVP lifecycle overrides (recommended)
 
-For complex packages, it is safer to provide **dedicated MVP scripts** instead of
+For complex parts, it is safer to provide **dedicated MVP scripts** instead of
 embedding conditionals. Wright supports a `[mvp.lifecycle]` section that overrides
 `[lifecycle]` **only during the MVP pass**.
 
@@ -560,7 +564,7 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${PART_ARCH}`   | Target architecture                        |
 | `${SRC_DIR}`    | Extraction root directory                  |
 | `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
-| `${PART_DIR}`    | Package output directory (install files here) |
+| `${PART_DIR}`    | Part output directory (install files here) |
 | `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
 | `${CFLAGS}`     | C compiler flags                           |
 | `${CXXFLAGS}`   | C++ compiler flags                         |
@@ -608,7 +612,7 @@ In both `relaxed` and `strict` modes, the dockyard:
 - Bind-mounts `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64` read-only
 - Bind-mounts essential `/etc` files (`resolv.conf`, `hosts`, `passwd`, `group`, `ld.so.conf`, `ld.so.cache`) read-only
 - Mounts the source directory at `/build` (read-write)
-- Mounts the package output directory at `/output` (read-write)
+- Mounts the part output directory at `/output` (read-write)
 - Mounts the files directory at `/files` (read-only, if present)
 - Provides `/dev` with basic devices (`null`, `zero`, `urandom`, `random`, `full`)
 - Mounts a fresh `/proc` and `/tmp`
@@ -694,7 +698,7 @@ os.makedirs(f"{os.environ['PART_DIR']}/usr/lib", exist_ok=True)
 name = "hello"
 version = "1.0.0"
 release = 1
-description = "Hello World test package"
+description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
@@ -800,9 +804,9 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 ### Multi-Package Mode
 
-A single plan can produce multiple output packages. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main package.
+A single plan can produce multiple output parts. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main part.
 
-In multi-package mode, the main package uses `[output]`, and extra outputs are
+In multi-output mode, the main part uses `[output]`, and extra outputs are
 declared as subtables of `[output]`.
 
 ```toml
@@ -832,15 +836,15 @@ hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
-Sub-packages inherit `version`, `release`, `arch`, and `license` from the
-parent manifest unless overridden. Each sub-package can have a `description`, a
+Sub-parts inherit `version`, `release`, `arch`, and `license` from the
+parent manifest unless overridden. Each sub-part can have a `description`, a
 `script` to select/install files, `hooks.*` fields, `backup`, and a
 `dependencies` table. Names containing `+` or `.` must be quoted in TOML table
 headers (e.g. `[output."libstdc++"]`).
 
-Sub-package dependencies use dotted keys (`dependencies.runtime`) or a sub-table
-(`[output.<name>.dependencies]`) for packages that must be installed when this
-sub-package is installed independently.
+Sub-part dependencies use dotted keys (`dependencies.runtime`) or a sub-table
+(`[output.<name>.dependencies]`) for parts that must be installed when this
+sub-part is installed independently.
 
 ```toml
 [lifecycle.staging]
@@ -854,7 +858,7 @@ install -Dm644 ${BUILD_DIR}/libfoo.pc ${PART_DIR}/usr/lib/pkgconfig/libfoo.pc
 """
 ```
 
-Sub-packages are independent archives — installing the parent does **not** automatically install its sub-packages. To create a meta-package that pulls in all sub-packages, list them as `runtime` dependencies on the parent:
+Sub-parts are independent archives — installing the parent does **not** automatically install its sub-parts. To create a meta-part that pulls in all sub-parts, list them as `runtime` dependencies on the parent:
 
 ```toml
 name = "linux-firmware"
@@ -868,9 +872,9 @@ description = "AMD GPU/CPU firmware"
 # ...
 ```
 
-In this pattern the parent package itself may contain no files — it exists only to group the sub-packages.
+In this pattern the parent part itself may contain no files — it exists only to group the sub-parts.
 
-For a `-doc` sub-package that overrides the architecture:
+For a `-doc` sub-part that overrides the architecture:
 
 ```toml
 [lifecycle.fabricate.mypackage-doc]

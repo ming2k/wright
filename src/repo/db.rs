@@ -10,7 +10,7 @@ use crate::part::archive;
 const REPO_DB_FILENAME: &str = "repo.db";
 
 const SCHEMA: &str = "
-    CREATE TABLE IF NOT EXISTS packages (
+    CREATE TABLE IF NOT EXISTS parts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         version TEXT NOT NULL,
@@ -29,35 +29,35 @@ const SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS dependencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        package_id INTEGER NOT NULL,
+        part_id INTEGER NOT NULL,
         depends_on TEXT NOT NULL,
         dep_type TEXT NOT NULL DEFAULT 'runtime',
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS provides (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        package_id INTEGER NOT NULL,
+        part_id INTEGER NOT NULL,
         name TEXT NOT NULL,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS conflicts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        package_id INTEGER NOT NULL,
+        part_id INTEGER NOT NULL,
         name TEXT NOT NULL,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS replaces (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        package_id INTEGER NOT NULL,
+        part_id INTEGER NOT NULL,
         name TEXT NOT NULL,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+        FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
     );
 
-    CREATE INDEX IF NOT EXISTS idx_repo_pkg_name ON packages(name);
-    CREATE INDEX IF NOT EXISTS idx_repo_deps_pkg ON dependencies(package_id);
+    CREATE INDEX IF NOT EXISTS idx_repo_pkg_name ON parts(name);
+    CREATE INDEX IF NOT EXISTS idx_repo_deps_pkg ON dependencies(part_id);
     CREATE INDEX IF NOT EXISTS idx_repo_deps_on ON dependencies(depends_on);
     CREATE INDEX IF NOT EXISTS idx_repo_provides_name ON provides(name);
     CREATE INDEX IF NOT EXISTS idx_repo_conflicts_name ON conflicts(name);
@@ -67,7 +67,7 @@ const SCHEMA: &str = "
 ";
 
 #[derive(Debug, Clone)]
-pub struct RepoPackage {
+pub struct RepoPart {
     pub id: i64,
     pub name: String,
     pub version: String,
@@ -79,7 +79,6 @@ pub struct RepoPackage {
     pub sha256: String,
     pub install_size: u64,
     pub runtime_deps: Vec<String>,
-    pub link_deps: Vec<String>,
 }
 
 pub struct RepoDb {
@@ -136,8 +135,8 @@ impl RepoDb {
         })
     }
 
-    /// Register a built package in the repo database.
-    pub fn register_package(
+    /// Register a built part in the repo database.
+    pub fn register_part(
         &self,
         partinfo: &archive::PartInfo,
         filename: &str,
@@ -149,7 +148,7 @@ impl RepoDb {
 
         // Delete existing entry for same name/version/release/epoch
         tx.execute(
-            "DELETE FROM packages WHERE name = ?1 AND version = ?2 AND release = ?3 AND epoch = ?4",
+            "DELETE FROM parts WHERE name = ?1 AND version = ?2 AND release = ?3 AND epoch = ?4",
             params![
                 partinfo.name,
                 partinfo.version,
@@ -160,7 +159,7 @@ impl RepoDb {
         .map_err(|e| WrightError::DatabaseError(format!("delete old entry: {}", e)))?;
 
         tx.execute(
-            "INSERT INTO packages (name, version, release, epoch, description, arch, license, filename, sha256, install_size, build_date)
+            "INSERT INTO parts (name, version, release, epoch, description, arch, license, filename, sha256, install_size, build_date)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 partinfo.name,
@@ -176,44 +175,36 @@ impl RepoDb {
                 partinfo.build_date,
             ],
         )
-        .map_err(|e| WrightError::DatabaseError(format!("insert package: {}", e)))?;
+        .map_err(|e| WrightError::DatabaseError(format!("insert part: {}", e)))?;
 
         let pkg_id = tx.last_insert_rowid();
 
         // Insert dependencies
         for dep in &partinfo.runtime_deps {
             tx.execute(
-                "INSERT INTO dependencies (package_id, depends_on, dep_type) VALUES (?1, ?2, 'runtime')",
+                "INSERT INTO dependencies (part_id, depends_on, dep_type) VALUES (?1, ?2, 'runtime')",
                 params![pkg_id, dep],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert runtime dep: {}", e)))?;
         }
-        for dep in &partinfo.link_deps {
-            tx.execute(
-                "INSERT INTO dependencies (package_id, depends_on, dep_type) VALUES (?1, ?2, 'link')",
-                params![pkg_id, dep],
-            )
-            .map_err(|e| WrightError::DatabaseError(format!("insert link dep: {}", e)))?;
-        }
-
         // Insert relations
         for name in &partinfo.provides {
             tx.execute(
-                "INSERT INTO provides (package_id, name) VALUES (?1, ?2)",
+                "INSERT INTO provides (part_id, name) VALUES (?1, ?2)",
                 params![pkg_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert provides: {}", e)))?;
         }
         for name in &partinfo.conflicts {
             tx.execute(
-                "INSERT INTO conflicts (package_id, name) VALUES (?1, ?2)",
+                "INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)",
                 params![pkg_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert conflicts: {}", e)))?;
         }
         for name in &partinfo.replaces {
             tx.execute(
-                "INSERT INTO replaces (package_id, name) VALUES (?1, ?2)",
+                "INSERT INTO replaces (part_id, name) VALUES (?1, ?2)",
                 params![pkg_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert replaces: {}", e)))?;
@@ -225,19 +216,19 @@ impl RepoDb {
         Ok(pkg_id)
     }
 
-    /// List packages, optionally filtered by name.
-    pub fn list_packages(&self, name: Option<&str>) -> Result<Vec<RepoPackage>> {
-        let mut packages = if let Some(name) = name {
+    /// List parts, optionally filtered by name.
+    pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<RepoPart>> {
+        let mut parts = if let Some(name) = name {
             let mut stmt = self
                 .conn
                 .prepare(
                     "SELECT id, name, version, release, epoch, description, arch, filename, sha256, install_size
-                     FROM packages WHERE name = ?1
+                     FROM parts WHERE name = ?1
                      ORDER BY epoch DESC, version DESC, release DESC",
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map(params![name], row_to_repo_package)
+                .query_map(params![name], row_to_repo_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
@@ -247,11 +238,11 @@ impl RepoDb {
                 .conn
                 .prepare(
                     "SELECT id, name, version, release, epoch, description, arch, filename, sha256, install_size
-                     FROM packages ORDER BY name, epoch DESC, version DESC, release DESC",
+                     FROM parts ORDER BY name, epoch DESC, version DESC, release DESC",
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map([], row_to_repo_package)
+                .query_map([], row_to_repo_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
@@ -259,74 +250,71 @@ impl RepoDb {
         };
 
         // Fill in dependencies
-        for pkg in &mut packages {
+        for pkg in &mut parts {
             pkg.runtime_deps = self.get_deps(pkg.id, "runtime")?;
-            pkg.link_deps = self.get_deps(pkg.id, "link")?;
         }
 
-        Ok(packages)
+        Ok(parts)
     }
 
-    /// Search packages by keyword (matches name and description).
-    pub fn search_packages(&self, keyword: &str) -> Result<Vec<RepoPackage>> {
+    /// Search parts by keyword (matches name and description).
+    pub fn search_parts(&self, keyword: &str) -> Result<Vec<RepoPart>> {
         let pattern = format!("%{}%", keyword);
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, name, version, release, epoch, description, arch, filename, sha256, install_size
-                 FROM packages
+                 FROM parts
                  WHERE name LIKE ?1 OR description LIKE ?1
                  ORDER BY name, epoch DESC, version DESC, release DESC",
             )
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
-        let mut packages: Vec<RepoPackage> = stmt
-            .query_map(params![pattern], row_to_repo_package)
+        let mut parts: Vec<RepoPart> = stmt
+            .query_map(params![pattern], row_to_repo_part)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
 
-        for pkg in &mut packages {
+        for pkg in &mut parts {
             pkg.runtime_deps = self.get_deps(pkg.id, "runtime")?;
-            pkg.link_deps = self.get_deps(pkg.id, "link")?;
         }
 
-        Ok(packages)
+        Ok(parts)
     }
 
-    /// Find the latest version of a package by name.
-    pub fn find_package(&self, name: &str) -> Result<Option<RepoPackage>> {
+    /// Find the latest version of a part by name.
+    pub fn find_part(&self, name: &str) -> Result<Option<RepoPart>> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, name, version, release, epoch, description, arch, filename, sha256, install_size
-                 FROM packages WHERE name = ?1
+                 FROM parts WHERE name = ?1
                  ORDER BY epoch DESC, version DESC, release DESC
                  LIMIT 1",
             )
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
         let mut pkg = stmt
-            .query_map(params![name], row_to_repo_package)
+            .query_map(params![name], row_to_repo_part)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .next();
 
         if let Some(ref mut p) = pkg {
             p.runtime_deps = self.get_deps(p.id, "runtime")?;
-            p.link_deps = self.get_deps(p.id, "link")?;
         }
 
         Ok(pkg)
     }
 
-    /// Find all versions of a package.
-    pub fn find_all_versions(&self, name: &str) -> Result<Vec<RepoPackage>> {
-        self.list_packages(Some(name))
+    /// Find all versions of a part.
+    pub fn find_all_versions(&self, name: &str) -> Result<Vec<RepoPart>> {
+        self.list_parts(Some(name))
     }
 
-    /// Remove a package entry from the repo database.
-    pub fn remove_package(
+    /// Remove a part entry from the repo database.
+    pub fn remove_part(
         &self,
         name: &str,
         version: &str,
@@ -335,7 +323,7 @@ impl RepoDb {
         let entries: Vec<(i64, String, String, u32)> = if let Some(rel) = release {
             let mut stmt = self
                 .conn
-                .prepare("SELECT id, name, version, release FROM packages WHERE name = ?1 AND version = ?2 AND release = ?3")
+                .prepare("SELECT id, name, version, release FROM parts WHERE name = ?1 AND version = ?2 AND release = ?3")
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version, rel], |row| {
@@ -348,7 +336,7 @@ impl RepoDb {
         } else {
             let mut stmt = self
                 .conn
-                .prepare("SELECT id, name, version, release FROM packages WHERE name = ?1 AND version = ?2")
+                .prepare("SELECT id, name, version, release FROM parts WHERE name = ?1 AND version = ?2")
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version], |row| {
@@ -363,7 +351,7 @@ impl RepoDb {
         let mut removed = Vec::new();
         for (id, n, v, r) in entries {
             self.conn
-                .execute("DELETE FROM packages WHERE id = ?1", params![id])
+                .execute("DELETE FROM parts WHERE id = ?1", params![id])
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             removed.push((n, v, r));
         }
@@ -371,7 +359,7 @@ impl RepoDb {
         Ok(removed)
     }
 
-    /// Get the filename for a specific package version.
+    /// Get the filename for a specific part version.
     pub fn get_filename(
         &self,
         name: &str,
@@ -381,7 +369,7 @@ impl RepoDb {
         let result = if let Some(rel) = release {
             self.conn
                 .query_row(
-                    "SELECT filename FROM packages WHERE name = ?1 AND version = ?2 AND release = ?3",
+                    "SELECT filename FROM parts WHERE name = ?1 AND version = ?2 AND release = ?3",
                     params![name, version, rel],
                     |row| row.get(0),
                 )
@@ -389,7 +377,7 @@ impl RepoDb {
         } else {
             self.conn
                 .query_row(
-                    "SELECT filename FROM packages WHERE name = ?1 AND version = ?2 ORDER BY release DESC LIMIT 1",
+                    "SELECT filename FROM parts WHERE name = ?1 AND version = ?2 ORDER BY release DESC LIMIT 1",
                     params![name, version],
                     |row| row.get(0),
                 )
@@ -398,7 +386,7 @@ impl RepoDb {
         Ok(result)
     }
 
-    /// Bulk-import packages from a directory of `.wright.tar.zst` archives.
+    /// Bulk-import parts from a directory of `.wright.tar.zst` archives.
     pub fn sync_from_archives(&self, dir: &Path) -> Result<usize> {
         if !dir.exists() {
             return Ok(0);
@@ -426,29 +414,29 @@ impl RepoDb {
             };
 
             let sha256 = crate::util::checksum::sha256_file(&path)?;
-            self.register_package(&partinfo, fname, &sha256)?;
+            self.register_part(&partinfo, fname, &sha256)?;
             count += 1;
         }
 
         Ok(count)
     }
 
-    /// Get the total number of packages in the repo.
+    /// Get the total number of parts in the repo.
     pub fn package_count(&self) -> Result<usize> {
         let count: i64 = self
             .conn
-            .query_row("SELECT COUNT(*) FROM packages", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM parts", [], |row| row.get(0))
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
         Ok(count as usize)
     }
 
-    fn get_deps(&self, package_id: i64, dep_type: &str) -> Result<Vec<String>> {
+    fn get_deps(&self, part_id: i64, dep_type: &str) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT depends_on FROM dependencies WHERE package_id = ?1 AND dep_type = ?2")
+            .prepare("SELECT depends_on FROM dependencies WHERE part_id = ?1 AND dep_type = ?2")
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
         let deps = stmt
-            .query_map(params![package_id, dep_type], |row| row.get(0))
+            .query_map(params![part_id, dep_type], |row| row.get(0))
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
@@ -456,8 +444,8 @@ impl RepoDb {
     }
 }
 
-fn row_to_repo_package(row: &rusqlite::Row) -> rusqlite::Result<RepoPackage> {
-    Ok(RepoPackage {
+fn row_to_repo_part(row: &rusqlite::Row) -> rusqlite::Result<RepoPart> {
+    Ok(RepoPart {
         id: row.get(0)?,
         name: row.get(1)?,
         version: row.get(2)?,
@@ -469,7 +457,6 @@ fn row_to_repo_package(row: &rusqlite::Row) -> rusqlite::Result<RepoPackage> {
         sha256: row.get(8)?,
         install_size: row.get::<_, u64>(9)?,
         runtime_deps: Vec::new(),
-        link_deps: Vec::new(),
     })
 }
 

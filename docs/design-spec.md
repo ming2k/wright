@@ -1,6 +1,6 @@
-# wright — Declarative, Extensible, Sandboxed Linux Package Manager Technical Design Specification
+# wright — Declarative, Extensible, Sandboxed System Part Manager Technical Design Specification
 
-> This document is a comprehensive technical design specification intended to guide AI agents or developers in implementing a modern package management system from scratch for LFS (Linux From Scratch) based distributions.
+> This document is a comprehensive technical design specification intended to guide AI agents or developers in implementing a modern system part manager from scratch for LFS (Linux From Scratch) based distributions.
 
 ---
 
@@ -8,18 +8,31 @@
 
 ### 1.1 Project Name
 
-`wright` — A declarative, extensible, sandboxed Linux package management and build system.
+`wright` — A declarative, extensible, sandboxed system part management and build system.
 
 ### 1.2 Project Goals
 
-Provide a complete package management solution for custom Linux distributions built on LFS, with the following core features:
+Provide a complete system-part management solution for custom Linux distributions built on LFS, with the following core features:
 
-- **Declarative package descriptions**: Define package metadata, dependencies, sources, and build procedures using TOML format
+- **Declarative plans**: Define part metadata, dependencies, sources, and build procedures using TOML format
 - **Lifecycle pipeline**: Build processes are split into ordered stages (lifecycle stages), each supporting pre/post hooks
 - **Pluggable executors**: Build scripts are not limited to shell — support Python, Lua, and other runtimes
 - **Dockyard isolation**: All build stages run in Linux namespace-isolated environments using bubblewrap (bwrap)
-- **Transactional operations**: Package installation and removal support atomic operations with rollback
-- **Binary package distribution**: Build artifacts are distributable binary packages (tar.zst format)
+- **Transactional operations**: Part installation and removal support atomic operations with rollback
+- **Binary part distribution**: Build artifacts are distributable binary parts (tar.zst format)
+
+### 1.2.1 Terminology
+
+Wright intentionally uses a single metaphor: the live computer is the **Ship of Theseus** while it is still sailing.
+
+- A **plan** is the blueprint for manufacturing one replacement part.
+- A **part** is the finished `.wright.tar.zst` artifact built from that plan.
+- A **repository** is the catalog and inventory of finished parts.
+- An **assembly** is a build-time grouping of plans.
+- A **kit** is an install-time grouping of parts.
+- The **system** is the live machine being maintained.
+
+This distinction matters because Wright does not want to call the build definition, built artifact, repository entry, and installed state by the same overloaded word.
 
 ### 1.3 Target Users
 
@@ -34,7 +47,7 @@ Developers building custom, long-term maintainable Linux distributions from LFS 
 
 ### 1.5 Distribution Philosophy
 
-The wright package manager is designed to serve a distribution with a clear, opinionated identity. The following principles define the character of the target distribution and **must** inform all packaging decisions, default configurations, and repository policies.
+The wright system manager is designed to serve a distribution with a clear, opinionated identity. The following principles define the character of the target distribution and **must** inform all planning, build, and repository decisions.
 
 #### Core Principles
 
@@ -56,10 +69,10 @@ The following choices reflect the distribution's philosophy and **must** be trea
 |-------|--------|-----------|
 | **C library** | **musl libc** | Small, correct, standards-compliant. Static linking friendly. Avoids glibc's complexity and legacy baggage. Some software may need patches for musl compatibility — this is acceptable and expected. |
 | **Init system** | **runit** | Simple, reliable, easy to understand. Service scripts are plain shell, not a DSL. The entire init system is auditable in an afternoon. No socket activation, no dependency graphs, no DBus requirement. |
-| **Core utilities** | **busybox + selective GNU** | Busybox for the base, with GNU coreutils/findutils/grep/sed available as optional packages for users who need full GNU compatibility. |
+| **Core utilities** | **busybox + selective GNU** | Busybox for the base, with GNU coreutils/findutils/grep/sed available as optional parts for users who need full GNU compatibility. |
 | **Shell** | **bash** (default build/user shell) | Widely compatible, well-understood. `/bin/sh` may symlink to busybox ash or dash for scripting performance. |
 | **TLS/SSL** | **LibreSSL** or **OpenSSL** | Either is acceptable. LibreSSL preferred for its cleaner codebase if compatibility allows; OpenSSL as fallback for maximum compatibility. |
-| **Desktop application isolation** | **Flatpak** | Third-party GUI applications (browsers, office suites, etc.) should be distributed via Flatpak rather than packaged natively. This keeps the native repository focused on system packages, libraries, and CLI tools. Flatpak provides its own runtime and sandboxing, reducing maintenance burden for complex desktop applications. |
+| **Desktop application isolation** | **Flatpak** | Third-party GUI applications (browsers, office suites, etc.) should be distributed via Flatpak rather than packaged natively. This keeps the native repository focused on system parts, libraries, and CLI tools. Flatpak provides its own runtime and sandboxing, reducing maintenance burden for complex desktop applications. |
 | **Compiler toolchain** | **GCC** (primary), **LLVM/Clang** (optional) | GCC as the default system compiler for maximum compatibility. Clang available as an alternative. |
 
 #### Repository Tiers
@@ -68,21 +81,21 @@ The hold tree and binary repository are organized into tiers with different stab
 
 | Tier | Name | Description | Update Policy |
 |------|------|-------------|---------------|
-| **core** | Core System | Toolchain, libc, kernel, init, essential utilities. Minimal set required to boot and build packages. | Conservative. Updates only for security fixes and critical bugs. Major version bumps require explicit migration. |
-| **base** | Base System | Networking, filesystem tools, common libraries, package manager itself. Expected on most installations. | Stable releases only. Tested against core before promotion. |
+| **core** | Core System | Toolchain, libc, kernel, init, essential utilities. Minimal set required to boot and build parts. | Conservative. Updates only for security fixes and critical bugs. Major version bumps require explicit migration. |
+| **base** | Base System | Networking, filesystem tools, common libraries, system manager itself. Expected on most installations. | Stable releases only. Tested against core before promotion. |
 | **extra** | Extra Packages | Servers, languages, development tools, libraries. General-purpose software. | Stable upstream releases. Reasonable testing before inclusion. |
-| **community** | Community | User-contributed packages. Lower barrier to entry. | Maintained by contributors. No stability guarantee from the distribution. |
+| **community** | Community | User-contributed parts. Lower barrier to entry. | Maintained by contributors. No stability guarantee from the distribution. |
 
 #### What the Native Repository Should NOT Contain
 
 - **Desktop applications with complex dependency trees**: Use Flatpak instead (browsers, LibreOffice, Electron apps, etc.)
-- **Multiple versions of the same library**: The repository tracks one version per package. If parallel installation is needed, the user manages it manually or uses containers.
-- **Abandoned or unmaintained upstream software**: Packages must have active upstream maintenance or a clear fork/replacement path.
+- **Multiple versions of the same library**: The repository tracks one version per part name. If parallel installation is needed, the user manages it manually or uses containers.
+- **Abandoned or unmaintained upstream software**: Parts must have active upstream maintenance or a clear fork/replacement path.
 - **Proprietary software**: The native repository is free/open-source only. Proprietary software can be installed via Flatpak or user-managed methods.
 
 #### Target FHS Layout (merged-usr)
 
-Wright targets a **merged-usr** Linux layout. All package files must be installed under one of the following paths:
+Wright targets a **merged-usr** Linux layout. All part payload files must be installed under one of the following paths:
 
 | Allowed path | Contents |
 |---|---|
@@ -98,30 +111,30 @@ Wright targets a **merged-usr** Linux layout. All package files must be installe
 | `/opt/` | Self-contained third-party software trees |
 | `/boot/` | Bootloader and kernel images |
 
-The following **legacy paths are forbidden** — packages must not install files there:
+The following **legacy paths are forbidden** — parts must not install files there:
 
 | Rejected path | Reason / correct destination |
 |---|---|
 | `/bin/`, `/sbin/` | Use `/usr/bin` |
 | `/usr/sbin/` | Use `/usr/bin` |
 | `/lib/`, `/lib64/` | Use `/usr/lib` or `/usr/lib64` |
-| `/usr/local/` | Packages install to `/usr` directly, not `/usr/local` |
-| `/home/`, `/root/` | User data — not for package files |
+| `/usr/local/` | Parts install to `/usr` directly, not `/usr/local` |
+| `/home/`, `/root/` | User data — not for part payload files |
 | `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
 
-Wright enforces this layout automatically: after the final output phase completes (`fabricate`, or `staging` for legacy plans with no fabricate stage), every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for packages that have a deliberate reason to deviate (e.g. kernel modules).
+Wright enforces this layout automatically: after the final output phase completes (`fabricate`, or `staging` for legacy plans with no fabricate stage), every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for parts that have a deliberate reason to deviate (e.g. kernel modules).
 
 #### musl Compatibility Policy
 
 Since musl libc is the system C library, some upstream software will require patches or configuration changes. The policy is:
 
 - **Patches are acceptable and expected**: Maintain musl compatibility patches in the hold tree. Upstream contributions are encouraged.
-- **If a package cannot be reasonably patched for musl**: It should not be in the native repository. Suggest Flatpak (which uses its own glibc runtime) or a glibc chroot as alternatives.
+- **If a part cannot be reasonably patched for musl**: It should not be in the native repository. Suggest Flatpak (which uses its own glibc runtime) or a glibc chroot as alternatives.
 - **Common musl issues to handle**: Missing `execinfo.h` (backtrace), `sys/cdefs.h` differences, locale limitations, `GLOB_TILDE`/`GLOB_BRACE` unavailability, `wordexp` differences. The build system should provide common musl compatibility flags and patches as reusable components.
 
 #### runit Service Convention
 
-All packages that provide system services must include runit service directories following this structure:
+All parts that provide system services must include runit service directories following this structure:
 
 ```
 /etc/sv/<service_name>/
@@ -153,14 +166,14 @@ Services are **not** enabled by default. The user explicitly enables services by
 
 | Purpose | Crate | Notes |
 |---------|-------|-------|
-| TOML parsing | `toml` / `serde` | Deserialize package description files |
+| TOML parsing | `toml` / `serde` | Deserialize plan files |
 | CLI framework | `clap` (derive API) | Command-line argument parsing |
 | Filesystem operations | `walkdir`, `tempfile` | Directory traversal, temporary build directories |
-| Compression/archiving | `tar`, `zstd` | Binary package format (tar.zst) |
+| Compression/archiving | `tar`, `zstd` | Binary part format (tar.zst) |
 | Hash verification | `sha2` | Source integrity verification (SHA-256) |
 | HTTP downloads | `reqwest` (blocking) | Source code downloads |
 | Process management | `std::process::Command` | Invoke bubblewrap and executors |
-| Database | `rusqlite` (SQLite) | Local installed package database |
+| Database | `rusqlite` (SQLite) | Local installed part database |
 | Dependency resolution | Custom topological sort | No SAT solver needed initially |
 | Progress display | `indicatif` | Download and build progress bars |
 | Logging | `tracing` | Structured logging |
@@ -176,12 +189,12 @@ Services are **not** enabled by default. The user explicitly enables services by
 | `curl` / `wget` | Fallback download tools | Optional |
 | `gpg` | Package signature verification | Optional (later phase) |
 
-### 2.3 Package Format
+### 2.3 Part Format
 
-- Binary package format: **tar.zst** (zstd-compressed tar archive)
-- Package file extension: `.wright.tar.zst`
-- Package description format: **TOML**
-- Package filename convention: `{name}-{version}-{release}-{arch}.wright.tar.zst`
+- Binary part format: **tar.zst** (zstd-compressed tar archive)
+- Part file extension: `.wright.tar.zst`
+- Plan description format: **TOML**
+- Part filename convention: `{name}-{version}-{release}-{arch}.wright.tar.zst`
 
 ---
 
@@ -189,14 +202,20 @@ Services are **not** enabled by default. The user explicitly enables services by
 
 ### 3.1 Binary Components
 
-The system consists of a single binary with subcommands:
+The system consists of three binaries that share a core library:
 
 ```
-wright install   # Install packages
-wright remove    # Remove packages
-wright build     # Build tool (parse build descriptions, execute builds, create packages)
-wright ...       # Other subcommands: upgrade, query, list, search, files, owner, verify
+wbuild run       # Build parts from plans
+wrepo sync       # Index finished parts into a repository
+wright install   # Install parts onto the live system
+wright ...       # Other system-management commands: upgrade, query, list, search, files, owner, verify
 ```
+
+Their responsibilities are intentionally separate:
+
+- `wbuild` owns plan resolution and part construction
+- `wrepo` owns repository indexing and source configuration
+- `wright` owns live system state and transactions
 
 ### 3.2 Directory Layout
 
@@ -211,14 +230,14 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 
 /var/lib/wright/
 ├── db/
-│   └── packages.db             # SQLite database (installed package info)
+│   └── parts.db                # SQLite database (installed part info)
 ├── cache/
 │   ├── sources/                # Downloaded source code cache
-│   └── packages/               # Downloaded/built binary package cache
+│   └── parts/               # Downloaded/built binary part cache
 └── lock/                       # Global lock file (prevent concurrent operations)
 
-/var/hold/                      # Hold tree (collection of build description files)
-├── core/                       # Core system packages
+/var/hold/                      # Hold tree (collection of plan files)
+├── core/                       # Core system parts
 │   ├── glibc/
 │   │   └── plan.toml
 │   ├── gcc/
@@ -226,12 +245,12 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 │   │   └── patches/
 │   └── openssl/
 │       └── plan.toml
-├── extra/                      # Additional packages
+├── extra/                      # Additional parts
 │   ├── nginx/
 │   │   └── plan.toml
 │   └── python/
 │       └── plan.toml
-└── custom/                     # User-defined packages
+└── custom/                     # User-defined parts
 ```
 
 ### 3.3 Architecture Layers
@@ -261,16 +280,16 @@ wright ...       # Other subcommands: upgrade, query, list, search, files, owner
 
 ---
 
-## 4. Package Description Format (plan.toml)
+## 4. Plan Format (plan.toml)
 
 ### 4.1 Complete Field Specification
 
 ```toml
 # ==============================================================
-# plan.toml — wright package description file full specification
+# plan.toml — wright plan file full specification
 # ==============================================================
 
-# ---- Package metadata (required) ----
+# ---- Part metadata (required) ----
 name = "nginx"                          # Package name, [a-z0-9][a-z0-9_+.-]*, max 64 chars
 version = "1.25.3"                      # Upstream version (free-form string)
 release = 1                             # Release number (integer, increment when build script changes)
@@ -282,7 +301,7 @@ maintainer = "Your Name <you@email>"    # Maintainer (optional)
 
 # ---- Dependency declarations ----
 [dependencies]
-# Runtime dependencies: must be installed when this package is installed
+# Runtime dependencies: must be installed when this part is installed
 runtime = [
     "bash",                 # Dynamic execution dependency
     "python >= 3.10",
@@ -292,7 +311,7 @@ runtime = [
 build = ["cmake", "gcc", "make"]
 
 # Link dependencies: needed at build time (headers/libs) and runtime (shared libraries).
-# Updates to link-deps trigger an automatic rebuild of this package.
+# Updates to link-deps trigger an automatic rebuild of this part.
 link = [
     "openssl >= 3.0",
     "zlib",
@@ -305,10 +324,10 @@ optional = [
 
 # ---- Package relations (separate from dependencies) ----
 [relations]
-# Conflicts: cannot coexist with these packages
+# Conflicts: cannot coexist with these parts
 conflicts = ["apache"]
 
-# Provides: this package can substitute for these virtual packages
+# Provides: this part can substitute for these virtual parts
 provides = ["http-server"]
 
 # ---- Source definitions (array-of-tables) ----
@@ -387,7 +406,7 @@ make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
 
-# ---- Package output declaration ----
+# ---- Part output declaration ----
 # Hooks run on the target system during install/upgrade/removal (NOT sandboxed).
 # backup lists config files preserved across upgrades.
 [hooks]
@@ -410,10 +429,10 @@ backup = [
     "/etc/nginx/mime.types",
 ]
 
-# ---- Multi-package mode ----
+# ---- Multi-part mode ----
 # The parent [output] table describes the main output metadata.
-# Each sub-table under it declares an additional output package.
-# Sub-packages inherit version, release, arch, and license from the parent manifest unless overridden.
+# Each sub-table under it declares an additional output part.
+# Sub-parts inherit version, release, arch, and license from the parent manifest unless overridden.
 #
 # [output.libfoo]
 # description = "libfoo shared library"
@@ -428,16 +447,16 @@ backup = [
 
 ### 4.2 Variable Substitution Rules
 
-The `script` fields in package description files support the following variables (expanded by the build tool before execution):
+The `script` fields in plan files support the following variables (expanded by the build tool before execution):
 
 | Variable | Description |
 |----------|-------------|
-| `${PART_NAME}` | Package name |
-| `${PART_VERSION}` | Package version |
+| `${PART_NAME}` | Part name |
+| `${PART_VERSION}` | Part version |
 | `${PART_RELEASE}` | Release number |
 | `${PART_ARCH}` | Target architecture |
 | `${SRC_DIR}` | Source directory after extraction (build working directory) |
-| `${PART_DIR}` | Package output directory (simulated install root) |
+| `${PART_DIR}` | Part output directory (simulated install root) |
 | `${FILES_DIR}` | Non-archive files directory (patches, configs, etc.) |
 | `${CFLAGS}` | Global C compiler flags (from config or env override) |
 | `${CXXFLAGS}` | Global C++ compiler flags |
@@ -463,7 +482,7 @@ tempfile_extension = ".sh"          # Temporary file extension
 # Additional paths required to be visible inside the dockyard (read-only)
 required_paths = ["/bin", "/usr/bin"]
 
-# Default dockyard level if not specified by the package
+# Default dockyard level if not specified by the stage
 default_dockyard = "strict"
 ```
 
@@ -545,10 +564,10 @@ For each lifecycle stage execution, the filesystem view inside the dockyard is:
 ├── proc/           ← Mounted proc
 ├── tmp/            ← tmpfs (build temporary files)
 ├── build/          ← Read-write, source directory (SRC_DIR)
-├── output/         ← Read-write, package output directory (PART_DIR)
+├── output/         ← Read-write, part output directory (PART_DIR)
 ├── files/          ← Read-only bind mount of non-archive files directory
 └── deps/           ← Read-only bind mount of build dependencies
-    ├── openssl/    ← Dependency package installed files
+    ├── openssl/    ← Dependency part installed files
     └── pcre2/
 ```
 
@@ -666,20 +685,20 @@ Stages without a defined script are automatically skipped (except fetch/verify/e
 
 ---
 
-## 8. Package Manager (wright)
+## 8. System Manager (wright)
 
 ### 8.1 Command-Line Interface
 
 ```
-wright install <pkg> [pkg...]       # Install packages (from repo or local file)
-wright remove <pkg> [pkg...]        # Uninstall packages
-wright upgrade [pkg...]             # Upgrade packages (no args = upgrade all)
-wright query <pkg>                  # Query package information
-wright list [--installed]           # List packages
-wright search <keyword>             # Search packages
-wright files <pkg>                  # List files owned by a package
-wright owner <file>                 # Query which package owns a file
-wright verify [pkg]                 # Verify package file integrity
+wright install <pkg> [pkg...]       # Install parts (from repo or local file)
+wright remove <pkg> [pkg...]        # Uninstall parts
+wright upgrade [pkg...]             # Upgrade parts (no args = upgrade all)
+wright query <pkg>                  # Query part information
+wright list [--installed]           # List parts
+wright search <keyword>             # Search parts
+wright files <pkg>                  # List files owned by a part
+wright owner <file>                 # Query which part owns a file
+wright verify [pkg]                 # Verify part file integrity
 wright rollback                     # Rollback the last operation
 wright sync                         # Sync remote repository index
 wright clean                        # Clean caches
@@ -688,8 +707,8 @@ wright clean                        # Clean caches
 ### 8.2 SQLite Database Schema
 
 ```sql
--- Installed package information
-CREATE TABLE packages (
+-- Installed part information
+CREATE TABLE parts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     version TEXT NOT NULL,
@@ -709,55 +728,55 @@ CREATE TABLE packages (
                                                    -- Upgrades (wright upgrade, wbuild -icf) preserve existing value.
 );
 
--- Package file manifest
+-- Part file manifest
 CREATE TABLE files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_id INTEGER NOT NULL,
+    part_id INTEGER NOT NULL,
     path TEXT NOT NULL,             -- Absolute file path
     file_hash TEXT,                 -- File SHA-256 (for verification)
     file_type TEXT NOT NULL,        -- 'file', 'dir', 'symlink'
     file_mode INTEGER,             -- Permission bits
     file_size INTEGER,             -- File size
     is_config BOOLEAN DEFAULT 0,   -- Config file (preserved on upgrade)
-    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
 -- Dependency relationships
 CREATE TABLE dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_id INTEGER NOT NULL,
-    depends_on TEXT NOT NULL,       -- Dependency package name
+    part_id INTEGER NOT NULL,
+    depends_on TEXT NOT NULL,       -- Dependency part name
     version_constraint TEXT,        -- e.g. ">= 3.0"
     dep_type TEXT DEFAULT 'runtime', -- 'runtime', 'link', or 'build'
-    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
 -- Optional (informational) dependencies, not enforced
 CREATE TABLE optional_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_id INTEGER NOT NULL,
+    part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
-    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
 -- Virtual provides (e.g. http-server provided by nginx)
 CREATE TABLE provides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_id INTEGER NOT NULL,
+    part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
--- Package conflicts
+-- Part conflicts
 CREATE TABLE conflicts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_id INTEGER NOT NULL,
+    part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
--- Shadowed files: records when a file owned by one package is overwritten
+-- Shadowed files: records when a file owned by one part is overwritten
 -- by another (forced install). Used for conflict analysis and safe removal.
 CREATE TABLE shadowed_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -765,8 +784,8 @@ CREATE TABLE shadowed_files (
     original_owner_id INTEGER NOT NULL,
     shadowed_by_id INTEGER NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (original_owner_id) REFERENCES packages(id) ON DELETE CASCADE,
-    FOREIGN KEY (shadowed_by_id) REFERENCES packages(id) ON DELETE CASCADE
+    FOREIGN KEY (original_owner_id) REFERENCES parts(id) ON DELETE CASCADE,
+    FOREIGN KEY (shadowed_by_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
 -- Operation log (for rollback support and history)
@@ -774,7 +793,7 @@ CREATE TABLE transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     operation TEXT NOT NULL,        -- 'install', 'remove', 'upgrade'
-    package_name TEXT NOT NULL,
+    part_name TEXT NOT NULL,
     old_version TEXT,               -- Pre-upgrade version (upgrade only)
     new_version TEXT,               -- Post-install/upgrade version
     status TEXT NOT NULL,           -- 'pending', 'completed', 'rolled_back'
@@ -782,14 +801,14 @@ CREATE TABLE transactions (
 );
 
 -- Indexes
-CREATE INDEX idx_files_package ON files(package_id);
-CREATE INDEX idx_deps_package ON dependencies(package_id);
+CREATE INDEX idx_files_package ON files(part_id);
+CREATE INDEX idx_deps_package ON dependencies(part_id);
 CREATE INDEX idx_deps_on ON dependencies(depends_on);
-CREATE INDEX idx_opt_deps_package ON optional_dependencies(package_id);
+CREATE INDEX idx_opt_deps_package ON optional_dependencies(part_id);
 CREATE INDEX idx_provides_name ON provides(name);
-CREATE INDEX idx_provides_package ON provides(package_id);
+CREATE INDEX idx_provides_package ON provides(part_id);
 CREATE INDEX idx_conflicts_name ON conflicts(name);
-CREATE INDEX idx_conflicts_package ON conflicts(package_id);
+CREATE INDEX idx_conflicts_package ON conflicts(part_id);
 CREATE INDEX idx_shadowed_path ON shadowed_files(path);
 ```
 
@@ -798,9 +817,9 @@ CREATE INDEX idx_shadowed_path ON shadowed_files(path);
 ```
 Installation flow:
 1. Resolve dependencies → build installation order (topological sort)
-2. Check for conflicts (file conflicts, package conflicts)
+2. Check for conflicts (file conflicts, part conflicts)
 3. BEGIN TRANSACTION
-4. For each package:
+4. For each part:
    a. Extract to temporary directory
    b. Record file manifest in database
    c. Copy files to system directories
@@ -820,7 +839,7 @@ Failure rollback:
 Initial implementation uses a simple topological sort algorithm:
 
 ```
-Input: List of packages to install
+Input: List of parts to install
 Process:
   1. Recursively expand all runtime dependencies
   2. Build a directed dependency graph
@@ -834,16 +853,16 @@ Version comparison uses segment-based ordering: versions are split on `.` and `-
 
 ---
 
-## 9. Build Tool (wright build)
+## 9. Build Tool (`wbuild`)
 
 ### 9.1 Command-Line Interface
 
 ```
-wright build <port_path>              # Build the specified port
-wright build <port_path> --stage <s>  # Execute only up to a specific stage
-wright build --clean <port_path>      # Clean build directory
-wright build --lint <port_path>       # Validate plan.toml syntax
-wright build --clean --force <port_path>  # Clean + force rebuild
+wbuild run <plan_or_name>                   # Build the specified plan
+wbuild run <plan_or_name> --stage <s>       # Execute selected lifecycle stages
+wbuild run --clean <plan_or_name>           # Clean build directory before building
+wbuild check <plan_or_name>                 # Validate plan.toml syntax and logic
+wbuild run --clean --force <plan_or_name>   # Clean + force rebuild
 ```
 
 ### 9.2 Complete Build Flow
@@ -866,13 +885,13 @@ wright build --clean --force <port_path>  # Clean + force rebuild
     d. Execute and capture output, write to log/
     e. Check exit code
 9.  Generate file manifest from pkg/
-10. Generate package metadata file .PARTINFO
+10. Generate part metadata file .PARTINFO
 11. Archive: tar -c -I 'zstd -19' -f {name}-{version}-{release}-{arch}.wright.tar.zst -C pkg/ .
-12. Compute package SHA-256
+12. Compute part SHA-256
 14. Move to output directory
 ```
 
-### 9.3 Binary Package Internal Structure
+### 9.3 Binary Part Internal Structure
 
 ```
 {name}-{version}-{release}-{arch}.wright.tar.zst
@@ -889,7 +908,7 @@ wright build --clean --force <port_path>  # Clean + force rebuild
 `.PARTINFO` format:
 
 ```toml
-[package]
+[part]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -921,7 +940,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 arch = "x86_64"                     # System architecture
 hold_dir = "/var/hold"              # Hold tree path
 cache_dir = "/var/lib/wright/cache"   # Cache directory
-db_path = "/var/lib/wright/db/packages.db"
+db_path = "/var/lib/wright/db/parts.db"
 log_dir = "/var/log/wright"
 
 [build]
@@ -939,10 +958,10 @@ download_timeout = 300              # Download timeout (seconds)
 retry_count = 3                     # Download retry attempts
 
 [repos]
-# Remote binary package repositories (later phase)
+# Remote binary part repositories (later phase)
 # [[repos.remote]]
 # name = "official"
-# url = "https://repo.example.com/packages"
+# url = "https://repo.example.com/parts"
 # priority = 100
 ```
 
@@ -952,12 +971,12 @@ retry_count = 3                     # Download retry attempts
 
 ### Phase 1: Minimum Viable Product (MVP)
 
-Goal: Ability to build, install, and uninstall packages.
+Goal: Ability to build, install, and uninstall parts.
 
 Tasks:
 - [ ] plan.toml parser (manifest.rs)
 - [ ] Shell executor
-- [ ] Basic lifecycle pipeline (prepare → build → package)
+- [ ] Basic lifecycle pipeline (prepare → build → fabricate)
 - [ ] Unsandboxed builds (dockyard = none)
 - [ ] tar.zst packaging
 - [ ] SQLite database + file manifest tracking
@@ -988,7 +1007,7 @@ Tasks:
 - [ ] Custom lifecycle pipelines
 - [ ] Build log auditing
 - [ ] ccache integration
-- [ ] `wright build --lint` package description validation
+- [ ] `wbuild check` plan validation
 
 ### Phase 4: Repository + Distribution
 
@@ -996,10 +1015,10 @@ Goal: Remote repository support and self-hosting capability.
 
 Tasks:
 - [ ] Repository index format (`index.toml`) generation
-- [ ] Repository generation tool for creating repository from built packages
+- [ ] Repository generation tool for creating repositories from built parts
 - [ ] `wright sync` remote repository synchronization with caching
 - [ ] Priority-based source resolution (local > remote)
-- [ ] Remote package download with SHA-256 verification
+- [ ] Remote part download with SHA-256 verification
 - [ ] GPG signature verification for repository index
 - [ ] Mirror support with fallback
 - [ ] Offline/air-gapped installation support
@@ -1013,7 +1032,7 @@ Goal: A self-hosting base system that can rebuild itself.
 Tasks:
 - [ ] Core tier holds: musl libc, Linux kernel headers, busybox, GCC, binutils, make, bash
 - [ ] Base tier holds: runit, wright (self-hosting), openssl/libressl, curl, git, zstd
-- [ ] musl compatibility patch collection for common packages
+- [ ] musl compatibility patch collection for common parts
 - [ ] runit service directory templates and conventions
 - [ ] Flatpak integration documentation for desktop application delivery
 - [ ] Bootstrap script: from LFS base to a wright-managed system
@@ -1029,13 +1048,13 @@ The wright repository system supports both local hold trees (source-based) and r
 
 ### 13.2 Repository Index Format
 
-Each binary repository contains a single index file that describes all available packages:
+Each binary repository contains a single index file that describes all available parts:
 
 ```
 repo/
-├── index.toml              # Repository index (metadata for all packages)
+├── index.toml              # Repository index (metadata for all parts)
 ├── index.toml.sig          # GPG detached signature of index.toml
-└── packages/
+└── parts/
     ├── nginx-1.25.3-1-x86_64.wright.tar.zst
     ├── openssl-3.2.1-1-x86_64.wright.tar.zst
     └── ...
@@ -1051,8 +1070,8 @@ arch = "x86_64"
 generated_at = "2025-06-15T10:30:00Z"
 generator = "wright 0.1.0"
 
-# Each package is an entry in the packages array
-[[packages]]
+# Each part is an entry in the parts array
+[[parts]]
 name = "nginx"
 version = "1.25.3"
 release = 1
@@ -1068,7 +1087,7 @@ conflicts = ["apache"]
 provides = ["http-server"]
 build_date = "2025-06-14T08:00:00Z"
 
-[[packages]]
+[[parts]]
 name = "openssl"
 version = "3.2.1"
 release = 1
@@ -1105,15 +1124,15 @@ priority = 150
 gpg_key = "/etc/wright/keys/official.gpg"
 enabled = true
 
-# Local binary cache (for self-built packages)
+# Local binary cache (for self-built parts)
 [[source]]
 name = "local"
 type = "local"
-path = "/var/lib/wright/cache/packages"
-priority = 300              # Highest priority — prefer locally built packages
+path = "/var/lib/wright/cache/parts"
+priority = 300              # Highest priority — prefer locally built parts
 ```
 
-Resolution order: When multiple sources provide the same package, the source with the highest priority wins. Within the same priority, the newest version wins.
+Resolution order: When multiple sources provide the same part, the source with the highest priority wins. Within the same priority, the newest version wins.
 
 ### 13.4 Repository Synchronization
 
@@ -1126,16 +1145,16 @@ Resolution order: When multiple sources provide the same package, the source wit
    c. Parse and validate index.toml
    d. Store locally in /var/lib/wright/cache/repos/{name}/index.toml
 2. Merge all source indexes into a unified view
-3. Report: new packages, available upgrades, removed packages
+3. Report: new parts, available upgrades, removed parts
 ```
 
 ### 13.5 Repository Generation
 
-Repository generation creates a repository from a directory of built packages. This functionality is planned for a future phase.
+Repository generation creates a repository from a directory of built parts. This functionality is planned for a future phase.
 
 Process:
 1. Scan directory for `*.wright.tar.zst` files
-2. Extract `.PARTINFO` from each package
+2. Extract `.PARTINFO` from each part archive
 3. Compute SHA-256 and file sizes
 4. Generate `index.toml`
 5. Optionally sign with GPG: `gpg --detach-sign index.toml`
@@ -1143,12 +1162,12 @@ Process:
 ### 13.6 Package Download and Verification
 
 ```
-1. Resolve package to a source (priority-based)
-2. Check local cache first (/var/lib/wright/cache/packages/)
+1. Resolve the requested part to a source (priority-based)
+2. Check local cache first (/var/lib/wright/cache/parts/)
 3. If not cached, download from remote URL
 4. Verify SHA-256 against index.toml entry
 5. If verification fails, delete and retry (up to retry_count)
-6. Cache the verified package locally
+6. Cache the verified part locally
 7. Pass to the install subsystem
 ```
 
@@ -1158,8 +1177,8 @@ The repository system must support fully offline operation:
 
 - `wright install <path/to/file.wright.tar.zst>` installs directly from a local file
 - The hold tree (`/var/hold/`) works entirely offline once source tarballs are cached
-- A USB-based repository is just a directory with `index.toml` + packages — mount and point a `[[source]]` at it
-- `wright build` caches all downloaded sources in `/var/lib/wright/cache/sources/` for future offline rebuilds
+- A USB-based repository is just a directory with `index.toml` + parts — mount and point a `[[source]]` at it
+- `wbuild run` caches all downloaded sources in `/var/lib/wright/cache/sources/` for future offline rebuilds
 
 ### 13.8 Repository Hosting
 
@@ -1190,14 +1209,14 @@ Recommended hosting options:
 - Minimum kernel version: 5.10+ (namespace support)
 - Requires bubblewrap >= 0.5.0
 - Filesystem: Must support overlay or bind mount capable filesystems
-- All packages must build and run against musl; glibc-only software is excluded from the native repository
-- No hard dependency on systemd, dbus, polkit, or logind in core/base tier packages
+- All parts must build and run against musl; glibc-only software is excluded from the native repository
+- No hard dependency on systemd, dbus, polkit, or logind in core/base tier parts
 
 ### 14.3 Performance Targets
 
 - Package install/uninstall operations should complete in seconds (excluding download time)
 - Database queries should respond in < 100ms
-- Dependency resolution (up to 100 packages) should complete in < 1s
+- Dependency resolution (up to 100 parts) should complete in < 1s
 - Package extraction speed is limited by disk I/O; zstd decompression overhead is negligible
 
 ### 14.4 Error Handling Principles
@@ -1220,10 +1239,10 @@ Recommended hosting options:
 
 ### 14.2 Integration Tests
 
-- End-to-end build of a simple C program package
+- End-to-end build of a simple C program part
 - Install → verify files exist → uninstall → verify files removed
 - Dependency chain installation: A depends on B depends on C
-- Conflict detection: file conflicts, package conflicts
+- Conflict detection: file conflicts, part conflicts
 - Rollback: Verify system is clean after a mid-install failure
 - Dockyard: Verify build scripts cannot access files or network outside the dockyard
 

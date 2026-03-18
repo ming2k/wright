@@ -1,7 +1,7 @@
 name = "hello"
 version = "1.0.0"
 release = 1
-description = "Hello World test package"
+description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 

@@ -4,12 +4,12 @@ Practical recipes for common build scenarios.
 
 ## Bootstrapping a New System (First Import)
 
-When deploying wright onto a fresh LFS-based system, the core packages (glibc,
+When deploying wright onto a fresh LFS-based system, the core parts (glibc,
 gcc, binutils, linux, etc.) are already installed but unknown to wright's
-database. Any package whose `plan.toml` lists them as dependencies will fail
+database. Any part whose `plan.toml` lists them as dependencies will fail
 with an unresolved dependency error until they are registered.
 
-Use `wright assume` to seed the database with the packages that already exist:
+Use `wright assume` to seed the database with the parts that already exist:
 
 ```sh
 wright assume glibc 2.41
@@ -20,14 +20,14 @@ wright assume bash 5.2
 wright assume coreutils 9.5
 ```
 
-After seeding, install packages normally — dependency checks will pass:
+After seeding, install parts normally — dependency checks will pass:
 
 ```sh
 wright install man-db-2.12.1-1.wright.tar.zst
 wright install python-3.13.0-1.wright.tar.zst
 ```
 
-Assumed packages appear with an `[external]` tag in `wright list`:
+Assumed parts appear with an `[external]` tag in `wright list`:
 
 ```
 bash 5.2 [external]
@@ -40,14 +40,14 @@ man-db 2.12.1-1 (x86_64)
 python 3.13.0-1 (x86_64)
 ```
 
-Once you have a wright-built package ready to replace a stub, simply install
+Once you have a wright-built part ready to replace a stub, simply install
 it — the assumed record is replaced automatically:
 
 ```sh
 wright install glibc-2.41-1.wright.tar.zst
 ```
 
-After that, `wright list` will show the fully managed package entry and
+After that, `wright list` will show the fully managed part entry and
 `wright verify glibc` will check its file integrity as normal.
 
 To remove an assumed record without installing a replacement, use `unassume`:
@@ -58,7 +58,7 @@ wright unassume glibc
 
 ---
 
-## Building a Simple Package
+## Building a Simple Part
 
 Minimal `plan.toml` for a C library (`zlib`):
 
@@ -111,7 +111,7 @@ When tuning a stage without re-extracting sources every time, use `--stage` to
 run specific stages against the existing build tree:
 
 ```bash
-# Full first build (extracts, configures, compiles, packages)
+# Full first build (extracts, configures, compiles, fabricates parts)
 wbuild run mypkg
 
 # Edit lifecycle.staging in plan.toml, then re-run the output phases:
@@ -170,18 +170,18 @@ install -Dm644 ${BUILD_DIR}/zlib.pc ${PART_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
-Each sub-package declared via `[output.<name>]` produces its own
-archive. Sub-packages can define `description`, `script`, `hooks.*`, `backup`,
+Each sub-part declared via `[output.<name>]` produces its own
+archive. Sub-parts can define `description`, `script`, `hooks.*`, `backup`,
 and `dependencies`.
 
 ---
 
 ## Handling a Circular Dependency (MVP / Bootstrap)
 
-Some packages require themselves or each other to build (e.g. a compiler that
+Some parts require themselves or each other to build (e.g. a compiler that
 compiles itself). Wright resolves this with a two-pass build:
 
-1. **MVP pass** — build the package with a reduced dependency set (no cyclic dep)
+1. **MVP pass** — build the part with a reduced dependency set (no cyclic dep)
 2. **Full pass** — rebuild with all dependencies, now that the cycle is broken
 
 ```toml
@@ -211,7 +211,7 @@ To test the MVP pass explicitly without a cycle present:
 wbuild run gcc --mvp
 ```
 
-To inspect what cycles exist and which packages are MVP candidates:
+To inspect what cycles exist and which parts are MVP candidates:
 
 ```bash
 wbuild check gcc binutils glibc
@@ -221,7 +221,7 @@ wbuild check gcc binutils glibc
 
 ## Building a Dependency Chain
 
-Build a package and all of its missing upstream dependencies:
+Build a part and all of its missing upstream dependencies:
 
 ```bash
 # Default: build gtk4 + auto-resolve any missing build/link deps
@@ -234,7 +234,7 @@ Build only the missing deps, not gtk4 itself (pre-stage before the main build):
 wbuild run gtk4 --deps
 ```
 
-Build everything — deps, the package, and downstream link dependents:
+Build everything — deps, the part, and downstream link dependents:
 
 ```bash
 wbuild run gtk4 --self --deps --dependents
@@ -251,7 +251,7 @@ A library's ABI changed. Rebuild everything that links against it:
 wbuild run libfoo --self --dependents
 ```
 
-The scheduler labels affected packages as `[LINK-REBUILD]` in the Construction
+The scheduler labels affected parts as `[LINK-REBUILD]` in the Construction
 Plan. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
@@ -285,32 +285,32 @@ wbuild run -ic @base                # build and install, skip already-installed
 ## Force-Rebuild Everything from Source
 
 Useful when global flags change (e.g. new `CFLAGS`) and you want to rebuild
-all packages in an assembly:
+all parts in an assembly:
 
 ```bash
 wbuild run @base --force
 ```
 
 `--force` bypasses both the archive skip check and the build cache for every
-package in the set.
+part in the set.
 
 ---
 
 ## Removing Packages and Cleaning Up Dependencies
 
-Remove a package and its orphan dependencies (auto-installed deps no longer needed):
+Remove a part and its orphan dependencies (auto-installed deps no longer needed):
 
 ```bash
 wright remove --cascade nginx
 ```
 
-List orphan packages (auto-installed dependencies that nothing depends on anymore):
+List orphan parts (auto-installed dependencies that nothing depends on anymore):
 
 ```bash
 wright list --orphans
 ```
 
-If you explicitly install a package that was previously pulled in as a dependency,
+If you explicitly install a part that was previously pulled in as a dependency,
 it gets promoted to "explicit" and won't be removed by `--cascade`:
 
 ```bash
@@ -321,7 +321,7 @@ wright install pcre-8.45-1-x86_64.wright.tar.zst
 
 ---
 
-## Inspecting a Package's Dependency Tree
+## Inspecting a Part's Dependency Tree
 
 Print the full build-time dependency tree for a plan:
 
@@ -339,7 +339,7 @@ wbuild deps gtk4 --depth 2
 
 ## Custom Executor (Python Build Script)
 
-For packages whose build system is easier to drive with Python:
+For parts whose build system is easier to drive with Python:
 
 ```toml
 [lifecycle.configure]
@@ -355,7 +355,7 @@ See [configuration.md](configuration.md) for the executor format.
 
 ---
 
-## Rust / Cargo Package (Vendored — strict dockyard)
+## Rust / Cargo Package (Vendored - strict dockyard)
 
 The preferred approach: vendor crates in the source tree so the build is fully
 offline and runs under the default `strict` dockyard.
@@ -403,7 +403,7 @@ tar czf ripgrep-14.1.1-vendored.tar.gz ripgrep-14.1.1/
 
 ---
 
-## Rust / Cargo Package (Network — relaxed dockyard)
+## Rust / Cargo Package (Network - relaxed dockyard)
 
 When vendoring is impractical (e.g. bootstrapping), allow network access by
 setting `dockyard = "relaxed"` on the compile stage. The build gets a private
@@ -425,7 +425,7 @@ install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 
 ---
 
-## Go Package (Vendored — strict dockyard)
+## Go Package (Vendored - strict dockyard)
 
 Run `go mod vendor` before packaging the source tarball so the build is
 offline under `strict`.
@@ -458,7 +458,7 @@ install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo
 
 ---
 
-## Go Package (Network — relaxed dockyard)
+## Go Package (Network - relaxed dockyard)
 
 Without a vendor directory, Go downloads modules from proxy.golang.org at build
 time. Use `relaxed` so the network namespace is shared with the host.

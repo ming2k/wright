@@ -44,3 +44,7 @@ indicatif = "0.17"
 git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
 owo-colors = "4"
 terminal_size = "0.4"
+
+[build-dependencies]
+clap = { version = "4", features = ["derive"] }
+clap_mangen = "0.2"

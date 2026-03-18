@@ -6,7 +6,7 @@ This page explains how `wbuild` allocates CPU time across builds and how to tune
 
 | Layer | Controls | Where to configure |
 |-------|----------|--------------------|
-| **Dockyard concurrency** | How many packages build simultaneously | `build.dockyards` in `wright.toml`, overridden by `-w` / `--dockyards` |
+| **Dockyard concurrency** | How many parts build simultaneously | `build.dockyards` in `wright.toml`, overridden by `-w` / `--dockyards` |
 | **CPU affinity** | How many CPUs each dockyard process can use | Computed as `total_cpus / active_dockyards`; overridden by `build.nproc_per_dockyard` in `wright.toml` |
 
 The layers compose. On a 16-core machine (12 usable after the 4-core OS reserve) with 4 concurrent dockyards, each dockyard process is pinned to 3 CPUs — so `nproc` inside the dockyard returns 3, and `make -j$(nproc)` uses 3 threads. 12 threads total.
@@ -28,7 +28,7 @@ max_cpus = 16   # use exactly 16 cores; 0 or unset = available - 4
 
 ## Dockyard Concurrency
 
-The scheduler runs as many dockyards as the limit allows, but only launches a package when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the dockyard count is a ceiling, not a guarantee.
+The scheduler runs as many dockyards as the limit allows, but only launches a part when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the dockyard count is a ceiling, not a guarantee.
 
 ```
 dependency graph:          with dockyards = 3:
@@ -39,7 +39,7 @@ dependency graph:          with dockyards = 3:
   C ──► E                 step 4: F        (waits for D)
 ```
 
-Setting `dockyards` higher than the number of packages independent at any given point has no effect — the scheduler finds no additional ready work.
+Setting `dockyards` higher than the number of parts independent at any given point has no effect — the scheduler finds no additional ready work.
 
 Configure in `wright.toml`:
 
@@ -64,7 +64,7 @@ The CPU share for each dockyard is computed as:
 cpu_share = total_cpus / active_dockyards
 ```
 
-`active_dockyards` is the number of packages actually building at the moment a stage launches — not the dockyards ceiling. When the graph fans out, each package gets a smaller share; when it collapses to a single runnable package, that package gets the full CPU budget.
+`active_dockyards` is the number of parts actually building at the moment a stage launches — not the dockyards ceiling. When the graph fans out, each part gets a smaller share; when it collapses to a single runnable part, that part gets the full CPU budget.
 
 **CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another dockyard finishes mid-flight.
 
@@ -133,7 +133,7 @@ Per-plan values take precedence over global config:
 timeout = 7200        # 2-hour wall-clock limit per stage
 cpu_time_limit = 3600 # 1-hour CPU-time limit
 
-# plan.toml — tighter limits for a known-fast package
+# plan.toml — tighter limits for a known-fast part
 [options]
 timeout = 300
 memory_limit = 2048

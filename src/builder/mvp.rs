@@ -281,7 +281,7 @@ pub(crate) fn format_cycle_path(scc: &[String], graph: &HashMap<String, Vec<Stri
     members.join(" → ")
 }
 
-/// For each dependency cycle in the graph, find a package with
+/// For each dependency cycle in the graph, find a part with
 /// `[mvp.dependencies]` that breaks the cycle and insert a two-pass
 /// build plan: `{pkg}:bootstrap` runs first (no cyclic dep), then
 /// the rest of the cycle, then `{pkg}` rebuilds fully with all deps.

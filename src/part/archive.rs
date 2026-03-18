@@ -7,7 +7,11 @@ use walkdir::WalkDir;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::PlanManifest;
 
-/// Metadata extracted from a .PARTINFO file
+/// Metadata extracted from a .PARTINFO file.
+///
+/// `.PARTINFO` intentionally carries install-time/runtime metadata only.
+/// Link-only rebuild edges remain in plan metadata and are not serialized into
+/// binary part metadata.
 #[derive(Debug, Clone)]
 pub struct PartInfo {
     pub name: String,
@@ -20,7 +24,6 @@ pub struct PartInfo {
     pub install_size: u64,
     pub build_date: String,
     pub runtime_deps: Vec<String>,
-    pub link_deps: Vec<String>,
     pub replaces: Vec<String>,
     pub conflicts: Vec<String>,
     pub provides: Vec<String>,
@@ -28,8 +31,8 @@ pub struct PartInfo {
     pub optional_deps: Vec<(String, String)>,
 }
 
-/// Files that should never be included in a package.
-/// These are shared/generated files that cause conflicts between packages.
+/// Files that should never be included in a part archive.
+/// These are shared/generated files that cause conflicts between parts.
 const PART_EXCLUDE_FILES: &[&str] = &["usr/share/info/dir"];
 
 /// Remove well-known files that should never be packaged.
@@ -37,13 +40,13 @@ fn purge_excluded_files(part_dir: &Path) {
     for rel in PART_EXCLUDE_FILES {
         let path = part_dir.join(rel);
         if path.exists() {
-            tracing::debug!("Removing excluded file from package: {}", rel);
+            tracing::debug!("Removing excluded file from part archive: {}", rel);
             let _ = std::fs::remove_file(&path);
         }
     }
 }
 
-/// Create a .wright.tar.zst binary package archive.
+/// Create a .wright.tar.zst binary part archive.
 pub fn create_archive(
     part_dir: &Path,
     manifest: &PlanManifest,
@@ -144,24 +147,11 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut deps_toml = String::new();
-    if !manifest.dependencies.runtime.is_empty()
-        || !manifest.dependencies.link.is_empty()
-        || !manifest.dependencies.optional.is_empty()
-    {
+    if !manifest.dependencies.runtime.is_empty() || !manifest.dependencies.optional.is_empty() {
         deps_toml.push_str("\n[dependencies]\n");
         if !manifest.dependencies.runtime.is_empty() {
             deps_toml.push_str("runtime = [");
             for (i, dep) in manifest.dependencies.runtime.iter().enumerate() {
-                if i > 0 {
-                    deps_toml.push_str(", ");
-                }
-                deps_toml.push_str(&format!("\"{}\"", dep));
-            }
-            deps_toml.push_str("]\n");
-        }
-        if !manifest.dependencies.link.is_empty() {
-            deps_toml.push_str("link = [");
-            for (i, dep) in manifest.dependencies.link.iter().enumerate() {
                 if i > 0 {
                     deps_toml.push_str(", ");
                 }
@@ -243,7 +233,7 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
     };
 
     format!(
-        r#"[package]
+        r#"[part]
 name = "{name}"
 version = "{version}"
 release = {release}
@@ -355,7 +345,7 @@ fn parse_partinfo(path: &Path) -> Result<PartInfo> {
 fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
     struct PartInfoToml {
-        package: PartInfoMeta,
+        part: PartInfoMeta,
         #[serde(default)]
         dependencies: Option<PartInfoDeps>,
         #[serde(default)]
@@ -390,7 +380,9 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     struct PartInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
+        // Accept legacy archives that still serialized `link`, but ignore it.
         #[serde(default)]
+        #[allow(dead_code)]
         link: Vec<String>,
         #[serde(default)]
         optional: Vec<PartInfoOptDep>,
@@ -415,7 +407,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     let parsed: PartInfoToml = toml::from_str(content)
         .map_err(|e| WrightError::ArchiveError(format!("failed to parse .PARTINFO: {}", e)))?;
 
-    let (runtime_deps, link_deps, optional_deps) = parsed
+    let (runtime_deps, optional_deps) = parsed
         .dependencies
         .map(|d| {
             let opt = d
@@ -423,24 +415,23 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
                 .into_iter()
                 .map(|o| (o.name, o.description))
                 .collect();
-            (d.runtime, d.link, opt)
+            (d.runtime, opt)
         })
         .unwrap_or_default();
 
     let relations = parsed.relations.unwrap_or_default();
 
     Ok(PartInfo {
-        name: parsed.package.name,
-        version: parsed.package.version,
-        release: parsed.package.release,
-        epoch: parsed.package.epoch,
-        description: parsed.package.description,
-        arch: parsed.package.arch,
-        license: parsed.package.license,
-        install_size: parsed.package.install_size,
-        build_date: parsed.package.build_date,
+        name: parsed.part.name,
+        version: parsed.part.version,
+        release: parsed.part.release,
+        epoch: parsed.part.epoch,
+        description: parsed.part.description,
+        arch: parsed.part.arch,
+        license: parsed.part.license,
+        install_size: parsed.part.install_size,
+        build_date: parsed.part.build_date,
         runtime_deps,
-        link_deps,
         replaces: relations.replaces,
         conflicts: relations.conflicts,
         provides: relations.provides,

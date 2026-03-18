@@ -3,7 +3,6 @@ pub mod schema;
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-
 use rusqlite::{params, Connection};
 
 use crate::error::{Result, WrightError};
@@ -89,7 +88,7 @@ impl rusqlite::ToSql for DepType {
 }
 
 #[derive(Debug, Clone)]
-pub struct PackageInfo {
+pub struct InstalledPart {
     pub id: i64,
     pub name: String,
     pub version: String,
@@ -118,7 +117,7 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone)]
-pub struct NewPackage<'a> {
+pub struct NewPart<'a> {
     pub name: &'a str,
     pub version: &'a str,
     pub release: u32,
@@ -133,7 +132,7 @@ pub struct NewPackage<'a> {
     pub install_reason: &'a str,
 }
 
-impl<'a> Default for NewPackage<'a> {
+impl<'a> Default for NewPart<'a> {
     fn default() -> Self {
         Self {
             name: "",
@@ -163,7 +162,7 @@ pub struct Dependency {
 pub struct TransactionRecord {
     pub timestamp: String,
     pub operation: String,
-    pub package_name: String,
+    pub part_name: String,
     pub old_version: Option<String>,
     pub new_version: Option<String>,
     pub status: String,
@@ -173,7 +172,7 @@ fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<TransactionRecord
     Ok(TransactionRecord {
         timestamp: row.get(0)?,
         operation: row.get(1)?,
-        package_name: row.get(2)?,
+        part_name: row.get(2)?,
         old_version: row.get(3)?,
         new_version: row.get(4)?,
         status: row.get(5)?,
@@ -186,13 +185,13 @@ pub struct Database {
     db_path: Option<PathBuf>,
 }
 
-/// Column list shared by all queries returning PackageInfo.
-const PKG_COLUMNS: &str =
+/// Column list shared by all queries returning InstalledPart.
+const PART_COLUMNS: &str =
     "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason, epoch";
 
-/// Map a row (with PKG_COLUMNS order) to PackageInfo.
-fn row_to_package_info(row: &rusqlite::Row) -> rusqlite::Result<PackageInfo> {
-    Ok(PackageInfo {
+/// Map a row (with PART_COLUMNS order) to InstalledPart.
+fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<InstalledPart> {
+    Ok(InstalledPart {
         id: row.get(0)?,
         name: row.get(1)?,
         version: row.get(2)?,
@@ -306,8 +305,8 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT s.path, p1.name as original, p2.name as shadower 
              FROM shadowed_files s
-             JOIN packages p1 ON s.original_owner_id = p1.id
-             JOIN packages p2 ON s.shadowed_by_id = p2.id",
+             JOIN parts p1 ON s.original_owner_id = p1.id
+             JOIN parts p2 ON s.shadowed_by_id = p2.id",
         )?;
 
         let rows = stmt
@@ -324,13 +323,13 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn insert_package(&self, pkg: NewPackage) -> Result<i64> {
-        // If an assumed record exists for this package, replace it with the real one.
+    pub fn insert_part(&self, part: NewPart) -> Result<i64> {
+        // If an assumed record exists for this part, replace it with the real one.
         let was_assumed: bool = self
             .conn
             .query_row(
-                "SELECT assumed FROM packages WHERE name = ?1",
-                params![pkg.name],
+                "SELECT assumed FROM parts WHERE name = ?1",
+                params![part.name],
                 |row| row.get(0),
             )
             .unwrap_or(false);
@@ -338,8 +337,8 @@ impl Database {
         if was_assumed {
             self.conn
                 .execute(
-                    "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
-                    params![pkg.name],
+                    "DELETE FROM parts WHERE name = ?1 AND assumed = 1",
+                    params![part.name],
                 )
                 .map_err(|e| {
                     WrightError::DatabaseError(format!("failed to remove assumed record: {}", e))
@@ -348,156 +347,156 @@ impl Database {
 
         self.conn
             .execute(
-                "INSERT INTO packages (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
+                "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
-                    pkg.name,
-                    pkg.version,
-                    pkg.release,
-                    pkg.epoch,
-                    pkg.description,
-                    pkg.arch,
-                    pkg.license,
-                    pkg.url,
-                    pkg.install_size,
-                    pkg.pkg_hash,
-                    pkg.install_scripts,
-                    pkg.install_reason
+                    part.name,
+                    part.version,
+                    part.release,
+                    part.epoch,
+                    part.description,
+                    part.arch,
+                    part.license,
+                    part.url,
+                    part.install_size,
+                    part.pkg_hash,
+                    part.install_scripts,
+                    part.install_reason
                 ],
             )
             .map_err(|e| {
                 if let rusqlite::Error::SqliteFailure(ref err, _) = e {
                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
-                        return WrightError::PackageAlreadyInstalled(pkg.name.to_string());
+                        return WrightError::PartAlreadyInstalled(part.name.to_string());
                     }
                 }
-                WrightError::DatabaseError(format!("failed to insert package: {}", e))
+                WrightError::DatabaseError(format!("failed to insert part: {}", e))
             })?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Register an externally-provided package so dependency checks treat it as satisfied.
-    /// If the package is already assumed, updates its version. Idempotent.
-    pub fn assume_package(&self, name: &str, version: &str) -> Result<()> {
+    /// Register an externally-provided part so dependency checks treat it as satisfied.
+    /// If the part is already assumed, updates its version. Idempotent.
+    pub fn assume_part(&self, name: &str, version: &str) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO packages (name, version, release, description, arch, license, install_size, assumed)
+            "INSERT INTO parts (name, version, release, description, arch, license, install_size, assumed)
              VALUES (?1, ?2, 0, 'externally provided', 'any', 'unknown', 0, 1)
              ON CONFLICT(name) DO UPDATE SET version=excluded.version, assumed=1",
             params![name, version],
-        ).map_err(|e| WrightError::DatabaseError(format!("failed to assume package: {}", e)))?;
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to assume part: {}", e)))?;
         Ok(())
     }
 
-    /// Remove an assumed package record. Returns an error if the package does not exist
+    /// Remove an assumed part record. Returns an error if the part does not exist
     /// or is not assumed (i.e. was installed normally).
-    pub fn unassume_package(&self, name: &str) -> Result<()> {
+    pub fn unassume_part(&self, name: &str) -> Result<()> {
         let rows = self
             .conn
             .execute(
-                "DELETE FROM packages WHERE name = ?1 AND assumed = 1",
+                "DELETE FROM parts WHERE name = ?1 AND assumed = 1",
                 params![name],
             )
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to unassume package: {}", e))
+                WrightError::DatabaseError(format!("failed to unassume part: {}", e))
             })?;
         if rows == 0 {
-            return Err(WrightError::PackageNotFound(name.to_string()));
+            return Err(WrightError::PartNotFound(name.to_string()));
         }
         Ok(())
     }
 
-    pub fn update_package(&self, pkg: NewPackage) -> Result<()> {
+    pub fn update_part(&self, part: NewPart) -> Result<()> {
         let rows = self.conn.execute(
-            "UPDATE packages SET version = ?1, release = ?2, epoch = ?3, description = ?4, arch = ?5, license = ?6, url = ?7, install_size = ?8, pkg_hash = ?9, install_scripts = ?10
+            "UPDATE parts SET version = ?1, release = ?2, epoch = ?3, description = ?4, arch = ?5, license = ?6, url = ?7, install_size = ?8, pkg_hash = ?9, install_scripts = ?10
              WHERE name = ?11",
             params![
-                pkg.version,
-                pkg.release,
-                pkg.epoch,
-                pkg.description,
-                pkg.arch,
-                pkg.license,
-                pkg.url,
-                pkg.install_size,
-                pkg.pkg_hash,
-                pkg.install_scripts,
-                pkg.name
+                part.version,
+                part.release,
+                part.epoch,
+                part.description,
+                part.arch,
+                part.license,
+                part.url,
+                part.install_size,
+                part.pkg_hash,
+                part.install_scripts,
+                part.name
             ],
-        ).map_err(|e| WrightError::DatabaseError(format!("failed to update package: {}", e)))?;
+        ).map_err(|e| WrightError::DatabaseError(format!("failed to update part: {}", e)))?;
 
         if rows == 0 {
-            return Err(WrightError::PackageNotFound(pkg.name.to_string()));
+            return Err(WrightError::PartNotFound(part.name.to_string()));
         }
         Ok(())
     }
 
-    pub fn remove_package(&self, name: &str) -> Result<()> {
+    pub fn remove_part(&self, name: &str) -> Result<()> {
         let rows = self
             .conn
-            .execute("DELETE FROM packages WHERE name = ?1", params![name])
-            .map_err(|e| WrightError::DatabaseError(format!("failed to remove package: {}", e)))?;
+            .execute("DELETE FROM parts WHERE name = ?1", params![name])
+            .map_err(|e| WrightError::DatabaseError(format!("failed to remove part: {}", e)))?;
         if rows == 0 {
-            return Err(WrightError::PackageNotFound(name.to_string()));
+            return Err(WrightError::PartNotFound(name.to_string()));
         }
         Ok(())
     }
 
-    pub fn get_package(&self, name: &str) -> Result<Option<PackageInfo>> {
-        let sql = format!("SELECT {} FROM packages WHERE name = ?1", PKG_COLUMNS);
+    pub fn get_part(&self, name: &str) -> Result<Option<InstalledPart>> {
+        let sql = format!("SELECT {} FROM parts WHERE name = ?1", PART_COLUMNS);
         let mut stmt = self.conn.prepare(&sql)?;
 
-        match stmt.query_row(params![name], row_to_package_info) {
+        match stmt.query_row(params![name], row_to_installed_part) {
             Ok(info) => Ok(Some(info)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(WrightError::DatabaseError(format!(
-                "failed to query package: {}",
+                "failed to query part: {}",
                 e
             ))),
         }
     }
 
-    pub fn list_packages(&self) -> Result<Vec<PackageInfo>> {
-        let sql = format!("SELECT {} FROM packages ORDER BY name", PKG_COLUMNS);
+    pub fn list_parts(&self) -> Result<Vec<InstalledPart>> {
+        let sql = format!("SELECT {} FROM parts ORDER BY name", PART_COLUMNS);
         let mut stmt = self.conn.prepare(&sql)?;
 
         let rows = stmt
-            .query_map([], row_to_package_info)?
+            .query_map([], row_to_installed_part)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to list packages: {}", e)))?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to list parts: {}", e)))?;
 
         Ok(rows)
     }
 
-    /// Get packages that are not depended on by any other installed package.
-    pub fn get_root_packages(&self) -> Result<Vec<PackageInfo>> {
+    /// Get parts that are not depended on by any other installed part.
+    pub fn get_root_parts(&self) -> Result<Vec<InstalledPart>> {
         let sql = format!(
-            "SELECT {} FROM packages WHERE name NOT IN (SELECT DISTINCT depends_on FROM dependencies) ORDER BY name",
-            PKG_COLUMNS
+            "SELECT {} FROM parts WHERE name NOT IN (SELECT DISTINCT depends_on FROM dependencies) ORDER BY name",
+            PART_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql)?;
 
         let rows = stmt
-            .query_map([], row_to_package_info)?
+            .query_map([], row_to_installed_part)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get root packages: {}", e))
+                WrightError::DatabaseError(format!("failed to get root parts: {}", e))
             })?;
 
         Ok(rows)
     }
 
-    pub fn search_packages(&self, keyword: &str) -> Result<Vec<PackageInfo>> {
+    pub fn search_parts(&self, keyword: &str) -> Result<Vec<InstalledPart>> {
         let pattern = format!("%{}%", keyword);
         let sql = format!(
-            "SELECT {} FROM packages WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY name",
-            PKG_COLUMNS
+            "SELECT {} FROM parts WHERE name LIKE ?1 OR description LIKE ?1 ORDER BY name",
+            PART_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql)?;
 
         let rows = stmt
-            .query_map(params![pattern], row_to_package_info)?
+            .query_map(params![pattern], row_to_installed_part)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| WrightError::DatabaseError(format!("failed to search packages: {}", e)))?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to search parts: {}", e)))?;
 
         Ok(rows)
     }
@@ -515,20 +514,20 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
+    pub fn insert_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
         let tx = self.conn.unchecked_transaction().map_err(|e| {
             WrightError::DatabaseError(format!("failed to begin transaction: {}", e))
         })?;
 
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO files (package_id, path, file_hash, file_type, file_mode, file_size, is_config)
+                "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
 
             for file in files {
                 stmt.execute(params![
-                    package_id,
+                    part_id,
                     file.path,
                     file.file_hash,
                     file.file_type,
@@ -544,10 +543,10 @@ impl Database {
         Ok(())
     }
 
-    /// Find other packages that own the same path.
+    /// Find other parts that own the same path.
     pub fn get_other_owners(&self, current_pkg_id: i64, path: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.name FROM packages p JOIN files f ON p.id = f.package_id 
+            "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id 
              WHERE f.path = ?1 AND p.id != ?2",
         )?;
         let rows = stmt
@@ -556,26 +555,26 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn replace_files(&self, package_id: i64, files: &[FileEntry]) -> Result<()> {
+    pub fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
         self.conn
             .execute(
-                "DELETE FROM files WHERE package_id = ?1",
-                params![package_id],
+                "DELETE FROM files WHERE part_id = ?1",
+                params![part_id],
             )
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to delete old files: {}", e))
             })?;
-        self.insert_files(package_id, files)
+        self.insert_files(part_id, files)
     }
 
-    pub fn get_files(&self, package_id: i64) -> Result<Vec<FileEntry>> {
+    pub fn get_files(&self, part_id: i64) -> Result<Vec<FileEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT path, file_hash, file_type, file_mode, file_size, is_config
-             FROM files WHERE package_id = ?1 ORDER BY path",
+             FROM files WHERE part_id = ?1 ORDER BY path",
         )?;
 
         let rows = stmt
-            .query_map(params![package_id], |row| {
+            .query_map(params![part_id], |row| {
                 let ft_str: String = row.get(2)?;
                 Ok((
                     row.get::<_, String>(0)?,
@@ -611,7 +610,7 @@ impl Database {
 
     pub fn find_owner(&self, path: &str) -> Result<Option<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.name FROM files f JOIN packages p ON f.package_id = p.id WHERE f.path = ?1",
+            "SELECT p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path = ?1",
         )?;
 
         match stmt.query_row(params![path], |row| row.get::<_, String>(0)) {
@@ -624,40 +623,40 @@ impl Database {
         }
     }
 
-    pub fn insert_dependencies(&self, package_id: i64, deps: &[Dependency]) -> Result<()> {
+    pub fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "INSERT INTO dependencies (package_id, depends_on, version_constraint, dep_type)
+            "INSERT INTO dependencies (part_id, depends_on, version_constraint, dep_type)
              VALUES (?1, ?2, ?3, ?4)",
         )?;
 
         for dep in deps {
-            stmt.execute(params![package_id, dep.name, dep.constraint, dep.dep_type])?;
+            stmt.execute(params![part_id, dep.name, dep.constraint, dep.dep_type])?;
         }
 
         Ok(())
     }
 
-    pub fn replace_dependencies(&self, package_id: i64, deps: &[Dependency]) -> Result<()> {
+    pub fn replace_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
         self.conn
             .execute(
-                "DELETE FROM dependencies WHERE package_id = ?1",
-                params![package_id],
+                "DELETE FROM dependencies WHERE part_id = ?1",
+                params![part_id],
             )
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to delete old dependencies: {}", e))
             })?;
-        self.insert_dependencies(package_id, deps)
+        self.insert_dependencies(part_id, deps)
     }
 
     pub fn check_dependency(&self, name: &str) -> Result<bool> {
         let mut stmt = self
             .conn
-            .prepare("SELECT COUNT(*) FROM packages WHERE name = ?1")?;
+            .prepare("SELECT COUNT(*) FROM parts WHERE name = ?1")?;
         let count: i64 = stmt.query_row(params![name], |row| row.get(0))?;
         if count > 0 {
             return Ok(true);
         }
-        // Also check if any installed package provides this name
+        // Also check if any installed part provides this name
         let mut stmt2 = self
             .conn
             .prepare("SELECT COUNT(*) FROM provides WHERE name = ?1")?;
@@ -668,7 +667,7 @@ impl Database {
     pub fn get_dependents(&self, name: &str) -> Result<Vec<(String, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT p.name, d.dep_type FROM dependencies d
-             JOIN packages p ON d.package_id = p.id
+             JOIN parts p ON d.part_id = p.id
              WHERE d.depends_on = ?1",
         )?;
 
@@ -680,13 +679,13 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn get_dependencies(&self, package_id: i64) -> Result<Vec<Dependency>> {
+    pub fn get_dependencies(&self, part_id: i64) -> Result<Vec<Dependency>> {
         let mut stmt = self.conn.prepare(
-            "SELECT depends_on, version_constraint, dep_type FROM dependencies WHERE package_id = ?1",
+            "SELECT depends_on, version_constraint, dep_type FROM dependencies WHERE part_id = ?1",
         )?;
 
         let rows = stmt
-            .query_map(params![package_id], |row| {
+            .query_map(params![part_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
@@ -708,12 +707,12 @@ impl Database {
             .collect())
     }
 
-    /// Get runtime dependencies for a package by name.
+    /// Get runtime dependencies for a part by name.
     pub fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<Dependency>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.depends_on, d.version_constraint, d.dep_type
              FROM dependencies d
-             JOIN packages p ON d.package_id = p.id
+             JOIN parts p ON d.part_id = p.id
              WHERE p.name = ?1",
         )?;
 
@@ -740,8 +739,8 @@ impl Database {
             .collect())
     }
 
-    /// Get all transitive reverse dependents of a package (packages that depend on it,
-    /// directly or indirectly). Does NOT include the root package itself.
+    /// Get all transitive reverse dependents of a part (parts that depend on it,
+    /// directly or indirectly). Does NOT include the root part itself.
     /// Returns names in leaf-first order (safe removal order: remove leaves before parents).
     pub fn get_recursive_dependents(&self, name: &str) -> Result<Vec<String>> {
         let mut result = Vec::new();
@@ -770,11 +769,11 @@ impl Database {
         Ok(())
     }
 
-    /// Update the install_reason of a package (e.g. promote dependency → explicit).
+    /// Update the install_reason of a part (e.g. promote dependency -> explicit).
     pub fn set_install_reason(&self, name: &str, reason: &str) -> Result<()> {
         self.conn
             .execute(
-                "UPDATE packages SET install_reason = ?1 WHERE name = ?2",
+                "UPDATE parts SET install_reason = ?1 WHERE name = ?2",
                 params![reason, name],
             )
             .map_err(|e| {
@@ -783,19 +782,19 @@ impl Database {
         Ok(())
     }
 
-    /// Get orphan dependencies of a specific package: dependencies that were auto-installed
-    /// (`install_reason = 'dependency'`) and are not depended on by any other installed package.
+    /// Get orphan dependencies of a specific part: dependencies that were auto-installed
+    /// (`install_reason = 'dependency'`) and are not depended on by any other installed part.
     pub fn get_orphan_dependencies(&self, name: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.depends_on FROM dependencies d
-             JOIN packages p ON d.package_id = p.id
+             JOIN parts p ON d.part_id = p.id
              WHERE p.name = ?1
                AND EXISTS (
-                   SELECT 1 FROM packages dep WHERE dep.name = d.depends_on AND dep.install_reason = 'dependency'
+                   SELECT 1 FROM parts dep WHERE dep.name = d.depends_on AND dep.install_reason = 'dependency'
                )
                AND NOT EXISTS (
                    SELECT 1 FROM dependencies d2
-                   JOIN packages p2 ON d2.package_id = p2.id
+                   JOIN parts p2 ON d2.part_id = p2.id
                    WHERE d2.depends_on = d.depends_on AND p2.name != ?1
                )"
         ).map_err(|e| WrightError::DatabaseError(format!("failed to prepare orphan deps query: {}", e)))?;
@@ -808,24 +807,24 @@ impl Database {
         Ok(rows)
     }
 
-    /// Get globally orphan packages: `install_reason = 'dependency'` and not depended on
-    /// by any installed package.
-    pub fn get_orphan_packages(&self) -> Result<Vec<PackageInfo>> {
+    /// Get globally orphan parts: `install_reason = 'dependency'` and not depended on
+    /// by any installed part.
+    pub fn get_orphan_parts(&self) -> Result<Vec<InstalledPart>> {
         let sql = format!(
-            "SELECT {} FROM packages WHERE install_reason = 'dependency' AND name NOT IN (
+            "SELECT {} FROM parts WHERE install_reason = 'dependency' AND name NOT IN (
                 SELECT depends_on FROM dependencies
             )",
-            PKG_COLUMNS
+            PART_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql).map_err(|e| {
             WrightError::DatabaseError(format!("failed to prepare orphan query: {}", e))
         })?;
 
         let rows = stmt
-            .query_map([], row_to_package_info)?
+            .query_map([], row_to_installed_part)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get orphan packages: {}", e))
+                WrightError::DatabaseError(format!("failed to get orphan parts: {}", e))
             })?;
 
         Ok(rows)
@@ -834,27 +833,27 @@ impl Database {
     pub fn record_transaction(
         &self,
         operation: &str,
-        package_name: &str,
+        part_name: &str,
         old_version: Option<&str>,
         new_version: Option<&str>,
         status: &str,
         backup_path: Option<&str>,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO transactions (operation, package_name, old_version, new_version, status, backup_path)
+            "INSERT INTO transactions (operation, part_name, old_version, new_version, status, backup_path)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![operation, package_name, old_version, new_version, status, backup_path],
+            params![operation, part_name, old_version, new_version, status, backup_path],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Query transaction history, optionally filtered by package name.
-    pub fn get_history(&self, package: Option<&str>) -> Result<Vec<TransactionRecord>> {
+    /// Query transaction history, optionally filtered by part name.
+    pub fn get_history(&self, part: Option<&str>) -> Result<Vec<TransactionRecord>> {
         let mut records = Vec::new();
-        if let Some(name) = package {
+        if let Some(name) = part {
             let mut stmt = self.conn.prepare(
-                "SELECT timestamp, operation, package_name, old_version, new_version, status
-                 FROM transactions WHERE package_name = ?1 ORDER BY timestamp",
+                "SELECT timestamp, operation, part_name, old_version, new_version, status
+                 FROM transactions WHERE part_name = ?1 ORDER BY timestamp",
             )?;
             let rows = stmt.query_map(params![name], row_to_transaction)?;
             for row in rows {
@@ -862,7 +861,7 @@ impl Database {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT timestamp, operation, package_name, old_version, new_version, status
+                "SELECT timestamp, operation, part_name, old_version, new_version, status
                  FROM transactions ORDER BY timestamp",
             )?;
             let rows = stmt.query_map([], row_to_transaction)?;
@@ -883,40 +882,40 @@ impl Database {
 
     pub fn insert_optional_dependencies(
         &self,
-        package_id: i64,
+        part_id: i64,
         deps: &[(String, String)],
     ) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "INSERT INTO optional_dependencies (package_id, name, description) VALUES (?1, ?2, ?3)",
+            "INSERT INTO optional_dependencies (part_id, name, description) VALUES (?1, ?2, ?3)",
         )?;
         for (name, description) in deps {
-            stmt.execute(params![package_id, name, description])?;
+            stmt.execute(params![part_id, name, description])?;
         }
         Ok(())
     }
 
     pub fn replace_optional_dependencies(
         &self,
-        package_id: i64,
+        part_id: i64,
         deps: &[(String, String)],
     ) -> Result<()> {
         self.conn
             .execute(
-                "DELETE FROM optional_dependencies WHERE package_id = ?1",
-                params![package_id],
+                "DELETE FROM optional_dependencies WHERE part_id = ?1",
+                params![part_id],
             )
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e))
             })?;
-        self.insert_optional_dependencies(package_id, deps)
+        self.insert_optional_dependencies(part_id, deps)
     }
 
-    pub fn get_optional_dependencies(&self, package_id: i64) -> Result<Vec<(String, String)>> {
+    pub fn get_optional_dependencies(&self, part_id: i64) -> Result<Vec<(String, String)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT name, description FROM optional_dependencies WHERE package_id = ?1 ORDER BY name",
+            "SELECT name, description FROM optional_dependencies WHERE part_id = ?1 ORDER BY name",
         )?;
         let rows = stmt
-            .query_map(params![package_id], |row| {
+            .query_map(params![part_id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -928,32 +927,32 @@ impl Database {
 
     // ── provides ─────────────────────────────────────────────────────────
 
-    pub fn insert_provides(&self, package_id: i64, names: &[String]) -> Result<()> {
+    pub fn insert_provides(&self, part_id: i64, names: &[String]) -> Result<()> {
         let mut stmt = self
             .conn
-            .prepare("INSERT INTO provides (package_id, name) VALUES (?1, ?2)")?;
+            .prepare("INSERT INTO provides (part_id, name) VALUES (?1, ?2)")?;
         for name in names {
-            stmt.execute(params![package_id, name])?;
+            stmt.execute(params![part_id, name])?;
         }
         Ok(())
     }
 
-    pub fn get_provides(&self, package_id: i64) -> Result<Vec<String>> {
+    pub fn get_provides(&self, part_id: i64) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT name FROM provides WHERE package_id = ?1 ORDER BY name")?;
+            .prepare("SELECT name FROM provides WHERE part_id = ?1 ORDER BY name")?;
         let rows = stmt
-            .query_map(params![package_id], |row| row.get::<_, String>(0))?
+            .query_map(params![part_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get provides: {}", e)))?;
         Ok(rows)
     }
 
-    /// Return names of all installed packages that provide `virtual_name`.
+    /// Return names of all installed parts that provide `virtual_name`.
     pub fn find_providers(&self, virtual_name: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.name FROM packages p
-             JOIN provides pv ON p.id = pv.package_id
+            "SELECT p.name FROM parts p
+             JOIN provides pv ON p.id = pv.part_id
              WHERE pv.name = ?1",
         )?;
         let rows = stmt
@@ -965,39 +964,39 @@ impl Database {
 
     // ── conflicts ────────────────────────────────────────────────────────
 
-    pub fn insert_conflicts(&self, package_id: i64, names: &[String]) -> Result<()> {
+    pub fn insert_conflicts(&self, part_id: i64, names: &[String]) -> Result<()> {
         let mut stmt = self
             .conn
-            .prepare("INSERT INTO conflicts (package_id, name) VALUES (?1, ?2)")?;
+            .prepare("INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)")?;
         for name in names {
-            stmt.execute(params![package_id, name])?;
+            stmt.execute(params![part_id, name])?;
         }
         Ok(())
     }
 
-    pub fn get_conflicts(&self, package_id: i64) -> Result<Vec<String>> {
+    pub fn get_conflicts(&self, part_id: i64) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT name FROM conflicts WHERE package_id = ?1 ORDER BY name")?;
+            .prepare("SELECT name FROM conflicts WHERE part_id = ?1 ORDER BY name")?;
         let rows = stmt
-            .query_map(params![package_id], |row| row.get::<_, String>(0))?
+            .query_map(params![part_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
         Ok(rows)
     }
 
-    /// Return names of installed packages whose `conflicts` list includes `name`.
-    pub fn find_conflicting_packages(&self, name: &str) -> Result<Vec<String>> {
+    /// Return names of installed parts whose `conflicts` list includes `name`.
+    pub fn find_conflicting_parts(&self, name: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.name FROM packages p
-             JOIN conflicts c ON p.id = c.package_id
+            "SELECT p.name FROM parts p
+             JOIN conflicts c ON p.id = c.part_id
              WHERE c.name = ?1",
         )?;
         let rows = stmt
             .query_map(params![name], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to find conflicting packages: {}", e))
+                WrightError::DatabaseError(format!("failed to find conflicting parts: {}", e))
             })?;
         Ok(rows)
     }
@@ -1015,7 +1014,7 @@ mod tests {
     fn test_insert_and_get_package() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1028,7 +1027,7 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let pkg = db.get_package("hello").unwrap().unwrap();
+        let pkg = db.get_part("hello").unwrap().unwrap();
         assert_eq!(pkg.name, "hello");
         assert_eq!(pkg.version, "1.0.0");
         assert_eq!(pkg.release, 1);
@@ -1039,7 +1038,7 @@ mod tests {
     #[test]
     fn test_list_packages() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "alpha",
             version: "1.0.0",
             release: 1,
@@ -1049,7 +1048,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "beta",
             version: "2.0.0",
             release: 1,
@@ -1059,7 +1058,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let pkgs = db.list_packages().unwrap();
+        let pkgs = db.list_parts().unwrap();
         assert_eq!(pkgs.len(), 2);
         assert_eq!(pkgs[0].name, "alpha");
         assert_eq!(pkgs[1].name, "beta");
@@ -1068,7 +1067,7 @@ mod tests {
     #[test]
     fn test_remove_package() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "hello",
             version: "1.0.0",
             release: 1,
@@ -1078,15 +1077,15 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        db.remove_package("hello").unwrap();
-        assert!(db.get_package("hello").unwrap().is_none());
+        db.remove_part("hello").unwrap();
+        assert!(db.get_part("hello").unwrap().is_none());
     }
 
     #[test]
     fn test_remove_cascades_files() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1109,7 +1108,7 @@ mod tests {
         )
         .unwrap();
 
-        db.remove_package("hello").unwrap();
+        db.remove_part("hello").unwrap();
         assert!(db.find_owner("/usr/bin/hello").unwrap().is_none());
     }
 
@@ -1117,7 +1116,7 @@ mod tests {
     fn test_insert_and_get_files() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1157,7 +1156,7 @@ mod tests {
     fn test_find_owner() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1190,7 +1189,7 @@ mod tests {
     #[test]
     fn test_search_packages() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "hello",
             version: "1.0.0",
             release: 1,
@@ -1200,7 +1199,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "nginx",
             version: "1.25.3",
             release: 1,
@@ -1211,11 +1210,11 @@ mod tests {
         })
         .unwrap();
 
-        let results = db.search_packages("hello").unwrap();
+        let results = db.search_parts("hello").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hello");
 
-        let results = db.search_packages("server").unwrap();
+        let results = db.search_parts("server").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "nginx");
     }
@@ -1223,7 +1222,7 @@ mod tests {
     #[test]
     fn test_duplicate_package() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "hello",
             version: "1.0.0",
             release: 1,
@@ -1233,7 +1232,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let result = db.insert_package(NewPackage {
+        let result = db.insert_part(NewPart {
             name: "hello",
             version: "2.0.0",
             release: 1,
@@ -1248,7 +1247,7 @@ mod tests {
     #[test]
     fn test_check_dependency() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "openssl",
             version: "3.0.0",
             release: 1,
@@ -1275,7 +1274,7 @@ mod tests {
     #[test]
     fn test_update_package() {
         let db = test_db();
-        db.insert_package(NewPackage {
+        db.insert_part(NewPart {
             name: "hello",
             version: "1.0.0",
             release: 1,
@@ -1287,7 +1286,7 @@ mod tests {
         })
         .unwrap();
 
-        db.update_package(NewPackage {
+        db.update_part(NewPart {
             name: "hello",
             version: "2.0.0",
             release: 1,
@@ -1300,7 +1299,7 @@ mod tests {
         })
         .unwrap();
 
-        let pkg = db.get_package("hello").unwrap().unwrap();
+        let pkg = db.get_part("hello").unwrap().unwrap();
         assert_eq!(pkg.version, "2.0.0");
         assert_eq!(pkg.description, "updated pkg");
         assert_eq!(pkg.install_size, 2048);
@@ -1314,7 +1313,7 @@ mod tests {
     fn test_replace_files() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1360,7 +1359,7 @@ mod tests {
     fn test_replace_dependencies() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1400,7 +1399,7 @@ mod tests {
     fn test_install_scripts_field() {
         let db = test_db();
         let id = db
-            .insert_package(NewPackage {
+            .insert_part(NewPart {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
@@ -1412,7 +1411,7 @@ mod tests {
             })
             .unwrap();
 
-        let pkg = db.get_package("hello").unwrap().unwrap();
+        let pkg = db.get_part("hello").unwrap().unwrap();
         assert_eq!(
             pkg.install_scripts.as_deref(),
             Some("post_install() { echo done; }")

@@ -126,7 +126,7 @@ impl SimpleResolver {
                 }
                 "hold" => {
                     tracing::debug!(
-                        "ignoring hold source '{}' for binary package resolver",
+                        "ignoring hold source '{}' for binary part resolver",
                         source.name
                     );
                 }
@@ -182,7 +182,7 @@ impl SimpleResolver {
         // Try repo DB first (indexed lookup)
         if let Some(ref repo_dir) = self.repo_dir {
             if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_dir) {
-                if let Ok(Some(entry)) = repo_db.find_package(name) {
+                if let Ok(Some(entry)) = repo_db.find_part(name) {
                     for dir in &self.search_dirs {
                         let path = dir.join(&entry.filename);
                         if path.exists() {

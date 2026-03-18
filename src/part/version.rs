@@ -203,7 +203,7 @@ pub fn parse_dependency(dep: &str) -> Result<(String, Option<VersionConstraint>)
         }
     }
 
-    // No operator — just a package name
+    // No operator — just a part name
     Ok((dep.to_string(), None))
 }
 

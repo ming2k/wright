@@ -28,8 +28,6 @@ pub struct IndexEntry {
     #[serde(default)]
     pub runtime_deps: Vec<String>,
     #[serde(default)]
-    pub link_deps: Vec<String>,
-    #[serde(default)]
     pub provides: Vec<String>,
     #[serde(default)]
     pub conflicts: Vec<String>,
@@ -82,7 +80,6 @@ pub fn generate_index(repo_dir: &Path) -> Result<RepoIndex> {
             sha256,
             install_size: partinfo.install_size,
             runtime_deps: partinfo.runtime_deps,
-            link_deps: partinfo.link_deps,
             provides: partinfo.provides,
             conflicts: partinfo.conflicts,
             replaces: partinfo.replaces,

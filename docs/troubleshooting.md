@@ -125,6 +125,8 @@ Triggered during automatic dependency expansion when a dependency declared in
 2. If the dependency is already installed on the system and you don't want to
    build it, mark it as a runtime-only dep or remove it from `build`/`link`
    dependencies if it is genuinely not needed at build time.
+   If it is needed both at runtime and for ABI-sensitive rebuild tracking,
+   declare it in both `runtime` and `link`.
 3. Use `--self` to skip dependency expansion entirely:
    ```bash
    wbuild run mypkg --self   # build only mypkg, assume deps are installed
@@ -144,7 +146,7 @@ ERROR Deadlock detected or dependency missing from plan set:
 
 A circular dependency exists and Wright could not resolve it automatically.
 
-**Resolution:** Add an `[mvp.dependencies]` section to one of the packages in
+**Resolution:** Add an `[mvp.dependencies]` section to one of the parts in
 the cycle to declare an acyclic minimal dependency set for its first build
 pass. See [writing-plans.md — Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full)
 for the full pattern.
@@ -193,7 +195,7 @@ wbuild checksum <pkg>
 
 ## Archive Already Exists but is Wrong
 
-**Symptom:** Build appears to succeed but the installed package is stale or
+**Symptom:** Build appears to succeed but the installed part is stale or
 incorrect. The build log shows:
 
 ```
@@ -249,7 +251,7 @@ directory may be partially written. On the next run Wright recreates it from
 scratch, but if you hit issues:
 
 ```bash
-# Manually clean the working directory for one package
+# Manually clean the working directory for one part
 wbuild run <pkg> --clean
 
 # Or remove it directly
@@ -276,7 +278,7 @@ The stage exceeded the `timeout` setting in `wright.toml` or `plan.toml`.
 
 **Options:**
 
-1. Raise `timeout` globally or for the specific package:
+1. Raise `timeout` globally or for the specific part:
    ```toml
    # plan.toml
    [options]

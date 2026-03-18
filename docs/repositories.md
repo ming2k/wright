@@ -11,17 +11,17 @@ Repository management is handled by the dedicated `wrepo` tool.
 | Term | What it is |
 |------|-----------|
 | **Source** | A configured directory (local) or URL (remote, future) where wright looks for parts |
-| **Repo DB** | The SQLite catalog (`repo.db`) populated from package `.PARTINFO` metadata |
+| **Repo DB** | The SQLite catalog (`repo.db`) populated from part `.PARTINFO` metadata |
 | **Resolver** | The component that finds a part archive by name — checks the repo DB first, falls back to scanning archives |
 
 ## Quick Start
 
 The default local repository is `components_dir` (`/var/lib/wright/components`
-by default). Packages built by `wbuild` are placed there automatically, so the
+by default). Parts built by `wbuild` are placed there automatically, so the
 simplest workflow is:
 
 ```bash
-# 1. Build packages (output goes to components_dir)
+# 1. Build parts (output goes to components_dir)
 wbuild run curl
 
 # 2. Sync the default repo into SQLite
@@ -56,7 +56,7 @@ wrepo source add myrepo --path /var/lib/wright/myrepo --priority 300
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path <PATH>` | *(required)* | Local directory path |
-| `--priority <N>` | `100` | Higher number = preferred when the same package exists in multiple sources |
+| `--priority <N>` | `100` | Higher number = preferred when the same part exists in multiple sources |
 
 ### List sources
 
@@ -74,12 +74,12 @@ wrepo source remove myrepo
 ## Indexing
 
 `wrepo sync` imports `.wright.tar.zst` metadata into the repo DB. `wbuild`
-already registers newly built packages there directly, so `sync` is mainly for
+already registers newly built parts there directly, so `sync` is mainly for
 existing or externally copied archives.
 
 ```bash
 wrepo sync                          # index the default components_dir
-wrepo sync /var/lib/wright/myrepo   # index a specific directory
+wrepo sync ./components             # index a specific directory
 ```
 
 **Re-run `wrepo sync` whenever you add or update archives outside `wbuild`.**
@@ -87,7 +87,7 @@ wrepo sync /var/lib/wright/myrepo   # index a specific directory
 The repo DB records for each part:
 - Name, version, release, epoch, architecture
 - Description
-- Runtime and link dependencies
+- Runtime dependencies
 - Provides, conflicts, replaces
 - Filename and SHA-256 checksum
 
@@ -98,8 +98,9 @@ collects all versions and picks the latest (or a user-specified version).
 
 ```bash
 wrepo list                   # all indexed parts
-wrepo list gcc               # all available versions of gcc
-wrepo search curl            # search by keyword (name + description)
+wrepo list zlib              # all available versions of zlib
+wrepo search zlib            # search by keyword (name + description)
+wrepo search ssl             # search by keyword (name + description)
 ```
 
 Output marks the currently installed version with `[installed]`:
@@ -113,8 +114,8 @@ gcc 14.2.0-2 (x86_64)
 ## Removing Parts from the Repository
 
 ```bash
-wrepo remove gcc 14.2.0-2           # remove DB entry only
-wrepo remove gcc 14.2.0-2 --purge   # also delete the archive file
+wrepo remove zlib 1.3.1             # remove DB entry only
+wrepo remove zlib 1.3.1-2 --purge   # also delete the archive file
 ```
 
 ## Upgrading
@@ -176,7 +177,7 @@ wright install @base
 ### Assembly build with repo
 
 ```bash
-wbuild run -ic @qemu            # build, skip installed, install new packages
+wbuild run -ic @qemu            # build, skip installed, install new parts
 wrepo sync                      # update the index
 ```
 
@@ -185,5 +186,5 @@ wrepo sync                      # update the index
 | Tool | Role |
 |------|------|
 | `wright` | System administrator — install, remove, upgrade, query |
-| `wbuild` | Package builder — build from plan.toml |
+| `wbuild` | Part builder — build from plan.toml |
 | `wrepo` | Repository manager — index, search, source management |

@@ -97,6 +97,66 @@ fn test_build_and_archive_hello() {
 }
 
 #[test]
+fn test_archive_records_runtime_but_not_link_dependencies() {
+    let manifest = PlanManifest::parse(
+        r#"
+name = "runtime-link-overlap"
+version = "1.0.0"
+release = 1
+description = "test part"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+runtime = ["openssl", "zlib"]
+link = ["zlib", "libffi"]
+
+[lifecycle.staging]
+executor = "shell"
+dockyard = "none"
+script = """
+install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
+"""
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.build_dir = build_tmp.path().to_path_buf();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let builder = Builder::new(config);
+    let result = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let output_dir = tempfile::tempdir().unwrap();
+    let archive_path =
+        archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let pkginfo = archive::read_partinfo(&archive_path).unwrap();
+
+    assert_eq!(pkginfo.runtime_deps, vec!["openssl", "zlib"]);
+
+    let extract_dir = tempfile::tempdir().unwrap();
+    archive::extract_archive(&archive_path, extract_dir.path()).unwrap();
+    let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
+    assert!(partinfo.contains("runtime = [\"openssl\", \"zlib\"]"));
+    assert!(!partinfo.contains("link ="));
+}
+
+#[test]
 fn test_lint_hello_fixture() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();

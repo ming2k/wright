@@ -22,15 +22,26 @@ Three binaries, three roles:
 
 | Tool | Role |
 |------|------|
-| `wbuild` | Build packages from `plan.toml` |
-| `wrepo` | Manage the package index and sources |
-| `wright` | Install, remove, upgrade, query packages |
+| `wbuild` | Build parts from `plan.toml` |
+| `wrepo` | Manage the part index and sources |
+| `wright` | Install, remove, upgrade, query installed parts |
+
+## Mental Model
+
+Wright uses a single metaphor throughout the project: treat the computer as the Ship of Theseus while it is still sailing.
+
+- A `plan.toml` is the blueprint for one replacement **part**.
+- A built `.wright.tar.zst` is the finished **part**.
+- `wrepo` catalogs finished parts in a repository.
+- `wright` swaps parts onto the live system.
+
+If you keep that pipeline in mind, most command names become self-explanatory. See [terminology.md](terminology.md) for the full glossary.
 
 ## Configuration
 
 Wright works with no config file. To customize, create `/etc/wright/wright.toml`. See [configuration.md](configuration.md).
 
-## Your First Package
+## Your First Part
 
 Create `plans/hello/plan.toml`:
 
@@ -38,7 +49,7 @@ Create `plans/hello/plan.toml`:
 name = "hello"
 version = "1.0.0"
 release = 1
-description = "Hello World test package"
+description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
@@ -84,7 +95,7 @@ wbuild run -i plans/hello                               # build + install
 ### Verify and remove
 
 ```bash
-wright query hello           # show package info
+wright query hello           # show part info
 wright files hello           # list installed files
 wright verify hello          # check file integrity
 wright remove hello          # uninstall

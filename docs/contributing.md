@@ -16,7 +16,7 @@ src/
 ├── bin/wright.rs   # CLI entry point
 ├── lib.rs          # Library root
 ├── config.rs       # Configuration
-├── package/        # Plan parsing, versioning, archive creation
+├── part/           # Part archive and version handling
 ├── builder/        # Build pipeline, executors, variables
 ├── database/       # SQLite layer
 ├── transaction/    # Install/remove with rollback

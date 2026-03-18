@@ -63,25 +63,25 @@ fn test_end_to_end_install_query_remove() {
     let archive = build_hello_archive();
 
     // Install
-    transaction::install_package(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).unwrap();
 
     // Verify file exists on disk
     let hello_bin = root.path().join("usr/bin/hello");
     assert!(hello_bin.exists());
 
-    // Query package in DB
-    let pkg = db.get_package("hello").unwrap().unwrap();
-    assert_eq!(pkg.name, "hello");
-    assert_eq!(pkg.version, "1.0.0");
-    assert_eq!(pkg.release, 1);
-    assert_eq!(pkg.arch, "x86_64");
+    // Query part in DB
+    let part = db.get_part("hello").unwrap().unwrap();
+    assert_eq!(part.name, "hello");
+    assert_eq!(part.version, "1.0.0");
+    assert_eq!(part.release, 1);
+    assert_eq!(part.arch, "x86_64");
 
-    // List packages
-    let packages = db.list_packages().unwrap();
-    assert_eq!(packages.len(), 1);
+    // List parts
+    let parts = db.list_parts().unwrap();
+    assert_eq!(parts.len(), 1);
 
     // Query files
-    let files = db.get_files(pkg.id).unwrap();
+    let files = db.get_files(part.id).unwrap();
     assert!(files.iter().any(|f| f.path == "/usr/bin/hello"));
 
     // Find owner
@@ -89,18 +89,18 @@ fn test_end_to_end_install_query_remove() {
     assert_eq!(owner, Some("hello".to_string()));
 
     // Verify integrity
-    let issues = transaction::verify_package(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
     assert!(issues.is_empty());
 
     // Remove
-    transaction::remove_package(&db, "hello", root.path(), false).unwrap();
+    transaction::remove_part(&db, "hello", root.path(), false).unwrap();
 
     // Verify file is gone
     assert!(!hello_bin.exists());
 
     // Verify DB is clean
-    assert!(db.get_package("hello").unwrap().is_none());
-    assert!(db.list_packages().unwrap().is_empty());
+    assert!(db.get_part("hello").unwrap().is_none());
+    assert!(db.list_parts().unwrap().is_empty());
     assert!(db.find_owner("/usr/bin/hello").unwrap().is_none());
 
     let _ = std::fs::remove_file(&archive);
@@ -113,10 +113,10 @@ fn test_file_conflict_detection() {
     let archive = build_hello_archive();
 
     // Install first copy
-    transaction::install_package(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).unwrap();
 
-    // Try to install again — should fail because package is already installed
-    let result = transaction::install_package(&db, &archive, root.path(), false);
+    // Try to install again — should fail because the part is already installed
+    let result = transaction::install_part(&db, &archive, root.path(), false);
     assert!(result.is_err());
 
     let _ = std::fs::remove_file(&archive);
@@ -128,12 +128,12 @@ fn test_verify_detects_modification() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).unwrap();
 
     // Tamper with installed file
     std::fs::write(root.path().join("usr/bin/hello"), b"tampered content").unwrap();
 
-    let issues = transaction::verify_package(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
     assert!(!issues.is_empty());
     assert!(issues.iter().any(|i| i.contains("MODIFIED")));
 
@@ -146,12 +146,12 @@ fn test_verify_detects_missing_file() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).unwrap();
 
     // Delete installed file
     std::fs::remove_file(root.path().join("usr/bin/hello")).unwrap();
 
-    let issues = transaction::verify_package(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
     assert!(!issues.is_empty());
     assert!(issues.iter().any(|i| i.contains("MISSING")));
 
@@ -159,23 +159,23 @@ fn test_verify_detects_missing_file() {
 }
 
 #[test]
-fn test_search_installed_packages() {
+fn test_search_installed_parts() {
     let db = Database::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
-    transaction::install_package(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).unwrap();
 
     // Search by name
-    let results = db.search_packages("hello").unwrap();
+    let results = db.search_parts("hello").unwrap();
     assert_eq!(results.len(), 1);
 
     // Search by description
-    let results = db.search_packages("World").unwrap();
+    let results = db.search_parts("World").unwrap();
     assert_eq!(results.len(), 1);
 
     // Search with no results
-    let results = db.search_packages("nonexistent").unwrap();
+    let results = db.search_parts("nonexistent").unwrap();
     assert!(results.is_empty());
 
     let _ = std::fs::remove_file(&archive);

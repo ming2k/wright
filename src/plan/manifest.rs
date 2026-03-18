@@ -93,7 +93,7 @@ pub struct BackupConfig {
 // Main manifest
 // ---------------------------------------------------------------------------
 
-/// Package relations (replaces, conflicts, provides).
+/// Part relations (replaces, conflicts, provides).
 /// Moved from [dependencies] to [relations] in v1.3.1.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct Relations {
@@ -119,7 +119,7 @@ fn default_skip() -> String {
 
 #[derive(Debug, Clone)]
 pub struct PlanManifest {
-    pub plan: PackageMetadata,
+    pub plan: PlanMetadata,
     pub dependencies: Dependencies,
     pub relations: Relations,
     pub sources: Sources,
@@ -135,7 +135,7 @@ pub struct PlanManifest {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct PackageMetadata {
+pub struct PlanMetadata {
     pub name: String,
     pub version: String,
     pub release: u32,
@@ -153,10 +153,16 @@ pub struct PackageMetadata {
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Dependencies {
+    /// Runtime dependencies recorded in binary part metadata and used by
+    /// install/remove operations. If a dependency is required at runtime, it
+    /// must be listed here even if it also appears in `link`.
     #[serde(default)]
     pub runtime: Vec<String>,
     #[serde(default)]
     pub build: Vec<String>,
+    /// ABI-sensitive build edges used by `wbuild` to drive reverse rebuilds.
+    /// Entries may overlap with `runtime`; overlap is expected for shared
+    /// libraries that are both linked and needed after installation.
     #[serde(default)]
     pub link: Vec<String>,
     #[serde(default)]
@@ -193,7 +199,7 @@ pub struct BuildOptions {
     pub debug: bool,
     #[serde(default = "default_true")]
     pub ccache: bool,
-    /// Package-wide environment variables injected into every lifecycle stage.
+    /// Plan-wide environment variables injected into every lifecycle stage.
     /// Per-stage `[lifecycle.<stage>.env]` takes precedence over these.
     /// Use this to set tool-specific parallelism (e.g. MAKEFLAGS, GOFLAGS)
     /// or any other build knobs the script needs.
@@ -206,7 +212,7 @@ pub struct BuildOptions {
     #[serde(default)]
     pub timeout: Option<u64>,
     /// Skip FHS validation after the final output stage.
-    /// Set to `true` only for packages with a deliberate reason to install
+    /// Set to `true` only for parts with a deliberate reason to install
     /// outside the standard FHS paths (e.g. kernel modules, legacy compat layers).
     #[serde(default)]
     pub skip_fhs_check: bool,
@@ -287,7 +293,7 @@ pub struct PhaseDependencies {
 #[serde(deny_unknown_fields)]
 struct RawManifest {
     #[serde(flatten)]
-    plan: PackageMetadata,
+    plan: PlanMetadata,
     #[serde(default)]
     dependencies: Dependencies,
     #[serde(default)]
@@ -334,7 +340,7 @@ impl SubFabricateOutput {
         });
 
         PlanManifest {
-            plan: PackageMetadata {
+            plan: PlanMetadata {
                 name: name.to_string(),
                 version: self
                     .version
@@ -431,7 +437,7 @@ fn parse_output_section(
         Some(value) => {
             if main_hooks.is_some() {
                 return Err(WrightError::ParseError(
-                    "main package hooks must be declared only once (prefer top-level [hooks])"
+                    "main part hooks must be declared only once (prefer top-level [hooks])"
                         .to_string(),
                 ));
             }
@@ -543,11 +549,6 @@ impl PlanManifest {
                         "[lifecycle.part] is no longer supported; use [lifecycle.fabricate]"
                             .to_string(),
                     ));
-                } else if key == "package" {
-                    return Err(WrightError::ParseError(
-                        "[lifecycle.package] is no longer supported; use [lifecycle.fabricate]"
-                            .to_string(),
-                    ));
                 } else {
                     let stage: LifecycleStage =
                         value.try_into().map_err(|e: toml::de::Error| {
@@ -619,13 +620,13 @@ impl PlanManifest {
         let name_re = regex::Regex::new(r"^[a-z0-9][a-z0-9_+.-]*$").unwrap();
         if !name_re.is_match(&self.plan.name) {
             return Err(WrightError::ValidationError(format!(
-                "invalid package name '{}': must match [a-z0-9][a-z0-9_+.-]*",
+                "invalid part name '{}': must match [a-z0-9][a-z0-9_+.-]*",
                 self.plan.name
             )));
         }
         if self.plan.name.len() > 64 {
             return Err(WrightError::ValidationError(
-                "package name must be at most 64 characters".to_string(),
+                "part name must be at most 64 characters".to_string(),
             ));
         }
 
@@ -688,18 +689,18 @@ impl PlanManifest {
         // Validate fabricate config
         if let Some(ref pkg) = self.fabricate {
             match pkg {
-                FabricateConfig::Multi(ref packages) => {
-                    for (sub_name, sub_part) in packages {
+                FabricateConfig::Multi(ref parts) => {
+                    for (sub_name, sub_part) in parts {
                         if !name_re.is_match(sub_name) {
                             return Err(WrightError::ValidationError(format!(
-                                "invalid sub-package name '{}': must match [a-z0-9][a-z0-9_+.-]*",
+                                "invalid sub-part name '{}': must match [a-z0-9][a-z0-9_+.-]*",
                                 sub_name
                             )));
                         }
-                        // Non-main sub-packages must have description
+                        // Non-main sub-parts must have description
                         if sub_name != &self.plan.name && sub_part.description.is_none() {
                             return Err(WrightError::ValidationError(format!(
-                                "sub-package '{}': description is required for non-main packages",
+                                "sub-part '{}': description is required for non-main parts",
                                 sub_name
                             )));
                         }
@@ -709,7 +710,7 @@ impl PlanManifest {
                         if let Some(ref rel) = sub_part.release {
                             if *rel == 0 {
                                 return Err(WrightError::ValidationError(format!(
-                                    "sub-package '{}': release must be >= 1",
+                                    "sub-part '{}': release must be >= 1",
                                     sub_name
                                 )));
                             }
@@ -725,7 +726,7 @@ impl PlanManifest {
         Ok(())
     }
 
-    /// Get the archive filename for this package.
+    /// Get the archive filename for this part.
     /// Includes epoch only when > 0: `name-epoch:version-release-arch.wright.tar.zst`
     pub fn archive_filename(&self) -> String {
         if self.plan.epoch > 0 {
@@ -745,9 +746,9 @@ impl PlanManifest {
         }
     }
 
-    /// Iterate over sub-packages (multi-package mode).
+    /// Iterate over sub-parts (multi-part mode).
     /// Returns an empty iterator for Single or None.
-    pub fn sub_packages(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
+    pub fn sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
         match self.fabricate {
             Some(FabricateConfig::Multi(ref pkgs)) => {
                 Box::new(pkgs.iter()) as Box<dyn Iterator<Item = _>>
@@ -756,10 +757,10 @@ impl PlanManifest {
         }
     }
 
-    /// Get sub-packages that are not the main package (need their own script/PART_DIR).
-    pub fn extra_sub_packages(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
+    /// Get sub-parts that are not the main part (need their own script/PART_DIR).
+    pub fn extra_sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
         let main_name = self.plan.name.clone();
-        self.sub_packages()
+        self.sub_parts()
             .filter(move |(name, _)| *name != &main_name)
     }
 }
@@ -774,7 +775,7 @@ mod tests {
 name = "hello"
 version = "1.0.0"
 release = 1
-description = "Hello World test package"
+description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
@@ -1106,7 +1107,7 @@ description = "bad"
 script = "true"
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("invalid sub-package name"));
+        assert!(err.to_string().contains("invalid sub-part name"));
     }
 
     #[test]
@@ -1238,7 +1239,7 @@ script = "true"
         match manifest.fabricate {
             Some(FabricateConfig::Multi(ref pkgs)) => {
                 let main = pkgs.get("gcc").unwrap();
-                // Main package description is None — to_manifest will use parent's
+                // Main part description is None — to_manifest will use parent's
                 let main_manifest = main.to_manifest("gcc", &manifest);
                 assert_eq!(
                     main_manifest.plan.description,
@@ -1366,7 +1367,7 @@ build = ["make"]
 name = "minimal"
 version = "1.0.0"
 release = 1
-description = "minimal package"
+description = "minimal part"
 license = "MIT"
 arch = "x86_64"
 "#;
@@ -1589,22 +1590,4 @@ script = "strip ${PART_DIR}/usr/bin/test"
         );
     }
 
-    #[test]
-    fn test_lifecycle_package_rejected() {
-        let toml_str = r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[lifecycle.package]
-hooks.post_install = "ldconfig"
-"#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("[lifecycle.package] is no longer supported"));
-    }
 }

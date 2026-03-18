@@ -2,15 +2,24 @@
 
 Wright is designed as a modular toolkit split into three binaries that share a core library.
 
+The project uses a deliberate vocabulary:
+
+- a `plan.toml` is a **plan**
+- a built `.wright.tar.zst` is a **part**
+- a repository stores finished parts
+- the live machine is the **system**
+
+See [terminology.md](terminology.md) for the canonical glossary.
+
 ## Binary Split
 
 | Binary | Role | Domain |
 |--------|------|--------|
-| **`wbuild`** | Package Constructor | Transforms `plan.toml` → `.wright.tar.zst` via sandboxed builds |
+| **`wbuild`** | Part Constructor | Transforms `plan.toml` → `.wright.tar.zst` via sandboxed builds |
 | **`wrepo`** | Repository Manager | Manages indices (`wright.index.toml`) and source configuration |
-| **`wright`** | System Administrator | Manages installed packages, the SQLite database, and system health |
+| **`wright`** | System Administrator | Manages installed parts, the SQLite database, and system health |
 
-Each binary owns a distinct phase of the package lifecycle. They share the
+Each binary owns a distinct phase of the part lifecycle. They share the
 core library (`src/lib.rs`) but never overlap in responsibility:
 
 ```
@@ -143,7 +152,7 @@ wright install <name>
 
 wright remove
   → check link-dependents → block if CRITICAL
-  → check file shadows → preserve files if shared by other packages
+  → check file shadows → preserve files if shared by other parts
 
 wright remove --cascade
   → compute orphan dependencies (install_reason = 'dependency', not needed by others)
@@ -161,9 +170,9 @@ communication:
 | `.wright.tar.zst` | `wbuild` | `wrepo`, `wright` | `components_dir` |
 | `wright.index.toml` | `wrepo` | `wright` | alongside archives |
 | `/etc/wright/repos.toml` | `wrepo` | `wright`, `wrepo` | system config |
-| `packages.db` (SQLite) | `wright` | `wbuild` (read), `wrepo` (read) | `db_path` |
+| `parts.db` (SQLite) | `wright` | `wbuild` (read), `wrepo` (read) | `db_path` |
 
-`wbuild` reads the database to check which packages are already installed
+`wbuild` reads the database to check which parts are already installed
 (for `--install` skip logic and dependency expansion). `wrepo` reads the
 database to annotate `[installed]` tags in listings. Neither tool writes to
 the database — only `wright` (and `wbuild -i` via the transaction module)

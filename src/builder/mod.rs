@@ -40,7 +40,7 @@ fn is_git_uri(uri: &str) -> bool {
 }
 
 /// Compute the cache filename for a remote source URI.
-/// Prefixes with the package name to prevent collisions between packages
+/// Prefixes with the part name to prevent collisions between plans/parts
 /// that use similarly-named upstream tarballs (e.g. GitHub archive v*.tar.gz).
 fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
     let basename = uri.split('/').next_back().unwrap_or("source");
@@ -172,7 +172,7 @@ impl Builder {
         variables::substitute(uri, &vars)
     }
 
-    /// Get absolute build root for a package (tools like libtool require absolute paths).
+    /// Get absolute build root for a part (tools like libtool require absolute paths).
     fn build_root(&self, manifest: &PlanManifest) -> Result<PathBuf> {
         let build_dir = if self.config.build.build_dir.is_absolute() {
             self.config.build.build_dir.clone()
@@ -184,7 +184,7 @@ impl Builder {
         Ok(build_dir.join(format!("{}-{}", manifest.plan.name, manifest.plan.version)))
     }
 
-    /// Run the full build pipeline for a package manifest.
+    /// Run the full build pipeline for a part manifest.
     /// Returns the BuildResult with paths to the build artifacts.
     ///
     /// `extra_env` is merged into every lifecycle stage's variable map.
@@ -239,7 +239,7 @@ impl Builder {
             // Extract cache into build_root
             compress::extract_archive(&cache_file, &build_root)?;
 
-            // Re-detect sub-package directories from the cached build_root
+            // Re-detect sub-part directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
             if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
                 for sub_name in pkgs.keys() {
@@ -413,15 +413,15 @@ impl Builder {
 
         pipeline.run()?;
 
-        // Run sub-package stages (multi-package mode)
+        // Run sub-part stages (multi-part mode)
         let mut split_pkg_dirs = std::collections::HashMap::new();
-        if let Some(FabricateConfig::Multi(ref packages)) = manifest.fabricate {
-            for (sub_name, sub_pkg) in packages {
-                // Main package uses PART_DIR directly, skip
+        if let Some(FabricateConfig::Multi(ref parts)) = manifest.fabricate {
+            for (sub_name, sub_pkg) in parts {
+                // Main part uses PART_DIR directly, skip
                 if sub_name == &manifest.plan.name {
                     continue;
                 }
-                // Sub-packages with empty script use the main PART_DIR (no separate stage)
+                // Sub-parts with empty script use the main PART_DIR (no separate stage)
                 if sub_pkg.script.is_empty() {
                     continue;
                 }
@@ -429,7 +429,7 @@ impl Builder {
                 let sub_pkg_dir = build_root.join(format!("pkg-{}", sub_name));
                 std::fs::create_dir_all(&sub_pkg_dir).map_err(|e| {
                     WrightError::BuildError(format!(
-                        "failed to create sub-package directory {}: {}",
+                        "failed to create sub-part directory {}: {}",
                         sub_pkg_dir.display(),
                         e
                     ))
@@ -446,7 +446,7 @@ impl Builder {
                     pkg_dir.to_string_lossy().to_string(),
                 );
 
-                debug!("Running package stage for sub-package: {}", sub_name);
+                debug!("Running fabricate stage for sub-part: {}", sub_name);
 
                 let sub_options = executor::ExecutorOptions {
                     level: sub_pkg.dockyard.parse().unwrap(),
@@ -477,12 +477,12 @@ impl Builder {
                 )?;
 
                 // Write log — stream from captured temp files
-                let log_path = log_dir.join(format!("package-{}.log", sub_name));
+                let log_path = log_dir.join(format!("part-{}.log", sub_name));
                 if let Ok(mut log_file) = std::fs::File::create(&log_path) {
                     use std::io::Write;
                     let _ = write!(
                         log_file,
-                        "=== Sub-package: {} ===\n=== Exit code: {} ===\n\n",
+                        "=== Sub-part: {} ===\n=== Exit code: {} ===\n\n",
                         sub_name, result.exit_code
                     );
                     let _ = log_file.write_all(b"--- stdout ---\n");
@@ -494,7 +494,7 @@ impl Builder {
 
                 if result.exit_code != 0 {
                     return Err(WrightError::BuildError(format!(
-                        "sub-package '{}' packaging stage failed with exit code {}\nstderr: {}",
+                        "sub-part '{}' packaging stage failed with exit code {}\nstderr: {}",
                         sub_name, result.exit_code, result.stderr.tail
                     )));
                 }
@@ -573,7 +573,7 @@ impl Builder {
         })
     }
 
-    /// Clean the working directory and build cache entry for a package.
+    /// Clean the working directory and build cache entry for a part.
     ///
     /// Working directory (`build_dir/<name>-<version>/`) is removed so the
     /// next build re-extracts sources from scratch.
@@ -980,7 +980,7 @@ impl Builder {
         Ok(obj.id().to_string())
     }
 
-    /// Fetch sources for a package to the cache directory.
+    /// Fetch sources for a plan to the cache directory.
     /// Remote URIs are downloaded; local URIs are validated and copied to cache.
     pub fn fetch(&self, manifest: &PlanManifest, plan_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.cache_dir.join("sources");

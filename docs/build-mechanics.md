@@ -7,13 +7,13 @@ when work is skipped or repeated.
 
 ## Build Directory Layout
 
-Each package gets its own working directory under `build_dir`
+Each part gets its own working directory under `build_dir`
 (default `/var/tmp/wright-build`):
 
 ```
 <build_dir>/<name>-<version>/
 ├── src/            # Extracted source tree (BUILD_DIR points here or a subdir)
-├── pkg/            # Main package staging root ($PART_DIR)
+├── pkg/            # Main part staging root ($PART_DIR)
 ├── log/            # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
@@ -95,8 +95,8 @@ across builds:
     └── linux                        # bare git repos
 ```
 
-The filename is prefixed with the package name to avoid collisions between
-packages that use similarly-named upstream archives (e.g. two packages both
+The filename is prefixed with the part name to avoid collisions between
+plans that use similarly-named upstream archives (e.g. two parts both
 fetching `v1.0.tar.gz` from different projects).
 
 Before extraction, each source is verified against its `sha256` checksum from
@@ -106,7 +106,7 @@ verification.
 
 ## Build Cache
 
-After a successful full build, Wright saves a build cache so the package can
+After a successful full build, Wright saves a build cache so the part can
 be skipped on future runs without re-compiling:
 
 ```
@@ -116,12 +116,12 @@ be skipped on future runs without re-compiling:
 
 The build key is a SHA-256 hash of:
 
-- Package name, version, and release number
+- Part name, version, and release number
 - All source URIs and their expected checksums
 - All lifecycle stage scripts and executor names
 - Global `CFLAGS` and `CXXFLAGS` from `wright.toml`
 
-If any of these change, the key changes and the cache is a miss — the package
+If any of these change, the key changes and the cache is a miss — the part
 rebuilds from scratch.
 
 ### What the build cache stores
@@ -153,7 +153,7 @@ the archive. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 
 ```
-validation error: package 'foo': file '/bin/foo' violates FHS — install to /usr/bin
+validation error: part 'foo': file '/bin/foo' violates FHS — install to /usr/bin
 ```
 
 Allowed install paths: `/usr/{bin,lib,lib64,share,include,libexec,libdata}`,
@@ -162,7 +162,7 @@ Allowed install paths: `/usr/{bin,lib,lib64,share,include,libexec,libdata}`,
 Absolute symlink targets are also validated. Relative symlink targets (the common
 case for versioned `.so` links) are not checked.
 
-To bypass the check for a package that intentionally deviates from the standard
+To bypass the check for a part that intentionally deviates from the standard
 layout, set `skip_fhs_check = true` in `[options]`:
 
 ```toml
@@ -172,13 +172,13 @@ skip_fhs_check = true
 
 ## Output Archives (Components)
 
-After a successful build the package is packed into an archive and placed in
+After a successful build the part is packed into an archive and placed in
 `components_dir` (default `/var/lib/wright/components`):
 
 ```
 <components_dir>/
 ├── zlib-1.3.1-1-x86_64.wright.tar.zst
-├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst   # sub-package
+├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst   # sub-part
 └── ...
 ```
 
@@ -186,15 +186,15 @@ Archive filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
 
 ### Skip condition
 
-If the archive (and all sub-package archives) already exist in `components_dir`,
+If the archive (and all sub-part archives) already exist in `components_dir`,
 the build is skipped entirely — the source cache and build cache are not even
 consulted. Use `--force` to override this and rebuild regardless.
 
 ### What the archive contains
 
 The archive is created from the staged root (`pkg/`) after the final
-`fabricate` phase and records the full package metadata (name, version,
-dependencies, file list) for the installer. Sub-packages each get their own
+`fabricate` phase and records the full part metadata (name, version,
+dependencies, file list) for the installer. Sub-parts each get their own
 archive produced by their `script`.
 
 ## Flag Quick Reference
