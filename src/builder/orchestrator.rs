@@ -275,7 +275,7 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
 
     let mut resolver = SimpleResolver::new(config.general.cache_dir.clone());
     resolver.download_timeout = config.network.download_timeout;
-    resolver.set_repo_dir(config.general.repo_dir.clone());
+    resolver.set_repo_db_path(config.general.repo_db_path.clone());
     resolver.load_assemblies(all_assemblies);
     resolver.add_plans_dir(config.general.plans_dir.clone());
     resolver.add_plans_dir(PathBuf::from("../wright-dockyard/plans"));
@@ -1211,7 +1211,7 @@ fn build_one(
             manifest.plan.name,
             archive_path.display()
         );
-        register_in_repo(&config.general.repo_dir, &archive_path);
+        register_in_repo(&config.general.repo_db_path, &archive_path);
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
@@ -1230,7 +1230,7 @@ fn build_one(
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
                 info!("{}: part stored in {}", sub_name, sub_archive.display());
-                register_in_repo(&config.general.repo_dir, &sub_archive);
+                register_in_repo(&config.general.repo_db_path, &sub_archive);
             }
         }
     }
@@ -1241,9 +1241,9 @@ fn build_one(
 /// Register a built archive in the repo database. Failures are logged but
 /// do not abort the build — the archive is already on disk and can be
 /// imported later via `wrepo sync`.
-fn register_in_repo(repo_dir: &Path, archive_path: &Path) {
+fn register_in_repo(repo_db_path: &Path, archive_path: &Path) {
     let do_register = || -> Result<()> {
-        let repo_db = crate::repo::db::RepoDb::open(repo_dir)?;
+        let repo_db = crate::repo::db::RepoDb::open(repo_db_path)?;
         let partinfo = archive::read_partinfo(archive_path)?;
         let sha256 = crate::util::checksum::sha256_file(archive_path)?;
         let filename = archive_path

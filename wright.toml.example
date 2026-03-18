@@ -28,6 +28,9 @@ cache_dir = "/var/lib/wright/cache"
 # SQLite database tracking installed parts.
 db_path = "/var/lib/wright/db/parts.db"
 
+# SQLite database tracking repository metadata.
+repo_db_path = "/var/lib/wright/db/repo.db"
+
 # Operation and build logs are written here.
 # Non-root default: ~/.local/state/wright
 log_dir = "/var/log/wright"
@@ -38,8 +41,11 @@ executors_dir = "/etc/wright/executors"
 # Directory containing assembly definition files (*.toml).
 assemblies_dir = "/var/lib/wright/assemblies"
 
-# Directory containing container (package group) definition files (*.toml).
-containers_dir = "/var/lib/wright/containers"
+# Directory containing kit definition files (*.toml).
+kits_dir = "/var/lib/wright/kits"
+
+# Repository directory for archive scanning and generated indexes.
+repo_dir = "/var/lib/wright/repo"
 
 [build]
 # Working directory for build trees. Use a large persistent filesystem here;

@@ -85,7 +85,7 @@ fn main() -> Result<()> {
     let mut resolver =
         wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("parts"));
     resolver.load_from_config(&repo_config);
-    resolver.set_repo_dir(config.general.repo_dir.clone());
+    resolver.set_repo_db_path(config.general.repo_db_path.clone());
     resolver.add_search_dir(config.general.cache_dir.join("parts"));
     resolver.add_search_dir(config.general.components_dir.clone());
     if let Ok(cwd) = std::env::current_dir() {

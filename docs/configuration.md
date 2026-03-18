@@ -128,10 +128,12 @@ plans_dir = "/var/lib/wright/plans"      # Plan definitions
 components_dir = "/var/lib/wright/components" # Built part archives
 cache_dir = "/var/lib/wright/cache"       # Downloaded sources cache
 db_path = "/var/lib/wright/db/parts.db" # Installed part database
+repo_db_path = "/var/lib/wright/db/repo.db" # Repository index database
 log_dir = "/var/log/wright"               # Operation logs (build logs are under build_dir/<name>-<version>/log)
 executors_dir = "/etc/wright/executors"   # Executor definitions (*.toml)
 assemblies_dir = "/var/lib/wright/assemblies" # Assembly definitions (*.toml)
 kits_dir = "/var/lib/wright/kits"             # Kit (part group) definitions (*.toml)
+repo_dir = "/var/lib/wright/repo"             # Repository directory for indexes and imported archives
 
 [build]
 build_dir = "/var/tmp/wright-build"       # Build working directory
@@ -169,10 +171,12 @@ plans_dir = "/home/alice/wright/plans"
 | `components_dir` | path | `/var/lib/wright/components` | Built part archives (`.wright.tar.zst`) |
 | `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
 | `db_path` | path | `/var/lib/wright/db/parts.db` | Installed part database (SQLite) |
+| `repo_db_path` | path | `/var/lib/wright/db/repo.db` | Repository index database (SQLite) |
 | `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |
 | `executors_dir` | path | `/etc/wright/executors` | Executor definition files (`*.toml`) |
 | `assemblies_dir` | path | `/var/lib/wright/assemblies` | Assembly definition files (`*.toml`) |
 | `kits_dir` | path | `/var/lib/wright/kits` | Kit (part group) definition files (`*.toml`) |
+| `repo_dir` | path | `/var/lib/wright/repo` | Repository directory used for indexes and archive scanning |
 
 ### `[build]` section
 

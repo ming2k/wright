@@ -7,9 +7,7 @@ use rusqlite::{params, Connection};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 
-const REPO_DB_FILENAME: &str = "repo.db";
-
-const SCHEMA: &str = "
+const BASE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS parts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -56,14 +54,16 @@ const SCHEMA: &str = "
         FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
     );
 
+    PRAGMA foreign_keys = ON;
+";
+
+const INDEX_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_repo_pkg_name ON parts(name);
     CREATE INDEX IF NOT EXISTS idx_repo_deps_pkg ON dependencies(part_id);
     CREATE INDEX IF NOT EXISTS idx_repo_deps_on ON dependencies(depends_on);
     CREATE INDEX IF NOT EXISTS idx_repo_provides_name ON provides(name);
     CREATE INDEX IF NOT EXISTS idx_repo_conflicts_name ON conflicts(name);
     CREATE INDEX IF NOT EXISTS idx_repo_replaces_name ON replaces(name);
-
-    PRAGMA foreign_keys = ON;
 ";
 
 #[derive(Debug, Clone)]
@@ -107,31 +107,46 @@ fn acquire_lock(db_path: &Path) -> Result<File> {
     Ok(file)
 }
 
+fn repo_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
+    format!(
+        "failed to open repo database {} with the current schema: {}. \
+If this is an older repo.db, remove it and rebuild the index with `wrepo sync`.",
+        db_path.display(),
+        err
+    )
+}
+
 impl RepoDb {
-    pub fn open(repo_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(repo_dir).map_err(|e| {
+    pub fn open(db_path: &Path) -> Result<Self> {
+        let parent = db_path.parent().ok_or_else(|| {
             WrightError::DatabaseError(format!(
-                "failed to create repo directory {}: {}",
-                repo_dir.display(),
+                "repo database path has no parent directory: {}",
+                db_path.display()
+            ))
+        })?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            WrightError::DatabaseError(format!(
+                "failed to create repo database directory {}: {}",
+                parent.display(),
                 e
             ))
         })?;
 
-        let db_path = repo_dir.join(REPO_DB_FILENAME);
-        let lock_file = acquire_lock(&db_path)?;
-        let conn = Connection::open(&db_path)?;
+        let lock_file = acquire_lock(db_path)?;
+        let conn = Connection::open(db_path)?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(|e| WrightError::DatabaseError(format!("failed to enable WAL: {}", e)))?;
 
-        conn.execute_batch(SCHEMA).map_err(|e| {
-            WrightError::DatabaseError(format!("failed to init repo schema: {}", e))
-        })?;
+        conn.execute_batch(BASE_SCHEMA)
+            .map_err(|e| WrightError::DatabaseError(repo_schema_error(db_path, e)))?;
+        conn.execute_batch(INDEX_SCHEMA)
+            .map_err(|e| WrightError::DatabaseError(repo_schema_error(db_path, e)))?;
 
         Ok(RepoDb {
             conn,
             _lock_file: Some(lock_file),
-            db_path: Some(db_path),
+            db_path: Some(db_path.to_path_buf()),
         })
     }
 

@@ -2,7 +2,7 @@
 
 Wright resolves parts by name from configured **sources** — directories
 containing `.wright.tar.zst` archives. Repository metadata is stored in
-SQLite under `/var/lib/wright/repo` by default.
+SQLite at `/var/lib/wright/db/repo.db` by default.
 
 Repository management is handled by the dedicated `wrepo` tool.
 

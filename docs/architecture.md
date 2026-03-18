@@ -171,6 +171,7 @@ communication:
 | `wright.index.toml` | `wrepo` | `wright` | alongside archives |
 | `/etc/wright/repos.toml` | `wrepo` | `wright`, `wrepo` | system config |
 | `parts.db` (SQLite) | `wright` | `wbuild` (read), `wrepo` (read) | `db_path` |
+| `repo.db` (SQLite) | `wrepo`, `wbuild` | `wright`, `wrepo` | `repo_db_path` |
 
 `wbuild` reads the database to check which parts are already installed
 (for `--install` skip logic and dependency expansion). `wrepo` reads the

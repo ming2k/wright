@@ -34,7 +34,7 @@ fn main() -> Result<()> {
                 eprintln!("error: directory '{}' does not exist", dir.display());
                 std::process::exit(1);
             }
-            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_db_path)
                 .context("failed to open repo database")?;
             let count = repo_db
                 .sync_from_archives(&dir)
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             println!("indexed {} part(s) from {}", count, dir.display());
         }
         Commands::List { name } => {
-            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_db_path)
                 .context("failed to open repo database")?;
             let db_path = config.general.db_path.clone();
             let db =
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Search { keyword } => {
-            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_db_path)
                 .context("failed to open repo database")?;
             let db_path = config.general.db_path.clone();
             let db =
@@ -122,7 +122,7 @@ fn main() -> Result<()> {
                 (version.as_str(), None)
             };
 
-            let repo_db = repo::db::RepoDb::open(&config.general.repo_dir)
+            let repo_db = repo::db::RepoDb::open(&config.general.repo_db_path)
                 .context("failed to open repo database")?;
 
             // Get filename before removal if purge is requested

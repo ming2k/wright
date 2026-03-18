@@ -35,7 +35,7 @@ pub struct SimpleResolver {
     pub cache_dir: PathBuf,
     pub assemblies: AssembliesConfig,
     pub download_timeout: u64,
-    pub repo_dir: Option<PathBuf>,
+    pub repo_db_path: Option<PathBuf>,
 }
 
 pub struct ResolvedPart {
@@ -109,7 +109,7 @@ impl SimpleResolver {
                 assemblies: std::collections::HashMap::new(),
             },
             download_timeout: 300,
-            repo_dir: None,
+            repo_db_path: None,
         }
     }
 
@@ -150,8 +150,8 @@ impl SimpleResolver {
         self.plans_dirs.push(path);
     }
 
-    pub fn set_repo_dir(&mut self, path: PathBuf) {
-        self.repo_dir = Some(path);
+    pub fn set_repo_db_path(&mut self, path: PathBuf) {
+        self.repo_db_path = Some(path);
     }
 
     pub fn load_assemblies(&mut self, config: AssembliesConfig) {
@@ -180,8 +180,8 @@ impl SimpleResolver {
 
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
         // Try repo DB first (indexed lookup)
-        if let Some(ref repo_dir) = self.repo_dir {
-            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_dir) {
+        if let Some(ref repo_db_path) = self.repo_db_path {
+            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_db_path) {
                 if let Ok(Some(entry)) = repo_db.find_part(name) {
                     for dir in &self.search_dirs {
                         let path = dir.join(&entry.filename);
@@ -227,8 +227,8 @@ impl SimpleResolver {
         let mut seen = std::collections::HashSet::new();
 
         // Try repo DB first
-        if let Some(ref repo_dir) = self.repo_dir {
-            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_dir) {
+        if let Some(ref repo_db_path) = self.repo_db_path {
+            if let Ok(repo_db) = crate::repo::db::RepoDb::open(repo_db_path) {
                 if let Ok(entries) = repo_db.find_all_versions(name) {
                     for entry in entries {
                         let key = (entry.version.clone(), entry.release, entry.epoch);
