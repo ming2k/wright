@@ -255,7 +255,7 @@ The scheduler labels affected parts as `[LINK-REBUILD]` in the Construction
 Plan. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wbuild run libfoo --self --dependents -R
+wbuild run libfoo --self --dependents=all --depth=0
 ```
 
 To limit how deep the cascade goes:

@@ -263,7 +263,7 @@ These flags control **which extra parts** are added to the build set.
 |------|-------------|
 | `--self` (`-s`) | Include the listed targets themselves |
 | `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` rebuilds all upstream deps. Recommended form is `--deps=<MODE>`. Passing bare `--deps` defaults to `missing`. |
-| `--dependents` | Include parts that link against the target |
+| `--dependents[=<MODE>]` | Include downstream dependents. Bare `--dependents` means `link`; `--dependents=all` also follows runtime and build dependents. |
 
 | Flags used | Listed targets | Upstream deps | Downstream link cascade |
 |------------|----------------|---------------|------------------------|
@@ -271,7 +271,7 @@ These flags control **which extra parts** are added to the build set.
 | `--self` | ✓ | ✗ | ✗ |
 | `--deps` | ✓ | `missing` | ✗ |
 | `--deps=sync` | ✓ | `missing + version mismatch` | ✗ |
-| `--dependents` | ✗ | ✗ | ✓ |
+| `--dependents` | ✗ | ✗ | `link`, depth 1 by default |
 | `--self --dependents` | ✓ | ✗ | ✓ |
 | `--deps --dependents` | ✓ | `missing` | ✓ |
 
@@ -281,13 +281,12 @@ These flags widen rebuild scope beyond the default edge types.
 
 | Flag | What it does | Compared to its scope counterpart |
 |------|--------------|-----------------------------------|
-| `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
-
-`-R` can be combined with scope flags, for example:
-- `--dependents -R`: add link dependents AND force-rebuild non-link dependents too
+| `--dependents=all` | Rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but also reaches runtime and build dependents |
 
 | Flag | `--depth=<N>` | Maximum expansion depth by real dependency-graph distance (0 = unlimited) |
 |------|---------------|----------------------------------------------------------------------|
+
+If omitted, reverse-dependent expansion defaults to `--depth=1`. Other expansion modes default to `--depth=0`.
 
 **Examples:**
 
@@ -304,6 +303,9 @@ wbuild run gtk4 --deps=sync -i
 # gtk4 already updated — cascade rebuild to parts that link against it, skip gtk4 itself
 wbuild run gtk4 --dependents
 
+# gtk4 ABI changed, rebuild every dependent edge type recursively
+wbuild run gtk4 --dependents=all --depth=0
+
 # Rebuild gtk4 AND cascade to its link-dependents (full ABI rebuild)
 wbuild run gtk4 --self --dependents
 
@@ -312,9 +314,6 @@ wbuild run gtk4 --deps --dependents
 
 # Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
 wbuild run gtk4 --deps=all
-
-# gtk4 ABI changed, force-rebuild every part that depends on it (not just link deps)
-wbuild run gtk4 --dependents -R
 
 # Build freetype using its [mvp.dependencies] set (e.g. to test the MVP phase manually)
 wbuild run freetype --mvp
@@ -349,7 +348,7 @@ Before building, `wbuild run` displays a **Construction Plan** listing all parts
 |-------|---------:|
 | `[NEW]` | Explicitly requested target |
 | `[LINK-REBUILD]` | Triggered because a link dependency was updated |
-| `[REV-REBUILD]` | Triggered transitively via `-R` |
+| `[REV-REBUILD]` | Triggered transitively via `--dependents=all` |
 | `[MVP]` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
 | `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 

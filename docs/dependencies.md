@@ -47,7 +47,7 @@ With `--deps=all`, Wright expands more aggressively:
 When a dependency changes, other parts may need to be rebuilt.
 
 - `link` dependencies always trigger reverse rebuilds in `wbuild run`.
-- `build` and `runtime` dependencies only trigger reverse rebuilds with `-R` or `--rebuild-dependents`.
+- `build` and `runtime` dependencies only trigger reverse rebuilds with `--dependents=all`.
 
 This behavior keeps ABI-sensitive chains correct without forcing expensive rebuilds by default.
 
@@ -58,7 +58,7 @@ This rebuild behavior does not make `link` an implicit runtime dependency. Runti
 
 - `[NEW]`: Explicitly requested, or missing dependency that had to be added.
 - `[LINK-REBUILD]`: Rebuilt because a link dependency changed.
-- `[REV-REBUILD]`: Rebuilt because of `-R` transitive expansion.
+- `[REV-REBUILD]`: Rebuilt because of `--dependents=all` transitive expansion.
 - `[MVP]`: Bootstrap build used to break a dependency cycle.
 - `[FULL]`: Full build after an MVP bootstrap.
 
@@ -100,7 +100,7 @@ wbuild run openssl --deps=all
 Example: Rebuild all reverse dependents (ABI-sensitive).
 
 ```bash
-wbuild run -R zlib
+wbuild run zlib --dependents=all --depth=0
 ```
 
 **Install Reason Tracking**

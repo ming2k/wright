@@ -7,6 +7,7 @@ Workflows:
   Build a part:            wbuild run zlib
   Rebuild part only:       wbuild run zlib --self
   Cascade to dependents:   wbuild run openssl --self --dependents
+  Full reverse cascade:    wbuild run glibc --self --dependents=all --depth=0
   Validate plans:          wbuild check ./plans/zlib
 
 Targets may be plan names, plan directories, or `@assembly` references.";
@@ -17,6 +18,7 @@ Examples:
   wbuild run zlib --deps
   wbuild run zlib --deps=sync -i
   wbuild run openssl --self --dependents
+  wbuild run glibc --self --dependents=all --depth=0
   wbuild run freetype --mvp --stage=configure
   wbuild run zlib --deps=all";
 const WBUILD_CHECK_AFTER_HELP: &str = "\
@@ -48,6 +50,14 @@ pub enum DepsMode {
     /// Add upstream dependencies whose installed version differs from the plan.
     Sync,
     /// Add all upstream dependencies, even when already installed at the same version.
+    All,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum DependentsMode {
+    /// Rebuild only direct/transitive link dependents.
+    Link,
+    /// Rebuild link, runtime, and build dependents.
     All,
 }
 
@@ -125,20 +135,15 @@ pub enum Commands {
         #[arg(short = 'w', long, default_value = "0")]
         dockyards: usize,
 
-        /// Force-rebuild ALL downstream dependents, not just link dependents
-        /// (extends --dependents beyond link-only parts; use together with --dependents
-        /// to also include the expansion, or alone to only force-rebuild already-expanded sets)
-        #[arg(short = 'R', long)]
-        rebuild_dependents: bool,
-
         /// Automatically install each part after a successful build
         #[arg(short = 'i', long)]
         install: bool,
 
-        /// Maximum expansion depth for dependency cascade operations (0 = unlimited,
-        /// applies to --deps and --dependents/-R)
-        #[arg(long, default_value = "0")]
-        depth: usize,
+        /// Maximum expansion depth for dependency cascade operations.
+        /// `0` means unlimited. If omitted, reverse-dependent expansion defaults
+        /// to depth 1; other expansions default to unlimited.
+        #[arg(long)]
+        depth: Option<usize>,
 
         /// Include the listed parts themselves in the build
         #[arg(short = 's', long = "self")]
@@ -158,10 +163,16 @@ pub enum Commands {
         )]
         deps: Option<DepsMode>,
 
-        /// Expand build set to include parts that link against the target
-        /// (does not include the listed parts themselves)
-        #[arg(long = "dependents")]
-        include_dependents: bool,
+        /// Expand downstream dependents.
+        /// `link` follows ABI-sensitive link dependents.
+        /// `all` also follows runtime and build dependents.
+        #[arg(
+            long = "dependents",
+            value_enum,
+            num_args = 0..=1,
+            default_missing_value = "link"
+        )]
+        dependents: Option<DependentsMode>,
 
         /// Build using the MVP dependency set from [mvp.dependencies] without
         /// requiring a dependency cycle to trigger it
@@ -212,7 +223,7 @@ pub enum Commands {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, DepsMode};
+    use super::{Cli, Commands, DependentsMode, DepsMode};
     use clap::Parser;
 
     #[test]
@@ -238,6 +249,29 @@ mod tests {
         let cli = Cli::try_parse_from(["wbuild", "run", "zlib", "--deps=sync"]).unwrap();
         match cli.command {
             Commands::Run { deps, .. } => assert_eq!(deps, Some(DepsMode::Sync)),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_dependents_flag_without_value_defaults_to_link() {
+        let cli = Cli::try_parse_from(["wbuild", "run", "glibc", "--dependents"]).unwrap();
+        match cli.command {
+            Commands::Run { dependents, .. } => {
+                assert_eq!(dependents, Some(DependentsMode::Link))
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_dependents_enum_value() {
+        let cli =
+            Cli::try_parse_from(["wbuild", "run", "glibc", "--dependents=all"]).unwrap();
+        match cli.command {
+            Commands::Run { dependents, .. } => {
+                assert_eq!(dependents, Some(DependentsMode::All))
+            }
             _ => panic!("expected run command"),
         }
     }

@@ -31,6 +31,14 @@ pub enum DependencyMode {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DependentsMode {
+    #[default]
+    None,
+    Link,
+    All,
+}
+
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
@@ -49,7 +57,7 @@ pub struct BuildOptions {
     /// Only parts with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
     pub dockyards: usize,
-    pub rebuild_dependents: bool,
+    pub dependents_mode: DependentsMode,
     pub deps_mode: DependencyMode,
     pub install: bool,
     pub depth: Option<usize>,
@@ -57,8 +65,6 @@ pub struct BuildOptions {
     pub quiet: bool,
     /// --self (-s): include the listed parts themselves in the build.
     pub include_self: bool,
-    /// --dependents: include downstream link-rebuild dependents (not the listed parts themselves).
-    pub include_dependents: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
     /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
@@ -108,7 +114,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     // Dependency expansion is opt-in via --deps <mode>.
     // Reverse rebuilds remain opt-in via --dependents.
     let do_deps = opts.deps_mode != DependencyMode::None;
-    let do_dependents = opts.include_dependents;
+    let do_dependents = opts.dependents_mode != DependentsMode::None;
     let do_self = opts.include_self || !do_dependents || do_deps;
 
     // Save the originally listed parts so we can optionally exclude them later.
@@ -139,7 +145,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         expand_rebuild_deps(
             &mut plans_to_build,
             &all_plans,
-            opts.rebuild_dependents,
+            opts.dependents_mode == DependentsMode::All,
             actual_max,
         )?
     } else {
@@ -791,7 +797,7 @@ fn expand_rebuild_deps(
 
             if link_changed || other_changed {
                 // PROTECTION: Do not automatically add system toolchain parts to the rebuild set
-                // via transitive link expansion unless rebuild_all (-R) is explicitly set.
+                // via transitive link expansion unless all dependents are explicitly requested.
                 // This prevents "compiler-waiting-for-libc" deadlocks.
                 if !rebuild_all && SYSTEM_TOOLCHAIN.contains(&name.as_str()) {
                     continue;

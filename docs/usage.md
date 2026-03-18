@@ -56,7 +56,7 @@ built and why:
 
 - `[NEW]`: The target you requested, or a missing dependency found in the hold tree.
 - `[LINK-REBUILD]`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
-- `[REV-REBUILD]`: Transitive rebuilds requested via `--rebuild-dependents`.
+- `[REV-REBUILD]`: Transitive rebuilds requested via `--dependents=all`.
 
 ### Build and Install (shortcut)
 

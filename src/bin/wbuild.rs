@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use wright::builder::orchestrator::{self, BuildOptions, DependencyMode};
-use wright::cli::wbuild::{Cli, Commands, DepsMode};
+use wright::builder::orchestrator::{self, BuildOptions, DependencyMode, DependentsMode};
+use wright::cli::wbuild::{Cli, Commands, DependentsMode as DependentsModeArg, DepsMode};
 use wright::config::GlobalConfig;
 use wright::part::version;
 use wright::plan::manifest::PlanManifest;
@@ -58,12 +58,11 @@ fn main() -> Result<()> {
             clean,
             force,
             dockyards,
-            rebuild_dependents,
             install,
             depth,
             include_self,
             deps,
-            include_dependents,
+            dependents,
             mvp,
         } => {
             let deps_mode = match deps.unwrap_or(DepsMode::None) {
@@ -71,6 +70,16 @@ fn main() -> Result<()> {
                 DepsMode::Missing => DependencyMode::Missing,
                 DepsMode::Sync => DependencyMode::Sync,
                 DepsMode::All => DependencyMode::All,
+            };
+            let dependents_mode = match dependents {
+                None => DependentsMode::None,
+                Some(DependentsModeArg::Link) => DependentsMode::Link,
+                Some(DependentsModeArg::All) => DependentsMode::All,
+            };
+            let effective_depth = match depth {
+                Some(value) => Some(value),
+                None if dependents_mode != DependentsMode::None => Some(1),
+                None => Some(0),
             };
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
             let effective_dockyards = if dockyards != 0 {
@@ -87,17 +96,16 @@ fn main() -> Result<()> {
                     clean,
                     force,
                     dockyards: effective_dockyards,
-                    rebuild_dependents,
+                    dependents_mode,
                     deps_mode,
                     install,
-                    depth: Some(depth),
+                    depth: effective_depth,
                     checksum: false,
                     lint: false,
                     skip_check,
                     verbose: cli.verbose > 0,
                     quiet: cli.quiet,
                     include_self,
-                    include_dependents,
                     mvp,
                     // Config nproc_per_dockyard is a static override; None means the
                     // scheduler computes it dynamically as total_cpus / active_dockyards.
