@@ -1,7 +1,7 @@
 //! Build orchestrator — parallel build scheduling, dependency resolution,
 //! cascade expansion, and automatic bootstrap cycle detection/resolution.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -342,68 +342,72 @@ fn expand_missing_dependencies(
     max_depth: usize,
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
+    let mut traversal_seen: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+
     for path in plans_to_build.iter() {
         if let Ok(m) = PlanManifest::from_file(path) {
             build_set.insert(m.plan.name.clone());
+            traversal_seen.insert(m.plan.name.clone());
+            queue.push_back((m.plan.name.clone(), 0));
         }
     }
 
-    let mut current_depth = 0;
-    loop {
-        if current_depth >= max_depth {
-            break;
-        }
-        let mut added_any = false;
-        let mut to_add_paths = Vec::new();
+    while let Some((name, depth)) = queue.pop_front() {
+        let Some(path) = all_plans.get(&name) else {
+            continue;
+        };
+        let manifest = PlanManifest::from_file(path)?;
 
-        for path in plans_to_build.iter() {
-            let manifest = PlanManifest::from_file(path)?;
+        // `all` covers build, link, and runtime recursively.
+        // With --install (-i), we also resolve runtime deps because they are
+        // required post-install.
+        let deps_to_check = if matches!(mode, DependencyMode::All) || include_runtime {
+            manifest
+                .dependencies
+                .build
+                .iter()
+                .chain(manifest.dependencies.link.iter())
+                .chain(manifest.dependencies.runtime.iter())
+                .collect::<Vec<_>>()
+        } else {
+            manifest
+                .dependencies
+                .build
+                .iter()
+                .chain(manifest.dependencies.link.iter())
+                .collect::<Vec<_>>()
+        };
 
-            // `all` covers build, link, and runtime recursively.
-            // With --install (-i), we also resolve runtime deps because they are
-            // required post-install.
-            let deps_to_check = if matches!(mode, DependencyMode::All) || include_runtime {
-                manifest
-                    .dependencies
-                    .build
-                    .iter()
-                    .chain(manifest.dependencies.link.iter())
-                    .chain(manifest.dependencies.runtime.iter())
-                    .collect::<Vec<_>>()
-            } else {
-                manifest
-                    .dependencies
-                    .build
-                    .iter()
-                    .chain(manifest.dependencies.link.iter())
-                    .collect::<Vec<_>>()
-            };
+        for dep in deps_to_check {
+            let dep_name = version::parse_dependency(dep)
+                .unwrap_or_else(|_| (dep.clone(), None))
+                .0;
+            let dep_depth = depth + 1;
 
-            for dep in deps_to_check {
-                let dep_name = version::parse_dependency(dep)
-                    .unwrap_or_else(|_| (dep.clone(), None))
-                    .0;
+            if dep_depth > max_depth {
+                continue;
+            }
 
-                // Protect toolchain: don't automatically rebuild core tools unless they are missing
-                if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
-                    continue;
-                }
+            if traversal_seen.insert(dep_name.clone()) {
+                queue.push_back((dep_name.clone(), dep_depth));
+            }
 
-                if !build_set.contains(&dep_name) {
-                    let should_add = dependency_requires_build(&dep_name, all_plans, db, mode)?;
-                    if should_add {
-                        if let Some(plan_path) = all_plans.get(&dep_name) {
-                            info!(
-                                "{} dependency (depth {}): {}",
-                                dependency_action_label(&dep_name, all_plans, db, mode)?,
-                                current_depth + 1,
-                                dep_name
-                            );
-                            to_add_paths.push(plan_path.clone());
-                            build_set.insert(dep_name.clone());
-                            added_any = true;
-                        }
-                    }
+            // Protect toolchain: don't automatically rebuild core tools unless they are missing
+            if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
+                continue;
+            }
+
+            if !build_set.contains(&dep_name) && dependency_requires_build(&dep_name, all_plans, db, mode)? {
+                if let Some(plan_path) = all_plans.get(&dep_name) {
+                    info!(
+                        "{} dependency (depth {}): {}",
+                        dependency_action_label(&dep_name, all_plans, db, mode)?,
+                        dep_depth,
+                        dep_name
+                    );
+                    plans_to_build.insert(plan_path.clone());
+                    build_set.insert(dep_name.clone());
                 }
             }
         }
@@ -411,89 +415,71 @@ fn expand_missing_dependencies(
         // Ensure the full transitive runtime dependency closure of every build
         // dependency is present. A build dep like python-sphinx is useless if
         // any part in its runtime dep tree (python-requests → python-urllib3 …)
-        // is missing.  We use BFS to expand the complete closure.
+        // is missing. We traverse this closure even when intermediate nodes do
+        // not themselves require rebuild, so deeper outdated nodes are still
+        // discovered by --deps=sync.
         if !matches!(mode, DependencyMode::All) {
-            let snapshot: Vec<PathBuf> = plans_to_build
-                .iter()
-                .chain(to_add_paths.iter())
-                .cloned()
-                .collect();
-            for path in &snapshot {
-                let manifest = match PlanManifest::from_file(path) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                for build_dep in &manifest.dependencies.build {
-                    let build_dep_name = version::parse_dependency(build_dep)
-                        .unwrap_or_else(|_| (build_dep.clone(), None))
-                        .0;
+            for build_dep in &manifest.dependencies.build {
+                let build_dep_name = version::parse_dependency(build_dep)
+                    .unwrap_or_else(|_| (build_dep.clone(), None))
+                    .0;
+                let build_dep_depth = depth + 1;
+                if build_dep_depth >= max_depth {
+                    continue;
+                }
 
-                    let build_dep_depth = current_depth + 1;
-                    if build_dep_depth >= max_depth {
+                let mut runtime_queue = VecDeque::new();
+                runtime_queue.push_back((build_dep_name.clone(), build_dep_depth));
+                let mut runtime_seen = HashSet::new();
+                runtime_seen.insert(build_dep_name.clone());
+
+                while let Some((cur, cur_depth)) = runtime_queue.pop_front() {
+                    let Some(cur_plan_path) = all_plans.get(&cur) else {
                         continue;
-                    }
+                    };
+                    let cur_manifest = match PlanManifest::from_file(cur_plan_path) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
 
-                    // BFS over the runtime dep tree of this build dependency.
-                    // Track absolute graph depth from the original target so
-                    // logs and --depth limiting use real edge distance.
-                    let mut queue = std::collections::VecDeque::new();
-                    queue.push_back((build_dep_name.clone(), build_dep_depth));
-                    let mut visited = HashSet::new();
-                    visited.insert(build_dep_name.clone());
+                    for rdep in &cur_manifest.dependencies.runtime {
+                        let rdep_name = version::parse_dependency(rdep)
+                            .unwrap_or_else(|_| (rdep.clone(), None))
+                            .0;
+                        if !runtime_seen.insert(rdep_name.clone()) {
+                            continue;
+                        }
 
-                    while let Some((cur, cur_depth)) = queue.pop_front() {
-                        if let Some(cur_plan_path) = all_plans.get(&cur) {
-                            if let Ok(cur_manifest) = PlanManifest::from_file(cur_plan_path) {
-                                for rdep in &cur_manifest.dependencies.runtime {
-                                    let rdep_name = version::parse_dependency(rdep)
-                                        .unwrap_or_else(|_| (rdep.clone(), None))
-                                        .0;
-                                    if !visited.insert(rdep_name.clone()) {
-                                        continue;
-                                    }
-                                    let rdep_depth = cur_depth + 1;
-                                    if rdep_depth > max_depth {
-                                        continue;
-                                    }
-                                    if !build_set.contains(&rdep_name)
-                                        && dependency_requires_build(
-                                            &rdep_name,
-                                            all_plans,
-                                            db,
-                                            mode,
-                                        )?
-                                    {
-                                        if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
-                                            info!(
-                                                "{} transitive runtime dep of build dep {} (depth {}): {}",
-                                                dependency_action_label(&rdep_name, all_plans, db, mode)?,
-                                                build_dep_name,
-                                                rdep_depth,
-                                                rdep_name
-                                            );
-                                            to_add_paths.push(rdep_plan_path.clone());
-                                            build_set.insert(rdep_name.clone());
-                                            added_any = true;
-                                        }
-                                    }
-                                    // Continue BFS regardless of whether rdep was missing,
-                                    // since its own runtime deps may still be missing.
-                                    queue.push_back((rdep_name, rdep_depth));
-                                }
+                        let rdep_depth = cur_depth + 1;
+                        if rdep_depth > max_depth {
+                            continue;
+                        }
+
+                        if traversal_seen.insert(rdep_name.clone()) {
+                            queue.push_back((rdep_name.clone(), rdep_depth));
+                        }
+
+                        if !build_set.contains(&rdep_name)
+                            && dependency_requires_build(&rdep_name, all_plans, db, mode)?
+                        {
+                            if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
+                                info!(
+                                    "{} transitive runtime dep of build dep {} (depth {}): {}",
+                                    dependency_action_label(&rdep_name, all_plans, db, mode)?,
+                                    build_dep_name,
+                                    rdep_depth,
+                                    rdep_name
+                                );
+                                plans_to_build.insert(rdep_plan_path.clone());
+                                build_set.insert(rdep_name.clone());
                             }
                         }
+
+                        runtime_queue.push_back((rdep_name, rdep_depth));
                     }
                 }
             }
         }
-
-        for p in to_add_paths {
-            plans_to_build.insert(p);
-        }
-        if !added_any {
-            break;
-        }
-        current_depth += 1;
     }
 
     Ok(())
@@ -564,9 +550,45 @@ fn installed_matches_manifest(
 
 #[cfg(test)]
 mod tests {
-    use super::installed_matches_manifest;
-    use crate::database::InstalledPart;
+    use super::{expand_missing_dependencies, installed_matches_manifest, DependencyMode};
+    use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn write_plan(dir: &std::path::Path, name: &str, version: &str, build_deps: &[&str]) -> PathBuf {
+        let plan_dir = dir.join(name);
+        fs::create_dir_all(&plan_dir).unwrap();
+        let build = if build_deps.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n[dependencies]\nbuild = [{}]\n",
+                build_deps
+                    .iter()
+                    .map(|dep| format!("\"{}\"", dep))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let content = format!(
+            r#"name = "{name}"
+version = "{version}"
+release = 1
+description = "test part"
+license = "MIT"
+arch = "x86_64"{build}
+[lifecycle.staging]
+executor = "shell"
+dockyard = "none"
+script = "mkdir -p ${{PART_DIR}}/usr/bin"
+"#
+        );
+        let path = plan_dir.join("plan.toml");
+        fs::write(&path, content).unwrap();
+        path
+    }
 
     fn installed_part(version: &str, release: u32, epoch: u32) -> InstalledPart {
         InstalledPart {
@@ -624,6 +646,68 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             &installed_part("1.3.1", 2, 0),
             &manifest
         ));
+    }
+
+    #[test]
+    fn sync_traversal_reaches_outdated_descendant_through_up_to_date_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("parts.db");
+        let db = Database::open(&db_path).unwrap();
+        db.insert_part(NewPart {
+            name: "b",
+            version: "1.0.0",
+            release: 1,
+            epoch: 0,
+            description: "b",
+            arch: "x86_64",
+            license: "MIT",
+            url: None,
+            install_size: 1,
+            pkg_hash: None,
+            install_scripts: None,
+            install_reason: "explicit",
+        })
+        .unwrap();
+        db.insert_part(NewPart {
+            name: "c",
+            version: "0.9.0",
+            release: 1,
+            epoch: 0,
+            description: "c",
+            arch: "x86_64",
+            license: "MIT",
+            url: None,
+            install_size: 1,
+            pkg_hash: None,
+            install_scripts: None,
+            install_reason: "explicit",
+        })
+        .unwrap();
+
+        let plans_root = temp.path().join("plans");
+        let a_path = write_plan(&plans_root, "a", "1.0.0", &["b"]);
+        let b_path = write_plan(&plans_root, "b", "1.0.0", &["c"]);
+        let c_path = write_plan(&plans_root, "c", "1.0.0", &[]);
+
+        let mut plans_to_build = std::collections::HashSet::from([a_path.clone()]);
+        let all_plans = HashMap::from([
+            ("a".to_string(), a_path),
+            ("b".to_string(), b_path),
+            ("c".to_string(), c_path.clone()),
+        ]);
+
+        expand_missing_dependencies(
+            &mut plans_to_build,
+            &all_plans,
+            &db,
+            DependencyMode::Sync,
+            false,
+            usize::MAX,
+        )
+        .unwrap();
+
+        assert!(!plans_to_build.contains(&all_plans["b"]));
+        assert!(plans_to_build.contains(&c_path));
     }
 }
 
