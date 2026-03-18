@@ -377,13 +377,10 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     }
 
     #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct PartInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
-        // Accept legacy archives that still serialized `link`, but ignore it.
-        #[serde(default)]
-        #[allow(dead_code)]
-        link: Vec<String>,
         #[serde(default)]
         optional: Vec<PartInfoOptDep>,
     }
@@ -438,4 +435,57 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
         optional_deps,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_partinfo_str;
+
+    #[test]
+    fn parse_partinfo_rejects_legacy_link_dependency_field() {
+        let err = parse_partinfo_str(
+            r#"
+[part]
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+arch = "x86_64"
+license = "MIT"
+
+[dependencies]
+runtime = ["bash"]
+link = ["zlib"]
+"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unknown field `link`"));
+    }
+
+    #[test]
+    fn parse_partinfo_accepts_runtime_and_optional_dependencies() {
+        let info = parse_partinfo_str(
+            r#"
+[part]
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+arch = "x86_64"
+license = "MIT"
+
+[dependencies]
+runtime = ["bash"]
+
+[[dependencies.optional]]
+name = "python"
+description = "python support"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.runtime_deps, vec!["bash"]);
+        assert_eq!(info.optional_deps, vec![("python".to_string(), "python support".to_string())]);
+    }
 }

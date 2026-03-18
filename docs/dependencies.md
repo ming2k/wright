@@ -38,7 +38,7 @@ want Wright to expand upstream dependencies from the hold tree.
 - With `--install`, runtime dependencies are also considered while expanding upstream dependencies.
 - If the dependency is missing and no plan exists, the build fails with a clear error.
 
-With `-D` or `--rebuild-dependencies`, Wright expands more aggressively:
+With `--deps=all`, Wright expands more aggressively:
 
 - `build`, `link`, and `runtime` dependencies are added to the plan.
 - This is useful for deep rebuilds when you want a clean, consistent dependency chain.
@@ -94,7 +94,7 @@ wbuild run -i curl
 Example: Force a deep rebuild of dependencies.
 
 ```bash
-wbuild run -D openssl
+wbuild run openssl --deps=all
 ```
 
 Example: Rebuild all reverse dependents (ABI-sensitive).

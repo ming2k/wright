@@ -214,7 +214,7 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 | `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
 | `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`, or legacy `staging`-only plans). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 

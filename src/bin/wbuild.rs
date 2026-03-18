@@ -59,7 +59,6 @@ fn main() -> Result<()> {
             force,
             dockyards,
             rebuild_dependents,
-            rebuild_dependencies,
             install,
             depth,
             include_self,
@@ -67,15 +66,11 @@ fn main() -> Result<()> {
             include_dependents,
             mvp,
         } => {
-            let deps_mode = if rebuild_dependencies {
-                DependencyMode::All
-            } else {
-                match deps.unwrap_or(DepsMode::None) {
-                    DepsMode::None => DependencyMode::None,
-                    DepsMode::Missing => DependencyMode::Missing,
-                    DepsMode::Sync => DependencyMode::Sync,
-                    DepsMode::All => DependencyMode::All,
-                }
+            let deps_mode = match deps.unwrap_or(DepsMode::None) {
+                DepsMode::None => DependencyMode::None,
+                DepsMode::Missing => DependencyMode::Missing,
+                DepsMode::Sync => DependencyMode::Sync,
+                DepsMode::All => DependencyMode::All,
             };
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
             let effective_dockyards = if dockyards != 0 {

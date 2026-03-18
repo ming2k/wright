@@ -53,7 +53,7 @@ wbuild run <changed-part> --self --dependents -R --install
 When you also want a deep upstream refresh, include dependency force-rebuild:
 
 ```bash
-wbuild run <changed-part> --self --deps --dependents -D -R --install
+wbuild run <changed-part> --self --deps=all --dependents -R --install
 ```
 
 ## 4. Practical Workflow

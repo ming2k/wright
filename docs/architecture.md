@@ -114,7 +114,7 @@ plan.toml → PlanManifest
 
 ### Dependency cascade rules
 
-`wbuild run` is the only command that performs dependency-driven expansion. Scope flags (`--self`, `--deps`, `--dependents`) are composable; `-D` and `-R` are force-rebuild escalators that extend the scope to already-installed or non-link dependents. `checksum`, `fetch`, and `check` skip all expansion entirely.
+`wbuild run` is the only command that performs dependency-driven expansion. Scope flags (`--self`, `--deps`, `--dependents`) are composable; `--deps=all` and `-R` are force-rebuild escalators that extend the scope to already-installed or non-link dependents. `checksum`, `fetch`, and `check` skip all expansion entirely.
 
 See [dependencies.md](dependencies.md) for the conceptual model and [cli-reference.md](cli-reference.md) for the full flag reference.
 

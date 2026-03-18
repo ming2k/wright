@@ -281,7 +281,6 @@ These flags widen rebuild scope beyond the default edge types.
 
 | Flag | What it does | Compared to its scope counterpart |
 |------|--------------|-----------------------------------|
-| `-D` / `--rebuild-dependencies` | Deprecated compatibility alias for `--deps=all` | Forces all upstream deps into the build set |
 | `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
 
 `-R` can be combined with scope flags, for example:

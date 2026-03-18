@@ -131,17 +131,12 @@ pub enum Commands {
         #[arg(short = 'R', long)]
         rebuild_dependents: bool,
 
-        /// Force-rebuild ALL upstream dependencies.
-        /// Deprecated compatibility alias for `--deps=all`.
-        #[arg(short = 'D', long)]
-        rebuild_dependencies: bool,
-
         /// Automatically install each part after a successful build
         #[arg(short = 'i', long)]
         install: bool,
 
         /// Maximum expansion depth for dependency cascade operations (0 = unlimited,
-        /// applies to --deps, --dependents, -D, and -R)
+        /// applies to --deps and --dependents/-R)
         #[arg(long, default_value = "0")]
         depth: usize,
 

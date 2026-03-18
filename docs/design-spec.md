@@ -122,7 +122,7 @@ The following **legacy paths are forbidden** — parts must not install files th
 | `/home/`, `/root/` | User data — not for part payload files |
 | `/tmp/`, `/run/` | Runtime-only — create via install scripts if needed |
 
-Wright enforces this layout automatically: after the final output phase completes (`fabricate`, or `staging` for legacy plans with no fabricate stage), every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for parts that have a deliberate reason to deviate (e.g. kernel modules).
+Wright enforces this layout automatically: after the final output phase completes (`fabricate`), every file and symlink in `$PART_DIR` is validated against this whitelist. A violation produces a `ValidationError` with a clear hint. Set `[options] skip_fhs_check = true` in `plan.toml` to opt out for parts that have a deliberate reason to deviate (e.g. kernel modules).
 
 #### musl Compatibility Policy
 

@@ -1385,8 +1385,6 @@ fn build_one(
 
     // Full builds always end in archive creation. For explicit stage runs, only
     // produce output when the selection reaches the final fabricate phase.
-    // Plans with no fabricate stage or fabricate output metadata still treat
-    // staging as the final output-producing step for compatibility.
     let has_fabricate_stage = manifest.fabricate.is_some()
         || manifest.lifecycle.contains_key("fabricate")
         || manifest.lifecycle.contains_key("pre_fabricate")
@@ -1395,12 +1393,7 @@ fn build_one(
         .stages
         .iter()
         .any(|s| s == "fabricate" || s == "post_fabricate");
-    let legacy_output_stage = !has_fabricate_stage
-        && opts
-            .stages
-            .iter()
-            .any(|s| s == "staging" || s == "post_staging");
-    let produces_output = opts.stages.is_empty() || explicit_output_stage || legacy_output_stage;
+    let produces_output = opts.stages.is_empty() || (has_fabricate_stage && explicit_output_stage);
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
