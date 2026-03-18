@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.10] - 2026-03-18
+
+### Changes
+- **Archive metadata completeness**: preserve build dependency metadata in generated archives for downstream tooling and inspection.
+- **Docs sync**: update dependency and build documentation to reflect the archived build-dependency metadata behavior.
+
 ## [1.7.9] - 2026-03-18
 
 ### Changes
