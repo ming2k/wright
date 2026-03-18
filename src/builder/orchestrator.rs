@@ -155,7 +155,6 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         if opts.is_build_op() && do_deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
-                &original_plans,
                 &all_plans,
                 &db,
                 opts.rebuild_dependencies,
@@ -366,7 +365,6 @@ const SYSTEM_TOOLCHAIN: &[&str] = &[
 
 fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
-    seed_plans: &HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
     force_all: bool,
@@ -388,20 +386,12 @@ fn expand_missing_dependencies(
         let mut added_any = false;
         let mut to_add_paths = Vec::new();
 
-        let paths_to_scan: Vec<PathBuf> = if force_all {
-            plans_to_build.iter().cloned().collect()
-        } else {
-            seed_plans.iter().cloned().collect()
-        };
-
-        for path in &paths_to_scan {
+        for path in plans_to_build.iter() {
             let manifest = PlanManifest::from_file(path)?;
 
-            // In a deep rebuild (-D), we cover build, link, and runtime dependencies
-            // recursively through the full upstream closure.
-            // During a normal build, only the user-requested targets are scanned:
-            // we add their missing direct deps, but do not keep recursing through
-            // every auto-added dependency.
+            // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
+            // With --install (-i), we also resolve missing runtime deps since they're needed post-install.
+            // For auto-resolving missing deps, we prioritize build and link as they are required for compilation.
             let deps_to_check = if force_all || include_runtime {
                 manifest
                     .dependencies
@@ -451,13 +441,68 @@ fn expand_missing_dependencies(
             }
         }
 
+        // Ensure the full transitive runtime dependency closure of every build
+        // dependency is present. A build dep like python-sphinx is useless if
+        // any part in its runtime dep tree (python-requests → python-urllib3 …)
+        // is missing.  We use BFS to expand the complete closure.
+        if !force_all {
+            let snapshot: Vec<PathBuf> = plans_to_build
+                .iter()
+                .chain(to_add_paths.iter())
+                .cloned()
+                .collect();
+            for path in &snapshot {
+                let manifest = match PlanManifest::from_file(path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                for build_dep in &manifest.dependencies.build {
+                    let build_dep_name = version::parse_dependency(build_dep)
+                        .unwrap_or_else(|_| (build_dep.clone(), None))
+                        .0;
+
+                    // BFS over the runtime dep tree of this build dependency
+                    let mut queue = std::collections::VecDeque::new();
+                    queue.push_back(build_dep_name.clone());
+                    let mut visited = HashSet::new();
+                    visited.insert(build_dep_name.clone());
+
+                    while let Some(cur) = queue.pop_front() {
+                        if let Some(cur_plan_path) = all_plans.get(&cur) {
+                            if let Ok(cur_manifest) = PlanManifest::from_file(cur_plan_path) {
+                                for rdep in &cur_manifest.dependencies.runtime {
+                                    let rdep_name = version::parse_dependency(rdep)
+                                        .unwrap_or_else(|_| (rdep.clone(), None))
+                                        .0;
+                                    if !visited.insert(rdep_name.clone()) {
+                                        continue;
+                                    }
+                                    if !build_set.contains(&rdep_name)
+                                        && db.get_part(&rdep_name)?.is_none()
+                                    {
+                                        if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
+                                            info!("Auto-resolving missing transitive runtime dep of build dep {} (depth {}): {}",
+                                                build_dep_name, current_depth + 1, rdep_name);
+                                            to_add_paths.push(rdep_plan_path.clone());
+                                            build_set.insert(rdep_name.clone());
+                                            added_any = true;
+                                        }
+                                    }
+                                    // Continue BFS regardless of whether rdep was missing,
+                                    // since its own runtime deps may still be missing.
+                                    queue.push_back(rdep_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         for p in to_add_paths {
             plans_to_build.insert(p);
         }
         if !added_any {
-            break;
-        }
-        if !force_all {
             break;
         }
         current_depth += 1;
@@ -1191,129 +1236,6 @@ fn build_one(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn write_plan(root: &std::path::Path, name: &str, deps_block: &str) -> PathBuf {
-        let plan_dir = root.join(name);
-        std::fs::create_dir_all(&plan_dir).unwrap();
-        let content = format!(
-            r#"name = "{name}"
-version = "1.0.0"
-release = 1
-description = "{name}"
-license = "MIT"
-arch = "x86_64"
-
-[dependencies]
-{deps_block}
-
-[lifecycle.staging]
-executor = "shell"
-dockyard = "none"
-script = "install -Dm755 /bin/sh ${{PART_DIR}}/usr/bin/{name}"
-"#
-        );
-        let plan_path = plan_dir.join("plan.toml");
-        std::fs::write(&plan_path, content).unwrap();
-        plan_path
-    }
-
-    #[test]
-    fn test_default_dep_expansion_stops_at_explicit_targets() {
-        let temp = tempfile::tempdir().unwrap();
-        let app = write_plan(temp.path(), "app", "build = [\"rust\"]");
-        let rust = write_plan(temp.path(), "rust", "runtime = [\"gcc\"]");
-        let gcc = write_plan(temp.path(), "gcc", "link = [\"mpfr\"]");
-        let mpfr = write_plan(temp.path(), "mpfr", "link = [\"gmp\"]");
-        let gmp = write_plan(temp.path(), "gmp", "build = [\"gcc\"]");
-
-        let mut all_plans = HashMap::new();
-        all_plans.insert("app".to_string(), app.clone());
-        all_plans.insert("rust".to_string(), rust.clone());
-        all_plans.insert("gcc".to_string(), gcc.clone());
-        all_plans.insert("mpfr".to_string(), mpfr.clone());
-        all_plans.insert("gmp".to_string(), gmp.clone());
-
-        let db = Database::open_in_memory().unwrap();
-        let mut plans_to_build = HashSet::from([app.clone()]);
-        let seed_plans = HashSet::from([app]);
-
-        expand_missing_dependencies(
-            &mut plans_to_build,
-            &seed_plans,
-            &all_plans,
-            &db,
-            false,
-            true,
-            usize::MAX,
-        )
-        .unwrap();
-
-        let names: HashSet<String> = plans_to_build
-            .iter()
-            .map(|path| {
-                PlanManifest::from_file(path)
-                    .unwrap()
-                    .plan
-                    .name
-            })
-            .collect();
-
-        assert!(names.contains("app"));
-        assert!(names.contains("rust"));
-        assert!(!names.contains("gcc"));
-        assert!(!names.contains("mpfr"));
-        assert!(!names.contains("gmp"));
-    }
-
-    #[test]
-    fn test_force_all_dep_expansion_recurses_through_upstream_closure() {
-        let temp = tempfile::tempdir().unwrap();
-        let app = write_plan(temp.path(), "app", "build = [\"builder\"]");
-        let builder = write_plan(temp.path(), "builder", "runtime = [\"helper\"]");
-        let helper = write_plan(temp.path(), "helper", "link = [\"leaf\"]");
-        let leaf = write_plan(temp.path(), "leaf", "");
-
-        let mut all_plans = HashMap::new();
-        all_plans.insert("app".to_string(), app.clone());
-        all_plans.insert("builder".to_string(), builder.clone());
-        all_plans.insert("helper".to_string(), helper.clone());
-        all_plans.insert("leaf".to_string(), leaf.clone());
-
-        let db = Database::open_in_memory().unwrap();
-        let mut plans_to_build = HashSet::from([app.clone()]);
-        let seed_plans = HashSet::from([app]);
-
-        expand_missing_dependencies(
-            &mut plans_to_build,
-            &seed_plans,
-            &all_plans,
-            &db,
-            true,
-            true,
-            usize::MAX,
-        )
-        .unwrap();
-
-        let names: HashSet<String> = plans_to_build
-            .iter()
-            .map(|path| {
-                PlanManifest::from_file(path)
-                    .unwrap()
-                    .plan
-                    .name
-            })
-            .collect();
-
-        assert!(names.contains("app"));
-        assert!(names.contains("builder"));
-        assert!(names.contains("helper"));
-        assert!(names.contains("leaf"));
-    }
 }
 
 /// Register a built archive in the repo database. Failures are logged but

@@ -76,7 +76,7 @@ pub struct Cli {
 pub enum Commands {
     /// Build parts from plans (default operation)
     #[command(
-        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. When none of the expansion flags are given, the default scope is: include the listed targets and any missing direct upstream dependencies.",
+        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. When none of the expansion flags are given, the default scope is: include the listed targets and any missing upstream dependencies.",
         after_help = WBUILD_RUN_AFTER_HELP
     )]
     Run {
@@ -117,8 +117,9 @@ pub enum Commands {
         #[arg(short = 'R', long)]
         rebuild_dependents: bool,
 
-        /// Force-rebuild the full upstream dependency closure, including already-installed parts
-        /// (recursive; extends --deps to installed parts and continues through auto-added deps)
+        /// Force-rebuild ALL upstream dependencies, including already-installed ones
+        /// (extends --deps to installed parts; use together with --deps
+        /// to also include the expansion, or alone to force-rebuild without expanding)
         #[arg(short = 'D', long)]
         rebuild_dependencies: bool,
 
@@ -135,8 +136,8 @@ pub enum Commands {
         #[arg(short = 's', long = "self")]
         include_self: bool,
 
-        /// Expand build set to include missing direct upstream dependencies (build + link,
-        /// and runtime when used with --install; does not include the listed parts themselves)
+        /// Expand build set to include missing upstream dependencies (build + link,
+        /// not yet installed; does not include the listed parts themselves)
         #[arg(short = 'd', long = "deps")]
         include_deps: bool,
 
