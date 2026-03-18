@@ -244,7 +244,7 @@ wbuild [OPTIONS] <COMMAND> [TARGETS]...
 
 #### `wbuild run [TARGETS]...`
 
-Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. When used with `--install` (`-i`), parts already installed on the system are automatically skipped.
+Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. By default, `wbuild run` builds only the listed targets. Use `--deps <MODE>` to expand upstream dependencies explicitly.
 
 | Flag | Description |
 |------|-------------|
@@ -257,35 +257,34 @@ Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assem
 
 ##### Expansion scope
 
-These three flags control **which parts** are added to the build set. They are additive and composable. When none are given, the default applies.
+These flags control **which extra parts** are added to the build set.
 
 | Flag | Description |
 |------|-------------|
 | `--self` (`-s`) | Include the listed targets themselves |
-| `--deps` (`-d`) | Include missing upstream dependencies (build + link, not yet installed) |
+| `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` rebuilds all upstream deps. Passing bare `--deps` defaults to `missing`. |
 | `--dependents` | Include parts that link against the target |
 
-| Flags used | Listed targets | Missing upstream deps | Downstream link cascade |
-|------------|-----------------|-----------------------|------------------------|
-| (default) | ✓ | ✓ | ✗ |
+| Flags used | Listed targets | Upstream deps | Downstream link cascade |
+|------------|----------------|---------------|------------------------|
+| (default) | ✓ | ✗ | ✗ |
 | `--self` | ✓ | ✗ | ✗ |
-| `--deps` | ✗ | ✓ | ✗ |
+| `--deps` | ✓ | `missing` | ✗ |
+| `--deps sync` | ✓ | `missing + version mismatch` | ✗ |
 | `--dependents` | ✗ | ✗ | ✓ |
-| `--self --deps` | ✓ | ✓ | ✗ |
 | `--self --dependents` | ✓ | ✗ | ✓ |
-| `--self --deps --dependents` | ✓ | ✓ | ✓ |
+| `--deps --dependents` | ✓ | `missing` | ✓ |
 
 ##### Force-rebuild modifiers
 
-These two flags are **force-rebuild escalators** — they extend the scope of the corresponding expansion flags to include parts that would otherwise be skipped (already installed or non-link dependents).
+These flags widen rebuild scope beyond the default edge types.
 
 | Flag | What it does | Compared to its scope counterpart |
 |------|--------------|-----------------------------------|
-| `-D` / `--rebuild-dependencies` | Force-rebuild ALL upstream dependencies, including already-installed ones | Like `--deps` but does not skip installed parts |
+| `-D` / `--rebuild-dependencies` | Deprecated compatibility alias for `--deps all` | Forces all upstream deps into the build set |
 | `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
 
-`-D` and `-R` can be combined with scope flags:
-- `--deps -D`: add missing deps to build set AND force-rebuild installed deps
+`-R` can be combined with scope flags, for example:
 - `--dependents -R`: add link dependents AND force-rebuild non-link dependents too
 
 | Flag | `--depth <N>` | Maximum expansion depth for all cascade operations (0 = unlimited) |
@@ -294,14 +293,14 @@ These two flags are **force-rebuild escalators** — they extend the scope of th
 **Examples:**
 
 ```bash
-# Default: rebuild gtk4 + auto-resolve its missing deps (no downstream cascade)
+# Default: rebuild gtk4 only
 wbuild run gtk4
 
-# Only rebuild gtk4 itself — all deps assumed installed
-wbuild run gtk4 --self
-
-# Only build gtk4's missing deps — don't rebuild gtk4 itself (pre-stage deps)
+# Rebuild gtk4 and add missing upstream deps
 wbuild run gtk4 --deps
+
+# Rebuild gtk4 and sync upstream deps whose installed version differs from plan.toml
+wbuild run gtk4 --deps sync -i
 
 # gtk4 already updated — cascade rebuild to parts that link against it, skip gtk4 itself
 wbuild run gtk4 --dependents
@@ -310,10 +309,10 @@ wbuild run gtk4 --dependents
 wbuild run gtk4 --self --dependents
 
 # Everything: deps + self + cascade
-wbuild run gtk4 --self --deps --dependents
+wbuild run gtk4 --deps --dependents
 
 # Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
-wbuild run gtk4 --deps -D
+wbuild run gtk4 --deps all
 
 # gtk4 ABI changed, force-rebuild every part that depends on it (not just link deps)
 wbuild run gtk4 --dependents -R

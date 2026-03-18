@@ -22,6 +22,15 @@ use crate::part::version;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::repo::source::SimpleResolver;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DependencyMode {
+    #[default]
+    None,
+    Missing,
+    Sync,
+    All,
+}
+
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
@@ -41,15 +50,13 @@ pub struct BuildOptions {
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
     pub dockyards: usize,
     pub rebuild_dependents: bool,
-    pub rebuild_dependencies: bool,
+    pub deps_mode: DependencyMode,
     pub install: bool,
     pub depth: Option<usize>,
     pub verbose: bool,
     pub quiet: bool,
     /// --self (-s): include the listed parts themselves in the build.
     pub include_self: bool,
-    /// --deps (-d): include missing upstream dependencies in the build.
-    pub include_deps: bool,
     /// --dependents: include downstream link-rebuild dependents (not the listed parts themselves).
     pub include_dependents: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
@@ -97,24 +104,12 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     };
 
     // Determine effective scope.
-    // Default (no explicit scope flags): build self + resolve missing deps, no cascade.
-    // When any scope flag is given, only the explicitly requested scopes apply.
-    let any_explicit_scope = opts.include_self || opts.include_deps || opts.include_dependents;
-    let do_self = if any_explicit_scope {
-        opts.include_self
-    } else {
-        true
-    };
-    let do_deps = if any_explicit_scope {
-        opts.include_deps
-    } else {
-        true
-    };
-    let do_dependents = if any_explicit_scope {
-        opts.include_dependents
-    } else {
-        false
-    };
+    // Default: build the listed targets only.
+    // Dependency expansion is opt-in via --deps <mode>.
+    // Reverse rebuilds remain opt-in via --dependents.
+    let do_deps = opts.deps_mode != DependencyMode::None;
+    let do_dependents = opts.include_dependents;
+    let do_self = opts.include_self || !do_dependents || do_deps;
 
     // Save the originally listed parts so we can optionally exclude them later.
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
@@ -126,38 +121,13 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         let db = Database::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
-        // 1a2. When --install is used without --force, skip parts that are
-        //      already installed at the same version+release.
-        if opts.is_build_op() && opts.install && !opts.force {
-            plans_to_build.retain(|path| {
-                if let Ok(manifest) = PlanManifest::from_file(path) {
-                    match db.get_part(&manifest.plan.name) {
-                        Ok(Some(pkg)) => {
-                            info!(
-                                "Skipping {} (already installed at {}-{})",
-                                manifest.plan.name, pkg.version, pkg.release
-                            );
-                            false
-                        }
-                        _ => true,
-                    }
-                } else {
-                    true
-                }
-            });
-            if plans_to_build.is_empty() {
-                info!("Nothing to build: all parts are already installed.");
-                return Ok(());
-            }
-        }
-
-        // 1b. Upward expansion: resolve missing upstream deps.
+        // 1a. Upward expansion: resolve upstream deps according to --deps mode.
         if opts.is_build_op() && do_deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
                 &all_plans,
                 &db,
-                opts.rebuild_dependencies,
+                opts.deps_mode,
                 opts.install,
                 actual_max,
             )?;
@@ -367,7 +337,7 @@ fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    force_all: bool,
+    mode: DependencyMode,
     include_runtime: bool,
     max_depth: usize,
 ) -> Result<()> {
@@ -389,10 +359,10 @@ fn expand_missing_dependencies(
         for path in plans_to_build.iter() {
             let manifest = PlanManifest::from_file(path)?;
 
-            // In a deep rebuild (-D), we want to cover build, link, and runtime dependencies.
-            // With --install (-i), we also resolve missing runtime deps since they're needed post-install.
-            // For auto-resolving missing deps, we prioritize build and link as they are required for compilation.
-            let deps_to_check = if force_all || include_runtime {
+            // `all` covers build, link, and runtime recursively.
+            // With --install (-i), we also resolve runtime deps because they are
+            // required post-install.
+            let deps_to_check = if matches!(mode, DependencyMode::All) || include_runtime {
                 manifest
                     .dependencies
                     .build
@@ -415,20 +385,17 @@ fn expand_missing_dependencies(
                     .0;
 
                 // Protect toolchain: don't automatically rebuild core tools unless they are missing
-                if force_all && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
+                if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
                     continue;
                 }
 
                 if !build_set.contains(&dep_name) {
-                    if force_all || db.get_part(&dep_name)?.is_none() {
+                    let should_add = dependency_requires_build(&dep_name, all_plans, db, mode)?;
+                    if should_add {
                         if let Some(plan_path) = all_plans.get(&dep_name) {
                             info!(
                                 "{} dependency (depth {}): {}",
-                                if force_all {
-                                    "Forcing rebuild of"
-                                } else {
-                                    "Auto-resolving missing"
-                                },
+                                dependency_action_label(&dep_name, all_plans, db, mode)?,
                                 current_depth + 1,
                                 dep_name
                             );
@@ -445,7 +412,7 @@ fn expand_missing_dependencies(
         // dependency is present. A build dep like python-sphinx is useless if
         // any part in its runtime dep tree (python-requests → python-urllib3 …)
         // is missing.  We use BFS to expand the complete closure.
-        if !force_all {
+        if !matches!(mode, DependencyMode::All) {
             let snapshot: Vec<PathBuf> = plans_to_build
                 .iter()
                 .chain(to_add_paths.iter())
@@ -478,11 +445,21 @@ fn expand_missing_dependencies(
                                         continue;
                                     }
                                     if !build_set.contains(&rdep_name)
-                                        && db.get_part(&rdep_name)?.is_none()
+                                        && dependency_requires_build(
+                                            &rdep_name,
+                                            all_plans,
+                                            db,
+                                            mode,
+                                        )?
                                     {
                                         if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
-                                            info!("Auto-resolving missing transitive runtime dep of build dep {} (depth {}): {}",
-                                                build_dep_name, current_depth + 1, rdep_name);
+                                            info!(
+                                                "{} transitive runtime dep of build dep {} (depth {}): {}",
+                                                dependency_action_label(&rdep_name, all_plans, db, mode)?,
+                                                build_dep_name,
+                                                current_depth + 1,
+                                                rdep_name
+                                            );
                                             to_add_paths.push(rdep_plan_path.clone());
                                             build_set.insert(rdep_name.clone());
                                             added_any = true;
@@ -509,6 +486,134 @@ fn expand_missing_dependencies(
     }
 
     Ok(())
+}
+
+fn dependency_action_label(
+    dep_name: &str,
+    all_plans: &HashMap<String, PathBuf>,
+    db: &Database,
+    mode: DependencyMode,
+) -> Result<&'static str> {
+    match mode {
+        DependencyMode::All => Ok("Forcing rebuild of"),
+        DependencyMode::Missing => Ok("Auto-resolving missing"),
+        DependencyMode::Sync => {
+            if dependency_plan_differs(dep_name, all_plans, db)? {
+                Ok("Syncing outdated")
+            } else {
+                Ok("Auto-resolving missing")
+            }
+        }
+        DependencyMode::None => Ok("Skipping"),
+    }
+}
+
+fn dependency_requires_build(
+    dep_name: &str,
+    all_plans: &HashMap<String, PathBuf>,
+    db: &Database,
+    mode: DependencyMode,
+) -> Result<bool> {
+    match mode {
+        DependencyMode::None => Ok(false),
+        DependencyMode::All => Ok(true),
+        DependencyMode::Missing => Ok(db.get_part(dep_name)?.is_none()),
+        DependencyMode::Sync => {
+            if db.get_part(dep_name)?.is_none() {
+                return Ok(true);
+            }
+            dependency_plan_differs(dep_name, all_plans, db)
+        }
+    }
+}
+
+fn dependency_plan_differs(
+    dep_name: &str,
+    all_plans: &HashMap<String, PathBuf>,
+    db: &Database,
+) -> Result<bool> {
+    let Some(installed) = db.get_part(dep_name)? else {
+        return Ok(true);
+    };
+    let Some(plan_path) = all_plans.get(dep_name) else {
+        return Ok(false);
+    };
+    let manifest = PlanManifest::from_file(plan_path)?;
+    Ok(!installed_matches_manifest(&installed, &manifest))
+}
+
+fn installed_matches_manifest(
+    installed: &crate::database::InstalledPart,
+    manifest: &PlanManifest,
+) -> bool {
+    installed.epoch == manifest.plan.epoch
+        && installed.version == manifest.plan.version
+        && installed.release == manifest.plan.release
+}
+
+#[cfg(test)]
+mod tests {
+    use super::installed_matches_manifest;
+    use crate::database::InstalledPart;
+    use crate::plan::manifest::PlanManifest;
+
+    fn installed_part(version: &str, release: u32, epoch: u32) -> InstalledPart {
+        InstalledPart {
+            id: 1,
+            name: "zlib".to_string(),
+            version: version.to_string(),
+            release,
+            epoch,
+            description: "test".to_string(),
+            arch: "x86_64".to_string(),
+            license: "Zlib".to_string(),
+            url: None,
+            installed_at: "now".to_string(),
+            install_size: 1,
+            pkg_hash: None,
+            install_scripts: None,
+            assumed: false,
+            install_reason: "explicit".to_string(),
+        }
+    }
+
+    #[test]
+    fn installed_matches_manifest_requires_epoch_version_and_release_match() {
+        let manifest = PlanManifest::parse(
+            r#"
+name = "zlib"
+version = "1.3.1"
+release = 2
+epoch = 1
+description = "test part"
+license = "Zlib"
+arch = "x86_64"
+
+[lifecycle.staging]
+executor = "shell"
+dockyard = "none"
+script = "mkdir -p ${PART_DIR}/usr/lib"
+"#,
+        )
+        .unwrap();
+
+        assert!(installed_matches_manifest(
+            &installed_part("1.3.1", 2, 1),
+            &manifest
+        ));
+        assert!(!installed_matches_manifest(
+            &installed_part("1.3.0", 2, 1),
+            &manifest
+        ));
+        assert!(!installed_matches_manifest(
+            &installed_part("1.3.1", 1, 1),
+            &manifest
+        ));
+        assert!(!installed_matches_manifest(
+            &installed_part("1.3.1", 2, 0),
+            &manifest
+        ));
+    }
 }
 
 // ---------------------------------------------------------------------------

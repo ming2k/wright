@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 const WBUILD_AFTER_HELP: &str = "\
 Workflows:
@@ -14,9 +14,11 @@ const WBUILD_RUN_AFTER_HELP: &str = "\
 Examples:
   wbuild run zlib
   wbuild run zlib --self
+  wbuild run zlib --deps
+  wbuild run zlib --deps sync -i
   wbuild run openssl --self --dependents
   wbuild run freetype --mvp --stage configure
-  wbuild run zlib --deps -D";
+  wbuild run zlib --deps all";
 const WBUILD_CHECK_AFTER_HELP: &str = "\
 Examples:
   wbuild check zlib
@@ -36,6 +38,18 @@ const WBUILD_CHECKSUM_AFTER_HELP: &str = "\
 Examples:
   wbuild checksum zlib
   wbuild checksum ./plans/zlib";
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum DepsMode {
+    /// Do not auto-expand upstream dependencies.
+    None,
+    /// Add missing upstream dependencies from the hold tree.
+    Missing,
+    /// Add upstream dependencies whose installed version differs from the plan.
+    Sync,
+    /// Add all upstream dependencies, even when already installed at the same version.
+    All,
+}
 
 #[derive(Parser)]
 #[command(
@@ -76,7 +90,7 @@ pub struct Cli {
 pub enum Commands {
     /// Build parts from plans (default operation)
     #[command(
-        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. When none of the expansion flags are given, the default scope is: include the listed targets and any missing upstream dependencies.",
+        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. By default, `wbuild run` builds only the listed targets. Use `--deps <MODE>` to expand upstream dependencies explicitly.",
         after_help = WBUILD_RUN_AFTER_HELP
     )]
     Run {
@@ -117,9 +131,8 @@ pub enum Commands {
         #[arg(short = 'R', long)]
         rebuild_dependents: bool,
 
-        /// Force-rebuild ALL upstream dependencies, including already-installed ones
-        /// (extends --deps to installed parts; use together with --deps
-        /// to also include the expansion, or alone to force-rebuild without expanding)
+        /// Force-rebuild ALL upstream dependencies.
+        /// Deprecated compatibility alias for `--deps all`.
         #[arg(short = 'D', long)]
         rebuild_dependencies: bool,
 
@@ -136,10 +149,19 @@ pub enum Commands {
         #[arg(short = 's', long = "self")]
         include_self: bool,
 
-        /// Expand build set to include missing upstream dependencies (build + link,
-        /// not yet installed; does not include the listed parts themselves)
-        #[arg(short = 'd', long = "deps")]
-        include_deps: bool,
+        /// Expand upstream dependencies.
+        /// `missing` adds only absent dependencies.
+        /// `sync` also rebuilds installed dependencies whose epoch/version/release
+        /// differs from the current plan.
+        /// `all` rebuilds all upstream dependencies regardless of installed state.
+        #[arg(
+            short = 'd',
+            long = "deps",
+            value_enum,
+            num_args = 0..=1,
+            default_missing_value = "missing"
+        )]
+        deps: Option<DepsMode>,
 
         /// Expand build set to include parts that link against the target
         /// (does not include the listed parts themselves)
@@ -191,4 +213,37 @@ pub enum Commands {
         /// Plans to checksum
         targets: Vec<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, DepsMode};
+    use clap::Parser;
+
+    #[test]
+    fn parse_run_defaults_to_no_dependency_expansion() {
+        let cli = Cli::try_parse_from(["wbuild", "run", "zlib"]).unwrap();
+        match cli.command {
+            Commands::Run { deps, .. } => assert_eq!(deps, None),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_deps_flag_without_value_defaults_to_missing() {
+        let cli = Cli::try_parse_from(["wbuild", "run", "zlib", "--deps"]).unwrap();
+        match cli.command {
+            Commands::Run { deps, .. } => assert_eq!(deps, Some(DepsMode::Missing)),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_deps_enum_value() {
+        let cli = Cli::try_parse_from(["wbuild", "run", "zlib", "--deps=sync"]).unwrap();
+        match cli.command {
+            Commands::Run { deps, .. } => assert_eq!(deps, Some(DepsMode::Sync)),
+            _ => panic!("expected run command"),
+        }
+    }
 }

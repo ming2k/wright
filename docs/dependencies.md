@@ -30,10 +30,12 @@ You do not need to declare transitive dependencies. Wright expands them when you
 - It can expand reverse rebuilds downward.
 
 **Upward Expansion: Missing Dependencies**
-When you run `wbuild run`, Wright checks your target’s `build` and `link` dependencies.
+By default, `wbuild run` builds only the listed targets. Add `--deps` when you
+want Wright to expand upstream dependencies from the hold tree.
 
-- If a dependency is already installed, it is not rebuilt.
-- If it is missing but a plan exists in the hold tree, Wright adds it to the Construction Plan.
+- With `--deps` (or `--deps missing`), missing `build` and `link` dependencies are added to the Construction Plan.
+- With `--deps sync`, missing dependencies and installed dependencies whose epoch/version/release differs from `plan.toml` are added.
+- With `--install`, runtime dependencies are also considered while expanding upstream dependencies.
 - If the dependency is missing and no plan exists, the build fails with a clear error.
 
 With `-D` or `--rebuild-dependencies`, Wright expands more aggressively:

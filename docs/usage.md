@@ -101,11 +101,14 @@ ordering comes from the dependency graph in each plan.
 ```bash
 wbuild run @core                # build all plans in the "core" assembly
 wbuild run @core @devel         # combine multiple assemblies
-wbuild run -ic @qemu            # build and install, skipping already-installed parts
+wbuild run -i @qemu             # build and install the requested plans
+wbuild run -i --deps sync @qemu # also sync missing/outdated upstream deps
 ```
 
-When used with `--install` (`-i`), parts already installed on the system
-are automatically skipped. Use `--force` (`-f`) to rebuild them anyway.
+By default, `wbuild run` builds only the listed plans. Use `--deps` to expand
+upstream dependencies explicitly: bare `--deps` means `missing`,
+`--deps sync` adds installed dependencies whose epoch/version/release differs
+from the current `plan.toml`, and `--deps all` rebuilds the full upstream chain.
 
 ---
 

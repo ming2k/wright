@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use wright::builder::orchestrator::{self, BuildOptions};
-use wright::cli::wbuild::{Cli, Commands};
+use wright::builder::orchestrator::{self, BuildOptions, DependencyMode};
+use wright::cli::wbuild::{Cli, Commands, DepsMode};
 use wright::config::GlobalConfig;
 use wright::part::version;
 use wright::plan::manifest::PlanManifest;
@@ -63,10 +63,20 @@ fn main() -> Result<()> {
             install,
             depth,
             include_self,
-            include_deps,
+            deps,
             include_dependents,
             mvp,
         } => {
+            let deps_mode = if rebuild_dependencies {
+                DependencyMode::All
+            } else {
+                match deps.unwrap_or(DepsMode::None) {
+                    DepsMode::None => DependencyMode::None,
+                    DepsMode::Missing => DependencyMode::Missing,
+                    DepsMode::Sync => DependencyMode::Sync,
+                    DepsMode::All => DependencyMode::All,
+                }
+            };
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
             let effective_dockyards = if dockyards != 0 {
                 dockyards
@@ -83,7 +93,7 @@ fn main() -> Result<()> {
                     force,
                     dockyards: effective_dockyards,
                     rebuild_dependents,
-                    rebuild_dependencies,
+                    deps_mode,
                     install,
                     depth: Some(depth),
                     checksum: false,
@@ -92,7 +102,6 @@ fn main() -> Result<()> {
                     verbose: cli.verbose > 0,
                     quiet: cli.quiet,
                     include_self,
-                    include_deps,
                     include_dependents,
                     mvp,
                     // Config nproc_per_dockyard is a static override; None means the
