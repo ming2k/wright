@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.8] - 2026-03-18
+
+### Changes
+- **CLI and docs clarification**: update command help and documentation to better explain dependency behavior and tool boundaries.
+- **Build workflow wording cleanup**: align `wbuild` scope descriptions across CLI help and guides.
+
 ## [1.7.7] - 2026-03-18
 
 ### Changes
