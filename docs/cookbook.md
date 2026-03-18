@@ -277,7 +277,8 @@ plans are deduplicated.
 ```bash
 wbuild run @base                    # build all plans in the "base" assembly
 wbuild run @base @devel mypackage   # combine assemblies and individual plans
-wbuild run -ic @base                # build and install, skip already-installed
+wbuild run -i @base                 # build and install the requested assembly
+wbuild run -i --deps=sync @base     # also sync missing/outdated upstream deps
 ```
 
 ---

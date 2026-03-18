@@ -85,10 +85,16 @@ If you pass `-i` or `--install`, Wright installs each part as soon as it finishe
 - Split parts are installed afterward, if they exist.
 
 **Common Examples**
-Example: Build and install with automatic dependency expansion.
+Example: Build and install only the listed target.
 
 ```bash
 wbuild run -i curl
+```
+
+Example: Build and install while syncing missing/outdated upstream dependencies.
+
+```bash
+wbuild run -i --deps=sync curl
 ```
 
 Example: Force a deep rebuild of dependencies.

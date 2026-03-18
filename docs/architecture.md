@@ -107,7 +107,7 @@ plan.toml → PlanManifest
       → parallel execution (topology-ordered):
           → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp, no cache write
           → full pass: Builder::build() force=true, normal cache
-          → archive::create_archive() → PARTINFO (with link/replaces/conflicts)
+          → archive::create_archive() → PARTINFO (runtime deps + relations)
       → output: .wright.tar.zst archives in components_dir
       → if --install: acquisition of serial install lock → transaction::install_package()
 ```

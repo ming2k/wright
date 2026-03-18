@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-03-18
+
+### Breaking Changes
+- **Part relations moved to output level**: `[relations]` section removed. `replaces`, `conflicts`, and `provides` are now declared per-output in `[output]` (main part) or `[output.<name>]` (sub-part). This enables multi-output plans where each sub-part declares its own relations independently.
+- **Legacy compatibility code removed**: historical rejection tests and special-case error messages for obsolete syntax (`[lifecycle.part]`, `[split.*]`, `[install_scripts]`, `[backup]`, relations in `[dependencies]`) have been removed. Invalid fields are still rejected by `deny_unknown_fields`.
+
 ## [1.7.10] - 2026-03-18
 
 ### Changes

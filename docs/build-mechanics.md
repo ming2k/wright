@@ -146,10 +146,9 @@ produce a broken archive that a later full pass would have to overwrite anyway.
 
 ## FHS Validation
 
-After the `fabricate` stage completes (or after `staging` for legacy plans that
-do not define any fabricate hook or stage), Wright validates every file and
-symlink in `$PART_DIR` against the distribution's FHS whitelist before creating
-the archive. This catches silent packaging mistakes
+After the final output stage completes (`fabricate`), Wright validates every
+file and symlink in `$PART_DIR` against the distribution's FHS whitelist before
+creating the archive. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 
 ```
