@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-03-18
+
+### Changes
+- **Installed DB migration tooling**: add a migration helper for installed database transitions.
+- **Builder dependency cleanup**: refine staged `wbuild` dependency handling around the installed DB migration work.
+
 ## [1.7.4] - 2026-03-18
 
 ### Changes
