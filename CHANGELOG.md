@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.7] - 2026-03-18
+
+### Changes
+- **`wbuild` dependency scope controls**: refine dependency expansion and scope behavior for `wbuild run` and `wbuild deps`.
+- **CLI documentation sync**: update usage and dependency reference docs to match the latest build-scope behavior.
+
 ## [1.7.6] - 2026-03-18
 
 ### Changes
