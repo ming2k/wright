@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.7.9] - 2026-03-18
+
+### Changes
+- **Build dependency expansion rework**: restructure `wbuild`'s dependency expansion flow for clearer behavior and maintenance.
+- **Release sync**: roll forward package metadata and changelog for the latest builder changes.
+
 ## [1.7.8] - 2026-03-18
 
 ### Changes
