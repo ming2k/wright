@@ -15,10 +15,10 @@ Examples:
   wbuild run zlib
   wbuild run zlib --self
   wbuild run zlib --deps
-  wbuild run zlib --deps sync -i
+  wbuild run zlib --deps=sync -i
   wbuild run openssl --self --dependents
-  wbuild run freetype --mvp --stage configure
-  wbuild run zlib --deps all";
+  wbuild run freetype --mvp --stage=configure
+  wbuild run zlib --deps=all";
 const WBUILD_CHECK_AFTER_HELP: &str = "\
 Examples:
   wbuild check zlib
@@ -30,7 +30,7 @@ Examples:
 const WBUILD_DEPS_AFTER_HELP: &str = "\
 Examples:
   wbuild deps zlib
-  wbuild deps zlib --depth 2
+  wbuild deps zlib --depth=2
 
 This command reads dependency declarations from `plan.toml` files in the hold tree.
 It does not inspect the installed part database.";
@@ -90,7 +90,7 @@ pub struct Cli {
 pub enum Commands {
     /// Build parts from plans (default operation)
     #[command(
-        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. By default, `wbuild run` builds only the listed targets. Use `--deps <MODE>` to expand upstream dependencies explicitly.",
+        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. By default, `wbuild run` builds only the listed targets. Use `--deps=<MODE>` to expand upstream dependencies explicitly.",
         after_help = WBUILD_RUN_AFTER_HELP
     )]
     Run {
@@ -99,7 +99,7 @@ pub enum Commands {
 
         /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
         /// Skips fetch/verify/extract — requires a previous full build.
-        /// Example: --stage check --stage staging --stage fabricate
+        /// Example: --stage=check --stage=staging --stage=fabricate
         #[arg(long)]
         stage: Vec<String>,
 
@@ -132,7 +132,7 @@ pub enum Commands {
         rebuild_dependents: bool,
 
         /// Force-rebuild ALL upstream dependencies.
-        /// Deprecated compatibility alias for `--deps all`.
+        /// Deprecated compatibility alias for `--deps=all`.
         #[arg(short = 'D', long)]
         rebuild_dependencies: bool,
 

@@ -428,13 +428,20 @@ fn expand_missing_dependencies(
                         .unwrap_or_else(|_| (build_dep.clone(), None))
                         .0;
 
-                    // BFS over the runtime dep tree of this build dependency
+                    let build_dep_depth = current_depth + 1;
+                    if build_dep_depth >= max_depth {
+                        continue;
+                    }
+
+                    // BFS over the runtime dep tree of this build dependency.
+                    // Track absolute graph depth from the original target so
+                    // logs and --depth limiting use real edge distance.
                     let mut queue = std::collections::VecDeque::new();
-                    queue.push_back(build_dep_name.clone());
+                    queue.push_back((build_dep_name.clone(), build_dep_depth));
                     let mut visited = HashSet::new();
                     visited.insert(build_dep_name.clone());
 
-                    while let Some(cur) = queue.pop_front() {
+                    while let Some((cur, cur_depth)) = queue.pop_front() {
                         if let Some(cur_plan_path) = all_plans.get(&cur) {
                             if let Ok(cur_manifest) = PlanManifest::from_file(cur_plan_path) {
                                 for rdep in &cur_manifest.dependencies.runtime {
@@ -442,6 +449,10 @@ fn expand_missing_dependencies(
                                         .unwrap_or_else(|_| (rdep.clone(), None))
                                         .0;
                                     if !visited.insert(rdep_name.clone()) {
+                                        continue;
+                                    }
+                                    let rdep_depth = cur_depth + 1;
+                                    if rdep_depth > max_depth {
                                         continue;
                                     }
                                     if !build_set.contains(&rdep_name)
@@ -457,7 +468,7 @@ fn expand_missing_dependencies(
                                                 "{} transitive runtime dep of build dep {} (depth {}): {}",
                                                 dependency_action_label(&rdep_name, all_plans, db, mode)?,
                                                 build_dep_name,
-                                                current_depth + 1,
+                                                rdep_depth,
                                                 rdep_name
                                             );
                                             to_add_paths.push(rdep_plan_path.clone());
@@ -467,7 +478,7 @@ fn expand_missing_dependencies(
                                     }
                                     // Continue BFS regardless of whether rdep was missing,
                                     // since its own runtime deps may still be missing.
-                                    queue.push_back(rdep_name);
+                                    queue.push_back((rdep_name, rdep_depth));
                                 }
                             }
                         }

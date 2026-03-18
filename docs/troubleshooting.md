@@ -23,7 +23,7 @@ cat /var/tmp/wright-build/<name>-<version>/log/<stage>.log
 **To re-run only the failed stage** after fixing the plan:
 
 ```bash
-wbuild run <pkg> --stage compile
+wbuild run <pkg> --stage=compile
 ```
 
 **To see output live** instead of buffered to the log:

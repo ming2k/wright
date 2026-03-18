@@ -37,7 +37,7 @@ For a custom repo directory, specify the path explicitly:
 mkdir -p /var/lib/wright/myrepo
 cp *.wright.tar.zst /var/lib/wright/myrepo/
 wrepo sync /var/lib/wright/myrepo
-wrepo source add myrepo --path /var/lib/wright/myrepo
+wrepo source add myrepo --path=/var/lib/wright/myrepo
 wright install curl
 ```
 
@@ -49,14 +49,14 @@ commands to manage them without editing the file by hand.
 ### Add a source
 
 ```bash
-wrepo source add myrepo --path /var/lib/wright/myrepo
-wrepo source add myrepo --path /var/lib/wright/myrepo --priority 300
+wrepo source add myrepo --path=/var/lib/wright/myrepo
+wrepo source add myrepo --path=/var/lib/wright/myrepo --priority=300
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--path <PATH>` | *(required)* | Local directory path |
-| `--priority <N>` | `100` | Higher number = preferred when the same part exists in multiple sources |
+| `--path=<PATH>` | *(required)* | Local directory path |
+| `--priority=<N>` | `100` | Higher number = preferred when the same part exists in multiple sources |
 
 ### List sources
 
@@ -124,7 +124,7 @@ With an indexed repository, upgrades work by name:
 
 ```bash
 wright upgrade gcc                       # upgrade to the latest available version
-wright upgrade gcc --version 14.2.0      # switch to a specific version
+wright upgrade gcc --version=14.2.0      # switch to a specific version
 wright sysupgrade                        # upgrade all installed parts to latest
 wright sysupgrade -n                     # dry-run: preview without changes
 ```
@@ -140,8 +140,8 @@ higher `priority` wins. This lets you layer a local build repo on top of
 a shared team repo:
 
 ```bash
-wrepo source add team   --path /mnt/shared/wright-repo --priority 100
-wrepo source add local  --path /var/lib/wright/myrepo   --priority 300
+wrepo source add team   --path=/mnt/shared/wright-repo --priority=100
+wrepo source add local  --path=/var/lib/wright/myrepo   --priority=300
 ```
 
 Parts you build locally (priority 300) shadow the team repo (priority 100).
@@ -170,14 +170,14 @@ wbuild run @core
 wrepo sync
 
 # Developer machines
-wrepo source add builds --path /mnt/nfs/wright-components
+wrepo source add builds --path=/mnt/nfs/wright-components
 wright install @base
 ```
 
 ### Assembly build with repo
 
 ```bash
-wbuild run -ic @qemu            # build, skip installed, install new parts
+wbuild run -i --deps=sync @qemu # build and install, syncing missing/outdated deps
 wrepo sync                      # update the index
 ```
 

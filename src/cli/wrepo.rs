@@ -7,7 +7,7 @@ Workflows:
   Index local archives:    wrepo sync
   Search indexed parts:    wrepo search zlib
   Show all versions:       wrepo list zlib
-  Add a source:            wrepo source add local --path /srv/wright/repo
+  Add a source:            wrepo source add local --path=/srv/wright/repo
 
 Use `wrepo` to maintain repository metadata and source configuration.";
 const WREPO_SYNC_AFTER_HELP: &str = "\
@@ -29,12 +29,12 @@ Examples:
 const WREPO_SOURCE_AFTER_HELP: &str = "\
 Examples:
   wrepo source list
-  wrepo source add local --path /srv/wright/repo
+  wrepo source add local --path=/srv/wright/repo
   wrepo source remove local";
 const WREPO_SOURCE_ADD_AFTER_HELP: &str = "\
 Examples:
-  wrepo source add local --path /srv/wright/repo
-  wrepo source add cache --path ./repo --priority 200";
+  wrepo source add local --path=/srv/wright/repo
+  wrepo source add cache --path=./repo --priority=200";
 const WREPO_SOURCE_REMOVE_AFTER_HELP: &str = "\
 Examples:
   wrepo source remove local";

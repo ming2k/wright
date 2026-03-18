@@ -115,25 +115,25 @@ run specific stages against the existing build tree:
 wbuild run mypkg
 
 # Edit lifecycle.staging in plan.toml, then re-run the output phases:
-wbuild run mypkg --stage staging --stage fabricate
+wbuild run mypkg --stage=staging --stage=fabricate
 ```
 
 To iterate on a subset of stages and inspect the result:
 
 ```bash
-wbuild run mypkg --stage configure
+wbuild run mypkg --stage=configure
 # Inspect $SRC_DIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
-wbuild run mypkg --stage compile
-wbuild run mypkg --stage staging --stage fabricate
+wbuild run mypkg --stage=compile
+wbuild run mypkg --stage=staging --stage=fabricate
 
 # Or run compile plus the output phases together in one command:
-wbuild run mypkg --stage compile --stage staging --stage fabricate
+wbuild run mypkg --stage=compile --stage=staging --stage=fabricate
 ```
 
 To skip the `check` stage (e.g. tests are slow or broken upstream):
 
 ```bash
-wbuild run mypkg --stage prepare --stage configure --stage compile --stage staging --stage fabricate
+wbuild run mypkg --stage=prepare --stage=configure --stage=compile --stage=staging --stage=fabricate
 ```
 
 Or more concisely, run the full pipeline but skip `check` by doing a full build
@@ -141,7 +141,7 @@ and using `--stage` to re-run only the stages you need after a prior full
 configure+compile:
 
 ```bash
-wbuild run mypkg --stage compile --stage staging --stage fabricate
+wbuild run mypkg --stage=compile --stage=staging --stage=fabricate
 ```
 
 ---
@@ -261,7 +261,7 @@ wbuild run libfoo --self --dependents -R
 To limit how deep the cascade goes:
 
 ```bash
-wbuild run libfoo --self --dependents --depth 2
+wbuild run libfoo --self --dependents --depth=2
 ```
 
 ---
@@ -332,7 +332,7 @@ wbuild deps gtk4
 Limit depth:
 
 ```bash
-wbuild deps gtk4 --depth 2
+wbuild deps gtk4 --depth=2
 ```
 
 ---

@@ -20,7 +20,7 @@ Examples:
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
   wright upgrade zlib
-  wright upgrade zlib --version 1.3.1
+  wright upgrade zlib --version=1.3.1
   wright upgrade ./zlib-1.3.1-1-x86_64.wright.tar.zst";
 const WRIGHT_REMOVE_AFTER_HELP: &str = "\
 Examples:
@@ -31,8 +31,8 @@ const WRIGHT_DEPS_AFTER_HELP: &str = "\
 Examples:
   wright deps zlib
   wright deps zlib --reverse
-  wright deps --all --depth 2
-  wright deps zlib --prefix depth
+  wright deps --all --depth=2
+  wright deps zlib --prefix=depth
 
 This command reads installed dependency metadata from the local part database,
 which is populated from archive `.PARTINFO` metadata during install/upgrade.

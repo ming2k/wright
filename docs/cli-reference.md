@@ -62,11 +62,11 @@ Upgrade installed parts by name or from archive files. When given a part name, t
 | Flag | Description |
 |------|-------------|
 | `--force` | Allow downgrades or same-version reinstalls |
-| `--version <VERSION>` | Target a specific version instead of the latest (implies `--force` for downgrades) |
+| `--version=<VERSION>` | Target a specific version instead of the latest (implies `--force` for downgrades) |
 
 ```bash
 wright upgrade gcc                          # upgrade to latest available version
-wright upgrade gcc --version 14.2.0         # downgrade/switch to a specific version
+wright upgrade gcc --version=14.2.0         # downgrade/switch to a specific version
 wright upgrade gcc-15.1.0-1-x86_64.wright.tar.zst  # upgrade from a file (still works)
 ```
 
@@ -106,17 +106,17 @@ Analyze dependency relationships of **installed** parts.
 | Flag | Description |
 |------|-------------|
 | `--reverse` (`-r`) | Show reverse dependencies (what depends on this part) |
-| `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
-| `--filter <PATTERN>` (`-f`) | Only show parts whose name contains the pattern |
+| `--depth=<N>` (`-d`) | Maximum tree depth by real dependency-graph distance (0 = unlimited, default: 0) |
+| `--filter=<PATTERN>` (`-f`) | Only show parts whose name contains the pattern |
 | `--all` (`-a`) | Show dependency tree for all installed parts |
-| `--prefix <MODE>` | Output prefix style: `indent`, `depth`, or `none` |
-| `--prune <PACKAGE>` | Hide the subtree of the named part; may be repeated |
+| `--prefix=<MODE>` | Output prefix style: `indent`, `depth`, or `none` |
+| `--prune=<PACKAGE>` | Hide the subtree of the named part; may be repeated |
 
 ```bash
 wright deps zlib
 wright deps zlib --reverse
-wright deps --all --depth 2
-wright deps zlib --prefix depth
+wright deps --all --depth=2
+wright deps zlib --prefix=depth
 ```
 
 #### `wright doctor`
@@ -244,11 +244,11 @@ wbuild [OPTIONS] <COMMAND> [TARGETS]...
 
 #### `wbuild run [TARGETS]...`
 
-Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. By default, `wbuild run` builds only the listed targets. Use `--deps <MODE>` to expand upstream dependencies explicitly.
+Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. By default, `wbuild run` builds only the listed targets. Use `--deps=<MODE>` to expand upstream dependencies explicitly.
 
 | Flag | Description |
 |------|-------------|
-| `--stage <STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage check --stage staging --stage fabricate`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
+| `--stage=<STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage=check --stage=staging --stage=fabricate`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
 | `--clean` | Clear the build cache entry, working directory, and source tree before starting. Without `--clean`, the source tree (`src/`) is preserved across builds when the build key is unchanged, enabling incremental compilation. `--clean` forces a full re-extraction and recompile. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only parts with no dependency relationship run simultaneously. Controls part-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
@@ -262,7 +262,7 @@ These flags control **which extra parts** are added to the build set.
 | Flag | Description |
 |------|-------------|
 | `--self` (`-s`) | Include the listed targets themselves |
-| `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` rebuilds all upstream deps. Passing bare `--deps` defaults to `missing`. |
+| `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` rebuilds all upstream deps. Recommended form is `--deps=<MODE>`. Passing bare `--deps` defaults to `missing`. |
 | `--dependents` | Include parts that link against the target |
 
 | Flags used | Listed targets | Upstream deps | Downstream link cascade |
@@ -270,7 +270,7 @@ These flags control **which extra parts** are added to the build set.
 | (default) | ✓ | ✗ | ✗ |
 | `--self` | ✓ | ✗ | ✗ |
 | `--deps` | ✓ | `missing` | ✗ |
-| `--deps sync` | ✓ | `missing + version mismatch` | ✗ |
+| `--deps=sync` | ✓ | `missing + version mismatch` | ✗ |
 | `--dependents` | ✗ | ✗ | ✓ |
 | `--self --dependents` | ✓ | ✗ | ✓ |
 | `--deps --dependents` | ✓ | `missing` | ✓ |
@@ -281,13 +281,13 @@ These flags widen rebuild scope beyond the default edge types.
 
 | Flag | What it does | Compared to its scope counterpart |
 |------|--------------|-----------------------------------|
-| `-D` / `--rebuild-dependencies` | Deprecated compatibility alias for `--deps all` | Forces all upstream deps into the build set |
+| `-D` / `--rebuild-dependencies` | Deprecated compatibility alias for `--deps=all` | Forces all upstream deps into the build set |
 | `-R` / `--rebuild-dependents` | Force-rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but reaches runtime and build dependents too |
 
 `-R` can be combined with scope flags, for example:
 - `--dependents -R`: add link dependents AND force-rebuild non-link dependents too
 
-| Flag | `--depth <N>` | Maximum expansion depth for all cascade operations (0 = unlimited) |
+| Flag | `--depth=<N>` | Maximum expansion depth by real dependency-graph distance (0 = unlimited) |
 |------|---------------|----------------------------------------------------------------------|
 
 **Examples:**
@@ -300,7 +300,7 @@ wbuild run gtk4
 wbuild run gtk4 --deps
 
 # Rebuild gtk4 and sync upstream deps whose installed version differs from plan.toml
-wbuild run gtk4 --deps sync -i
+wbuild run gtk4 --deps=sync -i
 
 # gtk4 already updated — cascade rebuild to parts that link against it, skip gtk4 itself
 wbuild run gtk4 --dependents
@@ -312,7 +312,7 @@ wbuild run gtk4 --self --dependents
 wbuild run gtk4 --deps --dependents
 
 # Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
-wbuild run gtk4 --deps all
+wbuild run gtk4 --deps=all
 
 # gtk4 ABI changed, force-rebuild every part that depends on it (not just link deps)
 wbuild run gtk4 --dependents -R
@@ -321,7 +321,7 @@ wbuild run gtk4 --dependents -R
 wbuild run freetype --mvp
 
 # MVP build, run only up to the configure stage
-wbuild run freetype --mvp --stage configure
+wbuild run freetype --mvp --stage=configure
 ```
 
 ##### Compile-stage serialization
@@ -370,7 +370,7 @@ Analyze the **static** dependency tree of a plan in the hold tree. Shows what *w
 
 | Flag | Description |
 |------|-------------|
-| `--depth <N>` (`-d`) | Maximum tree depth (0 = unlimited, default: 0) |
+| `--depth=<N>` (`-d`) | Maximum tree depth by real dependency-graph distance (0 = unlimited, default: 0) |
 
 #### `wbuild checksum [TARGETS]...`
 
@@ -388,7 +388,7 @@ wrepo [OPTIONS] <COMMAND>
 
 | Flag | Description |
 |------|-------------|
-| `--config <PATH>` | Path to config file |
+| `--config=<PATH>` | Path to config file |
 | `-v` / `--verbose` | Increase log verbosity; use twice (`-vv`) for trace-level logs |
 | `--quiet` | Reduce output to warnings and errors only |
 
@@ -434,18 +434,18 @@ wrepo remove zlib 1.3.1               # remove from index only
 wrepo remove zlib 1.3.1-2 --purge     # remove from index and delete archive
 ```
 
-#### `wrepo source add <NAME> --path <PATH>`
+#### `wrepo source add <NAME> --path=<PATH>`
 
 Add a new local repository source to `/etc/wright/repos.toml`. Higher priority sources are preferred during resolution.
 
 | Flag | Description |
 |------|-------------|
-| `--path <PATH>` | Local directory path (required) |
-| `--priority <N>` | Priority — higher number is preferred (default: `100`) |
+| `--path=<PATH>` | Local directory path (required) |
+| `--priority=<N>` | Priority — higher number is preferred (default: `100`) |
 
 ```bash
-wrepo source add local --path /srv/wright/repo
-wrepo source add cache --path ./repo --priority 200
+wrepo source add local --path=/srv/wright/repo
+wrepo source add cache --path=./repo --priority=200
 ```
 
 #### `wrepo source remove <NAME>`

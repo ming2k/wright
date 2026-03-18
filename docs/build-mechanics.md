@@ -78,7 +78,7 @@ overwritten on the next build attempt.
 |-----------|:------:|:------:|:------:|
 | Full build (key match) | **preserved** | recreated | recreated |
 | Full build (key mismatch) | recreated | recreated | recreated |
-| `--stage <s>` | preserved | recreated | recreated |
+| `--stage=<s>` | preserved | recreated | recreated |
 | `--clean` then build | deleted first | recreated | recreated |
 | Cache hit | recreated from cache | restored | restored |
 
@@ -138,7 +138,7 @@ restores these directories and skips the entire build pipeline.
 | `--force` | kept | ✗ | ✓ |
 | `--clean` | **deleted** | ✗ | ✓ |
 | `--clean --force` | **deleted** | ✗ | ✓ |
-| `--stage <s>` | kept | ✗ | ✗ |
+| `--stage=<s>` | kept | ✗ | ✗ |
 | Bootstrap (MVP first pass) | kept | ✗ | ✗ |
 
 Bootstrap passes are intentionally incomplete builds — caching them would
@@ -205,7 +205,7 @@ archive produced by their `script`.
 | `--force` | reuse | bypass read, overwrite | overwrite | reuse if key matches | recreated |
 | `--clean` | reuse | **delete + rebuild** | skip if exists | **deleted** | recreated |
 | `--clean --force` | reuse | **delete + rebuild** | overwrite | **deleted** | recreated |
-| `--stage <s>` | reuse | bypass | skip | preserved | recreated |
+| `--stage=<s>` | reuse | bypass | skip | preserved | recreated |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
 - `--clean` — invalidate the build cache **and** force a clean `src/` re-extraction

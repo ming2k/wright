@@ -65,7 +65,7 @@ installed immediately after a successful build:
 
 ```bash
 wbuild run -i curl                  # build and install in one step
-wbuild run -ic @qemu                # build assembly, skip already-installed
+wbuild run -i --deps=sync @qemu     # build assembly and sync missing/outdated deps
 ```
 
 This is the fastest path for single-part iteration. For batch workflows
@@ -76,8 +76,8 @@ This is the fastest path for single-part iteration. For batch workflows
 Use `--stage` to re-run specific lifecycle stages without a full rebuild:
 
 ```bash
-wbuild run hello --stage compile
-wbuild run hello --stage compile --stage staging --stage fabricate
+wbuild run hello --stage=compile
+wbuild run hello --stage=compile --stage=staging --stage=fabricate
 ```
 
 The build directory (`/var/tmp/wright-build/<name>-<version>/`) is preserved
@@ -102,13 +102,13 @@ ordering comes from the dependency graph in each plan.
 wbuild run @core                # build all plans in the "core" assembly
 wbuild run @core @devel         # combine multiple assemblies
 wbuild run -i @qemu             # build and install the requested plans
-wbuild run -i --deps sync @qemu # also sync missing/outdated upstream deps
+wbuild run -i --deps=sync @qemu # also sync missing/outdated upstream deps
 ```
 
 By default, `wbuild run` builds only the listed plans. Use `--deps` to expand
 upstream dependencies explicitly: bare `--deps` means `missing`,
-`--deps sync` adds installed dependencies whose epoch/version/release differs
-from the current `plan.toml`, and `--deps all` rebuilds the full upstream chain.
+`--deps=sync` adds installed dependencies whose epoch/version/release differs
+from the current `plan.toml`, and `--deps=all` rebuilds the full upstream chain.
 
 ---
 
@@ -156,8 +156,8 @@ Sources tell `wright` where to look for parts. The default
 are managed via `wrepo source`:
 
 ```bash
-wrepo source add local --path /srv/wright/repo
-wrepo source add cache --path ./repo --priority 200
+wrepo source add local --path=/srv/wright/repo
+wrepo source add cache --path=./repo --priority=200
 wrepo source list
 wrepo source remove local
 ```
@@ -181,7 +181,7 @@ wright install curl                                    # by name (resolved from 
 wright install @base                                   # all parts in a kit
 wright install @base @devel curl                       # mix kits and named parts
 wright upgrade gcc                                     # upgrade to latest available version
-wright upgrade gcc --version 14.2.0                    # switch to a specific version
+wright upgrade gcc --version=14.2.0                    # switch to a specific version
 wright upgrade curl-8.18.0-1-x86_64.wright.tar.zst    # upgrade from a file
 wright sysupgrade                                      # upgrade everything to latest
 ```
@@ -278,7 +278,7 @@ wbuild run @core @devel
 wrepo sync
 
 # Developer machine (one-time setup)
-wrepo source add team --path /mnt/nfs/wright-components
+wrepo source add team --path=/mnt/nfs/wright-components
 
 # Developer machine (daily use)
 wright install @base

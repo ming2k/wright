@@ -859,7 +859,7 @@ Version comparison uses segment-based ordering: versions are split on `.` and `-
 
 ```
 wbuild run <plan_or_name>                   # Build the specified plan
-wbuild run <plan_or_name> --stage <s>       # Execute selected lifecycle stages
+wbuild run <plan_or_name> --stage=<s>       # Execute selected lifecycle stages
 wbuild run --clean <plan_or_name>           # Clean build directory before building
 wbuild check <plan_or_name>                 # Validate plan.toml syntax and logic
 wbuild run --clean --force <plan_or_name>   # Clean + force rebuild
