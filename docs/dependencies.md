@@ -65,9 +65,10 @@ This rebuild behavior does not make `link` an implicit runtime dependency. Runti
 **Dependency Cycles and MVP Builds**
 If Wright detects a dependency cycle, it tries to resolve it in a user-friendly way.
 
-- If the part declares `mvp.dependencies` in `plan.toml`, Wright performs a two-pass build.
+- If the part declares `mvp.dependencies` inline in `plan.toml` or via a
+  sibling `mvp.toml`, Wright performs a two-pass build.
 - The first pass is an **MVP build** (tagged `[MVP]` in the Construction Plan).
-  It excludes the dependencies listed in `mvp.dependencies`.
+  It excludes the dependencies listed in that MVP override.
 - The second pass is a full build, forced to rebuild even if a partial archive exists.
 
 This results in two builds for that part:

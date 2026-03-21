@@ -305,8 +305,8 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
                 return Err(WrightError::BuildError(format!(
                     "Dependency cycle cannot be automatically resolved.\n\
                      Cycle: {}\n\
-                     Add '[mvp.dependencies]' in one of these plans to declare \
-                     an acyclic MVP dependency set.",
+                     Add inline '[mvp.dependencies]' or a sibling 'mvp.toml' in one of these \
+                     plans to declare an acyclic MVP dependency set.",
                     cycle_display
                 )));
             }

@@ -174,8 +174,8 @@ pub enum Commands {
         )]
         dependents: Option<DependentsMode>,
 
-        /// Build using the MVP dependency set from [mvp.dependencies] without
-        /// requiring a dependency cycle to trigger it
+        /// Build using the MVP dependency set from inline [mvp.dependencies]
+        /// or sibling mvp.toml without requiring a dependency cycle to trigger it
         #[arg(long)]
         mvp: bool,
     },
