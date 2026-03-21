@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-03-21
+
+### Changes
+- **Log style unification**: remove bracket labels from all log output, use lowercase natural-language action labels (`build`, `relink`, `rebuild`, `build:mvp`, `build:full`) with depth annotations in the scheduling plan.
+- **SendError panic fix**: gracefully handle dropped channel receiver when a build fails, preventing worker thread panics on early exit.
+
 ## [1.8.2] - 2026-03-21
 
 ### Changes
