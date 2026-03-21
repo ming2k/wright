@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-03-21
+
+### Breaking Changes
+- **Origin enum replaces install_reason**: the `install_reason` database column and field have been replaced by a typed `Origin` enum with three variants: `manual` (user ran `wright install`), `build` (installed via `wbuild -i`), and `dependency` (auto-resolved). The DB column is renamed from `install_reason` to `origin`. Run `tools/migrate_origin.py` to migrate existing databases.
+
+### Changes
+- **Promotion rules**: origin can only be promoted upward (`dependency → build → manual`), never downgraded. `wbuild -i` no longer overwrites a `manual` origin.
+- **`wbuild run --resume`**: add `--resume` flag to skip parts that were already successfully built and installed in a previous session.
+
 ## [1.9.0] - 2026-03-21
 
 ### Breaking Changes
