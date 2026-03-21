@@ -203,7 +203,7 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, and .zip
+/// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, .tar.lz, and .zip
 pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     let filename = archive_path
         .file_name()
@@ -218,6 +218,8 @@ pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         extract_tar_xz(archive_path, dest_dir)
     } else if filename.ends_with(".tar.bz2") {
         extract_tar_bz2(archive_path, dest_dir)
+    } else if filename.ends_with(".tar.lz") {
+        extract_tar_lz(archive_path, dest_dir)
     } else if filename.ends_with(".zip") {
         extract_zip(archive_path, dest_dir)
     } else {
@@ -250,6 +252,15 @@ pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     use xz2::read::XzDecoder;
     let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
     let decoder = XzDecoder::new(file);
+    let archive = tar::Archive::new(decoder);
+    unpack_tar_safely(archive, dest_dir)?;
+    Ok(())
+}
+
+pub fn extract_tar_lz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+    use lzma_rust::LzipReader;
+    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
+    let decoder = LzipReader::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
     Ok(())
@@ -524,6 +535,26 @@ mod tests {
         let dest = tempfile::tempdir().unwrap();
 
         let result = extract_tar_bz2(archive.path(), dest.path());
+        assert!(result.is_err());
+    }
+
+    fn create_tar_lz_with_path(path: &str) -> tempfile::NamedTempFile {
+        use lzma_rust::LzipWriter;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let file = std::fs::File::create(tmp.path()).unwrap();
+        let mut encoder = LzipWriter::new(file, Default::default());
+        let tar = build_raw_tar(path, b"evil");
+        encoder.write_all(&tar).unwrap();
+        encoder.finish().unwrap();
+        tmp
+    }
+
+    #[test]
+    fn test_extract_lz_rejects_parent_dir_paths() {
+        let archive = create_tar_lz_with_path("../evil.txt");
+        let dest = tempfile::tempdir().unwrap();
+
+        let result = extract_tar_lz(archive.path(), dest.path());
         assert!(result.is_err());
     }
 }

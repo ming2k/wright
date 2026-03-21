@@ -28,6 +28,7 @@ zstd = "0.13"
 flate2 = "1.0"
 bzip2 = { version = "0.5", features = ["static"] }
 xz2 = "0.1"
+lzma-rust = { version = "0.16", package = "lzma-rust2" }
 zip = "2"
 walkdir = "2"
 tempfile = "3"

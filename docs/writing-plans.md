@@ -130,7 +130,7 @@ sha256 = "SKIP"
 
 #### Archive vs non-archive URIs
 
-- URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.zip`) are extracted to the source directory during the `extract` stage.
+- URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are extracted to the source directory during the `extract` stage.
 - Non-archive URIs (patches, config files, scripts, etc.) are copied to `${FILES_DIR}` where lifecycle scripts can access them.
 
 #### Git sources

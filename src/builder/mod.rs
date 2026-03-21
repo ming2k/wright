@@ -72,6 +72,7 @@ fn is_archive(filename: &str) -> bool {
         || filename.ends_with(".tar.xz")
         || filename.ends_with(".tar.bz2")
         || filename.ends_with(".tar.zst")
+        || filename.ends_with(".tar.lz")
         || filename.ends_with(".zip")
 }
 
