@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-03-21
+
+### Changes
+- **Construction Plan logging cleanup**: unify plan labels around scheduled actions (`[BUILD]`, `[RELINK]`, `[REBUILD]`, `[BUILD:MVP]`, `[BUILD:FULL]`) and present the plan in stable dependency order.
+- **Build log wording alignment**: separate explanatory `INFO` logs from the plan summary so dependency expansion, cycle resolution, and MVP execution messages use consistent scheduling language.
+
 ## [1.8.1] - 2026-03-21
 
 ### Changes
