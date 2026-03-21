@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-03-21
+
+### Changes
+- **MVP documentation and messaging**: update error messages, CLI help, and docs to mention sibling `mvp.toml` as an alternative to inline `[mvp.dependencies]` for declaring acyclic MVP dependency sets.
+
 ## [1.8.0] - 2026-03-18
 
 ### Breaking Changes
