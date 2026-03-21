@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-03-21
+
+### Breaking Changes
+- **Merge `wbuild deps` into `wbuild resolve --tree`**: the `wbuild deps` subcommand has been removed. Use `wbuild resolve <TARGET> --tree` (with optional `--depth=<N>`) for static dependency tree visualization from hold-tree `plan.toml` files. The `--tree` flag is incompatible with `--self`, `--deps`, and `--dependents`.
+
 ## [1.8.3] - 2026-03-21
 
 ### Changes
