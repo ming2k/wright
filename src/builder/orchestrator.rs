@@ -182,13 +182,16 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
     // --- Build Plan Summary ---
     if !opts.quiet {
-        eprintln!("Construction Plan:");
-        for name in construction_plan_order(&graph.build_set, &graph.deps_map) {
+        for (name, depth) in construction_plan_order(&graph.build_set, &graph.deps_map) {
             let label =
                 construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
-            eprintln!("  {: <15} {}", label, name.trim_end_matches(":bootstrap"));
+            info!(
+                "Scheduling {} (depth {}): {}",
+                label,
+                depth,
+                name.trim_end_matches(":bootstrap"),
+            );
         }
-        eprintln!();
     }
 
     // Derive the set of user-specified target names (for install_reason tracking).
@@ -543,7 +546,7 @@ fn installed_matches_manifest(
 fn construction_plan_order(
     build_set: &HashSet<String>,
     deps_map: &HashMap<String, Vec<String>>,
-) -> Vec<String> {
+) -> Vec<(String, usize)> {
     let mut indegree: HashMap<String, usize> = build_set
         .iter()
         .map(|name| (name.clone(), 0usize))
@@ -564,22 +567,29 @@ fn construction_plan_order(
         }
     }
 
+    let mut depth_map: HashMap<String, usize> = HashMap::new();
     let mut ready = VecDeque::from({
         let mut nodes: Vec<_> = indegree
             .iter()
             .filter_map(|(name, degree)| (*degree == 0).then_some(name.clone()))
             .collect();
         nodes.sort();
+        for n in &nodes {
+            depth_map.insert(n.clone(), 0);
+        }
         nodes
     });
     let mut ordered = Vec::with_capacity(build_set.len());
 
     while let Some(name) = ready.pop_front() {
-        ordered.push(name.clone());
+        let my_depth = depth_map[&name];
+        ordered.push((name.clone(), my_depth));
 
         let mut next_ready = Vec::new();
         if let Some(children) = dependents.get(&name) {
             for child in children {
+                let child_depth = depth_map.entry(child.clone()).or_insert(0);
+                *child_depth = (*child_depth).max(my_depth + 1);
                 let degree = indegree.get_mut(child).unwrap();
                 *degree -= 1;
                 if *degree == 0 {
@@ -594,14 +604,16 @@ fn construction_plan_order(
     }
 
     if ordered.len() != build_set.len() {
-        let ordered_set: HashSet<_> = ordered.iter().cloned().collect();
+        let ordered_set: HashSet<_> = ordered.iter().map(|(n, _)| n.clone()).collect();
         let mut remaining: Vec<_> = build_set
             .iter()
             .filter(|name| !ordered_set.contains(*name))
             .cloned()
             .collect();
         remaining.sort();
-        ordered.extend(remaining);
+        for name in remaining {
+            ordered.push((name, 0));
+        }
     }
 
     ordered
@@ -618,14 +630,14 @@ fn construction_plan_label(
         !is_bootstrap_task && build_set.contains(&format!("{}:bootstrap", name));
 
     if is_bootstrap_task || opts.mvp {
-        "[BUILD:MVP]"
+        "build:mvp"
     } else if is_full_after_bootstrap {
-        "[BUILD:FULL]"
+        "build:full"
     } else {
         match rebuild_reasons.get(name) {
-            Some(RebuildReason::LinkDependency) => "[RELINK]",
-            Some(RebuildReason::Transitive) => "[REBUILD]",
-            Some(RebuildReason::Explicit) | None => "[BUILD]",
+            Some(RebuildReason::LinkDependency) => "relink",
+            Some(RebuildReason::Transitive) => "rebuild",
+            Some(RebuildReason::Explicit) | None => "build",
         }
     }
 }
@@ -826,10 +838,10 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
         assert_eq!(
             ordered,
             vec![
-                "librsvg:bootstrap".to_string(),
-                "pcre2".to_string(),
-                "gdk-pixbuf".to_string(),
-                "librsvg".to_string(),
+                ("librsvg:bootstrap".to_string(), 0),
+                ("pcre2".to_string(), 0),
+                ("gdk-pixbuf".to_string(), 1),
+                ("librsvg".to_string(), 2),
             ]
         );
     }
@@ -850,27 +862,27 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
 
         assert_eq!(
             construction_plan_label("librsvg:bootstrap", &build_set, &reasons, &opts),
-            "[BUILD:MVP]"
+            "build:mvp"
         );
         assert_eq!(
             construction_plan_label("librsvg", &build_set, &reasons, &opts),
-            "[BUILD:FULL]"
+            "build:full"
         );
         assert_eq!(
             construction_plan_label("pcre2", &HashSet::new(), &reasons, &opts),
-            "[BUILD]"
+            "build"
         );
         assert_eq!(
             construction_plan_label("gtk4", &HashSet::new(), &reasons, &opts),
-            "[RELINK]"
+            "relink"
         );
         assert_eq!(
             construction_plan_label("vala", &HashSet::new(), &reasons, &opts),
-            "[REBUILD]"
+            "rebuild"
         );
         assert_eq!(
             construction_plan_label("freetype", &HashSet::new(), &HashMap::new(), &mvp_opts),
-            "[BUILD:MVP]"
+            "build:mvp"
         );
     }
 }
@@ -1151,7 +1163,7 @@ fn execute_builds(
                 Some(share as u32)
             };
 
-            info!("[dockyard {}] {}", active_dockyards, name);
+            info!("Dockyard {} started: {}", active_dockyards, name);
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -1192,7 +1204,7 @@ fn execute_builds(
                 let manifest = match PlanManifest::from_file(&path) {
                     Ok(m) => m,
                     Err(e) => {
-                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                        let _ = tx_clone.send(Err((name_clone, e.into())));
                         return;
                     }
                 };
@@ -1237,7 +1249,7 @@ fn execute_builds(
                                         reason,
                                     ) {
                                         error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
-                                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                                        let _ = tx_clone.send(Err((name_clone, e.into())));
                                         return;
                                     }
 
@@ -1276,16 +1288,16 @@ fn execute_builds(
                                         "Failed to open database for automatic installation: {:#}",
                                         e
                                     );
-                                    tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                                    let _ = tx_clone.send(Err((name_clone, e.into())));
                                     return;
                                 }
                             }
                         }
-                        tx_clone.send(Ok(name_clone)).unwrap();
+                        let _ = tx_clone.send(Ok(name_clone));
                     }
                     Err(e) => {
                         error!("Failed to process {}: {:#}", name_clone, e);
-                        tx_clone.send(Err((name_clone, e.into()))).unwrap();
+                        let _ = tx_clone.send(Err((name_clone, e.into())));
                     }
                 }
             });
@@ -1333,7 +1345,7 @@ fn execute_builds(
                 in_progress.lock().unwrap().remove(&name);
                 completed.lock().unwrap().insert(name.clone());
                 if !opts.quiet {
-                    info!("[done] {}", name);
+                    info!("Completed: {}", name);
                 }
             }
             Ok(Err((name, _))) => {
@@ -1520,19 +1532,19 @@ fn build_one(
         }
         if !bootstrap_excl.is_empty() {
             info!(
-                "Executing [BUILD:MVP] for '{}' (excluding: {})",
+                "Executing mvp pass for {} without {}",
                 manifest.plan.name,
                 bootstrap_excl.join(", ")
             );
         } else {
-            info!("Executing [BUILD:MVP] for '{}'", manifest.plan.name);
+            info!("Executing mvp pass for {}", manifest.plan.name);
         }
     }
 
     if !extra_env.contains_key("WRIGHT_BUILD_PHASE") {
         extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
     }
-    info!("Manufacturing part {}...", manifest.plan.name);
+    info!("Manufacturing part {}", manifest.plan.name);
     let plan_dir = manifest_path.parent().unwrap().to_path_buf();
     let result = builder.build(
         manifest,

@@ -51,12 +51,13 @@ Plans are loaded from `plans_dir` (default: `/var/lib/wright/plans`). For
 non-root setups, override `plans_dir` to a writable user-owned path. You can
 also pass a path directly.
 
-Before building, wbuild displays a **Construction Plan** showing what will be
-built in dependency order:
+Before building, wbuild logs a scheduling plan showing what will be built
+in dependency order. Each entry includes an action label and its depth in
+the dependency graph:
 
-- `[BUILD]`: The target you requested, or a dependency that was added to complete the plan.
-- `[RELINK]`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
-- `[REBUILD]`: Transitive rebuilds requested via `--dependents=all`.
+- `build`: The target you requested, or a dependency that was added to complete the plan.
+- `relink`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
+- `rebuild`: Transitive rebuilds requested via `--dependents=all`.
 
 ### Build and Install (shortcut)
 

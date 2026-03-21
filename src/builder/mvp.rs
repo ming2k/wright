@@ -344,7 +344,7 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         }
 
         info!(
-            "Scheduling cycle resolution for '{}': [BUILD:MVP] without [{}], then [BUILD:FULL]",
+            "Scheduling cycle resolution for {}: build:mvp without {}, then build:full",
             pkg,
             excl.join(", ")
         );

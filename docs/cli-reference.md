@@ -346,11 +346,11 @@ Before building, `wbuild run` displays a **Construction Plan** listing all parts
 
 | Label | Meaning |
 |-------|---------:|
-| `[BUILD]` | Normal build for an explicitly requested target or an added dependency |
-| `[RELINK]` | Rebuild triggered because a `link` dependency changed |
-| `[REBUILD]` | Rebuild triggered transitively via `--dependents=all` |
-| `[BUILD:MVP]` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
-| `[BUILD:FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
+| `build` | Normal build for an explicitly requested target or an added dependency |
+| `relink` | Rebuild triggered because a `link` dependency changed |
+| `rebuild` | Rebuild triggered transitively via `--dependents=all` |
+| `build:mvp` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
+| `build:full` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
 See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
 

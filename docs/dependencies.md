@@ -53,28 +53,29 @@ This behavior keeps ABI-sensitive chains correct without forcing expensive rebui
 
 This rebuild behavior does not make `link` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
 
-**Construction Plan Labels**
-`wbuild run` prints a Construction Plan. Each entry is labeled by the action that will be taken.
+**Scheduling Labels**
+`wbuild run` logs a scheduling plan before building. Each entry includes an
+action label and its depth in the dependency graph:
 
-- `[BUILD]`: Normal build for an explicitly requested target or an added dependency.
-- `[RELINK]`: Rebuilt because a `link` dependency changed.
-- `[REBUILD]`: Rebuilt because of `--dependents=all` transitive expansion.
-- `[BUILD:MVP]`: Bootstrap build used to break a dependency cycle.
-- `[BUILD:FULL]`: Full build after an MVP bootstrap.
+- `build`: Normal build for an explicitly requested target or an added dependency.
+- `relink`: Rebuilt because a `link` dependency changed.
+- `rebuild`: Rebuilt because of `--dependents=all` transitive expansion.
+- `build:mvp`: Bootstrap build used to break a dependency cycle.
+- `build:full`: Full build after an MVP bootstrap.
 
 **Dependency Cycles and MVP Builds**
 If Wright detects a dependency cycle, it tries to resolve it in a user-friendly way.
 
 - If the part declares `mvp.dependencies` inline in `plan.toml` or via a
   sibling `mvp.toml`, Wright performs a two-pass build.
-- The first pass is an **MVP build** (tagged `[BUILD:MVP]` in the Construction Plan).
+- The first pass is an **MVP build** (labeled `build:mvp` in the scheduling log).
   It excludes the dependencies listed in that MVP override.
 - The second pass is a full build, forced to rebuild even if a partial archive exists.
 
-This results in two builds for that part:
+This results in two scheduled entries for that part:
 
-- `pkg` tagged `[BUILD:MVP]`
-- `pkg` tagged `[BUILD:FULL]`
+- `build:mvp` — first pass with reduced dependencies
+- `build:full` — second pass with all dependencies
 
 If no MVP definition exists, Wright stops and reports the cycle.
 

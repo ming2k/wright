@@ -540,22 +540,20 @@ fragile shell conditionals.
 
 ### Construction Plan output
 
-When a cycle is resolved, the plan summary shows the two-pass schedule:
+When a cycle is resolved, the scheduling log shows the two-pass schedule:
 
 ```
-Construction Plan:
-  [BUILD:MVP]     freetype
-  [BUILD]         harfbuzz
-  [BUILD:FULL]    freetype
+INFO Scheduling build:mvp (depth 0): freetype
+INFO Scheduling build (depth 0): harfbuzz
+INFO Scheduling build:full (depth 1): freetype
 ```
 
-`[BUILD:MVP]` is the first pass (incomplete). `[BUILD:FULL]` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
+`build:mvp` is the first pass (incomplete). `build:full` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
 
-When `--mvp` is used explicitly, all targets show `[BUILD:MVP]` — no `[BUILD:FULL]` pass follows:
+When `--mvp` is used explicitly, all targets show `build:mvp` — no `build:full` pass follows:
 
 ```
-Construction Plan:
-  [BUILD:MVP]     freetype
+INFO Scheduling build:mvp (depth 0): freetype
 ```
 
 ### Dependency type classification comes first

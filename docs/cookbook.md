@@ -199,10 +199,9 @@ build = ["binutils", "glibc"]          # MVP: build without gcc in deps
 Wright detects the cycle automatically and schedules:
 
 ```
-Construction Plan:
-  [BUILD:MVP]    gcc          ← first pass, no gcc dep
-  [BUILD]        binutils
-  [BUILD:FULL]   gcc          ← second pass, full deps
+INFO Scheduling build:mvp (depth 0): gcc       ← first pass, no gcc dep
+INFO Scheduling build (depth 0): binutils
+INFO Scheduling build:full (depth 1): gcc       ← second pass, full deps
 ```
 
 To test the MVP pass explicitly without a cycle present:
@@ -251,8 +250,7 @@ A library's ABI changed. Rebuild everything that links against it:
 wbuild run libfoo --self --dependents
 ```
 
-The scheduler labels affected parts as `[RELINK]` in the Construction
-Plan. To also catch runtime and build dependents (full reverse cascade):
+The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
 wbuild run libfoo --self --dependents=all --depth=0
