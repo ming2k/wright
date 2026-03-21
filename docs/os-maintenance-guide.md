@@ -41,27 +41,27 @@ This pessimistic policy is intentionally conservative to reduce ABI and integrat
 Build the changed part and force a full downstream cascade:
 
 ```bash
-wbuild run <changed-part> --self --dependents=all --depth=0
+wbuild resolve <changed-part> --self --dependents=all --depth=0 | wbuild run --force
 ```
 
 Build + install in one pass:
 
 ```bash
-wbuild run <changed-part> --self --dependents=all --depth=0 --install
+wbuild resolve <changed-part> --self --dependents=all --depth=0 | wbuild run --force -i
 ```
 
 When you also want a deep upstream refresh, include dependency force-rebuild:
 
 ```bash
-wbuild run <changed-part> --self --deps=all --dependents=all --depth=0 --install
+wbuild resolve <changed-part> --self --deps=all --dependents=all --depth=0 | wbuild run --force -i
 ```
 
 ## 4. Practical Workflow
 
 1. Choose the user-facing part you actually want to improve.
 2. Update its plan/version/source as needed.
-3. Run conservative rebuild with `--self --dependents` first; switch to `--dependents=all --depth=0` only when the change is broader than link-ABI impact.
-4. Install artifacts (`--install`) if this is a live system update.
+3. Run conservative rebuild with `wbuild resolve <part> --self --dependents | wbuild run --force -i` first; switch to `--dependents=all --depth=0` only when the change is broader than link-ABI impact.
+4. Install artifacts (`-i`) if this is a live system update.
 5. Run health checks:
 
 ```bash

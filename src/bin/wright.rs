@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -222,7 +223,19 @@ fn main() -> Result<()> {
             recursive,
             cascade,
         } => {
-            for name in &parts {
+            let batch_targets: HashSet<String> = if recursive {
+                HashSet::new()
+            } else {
+                parts.iter().cloned().collect()
+            };
+            let removal_order = if recursive {
+                parts.clone()
+            } else {
+                transaction::order_removal_batch(&db, &parts)
+                    .context("failed to plan removal order")?
+            };
+
+            for name in &removal_order {
                 if recursive {
                     let dependents = db
                         .get_recursive_dependents(name)
@@ -263,7 +276,24 @@ fn main() -> Result<()> {
                     Vec::new()
                 };
 
-                match transaction::remove_part(&db, name, &root_dir, force || recursive) {
+                let result = if recursive {
+                    transaction::remove_part(&db, name, &root_dir, force || recursive)
+                } else {
+                    let ignored_dependents: HashSet<String> = batch_targets
+                        .iter()
+                        .filter(|candidate| candidate.as_str() != name)
+                        .cloned()
+                        .collect();
+                    transaction::remove_part_with_ignored_dependents(
+                        &db,
+                        name,
+                        &root_dir,
+                        force,
+                        &ignored_dependents,
+                    )
+                };
+
+                match result {
                     Ok(()) => println!("removed: {}", name),
                     Err(e) => {
                         eprintln!("error removing {}: {}", name, e);

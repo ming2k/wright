@@ -57,7 +57,7 @@ the dependency graph:
 
 - `build`: The target you requested, or a dependency that was added to complete the plan.
 - `relink`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
-- `rebuild`: Transitive rebuilds requested via `--dependents=all`.
+- `rebuild`: Transitive rebuilds (from `wbuild resolve --dependents=all`).
 
 ### Build and Install (shortcut)
 
@@ -65,8 +65,8 @@ The `--install` (`-i`) flag bypasses the index step — each part is
 installed immediately after a successful build:
 
 ```bash
-wbuild run -i curl                  # build and install in one step
-wbuild run -i --deps=sync @qemu     # build assembly and sync missing/outdated deps
+wbuild run -i curl                                       # build and install in one step
+wbuild resolve @qemu --self --deps=sync | wbuild run -i  # build assembly and sync deps
 ```
 
 This is the fastest path for single-part iteration. For batch workflows
@@ -291,9 +291,7 @@ wright sysupgrade
 When a core library changes, rebuild it and everything that links against it:
 
 ```bash
-wbuild run openssl --self --dependents   # rebuild openssl + link dependents
-wrepo sync                               # re-index
-wright sysupgrade                        # upgrade all affected parts
+wbuild resolve openssl --self --dependents | wbuild run --force -i  # rebuild + install
 ```
 
 ---

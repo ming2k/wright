@@ -236,7 +236,7 @@ wbuild run gtk4 --deps
 Build everything — deps, the part, and downstream link dependents:
 
 ```bash
-wbuild run gtk4 --self --deps --dependents
+wbuild resolve gtk4 --self --deps --dependents | wbuild run -i
 ```
 
 ---
@@ -246,20 +246,20 @@ wbuild run gtk4 --self --deps --dependents
 A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
-# Update the library, then cascade to all link dependents
-wbuild run libfoo --self --dependents
+# Update the library, then cascade to all installed link dependents
+wbuild resolve libfoo --self --dependents | wbuild run --force -i
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wbuild run libfoo --self --dependents=all --depth=0
+wbuild resolve libfoo --self --dependents=all --depth=0 | wbuild run --force -i
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wbuild run libfoo --self --dependents --depth=2
+wbuild resolve libfoo --self --dependents --depth=2 | wbuild run --force -i
 ```
 
 ---
@@ -325,13 +325,13 @@ wright install pcre-8.45-1-x86_64.wright.tar.zst
 Print the full build-time dependency tree for a plan:
 
 ```bash
-wbuild deps gtk4
+wbuild resolve gtk4 --tree
 ```
 
 Limit depth:
 
 ```bash
-wbuild deps gtk4 --depth=2
+wbuild resolve gtk4 --tree --depth=2
 ```
 
 ---

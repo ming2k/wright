@@ -539,32 +539,27 @@ pub fn install_part_with_reason(
 /// By default, removal is denied if other installed parts depend on this one.
 /// Use `force` to override this check.
 pub fn remove_part(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
+    remove_part_with_ignored_dependents(db, name, root_dir, force, &HashSet::new())
+}
+
+/// Remove an installed part while treating `ignored_dependents` as part of the
+/// same removal batch.
+pub fn remove_part_with_ignored_dependents(
+    db: &Database,
+    name: &str,
+    root_dir: &Path,
+    force: bool,
+    ignored_dependents: &HashSet<String>,
+) -> Result<()> {
     let pkg = db
         .get_part(name)?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
     // Check if other parts depend on this one (by name or via provides)
-    let mut dependents = db.get_dependents(name)?;
+    let mut dependents = collect_removal_dependents(db, &pkg, name, ignored_dependents)?;
 
-    // Also check virtual provides: if this part provides "foo" and someone
-    // depends on "foo", we need to block removal unless another provider exists.
-    let provides_list = db.get_provides(pkg.id)?;
-    for virtual_name in &provides_list {
-        let virtual_dependents = db.get_dependents(virtual_name)?;
-        for (dep_name, dep_type) in virtual_dependents {
-            // Check if another part also provides this virtual name
-            let other_providers: Vec<String> = db
-                .find_providers(virtual_name)?
-                .into_iter()
-                .filter(|p| p != name)
-                .collect();
-            if other_providers.is_empty() {
-                // This part is the last provider — block removal
-                if !dependents.iter().any(|(n, _)| n == &dep_name) {
-                    dependents.push((dep_name, dep_type));
-                }
-            }
-        }
+    if !ignored_dependents.is_empty() {
+        dependents.retain(|(dep_name, _)| !ignored_dependents.contains(dep_name));
     }
 
     if !dependents.is_empty() {
@@ -673,6 +668,102 @@ pub fn remove_part(db: &Database, name: &str, root_dir: &Path, force: bool) -> R
     db.update_transaction_status(tx_id, "completed")?;
 
     info!("Removed {}", name);
+    Ok(())
+}
+
+fn collect_removal_dependents(
+    db: &Database,
+    pkg: &crate::database::InstalledPart,
+    name: &str,
+    ignored_dependents: &HashSet<String>,
+) -> Result<Vec<(String, String)>> {
+    let mut dependents = db.get_dependents(name)?;
+
+    // Also check virtual provides: if this part provides "foo" and someone
+    // depends on "foo", we need to block removal unless another provider
+    // remains installed outside the same removal batch.
+    let provides_list = db.get_provides(pkg.id)?;
+    for virtual_name in &provides_list {
+        let virtual_dependents = db.get_dependents(virtual_name)?;
+        for (dep_name, dep_type) in virtual_dependents {
+            let remaining_providers: Vec<String> = db
+                .find_providers(virtual_name)?
+                .into_iter()
+                .filter(|p| p != name && !ignored_dependents.contains(p))
+                .collect();
+            if remaining_providers.is_empty()
+                && !dependents
+                    .iter()
+                    .any(|(existing_name, _)| existing_name == &dep_name)
+            {
+                dependents.push((dep_name, dep_type));
+            }
+        }
+    }
+
+    Ok(dependents)
+}
+
+/// Sort removal targets so dependents are removed before the parts they depend on.
+pub fn order_removal_batch(db: &Database, targets: &[String]) -> Result<Vec<String>> {
+    let target_set: HashSet<String> = targets.iter().cloned().collect();
+    let mut ordered = Vec::new();
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+
+    for name in targets {
+        visit_removal_target(
+            db,
+            name,
+            &target_set,
+            &mut visiting,
+            &mut visited,
+            &mut ordered,
+        )?;
+    }
+
+    Ok(ordered)
+}
+
+fn visit_removal_target(
+    db: &Database,
+    name: &str,
+    target_set: &HashSet<String>,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
+    ordered: &mut Vec<String>,
+) -> Result<()> {
+    if visited.contains(name) {
+        return Ok(());
+    }
+    if !visiting.insert(name.to_string()) {
+        return Ok(());
+    }
+
+    let pkg = db
+        .get_part(name)?
+        .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
+    let batch_ignored: HashSet<String> = target_set
+        .iter()
+        .filter(|candidate| candidate.as_str() != name)
+        .cloned()
+        .collect();
+    let dependents = collect_removal_dependents(db, &pkg, name, &batch_ignored)?;
+    let mut next: Vec<String> = dependents
+        .into_iter()
+        .map(|(dep_name, _)| dep_name)
+        .filter(|dep_name| target_set.contains(dep_name))
+        .collect();
+    next.sort();
+    next.dedup();
+
+    for dep_name in next {
+        visit_removal_target(db, &dep_name, target_set, visiting, visited, ordered)?;
+    }
+
+    visiting.remove(name);
+    visited.insert(name.to_string());
+    ordered.push(name.to_string());
     Ok(())
 }
 
@@ -1474,6 +1565,116 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let result = remove_part(&db, "nonexistent", root.path(), false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_with_ignored_dependents_allows_same_batch_targets() {
+        let (db, root) = setup_test();
+
+        let lib_id = db
+            .insert_part(NewPart {
+                name: "libfoo",
+                version: "1.0.0",
+                release: 1,
+                description: "libfoo",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
+        db.insert_files(
+            lib_id,
+            &[FileEntry {
+                path: "/usr/lib/libfoo.so".to_string(),
+                file_hash: None,
+                file_type: FileType::File,
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            }],
+        )
+        .unwrap();
+
+        let app_id = db
+            .insert_part(NewPart {
+                name: "app",
+                version: "1.0.0",
+                release: 1,
+                description: "app",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
+        db.insert_files(
+            app_id,
+            &[FileEntry {
+                path: "/usr/bin/app".to_string(),
+                file_hash: None,
+                file_type: FileType::File,
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            }],
+        )
+        .unwrap();
+        db.insert_dependencies(
+            app_id,
+            &[Dependency {
+                name: "libfoo".to_string(),
+                constraint: None,
+                dep_type: DepType::Link,
+            }],
+        )
+        .unwrap();
+
+        let err = remove_part(&db, "libfoo", root.path(), false).unwrap_err();
+        assert!(format!("{}", err).contains("Cannot remove 'libfoo'"));
+
+        let ignored = HashSet::from([String::from("app")]);
+        remove_part_with_ignored_dependents(&db, "libfoo", root.path(), false, &ignored).unwrap();
+        assert!(db.get_part("libfoo").unwrap().is_none());
+        assert!(db.get_part("app").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_order_removal_batch_removes_dependents_first() {
+        let db = Database::open_in_memory().unwrap();
+
+        db.insert_part(NewPart {
+            name: "libfoo",
+            version: "1.0.0",
+            release: 1,
+            description: "libfoo",
+            arch: "x86_64",
+            license: "MIT",
+            ..Default::default()
+        })
+        .unwrap();
+        let app_id = db
+            .insert_part(NewPart {
+                name: "app",
+                version: "1.0.0",
+                release: 1,
+                description: "app",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
+        db.insert_dependencies(
+            app_id,
+            &[Dependency {
+                name: "libfoo".to_string(),
+                constraint: None,
+                dep_type: DepType::Link,
+            }],
+        )
+        .unwrap();
+
+        let ordered =
+            order_removal_batch(&db, &[String::from("libfoo"), String::from("app")]).unwrap();
+        assert_eq!(ordered, vec!["app".to_string(), "libfoo".to_string()]);
     }
 
     #[test]

@@ -242,9 +242,58 @@ wbuild [OPTIONS] <COMMAND> [TARGETS]...
 
 ### Commands
 
+#### `wbuild resolve [TARGETS]...`
+
+Resolve targets and expand their dependency graph. Outputs plan names to stdout (one per line) for piping into `wbuild run`. Only installed dependents are considered when expanding downstream — uninstalled plans are skipped.
+
+| Flag | Description |
+|------|-------------|
+| `--self` (`-s`) | Include the listed targets themselves in the output |
+| `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` adds all upstream deps. Bare `--deps` defaults to `missing`. |
+| `--dependents[=<MODE>]` | Expand downstream dependents (installed only). Bare `--dependents` means `link`; `--dependents=all` also follows runtime and build dependents. |
+| `--depth=<N>` | Maximum expansion depth (0 = unlimited). Defaults to 1 for `--dependents`, unlimited for `--deps`. |
+| `--tree` (`-t`) | Show a visual dependency tree from hold-tree `plan.toml` files (static analysis). Incompatible with `--self`, `--deps`, `--dependents`. |
+
+| Flags used | Listed targets | Upstream deps | Downstream dependents |
+|------------|----------------|---------------|-----------------------|
+| `--self` | ✓ | ✗ | ✗ |
+| `--self --deps` | ✓ | `missing` | ✗ |
+| `--self --deps=sync` | ✓ | `missing + version mismatch` | ✗ |
+| `--dependents` | ✗ | ✗ | `link`, depth 1 |
+| `--self --dependents` | ✓ | ✗ | ✓ |
+| `--self --deps --dependents` | ✓ | `missing` | ✓ |
+
+**Examples:**
+
+```bash
+# List gtk4's missing upstream deps
+wbuild resolve gtk4 --self --deps
+
+# Sync upstream deps whose installed version differs from plan
+wbuild resolve gtk4 --self --deps=sync
+
+# Cascade to installed link-dependents, skip gtk4 itself
+wbuild resolve gtk4 --dependents
+
+# Full ABI cascade: gtk4 + all link-dependents, unlimited depth
+wbuild resolve gtk4 --self --dependents --depth=0
+
+# All edge types, unlimited depth
+wbuild resolve gtk4 --self --dependents=all --depth=0
+
+# All upstream deps including already-installed ones
+wbuild resolve gtk4 --self --deps=all
+
+# Show static dependency tree from plan.toml
+wbuild resolve gtk4 --tree
+
+# Limit tree depth
+wbuild resolve gtk4 --tree --depth=2
+```
+
 #### `wbuild run [TARGETS]...`
 
-Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Assemblies are non-dependent, combinatory groupings — multiple assemblies can be combined freely and overlapping plans are deduplicated. By default, `wbuild run` builds only the listed targets. Use `--deps=<MODE>` to expand upstream dependencies explicitly.
+Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assemblies`. Also reads targets from stdin when piped (one per line). `wbuild run` builds exactly the listed targets — use `wbuild resolve` to expand dependencies/dependents before piping in.
 
 | Flag | Description |
 |------|-------------|
@@ -252,70 +301,31 @@ Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assem
 | `--clean` | Clear the build cache entry, working directory, and source tree before starting. Without `--clean`, the source tree (`src/`) is preserved across builds when the build key is unchanged, enabling incremental compilation. `--clean` forces a full re-extraction and recompile. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only parts with no dependency relationship run simultaneously. Controls part-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
-| `--install` (`-i`) | Automatically install each built part after success. User-specified targets are marked `explicit`; auto-resolved dependencies are marked `dependency`. Upgrading an already-installed part preserves its existing install reason — use `wright install` to promote a dependency to explicit. |
+| `--install` (`-i`) | Automatically install each built part after success. |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
-
-##### Expansion scope
-
-These flags control **which extra parts** are added to the build set.
-
-| Flag | Description |
-|------|-------------|
-| `--self` (`-s`) | Include the listed targets themselves |
-| `--deps[=<MODE>]` (`-d`) | Expand upstream dependencies. `missing` adds absent deps, `sync` adds absent or version-mismatched deps, `all` rebuilds all upstream deps. Recommended form is `--deps=<MODE>`. Passing bare `--deps` defaults to `missing`. |
-| `--dependents[=<MODE>]` | Include downstream dependents. Bare `--dependents` means `link`; `--dependents=all` also follows runtime and build dependents. |
-
-| Flags used | Listed targets | Upstream deps | Downstream link cascade |
-|------------|----------------|---------------|------------------------|
-| (default) | ✓ | ✗ | ✗ |
-| `--self` | ✓ | ✗ | ✗ |
-| `--deps` | ✓ | `missing` | ✗ |
-| `--deps=sync` | ✓ | `missing + version mismatch` | ✗ |
-| `--dependents` | ✗ | ✗ | `link`, depth 1 by default |
-| `--self --dependents` | ✓ | ✗ | ✓ |
-| `--deps --dependents` | ✓ | `missing` | ✓ |
-
-##### Force-rebuild modifiers
-
-These flags widen rebuild scope beyond the default edge types.
-
-| Flag | What it does | Compared to its scope counterpart |
-|------|--------------|-----------------------------------|
-| `--dependents=all` | Rebuild ALL downstream dependents, not just link dependents | Like `--dependents` but also reaches runtime and build dependents |
-
-| Flag | `--depth=<N>` | Maximum expansion depth by real dependency-graph distance (0 = unlimited) |
-|------|---------------|----------------------------------------------------------------------|
-
-If omitted, reverse-dependent expansion defaults to `--depth=1`. Other expansion modes default to `--depth=0`.
 
 **Examples:**
 
 ```bash
-# Default: rebuild gtk4 only
+# Build gtk4 only
 wbuild run gtk4
 
-# Rebuild gtk4 and add missing upstream deps
-wbuild run gtk4 --deps
+# Build and install
+wbuild run gtk4 -i
 
-# Rebuild gtk4 and sync upstream deps whose installed version differs from plan.toml
-wbuild run gtk4 --deps=sync -i
+# Resolve deps, then build and install
+wbuild resolve gtk4 --self --deps=sync | wbuild run -i
 
-# gtk4 already updated — cascade rebuild to parts that link against it, skip gtk4 itself
-wbuild run gtk4 --dependents
+# Cascade rebuild: resolve dependents, then force-rebuild and install
+wbuild resolve gtk4 --self --dependents | wbuild run --force -i
 
-# gtk4 ABI changed, rebuild every dependent edge type recursively
-wbuild run gtk4 --dependents=all --depth=0
+# Full ABI cascade with unlimited depth
+wbuild resolve gtk4 --self --dependents=all --depth=0 | wbuild run --force -i
 
-# Rebuild gtk4 AND cascade to its link-dependents (full ABI rebuild)
-wbuild run gtk4 --self --dependents
+# Force-rebuild all upstream deps
+wbuild resolve gtk4 --self --deps=all | wbuild run --force -i
 
-# Everything: deps + self + cascade
-wbuild run gtk4 --deps --dependents
-
-# Force-rebuild gtk4 and ALL its deps, even installed ones (deep clean)
-wbuild run gtk4 --deps=all
-
-# Build freetype using its [mvp.dependencies] set (e.g. to test the MVP phase manually)
+# Build freetype using its [mvp.dependencies] set
 wbuild run freetype --mvp
 
 # MVP build, run only up to the configure stage
@@ -348,7 +358,7 @@ Before building, `wbuild run` displays a **Construction Plan** listing all parts
 |-------|---------:|
 | `build` | Normal build for an explicitly requested target or an added dependency |
 | `relink` | Rebuild triggered because a `link` dependency changed |
-| `rebuild` | Rebuild triggered transitively via `--dependents=all` |
+| `rebuild` | Rebuild triggered transitively via `wbuild resolve --dependents=all` |
 | `build:mvp` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
 | `build:full` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
@@ -361,14 +371,6 @@ Validate `plan.toml` files for syntax and logic errors. Also prints a dependency
 #### `wbuild fetch [TARGETS]...`
 
 Download and cache sources for the specified plans without building.
-
-#### `wbuild deps <TARGET>`
-
-Analyze the **static** dependency tree of a plan in the hold tree. Shows what *would* be built.
-
-| Flag | Description |
-|------|-------------|
-| `--depth=<N>` (`-d`) | Maximum tree depth by real dependency-graph distance (0 = unlimited, default: 0) |
 
 #### `wbuild checksum [TARGETS]...`
 

@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::io::{self, BufRead, IsTerminal};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use wright::builder::orchestrator::{self, BuildOptions, DependencyMode, DependentsMode};
+use wright::builder::orchestrator::{
+    self, BuildOptions, DependencyMode, DependentsMode, ResolveOptions,
+};
 use wright::cli::wbuild::{Cli, Commands, DependentsMode as DependentsModeArg, DepsMode};
 use wright::config::GlobalConfig;
 use wright::part::version;
@@ -59,28 +62,20 @@ fn main() -> Result<()> {
             force,
             dockyards,
             install,
-            depth,
-            include_self,
-            deps,
-            dependents,
             mvp,
         } => {
-            let deps_mode = match deps.unwrap_or(DepsMode::None) {
-                DepsMode::None => DependencyMode::None,
-                DepsMode::Missing => DependencyMode::Missing,
-                DepsMode::Sync => DependencyMode::Sync,
-                DepsMode::All => DependencyMode::All,
-            };
-            let dependents_mode = match dependents {
-                None => DependentsMode::None,
-                Some(DependentsModeArg::Link) => DependentsMode::Link,
-                Some(DependentsModeArg::All) => DependentsMode::All,
-            };
-            let effective_depth = match depth {
-                Some(value) => Some(value),
-                None if dependents_mode != DependentsMode::None => Some(1),
-                None => Some(0),
-            };
+            // Collect targets from command line args + stdin (when piped).
+            let mut all_targets = targets;
+            if !io::stdin().is_terminal() {
+                for line in io::stdin().lock().lines() {
+                    let line = line.context("failed to read target from stdin")?;
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        all_targets.push(trimmed);
+                    }
+                }
+            }
+
             // CLI --dockyards 0 means "use config default"; config dockyards 0 means auto-detect.
             let effective_dockyards = if dockyards != 0 {
                 dockyards
@@ -89,29 +84,96 @@ fn main() -> Result<()> {
             };
             Ok(orchestrator::run_build(
                 &config,
-                targets,
+                all_targets,
                 BuildOptions {
                     stages: stage,
                     fetch_only: false,
                     clean,
                     force,
                     dockyards: effective_dockyards,
-                    dependents_mode,
-                    deps_mode,
                     install,
-                    depth: effective_depth,
                     checksum: false,
                     lint: false,
                     skip_check,
                     verbose: cli.verbose > 0,
                     quiet: cli.quiet,
-                    include_self,
                     mvp,
                     // Config nproc_per_dockyard is a static override; None means the
                     // scheduler computes it dynamically as total_cpus / active_dockyards.
                     nproc_per_dockyard: config.build.nproc_per_dockyard,
                 },
             )?)
+        }
+        Commands::Resolve {
+            targets,
+            include_self,
+            deps,
+            dependents,
+            depth,
+            tree,
+        } => {
+            if tree {
+                let target = targets.into_iter().next().ok_or_else(|| {
+                    anyhow::anyhow!("--tree requires at least one target")
+                })?;
+                let effective_depth = match depth {
+                    Some(0) | None => usize::MAX,
+                    Some(d) => d,
+                };
+                let resolver = wright::builder::orchestrator::setup_resolver(&config)?;
+                let all_plans = resolver.get_all_plans()?;
+                println!(
+                    "Plan dependency tree for: {} (source: hold-tree plan.toml)",
+                    target
+                );
+                let stats = print_plan_tree(
+                    &target,
+                    &all_plans,
+                    "",
+                    1,
+                    effective_depth,
+                )?;
+                println!(
+                    "\n{} parts, max depth {}, {} repeated, {} cycles",
+                    stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
+                );
+                println!("\nSource: hold-tree plan.toml");
+                Ok(())
+            } else {
+                let deps_mode = match deps.unwrap_or(DepsMode::None) {
+                    DepsMode::None => DependencyMode::None,
+                    DepsMode::Missing => DependencyMode::Missing,
+                    DepsMode::Sync => DependencyMode::Sync,
+                    DepsMode::All => DependencyMode::All,
+                };
+                let dependents_mode = match dependents {
+                    None => DependentsMode::None,
+                    Some(DependentsModeArg::Link) => DependentsMode::Link,
+                    Some(DependentsModeArg::All) => DependentsMode::All,
+                };
+                let effective_depth = match depth {
+                    Some(value) => Some(value),
+                    None if dependents_mode != DependentsMode::None => Some(1),
+                    None => Some(0),
+                };
+
+                let names = orchestrator::resolve_build_set(
+                    &config,
+                    targets,
+                    ResolveOptions {
+                        deps_mode,
+                        dependents_mode,
+                        depth: effective_depth,
+                        include_self,
+                        install: false,
+                    },
+                )?;
+
+                for name in &names {
+                    println!("{}", name);
+                }
+                Ok(())
+            }
         }
         Commands::Check { targets } => Ok(orchestrator::run_build(
             &config,
@@ -137,29 +199,6 @@ fn main() -> Result<()> {
                 ..Default::default()
             },
         )?),
-        Commands::Deps { target, depth } => {
-            // Static analysis of plans in hold tree
-            let resolver = wright::builder::orchestrator::setup_resolver(&config)?;
-            let all_plans = resolver.get_all_plans()?;
-
-            println!(
-                "Plan dependency tree for: {} (source: hold-tree plan.toml)",
-                target
-            );
-            let stats = print_plan_tree(
-                &target,
-                &all_plans,
-                "",
-                1,
-                if depth == 0 { usize::MAX } else { depth },
-            )?;
-            println!(
-                "\n{} parts, max depth {}, {} repeated, {} cycles",
-                stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
-            );
-            println!("\nSource: hold-tree plan.toml");
-            Ok(())
-        }
     }
 }
 

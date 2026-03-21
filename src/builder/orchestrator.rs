@@ -39,6 +39,18 @@ pub enum DependentsMode {
     All,
 }
 
+/// Options for dependency/dependent resolution via `wbuild resolve`.
+#[derive(Debug, Clone, Default)]
+pub struct ResolveOptions {
+    pub deps_mode: DependencyMode,
+    pub dependents_mode: DependentsMode,
+    pub depth: Option<usize>,
+    /// Include the listed targets themselves in the output.
+    pub include_self: bool,
+    /// Whether to mark resolved deps for installation (affects install-reason tracking).
+    pub install: bool,
+}
+
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
@@ -57,14 +69,9 @@ pub struct BuildOptions {
     /// Only parts with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
     pub dockyards: usize,
-    pub dependents_mode: DependentsMode,
-    pub deps_mode: DependencyMode,
     pub install: bool,
-    pub depth: Option<usize>,
     pub verbose: bool,
     pub quiet: bool,
-    /// --self (-s): include the listed parts themselves in the build.
-    pub include_self: bool,
     /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
     pub mvp: bool,
     /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
@@ -84,20 +91,21 @@ impl BuildOptions {
     }
 }
 
-/// Run a multi-target build with dependency ordering and parallel execution.
-pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
+/// Resolve targets and expand their dependency graph according to the given options.
+/// Returns a list of plan names suitable for piping into `wbuild run`.
+pub fn resolve_build_set(
+    config: &GlobalConfig,
+    targets: Vec<String>,
+    opts: ResolveOptions,
+) -> Result<Vec<String>> {
     let resolver = setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
     let mut plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
-            "No targets specified to build.".to_string(),
+            "No targets specified to resolve.".to_string(),
         ));
-    }
-
-    if opts.lint {
-        return lint_dependency_graph(&plans_to_build, &all_plans);
     }
 
     let actual_max = {
@@ -109,26 +117,18 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         }
     };
 
-    // Determine effective scope.
-    // Default: build the listed targets only.
-    // Dependency expansion is opt-in via --deps <mode>.
-    // Reverse rebuilds remain opt-in via --dependents.
     let do_deps = opts.deps_mode != DependencyMode::None;
     let do_dependents = opts.dependents_mode != DependentsMode::None;
     let do_self = opts.include_self || !do_dependents || do_deps;
 
-    // Save the originally listed parts so we can optionally exclude them later.
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
-    // Use a scoped block to ensure the database handle (and its flock) is released
-    // before we start the parallel build/install process.
     {
         let db_path = config.general.db_path.clone();
         let db = Database::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
-        // 1a. Upward expansion: resolve upstream deps according to --deps mode.
-        if opts.is_build_op() && do_deps {
+        if do_deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
                 &all_plans,
@@ -138,33 +138,60 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
                 actual_max,
             )?;
         }
-    }
 
-    // 1c. Downward expansion: cascade link rebuilds to parts that depend on the targets.
-    let reasons = if opts.is_build_op() && do_dependents {
-        expand_rebuild_deps(
-            &mut plans_to_build,
-            &all_plans,
-            opts.dependents_mode == DependentsMode::All,
-            actual_max,
-        )?
-    } else {
-        plans_to_build
-            .iter()
-            .filter_map(|p| PlanManifest::from_file(p).ok())
-            .map(|m| (m.plan.name, RebuildReason::Explicit))
-            .collect()
-    };
-
-    // 1d. If --self was not requested, remove the originally-listed parts from the
-    //     build set. Their metadata was still used above to find deps/dependents.
-    if opts.is_build_op() && !do_self {
-        plans_to_build.retain(|p| !original_plans.contains(p));
-        if plans_to_build.is_empty() {
-            info!("Nothing to build: all requested deps/dependents are already satisfied.");
-            return Ok(());
+        if do_dependents {
+            let installed_names: HashSet<String> = db
+                .list_parts()
+                .context("failed to list installed parts for dependents filter")?
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+            expand_rebuild_deps(
+                &mut plans_to_build,
+                &all_plans,
+                opts.dependents_mode == DependentsMode::All,
+                actual_max,
+                &installed_names,
+            )?;
         }
     }
+
+    if !do_self {
+        plans_to_build.retain(|p| !original_plans.contains(p));
+    }
+
+    let names: Vec<String> = plans_to_build
+        .iter()
+        .filter_map(|p| PlanManifest::from_file(p).ok())
+        .map(|m| m.plan.name)
+        .collect();
+
+    Ok(names)
+}
+
+/// Run a multi-target build with dependency ordering and parallel execution.
+/// Targets are plan names, paths, or @assemblies — no dependency expansion is performed.
+/// Use `resolve_build_set` (via `wbuild resolve`) to expand deps/dependents before calling this.
+pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
+    let resolver = setup_resolver(config)?;
+    let all_plans = resolver.get_all_plans()?;
+    let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
+
+    if plans_to_build.is_empty() {
+        return Err(WrightError::BuildError(
+            "No targets specified to build.".to_string(),
+        ));
+    }
+
+    if opts.lint {
+        return lint_dependency_graph(&plans_to_build, &all_plans);
+    }
+
+    let reasons: HashMap<String, RebuildReason> = plans_to_build
+        .iter()
+        .filter_map(|p| PlanManifest::from_file(p).ok())
+        .map(|m| (m.plan.name, RebuildReason::Explicit))
+        .collect();
 
     // 2. Build dependency map
     let mut graph = build_dep_map(
@@ -194,8 +221,9 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         }
     }
 
-    // Derive the set of user-specified target names (for install_reason tracking).
-    let user_target_names: HashSet<String> = original_plans
+    // All targets passed to run_build are considered user-specified (for install_reason tracking).
+    // Dependency expansion (if any) was already handled by `wbuild resolve`.
+    let user_target_names: HashSet<String> = plans_to_build
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
         .map(|m| m.plan.name)
@@ -896,6 +924,7 @@ fn expand_rebuild_deps(
     all_plans: &HashMap<String, PathBuf>,
     rebuild_all: bool,
     max_depth: usize,
+    installed_names: &HashSet<String>,
 ) -> Result<HashMap<String, RebuildReason>> {
     let mut reasons = HashMap::new();
 
@@ -953,6 +982,11 @@ fn expand_rebuild_deps(
         let mut added = false;
         for (name, path) in &all_name_to_path {
             if rebuild_set.contains(name) {
+                continue;
+            }
+
+            // Only consider parts that are currently installed.
+            if !installed_names.contains(name) {
                 continue;
             }
 
