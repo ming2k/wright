@@ -177,7 +177,7 @@ wright install @base
 ### Assembly build with repo
 
 ```bash
-wbuild run -i --deps=sync @qemu # build and install, syncing missing/outdated deps
+wbuild resolve @qemu --self --deps=sync | wbuild run -i # build and install, syncing missing/outdated deps
 wrepo sync                      # update the index
 ```
 

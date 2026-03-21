@@ -223,14 +223,14 @@ wbuild check gcc binutils glibc
 Build a part and all of its missing upstream dependencies:
 
 ```bash
-# Default: build gtk4 + auto-resolve any missing build/link deps
-wbuild run gtk4
+# Resolve gtk4 plus any missing build/link deps, then build
+wbuild resolve gtk4 --self --deps | wbuild run
 ```
 
 Build only the missing deps, not gtk4 itself (pre-stage before the main build):
 
 ```bash
-wbuild run gtk4 --deps
+wbuild resolve gtk4 --deps | wbuild run
 ```
 
 Build everything — deps, the part, and downstream link dependents:
@@ -306,7 +306,7 @@ plans are deduplicated.
 wbuild run @base                    # build all plans in the "base" assembly
 wbuild run @base @devel mypackage   # combine assemblies and individual plans
 wbuild run -i @base                 # build and install the requested assembly
-wbuild run -i --deps=sync @base     # also sync missing/outdated upstream deps
+wbuild resolve @base --self --deps=sync | wbuild run -i # also sync missing/outdated upstream deps
 ```
 
 ---

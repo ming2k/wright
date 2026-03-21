@@ -103,13 +103,14 @@ ordering comes from the dependency graph in each plan.
 wbuild run @core                # build all plans in the "core" assembly
 wbuild run @core @devel         # combine multiple assemblies
 wbuild run -i @qemu             # build and install the requested plans
-wbuild run -i --deps=sync @qemu # also sync missing/outdated upstream deps
+wbuild resolve @qemu --self --deps=sync | wbuild run -i # also sync missing/outdated upstream deps
 ```
 
-By default, `wbuild run` builds only the listed plans. Use `--deps` to expand
-upstream dependencies explicitly: bare `--deps` means `missing`,
-`--deps=sync` adds installed dependencies whose epoch/version/release differs
-from the current `plan.toml`, and `--deps=all` rebuilds the full upstream chain.
+By default, `wbuild run` builds only the listed plans. Use `wbuild resolve`
+to expand upstream dependencies explicitly before piping targets into
+`wbuild run`: bare `--deps` means `missing`, `--deps=sync` adds installed
+dependencies whose epoch/version/release differs from the current
+`plan.toml`, and `--deps=all` rebuilds the full upstream chain.
 
 ---
 

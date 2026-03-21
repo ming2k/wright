@@ -22,25 +22,25 @@ Only `runtime` and part relations are serialized into binary part metadata used 
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
-**What `wbuild run` Does With Dependencies**
-`wbuild run` is the only command that performs dependency-driven expansion.
+**What `wbuild resolve` Does With Dependencies**
+`wbuild resolve` is the command that performs dependency-driven expansion.
 
-- It resolves your targets and prints a Construction Plan.
+- It resolves your targets and prints plan names for `wbuild run`.
 - It expands missing dependencies upward.
 - It can expand reverse rebuilds downward.
 
 **Upward Expansion: Missing Dependencies**
-By default, `wbuild run` builds only the listed targets. Add `--deps` when you
-want Wright to expand upstream dependencies from the hold tree.
+By default, `wbuild run` builds only the listed targets. Add `--deps` to
+`wbuild resolve` when you want Wright to expand upstream dependencies from the
+hold tree before building.
 
-- With `--deps` (or `--deps=missing`), missing `build` and `link` dependencies are added to the Construction Plan.
+- With `wbuild resolve --deps` (or `--deps=missing`), missing `build` and `link` dependencies are added to the output target set.
 - With `--deps=sync`, missing dependencies and installed dependencies whose epoch/version/release differs from `plan.toml` are added.
-- With `--install`, runtime dependencies are also considered while expanding upstream dependencies.
 - If the dependency is missing and no plan exists, the build fails with a clear error.
 
 With `--deps=all`, Wright expands more aggressively:
 
-- `build`, `link`, and `runtime` dependencies are added to the plan.
+- `build`, `link`, and `runtime` dependencies are added to the resolved target set.
 - This is useful for deep rebuilds when you want a clean, consistent dependency chain.
 
 **Downward Expansion: Reverse Rebuilds**
@@ -96,13 +96,13 @@ wbuild run -i curl
 Example: Build and install while syncing missing/outdated upstream dependencies.
 
 ```bash
-wbuild run -i --deps=sync curl
+wbuild resolve curl --self --deps=sync | wbuild run -i
 ```
 
 Example: Force a deep rebuild of dependencies.
 
 ```bash
-wbuild run openssl --deps=all
+wbuild resolve openssl --self --deps=all | wbuild run --force
 ```
 
 Example: Rebuild all reverse dependents (ABI-sensitive).

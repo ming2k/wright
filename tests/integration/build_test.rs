@@ -41,6 +41,7 @@ fn test_build_hello_fixture() {
             false,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -67,6 +68,7 @@ fn test_build_and_archive_hello() {
             &std::collections::HashMap::new(),
             false,
             false,
+            None,
             None,
             None,
         )
@@ -139,6 +141,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
             false,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -206,6 +209,7 @@ fn test_build_single_stage() {
             false,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -220,6 +224,7 @@ fn test_build_single_stage() {
             &std::collections::HashMap::new(),
             false,
             false,
+            None,
             None,
             None,
         )

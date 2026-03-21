@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use indicatif::ProgressBar;
 use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
@@ -52,6 +53,8 @@ pub struct LifecyclePipeline<'a> {
     /// compiles at a time, giving the active compile access to all capped
     /// CPU cores.
     compile_lock: Option<Arc<Mutex<()>>>,
+    /// Optional spinner for live stage progress (used in multi-dockyard builds).
+    progress: Option<ProgressBar>,
 }
 
 pub struct LifecycleContext<'a> {
@@ -76,6 +79,8 @@ pub struct LifecycleContext<'a> {
     /// Compile-stage semaphore: serializes compile stages across dockyards
     /// so the active compile gets exclusive access to all capped CPU cores.
     pub compile_lock: Option<Arc<Mutex<()>>>,
+    /// Optional spinner for live stage progress (used in multi-dockyard builds).
+    pub progress: Option<ProgressBar>,
 }
 
 impl<'a> LifecyclePipeline<'a> {
@@ -96,6 +101,7 @@ impl<'a> LifecyclePipeline<'a> {
             cpu_count: Cell::new(ctx.cpu_count),
             compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
+            progress: ctx.progress,
         }
     }
 
@@ -168,14 +174,21 @@ impl<'a> LifecyclePipeline<'a> {
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
             let pkg = &self.manifest.plan.name;
-            info!("{}: running stage: {}", pkg, stage_name);
+
+            if let Some(ref pb) = self.progress {
+                pb.set_message(stage_name.to_string());
+            } else {
+                info!("{}: running stage: {}", pkg, stage_name);
+            }
+
             self.run_stage(stage_name, stage)?;
-            info!(
-                "{}: stage {} finished in {:.1}s",
-                pkg,
-                stage_name,
-                t0.elapsed().as_secs_f64()
-            );
+
+            let elapsed = t0.elapsed().as_secs_f64();
+            if self.progress.is_some() {
+                debug!("{}: stage {} finished in {:.1}s", pkg, stage_name, elapsed);
+            } else {
+                info!("{}: stage {} finished in {:.1}s", pkg, stage_name, elapsed);
+            }
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
         }

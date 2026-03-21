@@ -119,7 +119,7 @@ from a layer are inherited from the layer below.
 | Use Case | Config | Cache | Database |
 |----------|--------|-------|----------|
 | **System (root)** | `/etc/wright/wright.toml` | `/var/lib/wright/cache` | `/var/lib/wright/db/parts.db` |
-| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `~/.local/state/wright/parts.db` |
+| **User (non-root)** | `~/.config/wright/wright.toml` | `~/.cache/wright` | `/var/lib/wright/db/parts.db` |
 
 ```toml
 [general]

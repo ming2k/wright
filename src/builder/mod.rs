@@ -208,6 +208,8 @@ impl Builder {
         // Compile-stage semaphore: when set, compile stages acquire this lock
         // so only one dockyard compiles at a time with full CPU access.
         compile_lock: Option<Arc<Mutex<()>>>,
+        // Optional spinner for live stage progress (multi-dockyard builds).
+        progress: Option<indicatif::ProgressBar>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
@@ -410,6 +412,7 @@ impl Builder {
             cpu_count: Some(cpu_count),
             compile_cpu_count: Some(total_cpus),
             compile_lock,
+            progress,
         });
 
         pipeline.run()?;

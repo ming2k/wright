@@ -38,6 +38,7 @@ fn build_hello_archive() -> PathBuf {
             false,
             None,
             None,
+            None,
         )
         .unwrap();
 

@@ -158,13 +158,11 @@ fn default_general() -> GeneralConfig {
         } else {
             default_cache_dir()
         },
-        db_path: if use_xdg {
-            get_xdg_state()
-                .unwrap_or_else(default_log_dir)
-                .join("parts.db")
-        } else {
-            default_db_path()
-        },
+        // Use the system-installed part database for both root and non-root
+        // by default so `wbuild resolve ... | sudo wbuild run ...` consult the
+        // same installation state. Per-user overrides can still point db_path
+        // elsewhere explicitly.
+        db_path: default_db_path(),
         log_dir: if use_xdg {
             get_xdg_state().unwrap_or_else(default_log_dir)
         } else {

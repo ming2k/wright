@@ -1079,13 +1079,15 @@ fn expand_rebuild_deps(
         }
     }
 
-    // 3. Transitively expand
+    // 3. Transitively expand, one depth level per iteration.
+    //    Collect each wave into a separate vec so that packages added in the
+    //    current wave do not trigger further expansion within the same depth.
     let mut current_depth = 0;
     loop {
         if current_depth >= max_depth {
             break;
         }
-        let mut added = false;
+        let mut wave: Vec<(String, PathBuf, RebuildReason)> = Vec::new();
         for (name, path) in &all_name_to_path {
             if rebuild_set.contains(name) {
                 continue;
@@ -1113,21 +1115,21 @@ fn expand_rebuild_deps(
                     continue;
                 }
 
-                rebuild_set.insert(name.clone());
-                plans_to_build.insert(path.clone());
-                reasons.insert(
-                    name.clone(),
-                    if link_changed {
-                        RebuildReason::LinkDependency
-                    } else {
-                        RebuildReason::Transitive
-                    },
-                );
-                added = true;
+                let reason = if link_changed {
+                    RebuildReason::LinkDependency
+                } else {
+                    RebuildReason::Transitive
+                };
+                wave.push((name.clone(), path.clone(), reason));
             }
         }
-        if !added {
+        if wave.is_empty() {
             break;
+        }
+        for (name, path, reason) in wave {
+            rebuild_set.insert(name.clone());
+            plans_to_build.insert(path);
+            reasons.insert(name, reason);
         }
         current_depth += 1;
     }
@@ -1344,10 +1346,31 @@ fn execute_builds(
             // else: multi-dockyard + explicit -v → keep opts.verbose = true (user's choice)
             effective_opts.nproc_per_dockyard = dynamic_nproc_cap;
 
+            // In multi-dockyard builds, create a spinner to show live stage
+            // progress instead of interleaved info! lines.
+            let spinner = if actual_dockyards > 1 && !opts.quiet {
+                let pb = crate::util::progress::MULTI
+                    .add(indicatif::ProgressBar::new_spinner());
+                pb.set_style(
+                    indicatif::ProgressStyle::default_spinner()
+                        .template("{spinner:.cyan} {prefix}: {msg}")
+                        .expect("valid spinner template"),
+                );
+                pb.set_prefix(name.clone());
+                pb.set_message("starting");
+                pb.enable_steady_tick(std::time::Duration::from_millis(100));
+                Some(pb)
+            } else {
+                None
+            };
+
             std::thread::spawn(move || {
                 let manifest = match PlanManifest::from_file(&path) {
                     Ok(m) => m,
                     Err(e) => {
+                        if let Some(ref pb) = spinner {
+                            pb.finish_and_clear();
+                        }
                         let _ = tx_clone.send(Err((name_clone, e.into())));
                         return;
                     }
@@ -1360,12 +1383,16 @@ fn execute_builds(
                     &effective_opts,
                     &bootstrap_excl,
                     compile_lock_clone.clone(),
+                    spinner.clone(),
                 );
 
                 match res {
                     Ok(_) => {
                         // Success! Now install if requested
                         if effective_opts.install {
+                            if let Some(ref pb) = spinner {
+                                pb.set_message("installing");
+                            }
                             let _guard = install_lock_clone.lock().unwrap();
                             debug!("Automatically installing built part: {}", name_clone);
 
@@ -1392,6 +1419,9 @@ fn execute_builds(
                                         true,
                                         origin,
                                     ) {
+                                        if let Some(ref pb) = spinner {
+                                            pb.finish_and_clear();
+                                        }
                                         error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
                                         let _ = tx_clone.send(Err((name_clone, e.into())));
                                         return;
@@ -1428,6 +1458,9 @@ fn execute_builds(
                                     }
                                 }
                                 Err(e) => {
+                                    if let Some(ref pb) = spinner {
+                                        pb.finish_and_clear();
+                                    }
                                     error!(
                                         "Failed to open database for automatic installation: {:#}",
                                         e
@@ -1443,9 +1476,15 @@ fn execute_builds(
                                 let _ = db.mark_session_completed(hash, &name_clone);
                             }
                         }
+                        if let Some(ref pb) = spinner {
+                            pb.finish_and_clear();
+                        }
                         let _ = tx_clone.send(Ok(name_clone));
                     }
                     Err(e) => {
+                        if let Some(ref pb) = spinner {
+                            pb.finish_and_clear();
+                        }
                         error!("Failed to process {}: {:#}", name_clone, e);
                         let _ = tx_clone.send(Err((name_clone, e.into())));
                     }
@@ -1600,6 +1639,7 @@ fn build_one(
     opts: &BuildOptions,
     bootstrap_excl: &[String],
     compile_lock: Arc<Mutex<()>>,
+    progress: Option<indicatif::ProgressBar>,
 ) -> Result<()> {
     if opts.checksum {
         builder
@@ -1707,6 +1747,7 @@ fn build_one(
         opts.force,
         opts.nproc_per_dockyard,
         Some(compile_lock),
+        progress,
     )?;
 
     // Full builds always end in archive creation. For explicit stage runs, only
