@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-03-21
+
+### Changes
+- **Database lock retry**: replace immediate-fail `flock` with retry loop (exponential backoff from 50ms to 1s, 30s timeout) so parallel build tasks queue for the database lock instead of failing.
+- **Documentation refresh**: update Origin terminology (`explicit`→`manual`, add `build` tier), document `--skip-check` and `--clear-sessions` flags, fix stale commands and config fields in design-spec.
+
 ## [1.10.0] - 2026-03-21
 
 ### Breaking Changes
