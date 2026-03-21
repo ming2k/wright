@@ -200,9 +200,9 @@ Wright detects the cycle automatically and schedules:
 
 ```
 Construction Plan:
-  [MVP]          gcc          ← first pass, no gcc dep
-  [NEW]          binutils
-  [FULL]         gcc          ← second pass, full deps
+  [BUILD:MVP]    gcc          ← first pass, no gcc dep
+  [BUILD]        binutils
+  [BUILD:FULL]   gcc          ← second pass, full deps
 ```
 
 To test the MVP pass explicitly without a cycle present:
@@ -251,7 +251,7 @@ A library's ABI changed. Rebuild everything that links against it:
 wbuild run libfoo --self --dependents
 ```
 
-The scheduler labels affected parts as `[LINK-REBUILD]` in the Construction
+The scheduler labels affected parts as `[RELINK]` in the Construction
 Plan. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash

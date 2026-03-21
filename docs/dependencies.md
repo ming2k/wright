@@ -54,27 +54,27 @@ This behavior keeps ABI-sensitive chains correct without forcing expensive rebui
 This rebuild behavior does not make `link` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
 
 **Construction Plan Labels**
-`wbuild run` prints a Construction Plan. Each entry is labeled by why it is included.
+`wbuild run` prints a Construction Plan. Each entry is labeled by the action that will be taken.
 
-- `[NEW]`: Explicitly requested, or missing dependency that had to be added.
-- `[LINK-REBUILD]`: Rebuilt because a link dependency changed.
-- `[REV-REBUILD]`: Rebuilt because of `--dependents=all` transitive expansion.
-- `[MVP]`: Bootstrap build used to break a dependency cycle.
-- `[FULL]`: Full build after an MVP bootstrap.
+- `[BUILD]`: Normal build for an explicitly requested target or an added dependency.
+- `[RELINK]`: Rebuilt because a `link` dependency changed.
+- `[REBUILD]`: Rebuilt because of `--dependents=all` transitive expansion.
+- `[BUILD:MVP]`: Bootstrap build used to break a dependency cycle.
+- `[BUILD:FULL]`: Full build after an MVP bootstrap.
 
 **Dependency Cycles and MVP Builds**
 If Wright detects a dependency cycle, it tries to resolve it in a user-friendly way.
 
 - If the part declares `mvp.dependencies` inline in `plan.toml` or via a
   sibling `mvp.toml`, Wright performs a two-pass build.
-- The first pass is an **MVP build** (tagged `[MVP]` in the Construction Plan).
+- The first pass is an **MVP build** (tagged `[BUILD:MVP]` in the Construction Plan).
   It excludes the dependencies listed in that MVP override.
 - The second pass is a full build, forced to rebuild even if a partial archive exists.
 
 This results in two builds for that part:
 
-- `pkg` tagged `[MVP]`
-- `pkg` tagged `[FULL]`
+- `pkg` tagged `[BUILD:MVP]`
+- `pkg` tagged `[BUILD:FULL]`
 
 If no MVP definition exists, Wright stops and reports the cycle.
 

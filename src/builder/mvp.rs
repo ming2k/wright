@@ -294,7 +294,7 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
 
     for cycle in &cycles {
         let cycle_display = format_cycle_path(cycle, &graph.deps_map);
-        info!("Dependency cycle detected: {}", cycle_display);
+        info!("Detected dependency cycle: {}", cycle_display);
 
         let candidates = cycle_candidates_for(cycle, graph);
         let chosen = pick_candidate(candidates.clone());
@@ -344,8 +344,7 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         }
 
         info!(
-            "Cycle resolved: '{}' will be built twice \
-             (first as MVP without [{}], then fully)",
+            "Scheduling cycle resolution for '{}': [BUILD:MVP] without [{}], then [BUILD:FULL]",
             pkg,
             excl.join(", ")
         );

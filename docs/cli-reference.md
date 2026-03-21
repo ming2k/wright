@@ -342,15 +342,15 @@ By default `wbuild run` is quiet about subprocess I/O — build tool output (mak
 | `--verbose` (`-v`), multiple dockyards | echoed to terminal (may interleave) | shown | debug |
 | `--quiet` | captured only | hidden | warn |
 
-Before building, `wbuild run` displays a **Construction Plan** listing all parts to be built and the reason:
+Before building, `wbuild run` displays a **Construction Plan** listing all parts to be built in stable dependency order. The plan labels describe the scheduled action; explanatory detail stays in the surrounding `INFO` logs.
 
 | Label | Meaning |
 |-------|---------:|
-| `[NEW]` | Explicitly requested target |
-| `[LINK-REBUILD]` | Triggered because a link dependency was updated |
-| `[REV-REBUILD]` | Triggered transitively via `--dependents=all` |
-| `[MVP]` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
-| `[FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
+| `[BUILD]` | Normal build for an explicitly requested target or an added dependency |
+| `[RELINK]` | Rebuild triggered because a `link` dependency changed |
+| `[REBUILD]` | Rebuild triggered transitively via `--dependents=all` |
+| `[BUILD:MVP]` | MVP build: either a cycle-breaking first pass, or an explicit `--mvp` build |
+| `[BUILD:FULL]` | Second pass of a cycle build (complete rebuild after cycle is resolved) |
 
 See [Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for details on the two-pass mechanism.
 

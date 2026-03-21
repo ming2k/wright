@@ -441,10 +441,7 @@ fn empty_sub_fabricate_output(
 }
 
 /// Extract a string list from an `[output]` table field, removing it from the table.
-fn extract_output_string_list(
-    table: &mut toml::value::Table,
-    key: &str,
-) -> Result<Vec<String>> {
+fn extract_output_string_list(table: &mut toml::value::Table, key: &str) -> Result<Vec<String>> {
     match table.remove(key) {
         Some(toml::Value::Array(arr)) => arr
             .into_iter()
@@ -608,13 +605,12 @@ impl PlanManifest {
         let mut lifecycle_stages: HashMap<String, LifecycleStage> = HashMap::new();
         if let Some(raw_lifecycle) = raw_lifecycle {
             for (key, value) in raw_lifecycle {
-                let stage: LifecycleStage =
-                    value.try_into().map_err(|e: toml::de::Error| {
-                        WrightError::ParseError(format!(
-                            "failed to parse lifecycle stage '{}': {}",
-                            key, e
-                        ))
-                    })?;
+                let stage: LifecycleStage = value.try_into().map_err(|e: toml::de::Error| {
+                    WrightError::ParseError(format!(
+                        "failed to parse lifecycle stage '{}': {}",
+                        key, e
+                    ))
+                })?;
                 lifecycle_stages.insert(key, stage);
             }
         }
@@ -1581,5 +1577,4 @@ script = "strip ${PART_DIR}/usr/bin/test"
             Some("strip ${PART_DIR}/usr/bin/test")
         );
     }
-
 }

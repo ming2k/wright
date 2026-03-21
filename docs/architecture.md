@@ -100,9 +100,9 @@ plan.toml → PlanManifest
       → expand transitive rebuilds (Downward, build ops only)
       → detect dependency cycles (Tarjan SCC)
           → if cycle found and MVP overrides declared (inline [mvp.dependencies] or sibling mvp.toml):
-              inject two-pass plan ({pkg}:bootstrap [MVP] → rest → {pkg}:full [FULL])
+              inject two-pass plan ({pkg}:bootstrap [BUILD:MVP] → rest → {pkg}:full [BUILD:FULL])
           → if cycle found and no MVP overrides: error with cycle description
-      → display Construction Plan ([NEW] / [LINK-REBUILD] / [REV-REBUILD] / [MVP] / [FULL])
+      → display Construction Plan ([BUILD] / [RELINK] / [REBUILD] / [BUILD:MVP] / [BUILD:FULL])
           (suppressed with --quiet; subprocess output echoed only with --verbose and single job)
       → parallel execution (topology-ordered):
           → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp, no cache write

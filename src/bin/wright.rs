@@ -115,10 +115,7 @@ fn main() -> Result<()> {
                         match resolver.resolve(name) {
                             Ok(Some(resolved)) => pkg_paths.push(resolved.path),
                             Ok(None) => {
-                                eprintln!(
-                                    "error: part '{}' (from @{}) not found",
-                                    name, kit_name
-                                );
+                                eprintln!("error: part '{}' (from @{}) not found", name, kit_name);
                                 std::process::exit(1);
                             }
                             Err(e) => {
@@ -148,9 +145,7 @@ fn main() -> Result<()> {
                 }
             }
 
-            match transaction::install_parts(
-                &db, &pkg_paths, &root_dir, &resolver, force, nodeps,
-            ) {
+            match transaction::install_parts(&db, &pkg_paths, &root_dir, &resolver, force, nodeps) {
                 Ok(()) => println!("installation completed successfully"),
                 Err(e) => {
                     eprintln!("error: {}", e);
@@ -209,8 +204,7 @@ fn main() -> Result<()> {
 
                 // When --version is explicitly given, force the upgrade (allows downgrade)
                 let effective_force = force || target_version.is_some();
-                match transaction::upgrade_part(&db, &selected.path, &root_dir, effective_force)
-                {
+                match transaction::upgrade_part(&db, &selected.path, &root_dir, effective_force) {
                     Ok(()) => println!(
                         "upgraded: {} -> {}-{}",
                         arg, selected.version, selected.release
@@ -327,13 +321,10 @@ fn main() -> Result<()> {
                 writeln!(buf)?;
                 query::write_system_tree(&db, &opts, &mut buf)?
             } else {
-                let part_name = part.ok_or_else(|| {
-                    anyhow::anyhow!("part name is required unless using --all")
-                })?;
+                let part_name = part
+                    .ok_or_else(|| anyhow::anyhow!("part name is required unless using --all"))?;
 
-                let pkg = db
-                    .get_part(&part_name)
-                    .context("failed to query part")?;
+                let pkg = db.get_part(&part_name).context("failed to query part")?;
                 if pkg.is_none() {
                     eprintln!("part '{}' is not installed", part_name);
                     std::process::exit(1);
@@ -369,7 +360,11 @@ fn main() -> Result<()> {
                 )
                 .ok();
             } else {
-                writeln!(buf, "Source: local part database (.PARTINFO-derived metadata)").ok();
+                writeln!(
+                    buf,
+                    "Source: local part database (.PARTINFO-derived metadata)"
+                )
+                .ok();
             }
             print_paged(&String::from_utf8_lossy(&buf));
         }
@@ -410,9 +405,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Query { part } => {
-            let installed_part = db
-                .get_part(&part)
-                .context("failed to query part")?;
+            let installed_part = db.get_part(&part).context("failed to query part")?;
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);
@@ -465,9 +458,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Files { part } => {
-            let installed_part = db
-                .get_part(&part)
-                .context("failed to query part")?;
+            let installed_part = db.get_part(&part).context("failed to query part")?;
             match installed_part {
                 Some(info) => {
                     let files = db.get_files(info.id).context("failed to get files")?;

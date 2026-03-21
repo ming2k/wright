@@ -75,8 +75,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
 
     // Migration: add assumed column to databases created before this feature.
-    let _ =
-        conn.execute_batch("ALTER TABLE parts ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;");
+    let _ = conn.execute_batch("ALTER TABLE parts ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;");
 
     // Migration: add install_reason column (existing parts default to 'explicit').
     let _ = conn.execute_batch(

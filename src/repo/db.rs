@@ -351,7 +351,9 @@ impl RepoDb {
         } else {
             let mut stmt = self
                 .conn
-                .prepare("SELECT id, name, version, release FROM parts WHERE name = ?1 AND version = ?2")
+                .prepare(
+                    "SELECT id, name, version, release FROM parts WHERE name = ?1 AND version = ?2",
+                )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version], |row| {

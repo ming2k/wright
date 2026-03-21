@@ -183,27 +183,10 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     // --- Build Plan Summary ---
     if !opts.quiet {
         eprintln!("Construction Plan:");
-        let mut sorted_targets: Vec<_> = graph.build_set.iter().collect();
-        sorted_targets.sort();
-        for name in sorted_targets {
-            let is_bootstrap_task = name.ends_with(":bootstrap");
-            let base_name = name.trim_end_matches(":bootstrap");
-            let is_full_after_bootstrap =
-                !is_bootstrap_task && graph.build_set.contains(&format!("{}:bootstrap", name));
-
-            let reason_str = if is_bootstrap_task || opts.mvp {
-                "[MVP]".to_string()
-            } else if is_full_after_bootstrap {
-                "[FULL]".to_string()
-            } else {
-                match graph.rebuild_reasons.get(name.as_str()) {
-                    Some(RebuildReason::Explicit) => "[NEW]".to_string(),
-                    Some(RebuildReason::LinkDependency) => "[LINK-REBUILD]".to_string(),
-                    Some(RebuildReason::Transitive) => "[REV-REBUILD]".to_string(),
-                    None => "".to_string(),
-                }
-            };
-            eprintln!("  {: <15} {}", reason_str, base_name);
+        for name in construction_plan_order(&graph.build_set, &graph.deps_map) {
+            let label =
+                construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
+            eprintln!("  {: <15} {}", label, name.trim_end_matches(":bootstrap"));
         }
         eprintln!();
     }
@@ -400,17 +383,20 @@ fn expand_missing_dependencies(
             }
 
             // Protect toolchain: don't automatically rebuild core tools unless they are missing
-            if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str()) {
+            if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
+            {
                 continue;
             }
 
-            if !build_set.contains(&dep_name) && dependency_requires_build(&dep_name, all_plans, db, mode)? {
+            if !build_set.contains(&dep_name)
+                && dependency_requires_build(&dep_name, all_plans, db, mode)?
+            {
                 if let Some(plan_path) = all_plans.get(&dep_name) {
                     info!(
-                        "{} dependency (depth {}): {}",
-                        dependency_action_label(&dep_name, all_plans, db, mode)?,
+                        "Scheduling dependency (depth {}, reason: {}): {}",
                         dep_depth,
-                        dep_name
+                        dependency_reason_label(&dep_name, all_plans, db, mode)?,
+                        dep_name,
                     );
                     plans_to_build.insert(plan_path.clone());
                     build_set.insert(dep_name.clone());
@@ -470,11 +456,11 @@ fn expand_missing_dependencies(
                         {
                             if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                 info!(
-                                    "{} transitive runtime dep of build dep {} (depth {}): {}",
-                                    dependency_action_label(&rdep_name, all_plans, db, mode)?,
+                                    "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
                                     build_dep_name,
                                     rdep_depth,
-                                    rdep_name
+                                    dependency_reason_label(&rdep_name, all_plans, db, mode)?,
+                                    rdep_name,
                                 );
                                 plans_to_build.insert(rdep_plan_path.clone());
                                 build_set.insert(rdep_name.clone());
@@ -491,23 +477,23 @@ fn expand_missing_dependencies(
     Ok(())
 }
 
-fn dependency_action_label(
+fn dependency_reason_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
     mode: DependencyMode,
 ) -> Result<&'static str> {
     match mode {
-        DependencyMode::All => Ok("Forcing rebuild of"),
-        DependencyMode::Missing => Ok("Auto-resolving missing"),
+        DependencyMode::All => Ok("--deps=all"),
+        DependencyMode::Missing => Ok("missing"),
         DependencyMode::Sync => {
             if dependency_plan_differs(dep_name, all_plans, db)? {
-                Ok("Syncing outdated")
+                Ok("outdated")
             } else {
-                Ok("Auto-resolving missing")
+                Ok("missing")
             }
         }
-        DependencyMode::None => Ok("Skipping"),
+        DependencyMode::None => Ok("skipped"),
     }
 }
 
@@ -554,16 +540,114 @@ fn installed_matches_manifest(
         && installed.release == manifest.plan.release
 }
 
+fn construction_plan_order(
+    build_set: &HashSet<String>,
+    deps_map: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    let mut indegree: HashMap<String, usize> = build_set
+        .iter()
+        .map(|name| (name.clone(), 0usize))
+        .collect();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+
+    for name in build_set {
+        let deps = deps_map.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        for dep in deps {
+            if !build_set.contains(dep) {
+                continue;
+            }
+            *indegree.get_mut(name).unwrap() += 1;
+            dependents
+                .entry(dep.clone())
+                .or_default()
+                .push(name.clone());
+        }
+    }
+
+    let mut ready = VecDeque::from({
+        let mut nodes: Vec<_> = indegree
+            .iter()
+            .filter_map(|(name, degree)| (*degree == 0).then_some(name.clone()))
+            .collect();
+        nodes.sort();
+        nodes
+    });
+    let mut ordered = Vec::with_capacity(build_set.len());
+
+    while let Some(name) = ready.pop_front() {
+        ordered.push(name.clone());
+
+        let mut next_ready = Vec::new();
+        if let Some(children) = dependents.get(&name) {
+            for child in children {
+                let degree = indegree.get_mut(child).unwrap();
+                *degree -= 1;
+                if *degree == 0 {
+                    next_ready.push(child.clone());
+                }
+            }
+        }
+        next_ready.sort();
+        for child in next_ready {
+            ready.push_back(child);
+        }
+    }
+
+    if ordered.len() != build_set.len() {
+        let ordered_set: HashSet<_> = ordered.iter().cloned().collect();
+        let mut remaining: Vec<_> = build_set
+            .iter()
+            .filter(|name| !ordered_set.contains(*name))
+            .cloned()
+            .collect();
+        remaining.sort();
+        ordered.extend(remaining);
+    }
+
+    ordered
+}
+
+fn construction_plan_label(
+    name: &str,
+    build_set: &HashSet<String>,
+    rebuild_reasons: &HashMap<String, RebuildReason>,
+    opts: &BuildOptions,
+) -> &'static str {
+    let is_bootstrap_task = name.ends_with(":bootstrap");
+    let is_full_after_bootstrap =
+        !is_bootstrap_task && build_set.contains(&format!("{}:bootstrap", name));
+
+    if is_bootstrap_task || opts.mvp {
+        "[BUILD:MVP]"
+    } else if is_full_after_bootstrap {
+        "[BUILD:FULL]"
+    } else {
+        match rebuild_reasons.get(name) {
+            Some(RebuildReason::LinkDependency) => "[RELINK]",
+            Some(RebuildReason::Transitive) => "[REBUILD]",
+            Some(RebuildReason::Explicit) | None => "[BUILD]",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{expand_missing_dependencies, installed_matches_manifest, DependencyMode};
+    use super::{
+        construction_plan_label, construction_plan_order, expand_missing_dependencies,
+        installed_matches_manifest, BuildOptions, DependencyMode, RebuildReason,
+    };
     use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
 
-    fn write_plan(dir: &std::path::Path, name: &str, version: &str, build_deps: &[&str]) -> PathBuf {
+    fn write_plan(
+        dir: &std::path::Path,
+        name: &str,
+        version: &str,
+        build_deps: &[&str],
+    ) -> PathBuf {
         let plan_dir = dir.join(name);
         fs::create_dir_all(&plan_dir).unwrap();
         let build = if build_deps.is_empty() {
@@ -714,6 +798,80 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
 
         assert!(!plans_to_build.contains(&all_plans["b"]));
         assert!(plans_to_build.contains(&c_path));
+    }
+
+    #[test]
+    fn construction_plan_uses_stable_topological_order() {
+        let build_set = HashSet::from([
+            "pcre2".to_string(),
+            "librsvg:bootstrap".to_string(),
+            "gdk-pixbuf".to_string(),
+            "librsvg".to_string(),
+        ]);
+        let deps_map = HashMap::from([
+            ("pcre2".to_string(), Vec::new()),
+            ("librsvg:bootstrap".to_string(), Vec::new()),
+            (
+                "gdk-pixbuf".to_string(),
+                vec!["librsvg:bootstrap".to_string()],
+            ),
+            (
+                "librsvg".to_string(),
+                vec!["gdk-pixbuf".to_string(), "librsvg:bootstrap".to_string()],
+            ),
+        ]);
+
+        let ordered = construction_plan_order(&build_set, &deps_map);
+
+        assert_eq!(
+            ordered,
+            vec![
+                "librsvg:bootstrap".to_string(),
+                "pcre2".to_string(),
+                "gdk-pixbuf".to_string(),
+                "librsvg".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn construction_plan_labels_use_action_semantics() {
+        let build_set = HashSet::from(["librsvg:bootstrap".to_string(), "librsvg".to_string()]);
+        let reasons = HashMap::from([
+            ("pcre2".to_string(), RebuildReason::Explicit),
+            ("gtk4".to_string(), RebuildReason::LinkDependency),
+            ("vala".to_string(), RebuildReason::Transitive),
+        ]);
+        let opts = BuildOptions::default();
+        let mvp_opts = BuildOptions {
+            mvp: true,
+            ..BuildOptions::default()
+        };
+
+        assert_eq!(
+            construction_plan_label("librsvg:bootstrap", &build_set, &reasons, &opts),
+            "[BUILD:MVP]"
+        );
+        assert_eq!(
+            construction_plan_label("librsvg", &build_set, &reasons, &opts),
+            "[BUILD:FULL]"
+        );
+        assert_eq!(
+            construction_plan_label("pcre2", &HashSet::new(), &reasons, &opts),
+            "[BUILD]"
+        );
+        assert_eq!(
+            construction_plan_label("gtk4", &HashSet::new(), &reasons, &opts),
+            "[RELINK]"
+        );
+        assert_eq!(
+            construction_plan_label("vala", &HashSet::new(), &reasons, &opts),
+            "[REBUILD]"
+        );
+        assert_eq!(
+            construction_plan_label("freetype", &HashSet::new(), &HashMap::new(), &mvp_opts),
+            "[BUILD:MVP]"
+        );
     }
 }
 
@@ -1362,12 +1520,12 @@ fn build_one(
         }
         if !bootstrap_excl.is_empty() {
             info!(
-                "MVP build of '{}' (without: {})",
+                "Executing [BUILD:MVP] for '{}' (excluding: {})",
                 manifest.plan.name,
                 bootstrap_excl.join(", ")
             );
         } else {
-            info!("MVP build of '{}'", manifest.plan.name);
+            info!("Executing [BUILD:MVP] for '{}'", manifest.plan.name);
         }
     }
 
@@ -1418,10 +1576,7 @@ fn build_one(
                     continue;
                 }
                 let sub_pkg_dir = result.split_pkg_dirs.get(sub_name).ok_or_else(|| {
-                    WrightError::BuildError(format!(
-                        "missing sub-part pkg_dir for '{}'",
-                        sub_name
-                    ))
+                    WrightError::BuildError(format!("missing sub-part pkg_dir for '{}'", sub_name))
                 })?;
                 if !manifest.options.skip_fhs_check {
                     fhs::validate(sub_pkg_dir, sub_name)?;

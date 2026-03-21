@@ -52,11 +52,11 @@ non-root setups, override `plans_dir` to a writable user-owned path. You can
 also pass a path directly.
 
 Before building, wbuild displays a **Construction Plan** showing what will be
-built and why:
+built in dependency order:
 
-- `[NEW]`: The target you requested, or a missing dependency found in the hold tree.
-- `[LINK-REBUILD]`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
-- `[REV-REBUILD]`: Transitive rebuilds requested via `--dependents=all`.
+- `[BUILD]`: The target you requested, or a dependency that was added to complete the plan.
+- `[RELINK]`: Parts that depend on your target via `link` and must be rebuilt for ABI compatibility.
+- `[REBUILD]`: Transitive rebuilds requested via `--dependents=all`.
 
 ### Build and Install (shortcut)
 

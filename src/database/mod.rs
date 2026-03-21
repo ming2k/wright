@@ -1,9 +1,9 @@
 pub mod schema;
 
+use rusqlite::{params, Connection};
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use rusqlite::{params, Connection};
 
 use crate::error::{Result, WrightError};
 
@@ -396,9 +396,7 @@ impl Database {
                 "DELETE FROM parts WHERE name = ?1 AND assumed = 1",
                 params![name],
             )
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to unassume part: {}", e))
-            })?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to unassume part: {}", e)))?;
         if rows == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
         }
@@ -478,9 +476,7 @@ impl Database {
         let rows = stmt
             .query_map([], row_to_installed_part)?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get root parts: {}", e))
-            })?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get root parts: {}", e)))?;
 
         Ok(rows)
     }
@@ -557,10 +553,7 @@ impl Database {
 
     pub fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
         self.conn
-            .execute(
-                "DELETE FROM files WHERE part_id = ?1",
-                params![part_id],
-            )
+            .execute("DELETE FROM files WHERE part_id = ?1", params![part_id])
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to delete old files: {}", e))
             })?;

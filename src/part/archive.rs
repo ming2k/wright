@@ -464,6 +464,9 @@ description = "python support"
         .unwrap();
 
         assert_eq!(info.runtime_deps, vec!["bash"]);
-        assert_eq!(info.optional_deps, vec![("python".to_string(), "python support".to_string())]);
+        assert_eq!(
+            info.optional_deps,
+            vec![("python".to_string(), "python support".to_string())]
+        );
     }
 }

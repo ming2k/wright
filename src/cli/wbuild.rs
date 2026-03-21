@@ -266,8 +266,7 @@ mod tests {
 
     #[test]
     fn parse_run_dependents_enum_value() {
-        let cli =
-            Cli::try_parse_from(["wbuild", "run", "glibc", "--dependents=all"]).unwrap();
+        let cli = Cli::try_parse_from(["wbuild", "run", "glibc", "--dependents=all"]).unwrap();
         match cli.command {
             Commands::Run { dependents, .. } => {
                 assert_eq!(dependents, Some(DependentsMode::All))

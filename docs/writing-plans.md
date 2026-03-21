@@ -544,18 +544,18 @@ When a cycle is resolved, the plan summary shows the two-pass schedule:
 
 ```
 Construction Plan:
-  [MVP]           freetype
-  [NEW]           harfbuzz
-  [FULL]          freetype
+  [BUILD:MVP]     freetype
+  [BUILD]         harfbuzz
+  [BUILD:FULL]    freetype
 ```
 
-`[MVP]` is the first pass (incomplete). `[FULL]` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
+`[BUILD:MVP]` is the first pass (incomplete). `[BUILD:FULL]` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
 
-When `--mvp` is used explicitly, all targets show `[MVP]` — no `[FULL]` pass follows:
+When `--mvp` is used explicitly, all targets show `[BUILD:MVP]` — no `[BUILD:FULL]` pass follows:
 
 ```
 Construction Plan:
-  [MVP]           freetype
+  [BUILD:MVP]     freetype
 ```
 
 ### Dependency type classification comes first

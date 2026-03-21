@@ -106,16 +106,10 @@ fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
 fn self_replace_provides_conflicts(db: &Database, pkg_id: i64, pkginfo: &PartInfo) -> Result<()> {
     // Delete old rows
     db.connection()
-        .execute(
-            "DELETE FROM provides WHERE part_id = ?1",
-            params![pkg_id],
-        )
+        .execute("DELETE FROM provides WHERE part_id = ?1", params![pkg_id])
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
     db.connection()
-        .execute(
-            "DELETE FROM conflicts WHERE part_id = ?1",
-            params![pkg_id],
-        )
+        .execute("DELETE FROM conflicts WHERE part_id = ?1", params![pkg_id])
         .map_err(|e| {
             WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
         })?;
