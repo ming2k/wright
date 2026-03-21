@@ -48,6 +48,60 @@ impl rusqlite::ToSql for FileType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Origin {
+    /// Auto-resolved dependency — orphan-removable
+    Dependency,
+    /// Installed via `wbuild -i` as a user-specified build target
+    Build,
+    /// User explicitly ran `wright install` — never auto-remove
+    Manual,
+}
+
+impl Origin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Dependency => "dependency",
+            Self::Build => "build",
+            Self::Manual => "manual",
+        }
+    }
+
+    /// Whether this origin makes a part eligible for orphan cleanup.
+    pub fn is_orphan_candidate(&self) -> bool {
+        matches!(self, Self::Dependency)
+    }
+}
+
+impl std::fmt::Display for Origin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for Origin {
+    type Error = WrightError;
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "dependency" => Ok(Self::Dependency),
+            "build" => Ok(Self::Build),
+            "manual" => Ok(Self::Manual),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown origin: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl rusqlite::ToSql for Origin {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepType {
     Runtime,
@@ -104,7 +158,7 @@ pub struct InstalledPart {
     pub pkg_hash: Option<String>,
     pub install_scripts: Option<String>,
     pub assumed: bool,
-    pub install_reason: String,
+    pub origin: Origin,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +184,7 @@ pub struct NewPart<'a> {
     pub install_size: u64,
     pub pkg_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
-    pub install_reason: &'a str,
+    pub origin: Origin,
 }
 
 impl<'a> Default for NewPart<'a> {
@@ -147,7 +201,7 @@ impl<'a> Default for NewPart<'a> {
             install_size: 0,
             pkg_hash: None,
             install_scripts: None,
-            install_reason: "explicit",
+            origin: Origin::Manual,
         }
     }
 }
@@ -188,7 +242,7 @@ pub struct Database {
 
 /// Column list shared by all queries returning InstalledPart.
 const PART_COLUMNS: &str =
-    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason, epoch";
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, origin, epoch";
 
 /// Map a row (with PART_COLUMNS order) to InstalledPart.
 fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<InstalledPart> {
@@ -206,7 +260,8 @@ fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<InstalledPart>
         pkg_hash: row.get(10)?,
         install_scripts: row.get(11)?,
         assumed: row.get::<_, bool>(12)?,
-        install_reason: row.get::<_, String>(13)?,
+        origin: Origin::try_from(row.get::<_, String>(13)?.as_str())
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(e)))?,
         epoch: row.get::<_, u32>(14).unwrap_or(0),
     })
 }
@@ -348,7 +403,7 @@ impl Database {
 
         self.conn
             .execute(
-                "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, install_reason)
+                "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, origin)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     part.name,
@@ -362,7 +417,7 @@ impl Database {
                     part.install_size,
                     part.pkg_hash,
                     part.install_scripts,
-                    part.install_reason
+                    part.origin
                 ],
             )
             .map_err(|e| {
@@ -763,28 +818,35 @@ impl Database {
         Ok(())
     }
 
-    /// Update the install_reason of a part (e.g. promote dependency -> explicit).
-    pub fn set_install_reason(&self, name: &str, reason: &str) -> Result<()> {
+    /// Update the origin of a part, respecting promotion rules.
+    /// Only promotes upward: dependency → build → manual. Never downgrades.
+    pub fn set_origin(&self, name: &str, new_origin: Origin) -> Result<()> {
+        // Check current origin and only promote upward
+        if let Some(existing) = self.get_part(name)? {
+            if new_origin <= existing.origin {
+                return Ok(());
+            }
+        }
         self.conn
             .execute(
-                "UPDATE parts SET install_reason = ?1 WHERE name = ?2",
-                params![reason, name],
+                "UPDATE parts SET origin = ?1 WHERE name = ?2",
+                params![new_origin, name],
             )
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to set install_reason: {}", e))
+                WrightError::DatabaseError(format!("failed to set origin: {}", e))
             })?;
         Ok(())
     }
 
     /// Get orphan dependencies of a specific part: dependencies that were auto-installed
-    /// (`install_reason = 'dependency'`) and are not depended on by any other installed part.
+    /// (`origin = 'dependency'`) and are not depended on by any other installed part.
     pub fn get_orphan_dependencies(&self, name: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.depends_on FROM dependencies d
              JOIN parts p ON d.part_id = p.id
              WHERE p.name = ?1
                AND EXISTS (
-                   SELECT 1 FROM parts dep WHERE dep.name = d.depends_on AND dep.install_reason = 'dependency'
+                   SELECT 1 FROM parts dep WHERE dep.name = d.depends_on AND dep.origin = 'dependency'
                )
                AND NOT EXISTS (
                    SELECT 1 FROM dependencies d2
@@ -801,11 +863,11 @@ impl Database {
         Ok(rows)
     }
 
-    /// Get globally orphan parts: `install_reason = 'dependency'` and not depended on
+    /// Get globally orphan parts: `origin = 'dependency'` and not depended on
     /// by any installed part.
     pub fn get_orphan_parts(&self) -> Result<Vec<InstalledPart>> {
         let sql = format!(
-            "SELECT {} FROM parts WHERE install_reason = 'dependency' AND name NOT IN (
+            "SELECT {} FROM parts WHERE origin = 'dependency' AND name NOT IN (
                 SELECT depends_on FROM dependencies
             )",
             PART_COLUMNS
@@ -1034,6 +1096,19 @@ impl Database {
             params![session_hash],
         )?;
         Ok(())
+    }
+
+    /// Remove all build session records. Returns the number of sessions cleared.
+    pub fn clear_all_sessions(&self) -> Result<usize> {
+        // Count distinct sessions before clearing.
+        let count: usize = self.conn.query_row(
+            "SELECT COUNT(DISTINCT session_hash) FROM build_sessions",
+            [],
+            |row| row.get(0),
+        )?;
+        self.conn
+            .execute("DELETE FROM build_sessions", [])?;
+        Ok(count)
     }
 
     /// Return names of installed parts whose `conflicts` list includes `name`.

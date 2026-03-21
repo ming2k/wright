@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use wright::builder::orchestrator::{
@@ -64,7 +65,16 @@ fn main() -> Result<()> {
             dockyards,
             install,
             mvp,
+            clear_sessions,
         } => {
+            if clear_sessions {
+                let db = wright::database::Database::open(&config.general.db_path)
+                    .context("failed to open database")?;
+                let count = db.clear_all_sessions()?;
+                info!("Cleared {} build session(s)", count);
+                return Ok(());
+            }
+
             // Collect targets from command line args + stdin (when piped).
             let mut all_targets = targets;
             if !io::stdin().is_terminal() {
@@ -271,7 +281,7 @@ fn print_plan_tree_inner(
         }
 
         if ancestors.contains(&dep_name) {
-            // True cycle: check if the dep has [mvp.dependencies] that could break it
+            // True cycle: check if the dep has mvp.toml that could break it
             stats.cycles += 1;
             let cycle_note = all_plans
                 .get(&dep_name)

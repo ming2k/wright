@@ -294,6 +294,14 @@ When a core library changes, rebuild it and everything that links against it:
 wbuild resolve openssl --self --dependents | wbuild run --force -i  # rebuild + install
 ```
 
+If the build fails partway through, resume without re-building completed parts:
+
+```bash
+wbuild resolve openssl --self --dependents | wbuild run --resume -i  # skip already-installed parts
+```
+
+The `--resume` flag tracks build progress in a session. On failure, the session hash is printed — you can pass it explicitly (`--resume <hash>`) or let it auto-detect from the same build set.
+
 ---
 
 ## Boundary Summary

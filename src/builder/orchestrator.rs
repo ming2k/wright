@@ -76,7 +76,7 @@ pub struct BuildOptions {
     pub install: bool,
     pub verbose: bool,
     pub quiet: bool,
-    /// --mvp: build using [mvp.dependencies] without requiring a cycle to trigger it.
+    /// --mvp: build using mvp.toml deps without requiring a cycle to trigger it.
     pub mvp: bool,
     /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
     /// The scheduler computes this per launched task from the currently active
@@ -274,7 +274,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         }
     }
 
-    // All targets passed to run_build are considered user-specified (for install_reason tracking).
+    // All targets passed to run_build are considered user-specified (for origin tracking).
     // Dependency expansion (if any) was already handled by `wbuild resolve`.
     let user_target_names: HashSet<String> = plans_to_build
         .iter()
@@ -842,7 +842,7 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin"
             pkg_hash: None,
             install_scripts: None,
             assumed: false,
-            install_reason: "explicit".to_string(),
+            origin: crate::database::Origin::Manual,
         }
     }
 
@@ -901,7 +901,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             install_size: 1,
             pkg_hash: None,
             install_scripts: None,
-            install_reason: "explicit",
+            origin: crate::database::Origin::Manual,
         })
         .unwrap();
         db.insert_part(NewPart {
@@ -916,7 +916,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             install_size: 1,
             pkg_hash: None,
             install_scripts: None,
-            install_reason: "explicit",
+            origin: crate::database::Origin::Manual,
         })
         .unwrap();
 
@@ -1374,23 +1374,23 @@ fn execute_builds(
 
                             match Database::open(&config_clone.general.db_path) {
                                 Ok(db) => {
-                                    // Determine install reason:
-                                    // - Already installed → preserve existing reason (upgrade path handles this)
-                                    // - New + user target → explicit
-                                    // - New + auto-resolved dep → dependency
-                                    let reason = if is_user_target {
-                                        "explicit"
+                                    // Determine origin:
+                                    // - Already installed → preserve existing origin (upgrade path handles this)
+                                    // - New + user target → Build (wbuild -i)
+                                    // - New + auto-resolved dep → Dependency
+                                    let origin = if is_user_target {
+                                        crate::database::Origin::Build
                                     } else {
-                                        "dependency"
+                                        crate::database::Origin::Dependency
                                     };
 
                                     // 1. Install main part
-                                    if let Err(e) = crate::transaction::install_part_with_reason(
+                                    if let Err(e) = crate::transaction::install_part_with_origin(
                                         &db,
                                         &archive_path,
                                         &PathBuf::from("/"),
                                         true,
-                                        reason,
+                                        origin,
                                     ) {
                                         error!("Build succeeded but automatic installation failed for {}: {:#}", name_clone, e);
                                         let _ = tx_clone.send(Err((name_clone, e.into())));
@@ -1414,12 +1414,12 @@ fn execute_builds(
                                                 sub_name
                                             );
                                             if let Err(e) =
-                                                crate::transaction::install_part_with_reason(
+                                                crate::transaction::install_part_with_origin(
                                                     &db,
                                                     &sub_archive_path,
                                                     &PathBuf::from("/"),
                                                     true,
-                                                    reason,
+                                                    origin,
                                                 )
                                             {
                                                 warn!("Automatic installation of sub-part '{}' failed: {:#}", sub_name, e);
@@ -1667,7 +1667,7 @@ fn build_one(
     if !bootstrap_excl.is_empty() || opts.mvp {
         if manifest.mvp.is_none() && !bootstrap_excl.is_empty() {
             warn!(
-                "Plan '{}' declares no [mvp.dependencies]; \
+                "Plan '{}' has no mvp.toml; \
                  cannot compute MVP deps for cycle breaking.",
                 manifest.plan.name
             );

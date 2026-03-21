@@ -448,7 +448,7 @@ fn main() -> Result<()> {
                         println!("URL         : {}", url);
                     }
                     println!("Install Size: {} bytes", info.install_size);
-                    println!("Reason      : {}", info.install_reason);
+                    println!("Origin      : {}", info.origin);
                     println!("Installed At: {}", info.installed_at);
                     if let Some(ref hash) = info.pkg_hash {
                         println!("Part Hash   : {}", hash);

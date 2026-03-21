@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 
 use rusqlite::params;
 
-use crate::database::{Database, DepType, Dependency, FileEntry, FileType, NewPart};
+use crate::database::{Database, DepType, Dependency, FileEntry, FileType, NewPart, Origin};
 use crate::error::{Result, WrightError};
 use crate::part::archive::{self, PartInfo};
 use crate::part::version::{self, Version};
@@ -221,18 +221,17 @@ pub fn install_parts(
         )?;
     }
 
-    // Build set of user-specified target names for install_reason tracking
+    // Build set of user-specified target names for origin tracking
     let target_set: HashSet<String> = targets.iter().cloned().collect();
 
     // 4. Install in order
     for name in sorted_names {
         let is_target = target_set.contains(&name);
 
-        if let Some(existing) = db.get_part(&name)? {
-            if is_target && existing.install_reason == "dependency" {
-                // User explicitly installing a part that was previously pulled as a dep
-                info!("Promoting {} from dependency to explicit", name);
-                db.set_install_reason(&name, "explicit")?;
+        if let Some(_existing) = db.get_part(&name)? {
+            if is_target {
+                // User explicitly installing — promote to Manual (respects promotion rules)
+                db.set_origin(&name, Origin::Manual)?;
             }
             if force {
                 // Force reinstall via upgrade path (atomic — keeps old if new fails)
@@ -243,15 +242,15 @@ pub fn install_parts(
             continue;
         }
 
-        let reason = if is_target { "explicit" } else { "dependency" };
+        let origin = if is_target { Origin::Manual } else { Origin::Dependency };
         let pkg = resolved_map.get(&name).unwrap();
         info!(
-            "Installing {} from {} (reason: {})",
+            "Installing {} from {} (origin: {})",
             name,
             pkg.path.display(),
-            reason
+            origin
         );
-        install_part_with_reason(db, &pkg.path, root_dir, force, reason)?;
+        install_part_with_origin(db, &pkg.path, root_dir, force, origin)?;
     }
 
     Ok(())
@@ -300,16 +299,16 @@ pub fn install_part(
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_reason(db, archive_path, root_dir, force, "explicit")
+    install_part_with_origin(db, archive_path, root_dir, force, Origin::Manual)
 }
 
-/// Install a part with a specified install reason.
-pub fn install_part_with_reason(
+/// Install a part with a specified origin.
+pub fn install_part_with_origin(
     db: &Database,
     archive_path: &Path,
     root_dir: &Path,
     force: bool,
-    install_reason: &str,
+    origin: Origin,
 ) -> Result<()> {
     // Extract to temp dir
     let temp_dir = tempfile::tempdir()
@@ -473,7 +472,7 @@ pub fn install_part_with_reason(
         install_size: pkginfo.install_size,
         pkg_hash: pkg_hash.as_deref(),
         install_scripts: hooks_content.as_deref(),
-        install_reason,
+        origin,
     })?;
 
     // Record shadows

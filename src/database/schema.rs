@@ -19,7 +19,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             pkg_hash TEXT,
             install_scripts TEXT,
             assumed INTEGER NOT NULL DEFAULT 0,
-            install_reason TEXT NOT NULL DEFAULT 'explicit'
+            origin TEXT NOT NULL DEFAULT 'manual'
         );
 
         CREATE TABLE IF NOT EXISTS files (
@@ -77,9 +77,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     // Migration: add assumed column to databases created before this feature.
     let _ = conn.execute_batch("ALTER TABLE parts ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;");
 
-    // Migration: add install_reason column (existing parts default to 'explicit').
+    // Migration: add origin column (existing parts default to 'manual').
     let _ = conn.execute_batch(
-        "ALTER TABLE parts ADD COLUMN install_reason TEXT NOT NULL DEFAULT 'explicit';",
+        "ALTER TABLE parts ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';",
     );
 
     // Migration: add epoch column (default 0 for existing parts).

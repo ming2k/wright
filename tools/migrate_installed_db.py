@@ -41,7 +41,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             pkg_hash TEXT,
             install_scripts TEXT,
             assumed INTEGER NOT NULL DEFAULT 0,
-            install_reason TEXT NOT NULL DEFAULT 'explicit',
+            origin TEXT NOT NULL DEFAULT 'manual',
             epoch INTEGER NOT NULL DEFAULT 0
         );
 
@@ -168,14 +168,14 @@ def import_parts(src: sqlite3.Connection, dst: sqlite3.Connection, replace: bool
             "pkg_hash": record.get("pkg_hash") if "pkg_hash" in cols else None,
             "install_scripts": record.get("install_scripts") if "install_scripts" in cols else None,
             "assumed": record.get("assumed", 0) if "assumed" in cols else 0,
-            "install_reason": record.get("install_reason", "explicit") if "install_reason" in cols else "explicit",
+            "origin": record.get("install_reason", "manual") if "install_reason" in cols else "manual",
             "installed_at": record.get("installed_at") if "installed_at" in cols else None,
         }
         cur = dst.execute(
             """
             INSERT INTO parts (
                 name, version, release, epoch, description, arch, license, url,
-                installed_at, install_size, pkg_hash, install_scripts, assumed, install_reason
+                installed_at, install_size, pkg_hash, install_scripts, assumed, origin
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?)
             """,
             (
@@ -192,7 +192,7 @@ def import_parts(src: sqlite3.Connection, dst: sqlite3.Connection, replace: bool
                 payload["pkg_hash"],
                 payload["install_scripts"],
                 payload["assumed"],
-                payload["install_reason"],
+                payload["origin"],
             ),
         )
         new_id = cur.lastrowid

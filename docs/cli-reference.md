@@ -300,6 +300,7 @@ Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assem
 | `--stage=<STAGE>` | Run only the specified lifecycle stage; may be repeated to run multiple stages in pipeline order (e.g. `--stage=check --stage=staging --stage=fabricate`). Skips fetch/verify/extract — requires a previous full build. Omit entirely to run the full pipeline. |
 | `--clean` | Clear the build cache entry, working directory, and source tree before starting. Without `--clean`, the source tree (`src/`) is preserved across builds when the build key is unchanged, enabling incremental compilation. `--clean` forces a full re-extraction and recompile. Composable with `--force`. |
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
+| `--resume` (`-r`) `[HASH]` | Resume a previous build session: skip parts that were already successfully built and installed. Without a hash, auto-detects the session from the current build set. The session hash is printed on failure for explicit use. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only parts with no dependency relationship run simultaneously. Controls part-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
 | `--install` (`-i`) | Automatically install each built part after success. |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
@@ -324,6 +325,12 @@ wbuild resolve gtk4 --self --dependents=all --depth=0 | wbuild run --force -i
 
 # Force-rebuild all upstream deps
 wbuild resolve gtk4 --self --deps=all | wbuild run --force -i
+
+# Resume after a partial failure (auto-detect session)
+wbuild resolve gtk4 --self --dependents | wbuild run --resume -i
+
+# Resume with an explicit session hash
+wbuild resolve gtk4 --self --dependents | wbuild run --resume a1b2c3... -i
 
 # Build freetype using its [mvp.dependencies] set
 wbuild run freetype --mvp

@@ -264,6 +264,36 @@ wbuild resolve libfoo --self --dependents --depth=2 | wbuild run --force -i
 
 ---
 
+## Resuming After a Failed Build
+
+When a large cascade build fails partway through, use `--resume` to continue
+without re-building parts that already succeeded:
+
+```bash
+# First run — fails on package 15 of 30:
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --force -i
+# Output: Build session: a1b2c3...  (resume with: --resume a1b2c3...)
+
+# Resume — skips the 14 already-completed packages:
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
+```
+
+`--resume` tracks progress in a build session stored in the database. Each
+successfully built and installed part is recorded. On resume, those parts are
+skipped and the rest are rebuilt.
+
+The session hash is deterministic — running the same `wbuild resolve | wbuild run`
+pipeline produces the same hash, so `--resume` auto-detects the session. You can
+also pass the hash explicitly:
+
+```bash
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume a1b2c3... -i
+```
+
+Sessions are cleaned up automatically when all parts complete successfully.
+
+---
+
 ## Building an Assembly
 
 Assemblies are non-dependent, combinatory groupings of plans — items are
