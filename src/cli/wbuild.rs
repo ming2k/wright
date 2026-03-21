@@ -8,6 +8,7 @@ Workflows:
   Build and install:       wbuild run zlib -i
   Resolve + build:         wbuild resolve openssl --self --dependents | wbuild run -i
   Full reverse cascade:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --force -i
+  Resume after failure:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --resume -i
   Dependency tree:         wbuild resolve zlib --tree
   Validate plans:          wbuild check ./plans/zlib
 
@@ -19,7 +20,12 @@ Examples:
   wbuild run zlib --force --clean
   wbuild run freetype --mvp --stage=configure
   wbuild resolve openssl --self --dependents | wbuild run -i
-  echo -e 'curl\\nwget' | wbuild run --force -i";
+  echo -e 'curl\\nwget' | wbuild run --force -i
+
+Resume after partial failure (auto-detect session):
+  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
+Resume with explicit session hash:
+  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume abc123... -i";
 const WBUILD_RESOLVE_AFTER_HELP: &str = "\
 Examples:
   wbuild resolve zlib --self --deps
@@ -133,6 +139,13 @@ pub enum Commands {
         /// Force rebuild: overwrite existing archive and bypass the build cache
         #[arg(long, short)]
         force: bool,
+
+        /// Resume a previous build session: skip parts that were already
+        /// successfully built and installed. Optionally pass a session hash
+        /// (printed on failure); without a hash, auto-detects from the
+        /// current build set.
+        #[arg(long, short, num_args = 0..=1, default_missing_value = "")]
+        resume: Option<String>,
 
         /// Max number of concurrent dockyards. Only parts with no
         /// direct or indirect dependency relationship run simultaneously;

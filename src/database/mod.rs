@@ -1,6 +1,7 @@
 pub mod schema;
 
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -976,6 +977,63 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
         Ok(rows)
+    }
+
+    // ── build sessions ────────────────────────────────────────────────────
+
+    /// Create a new build session, inserting all packages as `pending`.
+    /// If a session with the same hash already exists, it is left intact
+    /// (allows resuming).
+    pub fn create_session(&self, session_hash: &str, packages: &[String]) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO build_sessions (session_hash, package_name, status) VALUES (?1, ?2, 'pending')",
+        )?;
+        for pkg in packages {
+            stmt.execute(params![session_hash, pkg])?;
+        }
+        Ok(())
+    }
+
+    /// Mark a package as completed within a session.
+    pub fn mark_session_completed(&self, session_hash: &str, package_name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE build_sessions SET status = 'completed' WHERE session_hash = ?1 AND package_name = ?2",
+            params![session_hash, package_name],
+        )?;
+        Ok(())
+    }
+
+    /// Get the set of completed package names for a session.
+    pub fn get_session_completed(&self, session_hash: &str) -> Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT package_name FROM build_sessions WHERE session_hash = ?1 AND status = 'completed'",
+        )?;
+        let rows = stmt
+            .query_map(params![session_hash], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<HashSet<_>, _>>()
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to query build session: {}", e))
+            })?;
+        Ok(rows)
+    }
+
+    /// Check whether a session with this hash exists (has any rows).
+    pub fn session_exists(&self, session_hash: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM build_sessions WHERE session_hash = ?1",
+            params![session_hash],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Remove all records for a session (called on successful completion).
+    pub fn clear_session(&self, session_hash: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM build_sessions WHERE session_hash = ?1",
+            params![session_hash],
+        )?;
+        Ok(())
     }
 
     /// Return names of installed parts whose `conflicts` list includes `name`.

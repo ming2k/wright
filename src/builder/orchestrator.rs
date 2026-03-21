@@ -61,6 +61,10 @@ pub struct BuildOptions {
     pub clean: bool,
     pub lint: bool,
     pub force: bool,
+    /// Resume a previous build session. `Some(None)` auto-detects
+    /// the session from the build set hash; `Some(Some(hash))` resumes
+    /// a specific session.
+    pub resume: Option<Option<String>>,
     pub checksum: bool,
     /// Skip the lifecycle `check` stage during a full build.
     /// Ignored for metadata-only operations and when explicit `--stage` selection is used.
@@ -207,9 +211,58 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         inject_bootstrap_passes(&mut graph)?;
     }
 
+    // --- Session management for --resume ---
+    let session_hash = if opts.resume.is_some() || opts.is_build_op() {
+        Some(compute_session_hash(&graph.build_set))
+    } else {
+        None
+    };
+
+    // When resuming, resolve the session hash (auto-detect or explicit).
+    let (_effective_resume, session_completed) = match &opts.resume {
+        Some(explicit_hash) => {
+            let hash = match explicit_hash {
+                Some(h) => h.clone(),
+                None => session_hash.clone().unwrap_or_default(),
+            };
+            if hash.is_empty() {
+                (false, HashSet::new())
+            } else {
+                let db = Database::open(&config.general.db_path)
+                    .context("failed to open database for resume")?;
+                if db.session_exists(&hash)? {
+                    let completed = db.get_session_completed(&hash)?;
+                    info!(
+                        "Resuming session {} ({}/{} completed)",
+                        &hash[..12.min(hash.len())],
+                        completed.len(),
+                        graph.build_set.len()
+                    );
+                    (true, completed)
+                } else {
+                    warn!(
+                        "No existing session {} found, starting fresh build",
+                        &hash[..12.min(hash.len())]
+                    );
+                    (false, HashSet::new())
+                }
+            }
+        }
+        None => (false, HashSet::new()),
+    };
+
     // --- Build Plan Summary ---
     if !opts.quiet {
         for (name, depth) in construction_plan_order(&graph.build_set, &graph.deps_map) {
+            if session_completed.contains(&name) {
+                info!(
+                    "Skipping {} (depth {}): {} (completed in previous run)",
+                    "skip",
+                    depth,
+                    name.trim_end_matches(":bootstrap"),
+                );
+                continue;
+            }
             let label =
                 construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
             info!(
@@ -229,8 +282,23 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         .map(|m| m.plan.name)
         .collect();
 
+    // Create/update session in DB for build operations.
+    let active_session_hash = if let Some(ref hash) = session_hash {
+        if opts.is_build_op() {
+            if let Ok(db) = Database::open(&config.general.db_path) {
+                let packages: Vec<String> = graph.build_set.iter().cloned().collect();
+                let _ = db.create_session(hash, &packages);
+            }
+            Some(hash.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // 3. Execute builds
-    execute_builds(
+    let result = execute_builds(
         config,
         &graph.name_to_path,
         &graph.deps_map,
@@ -238,7 +306,45 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         &opts,
         &graph.bootstrap_excluded,
         &user_target_names,
-    )
+        active_session_hash.as_deref(),
+        &session_completed,
+    );
+
+    match &result {
+        Ok(()) => {
+            // All done — clean up session
+            if let Some(ref hash) = active_session_hash {
+                if let Ok(db) = Database::open(&config.general.db_path) {
+                    let _ = db.clear_session(hash);
+                }
+            }
+        }
+        Err(_) => {
+            // Print session hash so user can resume
+            if let Some(ref hash) = active_session_hash {
+                info!(
+                    "Build session: {}  (resume with: --resume {})",
+                    hash,
+                    hash
+                );
+            }
+        }
+    }
+
+    result
+}
+
+/// Compute a deterministic session hash from the build set.
+fn compute_session_hash(build_set: &HashSet<String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut names: Vec<&str> = build_set.iter().map(|s| s.as_str()).collect();
+    names.sort();
+    let mut hasher = Sha256::new();
+    for name in &names {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,9 +1213,11 @@ fn execute_builds(
     opts: &BuildOptions,
     bootstrap_excluded: &HashMap<String, Vec<String>>,
     user_target_names: &HashSet<String>,
+    session_hash: Option<&str>,
+    session_completed: &HashSet<String>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>();
-    let completed = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let completed = Arc::new(Mutex::new(session_completed.clone()));
     let in_progress = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_count = Arc::new(Mutex::new(0usize));
@@ -1119,6 +1227,7 @@ fn execute_builds(
     let install_lock = Arc::new(Mutex::new(())); // Serializes installation
     let compile_lock = Arc::new(Mutex::new(())); // Serializes compile stages
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
+    let session_hash = Arc::new(session_hash.map(|s| s.to_string()));
 
     let available_cpus = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -1207,6 +1316,7 @@ fn execute_builds(
             let install_lock_clone = install_lock.clone();
             let compile_lock_clone = compile_lock.clone();
             let bootstrap_excluded_clone = bootstrap_excluded.clone();
+            let session_hash_clone = session_hash.clone();
             let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
 
             // Bootstrap tasks: build without cyclic deps, set env vars.
@@ -1325,6 +1435,12 @@ fn execute_builds(
                                     let _ = tx_clone.send(Err((name_clone, e.into())));
                                     return;
                                 }
+                            }
+                        }
+                        // Mark completed in session for --resume support.
+                        if let Some(ref hash) = *session_hash_clone {
+                            if let Ok(db) = Database::open(&config_clone.general.db_path) {
+                                let _ = db.mark_session_completed(hash, &name_clone);
                             }
                         }
                         let _ = tx_clone.send(Ok(name_clone));
@@ -1522,8 +1638,8 @@ fn build_one(
         std::env::current_dir()?
     };
 
-    // Skip if archive already exists (unless --force or specific stages are requested)
-    if !opts.force && opts.stages.is_empty() && !opts.fetch_only {
+    // Skip if archive already exists (unless --force/--resume or specific stages are requested)
+    if !opts.force && opts.resume.is_none() && opts.stages.is_empty() && !opts.fetch_only {
         let archive_name = manifest.archive_filename();
         let existing = output_dir.join(&archive_name);
         let all_exist = existing.exists()

@@ -122,6 +122,23 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
 
+    // Build sessions: track progress of multi-package build runs for --resume
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS build_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_hash TEXT NOT NULL,
+            package_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(session_hash, package_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_build_sessions_hash ON build_sessions(session_hash);
+        ",
+    )
+    .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;
+
     // Enable foreign keys
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|e| WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e)))?;
