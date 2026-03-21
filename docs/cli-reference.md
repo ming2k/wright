@@ -41,7 +41,7 @@ wright [OPTIONS] <COMMAND>
 
 Install parts. Each argument can be a `.wright.tar.zst` file path, a part name (resolved from configured sources), or a `@kit` reference (expands to all parts in the named kit). Multiple kits can be combined freely — they are non-dependent, combinatory groupings and overlapping parts are deduplicated. Transactional — failures are rolled back. Handles `replaces` and `conflicts` automatically.
 
-Parts explicitly listed by the user are marked as `explicit`; dependencies pulled in automatically are marked as `dependency`. If a part was previously installed as a dependency, explicitly installing it again promotes it to `explicit` so it won't be removed by cascade operations.
+Parts explicitly listed by the user are marked with `manual` origin; dependencies pulled in automatically are marked as `dependency`. If a part was previously installed as a dependency, explicitly installing it again promotes it to `manual` so it won't be removed by cascade operations.
 
 | Flag | Description |
 |------|-------------|
@@ -302,7 +302,9 @@ Build parts from `plan.toml` files. Targets can be plan names, paths, or `@assem
 | `--force` (`-f`) | Bypass the output archive skip check and always rebuild. Does not delete the build cache — use `--clean --force` to also clear the cache and fully start from scratch. |
 | `--resume` (`-r`) `[HASH]` | Resume a previous build session: skip parts that were already successfully built and installed. Without a hash, auto-detects the session from the current build set. The session hash is printed on failure for explicit use. |
 | `-w` / `--dockyards <N>` | Max concurrent dockyard processes (0 = auto = available_cpus − 4, minimum 1). Only parts with no dependency relationship run simultaneously. Controls part-level concurrency — compiler-level parallelism inside each dockyard is set by CPU affinity (`nproc` returns the correct count automatically). See [Resource Allocation](resource-allocation.md) for details. |
-| `--install` (`-i`) | Automatically install each built part after success. |
+| `--install` (`-i`) | Automatically install each built part after success. User-specified targets get `build` origin; auto-resolved dependencies get `dependency` origin. |
+| `--skip-check` | Skip the lifecycle `check` stage during a normal full build. Unlike `--stage`, this still runs the full pipeline (including fetch/verify/extract). Incompatible with `--stage`. |
+| `--clear-sessions` | Remove all saved build sessions from the database and exit (does not perform a build). |
 | `--mvp` | Build using the `[mvp.dependencies]` dep set; sets `WRIGHT_BUILD_PHASE=mvp` without requiring a dependency cycle |
 
 **Examples:**

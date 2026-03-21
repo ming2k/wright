@@ -155,7 +155,7 @@ wright remove
   → check file shadows → preserve files if shared by other parts
 
 wright remove --cascade
-  → compute orphan dependencies (install_reason = 'dependency', not needed by others)
+  → compute orphan dependencies (origin = 'dependency', not needed by others)
   → remove target → remove orphan deps leaf-first
 ```
 

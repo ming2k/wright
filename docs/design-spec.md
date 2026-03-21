@@ -322,14 +322,6 @@ optional = [
     { name = "geoip", description = "GeoIP module support" },
 ]
 
-# ---- Package relations (separate from dependencies) ----
-[relations]
-# Conflicts: cannot coexist with these parts
-conflicts = ["apache"]
-
-# Provides: this part can substitute for these virtual parts
-provides = ["http-server"]
-
 # ---- Source definitions (array-of-tables) ----
 [[sources]]
 uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
@@ -424,6 +416,8 @@ systemctl stop nginx 2>/dev/null || true
 """
 
 [output]
+conflicts = ["apache"]
+provides = ["http-server"]
 backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",
@@ -693,15 +687,17 @@ Stages without a defined script are automatically skipped (except fetch/verify/e
 wright install <pkg> [pkg...]       # Install parts (from repo or local file)
 wright remove <pkg> [pkg...]        # Uninstall parts
 wright upgrade [pkg...]             # Upgrade parts (no args = upgrade all)
+wright sysupgrade                   # Upgrade all installed parts from repositories
 wright query <pkg>                  # Query part information
 wright list [--installed]           # List parts
 wright search <keyword>             # Search parts
 wright files <pkg>                  # List files owned by a part
 wright owner <file>                 # Query which part owns a file
 wright verify [pkg]                 # Verify part file integrity
-wright rollback                     # Rollback the last operation
-wright sync                         # Sync remote repository index
-wright clean                        # Clean caches
+wright doctor                       # Diagnose system issues
+wright assume <pkg>                 # Mark a part as externally provided
+wright unassume <pkg>               # Remove assumed status
+wright history                      # Show operation history
 ```
 
 ### 8.2 SQLite Database Schema
@@ -723,9 +719,10 @@ CREATE TABLE parts (
     pkg_hash TEXT,                     -- SHA-256 of the .wright.tar.zst archive
     install_scripts TEXT,              -- TOML-serialized install hooks
     assumed INTEGER NOT NULL DEFAULT 0, -- 1 = externally provided (wright assume)
-    install_reason TEXT NOT NULL DEFAULT 'explicit' -- 'explicit' (user-requested) or 'dependency' (auto-resolved).
-                                                   -- Only `wright install` promotes dependency → explicit.
-                                                   -- Upgrades (wright upgrade, wbuild -icf) preserve existing value.
+    origin TEXT NOT NULL DEFAULT 'manual'  -- 'manual' (user ran wright install), 'build' (wbuild -i target),
+                                          -- or 'dependency' (auto-resolved, eligible for orphan cleanup).
+                                          -- Promotion hierarchy: dependency → build → manual.
+                                          -- Only `wright install` promotes to manual. Upgrades preserve existing value.
 );
 
 -- Part file manifest
@@ -938,7 +935,7 @@ files = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 [general]
 arch = "x86_64"                     # System architecture
-hold_dir = "/var/hold"              # Hold tree path
+plans_dir = "/var/hold"             # Plans directory
 cache_dir = "/var/lib/wright/cache"   # Cache directory
 db_path = "/var/lib/wright/db/parts.db"
 log_dir = "/var/log/wright"
@@ -1016,7 +1013,7 @@ Goal: Remote repository support and self-hosting capability.
 Tasks:
 - [ ] Repository index format (`index.toml`) generation
 - [ ] Repository generation tool for creating repositories from built parts
-- [ ] `wright sync` remote repository synchronization with caching
+- [ ] `wrepo sync` remote repository synchronization with caching
 - [ ] Priority-based source resolution (local > remote)
 - [ ] Remote part download with SHA-256 verification
 - [ ] GPG signature verification for repository index
@@ -1136,7 +1133,7 @@ Resolution order: When multiple sources provide the same part, the source with t
 
 ### 13.4 Repository Synchronization
 
-`wright sync` performs the following:
+`wrepo sync` performs the following:
 
 ```
 1. For each enabled remote source:

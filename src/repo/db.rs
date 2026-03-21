@@ -97,14 +97,23 @@ fn acquire_lock(db_path: &Path) -> Result<File> {
         ))
     })?;
 
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if ret != 0 {
-        return Err(WrightError::DatabaseError(
-            "repo database is locked by another process".to_string(),
-        ));
-    }
+    let mut delay = std::time::Duration::from_millis(50);
+    let max_wait = std::time::Duration::from_secs(30);
+    let start = std::time::Instant::now();
 
-    Ok(file)
+    loop {
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if ret == 0 {
+            return Ok(file);
+        }
+        if start.elapsed() >= max_wait {
+            return Err(WrightError::DatabaseError(
+                "repo database is locked by another process (timed out after 30s)".to_string(),
+            ));
+        }
+        std::thread::sleep(delay);
+        delay = (delay * 2).min(std::time::Duration::from_secs(1));
+    }
 }
 
 fn repo_schema_error(db_path: &Path, err: rusqlite::Error) -> String {

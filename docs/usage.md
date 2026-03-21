@@ -205,16 +205,16 @@ wright remove --cascade nginx      # remove nginx and its orphan dependencies
 wright list --orphans              # show auto-installed deps no longer needed
 ```
 
-When parts are installed, wright tracks whether each was explicitly
-requested (`explicit`) or pulled in automatically as a dependency
-(`dependency`). `--cascade` uses this information to clean up dependencies
-that are no longer needed — similar to `apt autoremove` or `pacman -Rsu`.
+When parts are installed, wright tracks their origin: `manual` (user ran
+`wright install`), `build` (installed via `wbuild run -i`), or `dependency`
+(auto-resolved). `--cascade` uses this information to clean up `dependency`-origin
+parts that are no longer needed — similar to `apt autoremove` or `pacman -Rsu`.
 
-If you later explicitly install a part that was previously pulled in as a
-dependency, `wright install` promotes it to `explicit` so it won't be removed
-by cascade operations. Upgrading via `wright upgrade` or `wbuild run -icf`
-preserves the existing install reason — only `wright install` expresses the
-intent to "own" a part.
+Origins follow a promotion hierarchy: `dependency → build → manual`. If you
+later explicitly install a part that was previously pulled in as a dependency,
+`wright install` promotes it to `manual` so it won't be removed by cascade
+operations. Upgrading via `wright upgrade` or `wbuild run -icf` preserves the
+existing origin — only `wright install` expresses the intent to "own" a part.
 
 ### Querying and Analysis
 

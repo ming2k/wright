@@ -340,12 +340,12 @@ wright list --orphans
 ```
 
 If you explicitly install a part that was previously pulled in as a dependency,
-it gets promoted to "explicit" and won't be removed by `--cascade`:
+its origin gets promoted to `manual` and won't be removed by `--cascade`:
 
 ```bash
-# pcre was auto-installed as a dependency of nginx
+# pcre was auto-installed as a dependency of nginx (origin: dependency)
 wright install pcre-8.45-1-x86_64.wright.tar.zst
-# pcre is now "explicit" — cascade won't touch it
+# pcre is now "manual" — cascade won't touch it
 ```
 
 ---
