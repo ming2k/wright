@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-03-21
+
+### Changes
+- **`wbuild resolve` pipeline**: dependency expansion (`--deps`, `--deps=sync`, `--deps=all`) is now performed by `wbuild resolve` and piped into `wbuild run`, replacing the previous `wbuild run --deps` interface. This enables `wbuild resolve ... | sudo wbuild run ...` workflows where resolution runs unprivileged.
+- **Unified database path**: non-root users now default to the system database (`/var/lib/wright/db/parts.db`) so that resolve and build pipelines across privilege boundaries consult the same installation state. Per-user overrides via config are still supported.
+- **Multi-dockyard progress spinners**: parallel builds now display per-dockyard progress spinners showing the current lifecycle stage, replacing interleaved log lines.
+- **Wave-based transitive rebuild expansion**: fix `expand_rebuild_deps` to collect each depth level into a separate wave, preventing packages added at the current depth from triggering further expansion within the same iteration.
+
 ## [1.10.1] - 2026-03-21
 
 ### Changes
