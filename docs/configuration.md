@@ -169,7 +169,7 @@ plans_dir = "/home/alice/wright/plans"
 | `arch` | string | `"x86_64"` | Target architecture |
 | `plans_dir` | path | `/var/lib/wright/plans` | Root directory for plan definitions. Override this for non-root use if your plans live outside `/var/lib/wright/plans`. |
 | `components_dir` | path | `/var/lib/wright/components` | Built part archives (`.wright.tar.zst`) |
-| `cache_dir` | path | `/var/lib/wright/cache` | Downloaded sources cache |
+| `cache_dir` | path | `/var/lib/wright/cache` | Persistent cache root for downloaded sources (`sources/`), build-result snapshots (`builds/`), and related reusable cache data |
 | `db_path` | path | `/var/lib/wright/db/parts.db` | Installed part database (SQLite) |
 | `repo_db_path` | path | `/var/lib/wright/db/repo.db` | Repository index database (SQLite) |
 | `log_dir` | path | `/var/log/wright` | Operation logs (build logs live under `build_dir/<name>-<version>/log`) |

@@ -5,6 +5,20 @@ directory layout, log files, source cache, build cache, and output archives.
 Understanding these layers makes it easier to debug failures and reason about
 when work is skipped or repeated.
 
+## Three On-Disk Layers
+
+`wbuild run` uses three different storage layers that are easy to confuse:
+
+| Location | Purpose | Typical contents | Lifecycle |
+|----------|---------|------------------|-----------|
+| `build_dir` (default `/var/tmp/wright-build`) | Active working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
+| `<cache_dir>/sources/` | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
+| `<cache_dir>/builds/` | Reusable build-result cache | `<name>-<build_key>.tar.zst` snapshots containing `pkg/` and `log/` | Persistent cache across builds |
+
+The key distinction is that `build_dir` is an unpacked workspace, while
+`cache_dir/builds` is a formal cache entry. A cache hit can restore `pkg/` and
+`log/` even if the previous working directory under `build_dir` was deleted.
+
 ## Build Directory Layout
 
 Each part gets its own working directory under `build_dir`
@@ -129,6 +143,22 @@ rebuilds from scratch.
 The cache archive contains `pkg/` and `log/` directories.
 `src/` is **not** cached to keep the archive compact. On a cache hit, Wright
 restores these directories and skips the entire build pipeline.
+
+### Why this exists when `build_dir` already exists
+
+`build_dir` is primarily for live build state and debugging. It keeps the
+extracted source tree and the logs from the last run, but it is not the build
+cache interface. Wright still writes `cache_dir/builds/<name>-<build_key>.tar.zst`
+because:
+
+- the working directory may be removed manually or by `--clean`
+- `src/` is intentionally excluded from the build cache to keep cache entries smaller
+- the cache key provides a precise "can this build be reused?" decision
+- restoring a compact archive is more predictable than relying on an old working tree
+
+If you want to inspect source trees or rerun a stage manually, look in
+`build_dir`. If you want to understand why a later build skipped recompilation,
+look in `cache_dir/builds`.
 
 ### When the cache is bypassed or cleared
 
