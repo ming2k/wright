@@ -22,9 +22,6 @@ pub use remove::{
 pub use upgrade::upgrade_part;
 pub use verify::verify_part;
 
-#[cfg(test)]
-use hooks::parse_hooks_from_db;
-
 /// Derive journal path from the database path.
 pub(super) fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))
@@ -56,6 +53,7 @@ pub(super) fn self_replace_provides_conflicts(
 
 #[cfg(test)]
 mod tests {
+    use super::hooks::parse_hooks_from_db;
     use super::*;
     use crate::database::FileEntry as DbFileEntry;
     use crate::database::{Database, FileEntry, FileType, NewPart};

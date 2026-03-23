@@ -278,6 +278,21 @@ Their responsibilities are intentionally separate:
 └─────────────────────────────────────────────────────┘
 ```
 
+### 3.4 Source Module Layout
+
+The current source tree is organized around small, focused modules rather than
+single oversized implementation files. The important boundaries are:
+
+| Area | Primary modules | Responsibility |
+|---|---|---|
+| Build orchestration | `src/builder/orchestrator.rs`, `src/builder/orchestrator/resolver.rs`, `src/builder/orchestrator/planning.rs`, `src/builder/orchestrator/execute.rs` | Target resolution, dependency expansion, build graph construction, and parallel execution |
+| Transactions | `src/transaction/mod.rs`, `src/transaction/install.rs`, `src/transaction/remove.rs`, `src/transaction/upgrade.rs`, `src/transaction/verify.rs`, `src/transaction/hooks.rs`, `src/transaction/fs.rs` | Install/remove/upgrade flows, hook handling, file copy logic, and verification |
+| Manifest parsing | `src/plan/manifest.rs`, `src/plan/manifest/parse.rs`, `src/plan/manifest/convert.rs` | Plan data types, TOML parsing, and output/sub-part conversion |
+| Installed-state database | `src/database/core.rs`, `src/database/types.rs`, `src/database/meta.rs`, `src/database/parts.rs`, `src/database/files.rs`, `src/database/dependencies.rs`, `src/database/sessions.rs` | SQLite connection/locking, database records, and query/write operations grouped by responsibility |
+
+This layout is intentional. New code should prefer extending the focused
+submodule that owns a behavior instead of re-growing large catch-all files.
+
 ---
 
 ## 4. Plan Format (plan.toml)
