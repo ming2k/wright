@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-03-23
+
+### Changes
+- **Unified source fetch UI**: align HTTP, `git+`, and local-file source fetch progress under one shared presentation model with consistent prefixes, progress styles, and completion messages.
+- **Progress cleanup**: clear completed source-transfer progress bars before later lifecycle stages so stale network-fetch lines do not remain visible under `compile`.
+
 ## [1.11.1] - 2026-03-23
 
 ### Changes
