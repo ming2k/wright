@@ -78,9 +78,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     let _ = conn.execute_batch("ALTER TABLE parts ADD COLUMN assumed INTEGER NOT NULL DEFAULT 0;");
 
     // Migration: add origin column (existing parts default to 'manual').
-    let _ = conn.execute_batch(
-        "ALTER TABLE parts ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';",
-    );
+    let _ =
+        conn.execute_batch("ALTER TABLE parts ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';");
 
     // Migration: add epoch column (default 0 for existing parts).
     let _ = conn.execute_batch("ALTER TABLE parts ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;");
