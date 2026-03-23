@@ -925,6 +925,8 @@ impl Builder {
             &git_ref
         };
 
+        let label = progress::source_label(&git_url);
+
         let repo = if !dest.exists() {
             info!("Cloning Git repository (native): {}", git_url);
             git2::Repository::init_bare(dest)
@@ -938,15 +940,8 @@ impl Builder {
             .remote_anonymous(&git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
-        // Progress bar for git fetch, similar to HTTP downloads.
-        let pb = progress::MULTI.add(indicatif::ProgressBar::new(0));
-        pb.set_style(
-            indicatif::ProgressStyle::default_bar()
-                .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} objects ({msg})")
-                .unwrap()
-                .progress_chars("#>-"),
-        );
-        pb.set_prefix(format!("git fetch {}", git_url));
+        let pb = progress::new_source_transfer_bar(&label, 0);
+        progress::set_source_git_objects(&pb, 0, 0, 0);
 
         let pb_clone = pb.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
@@ -955,9 +950,12 @@ impl Builder {
             if total == 0 {
                 return true;
             }
-            pb_clone.set_length(total);
-            pb_clone.set_position(stats.received_objects() as u64);
-            pb_clone.set_message(format!("{} KiB", stats.received_bytes() / 1024));
+            progress::set_source_git_objects(
+                &pb_clone,
+                stats.received_objects() as u64,
+                total,
+                stats.received_bytes() as u64,
+            );
             true
         });
 
@@ -965,7 +963,6 @@ impl Builder {
         fetch_opts.remote_callbacks(callbacks);
         fetch_opts.download_tags(git2::AutotagOption::All);
 
-        info!("Fetching from remote: {}", git_url);
         let fetch_result = remote
             .fetch(
                 &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
@@ -973,8 +970,8 @@ impl Builder {
                 None,
             )
             .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)));
-        pb.finish_and_clear();
         fetch_result?;
+        progress::finish_source(&pb, &label, dest);
 
         // Resolve the ref to a commit
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
@@ -1043,7 +1040,6 @@ impl Builder {
                 }
 
                 if needs_download {
-                    info!("Fetching {} to {}", processed_uri, dest.display());
                     download::download_file(
                         &processed_uri,
                         &dest,
@@ -1070,6 +1066,8 @@ impl Builder {
                 let dest = cache_dir.join(&filename);
 
                 if !dest.exists() {
+                    let label = progress::source_label(&processed_uri);
+                    let pb = progress::new_source_spinner(&label, "copying");
                     std::fs::copy(&local_path, &dest).map_err(|e| {
                         WrightError::BuildError(format!(
                             "failed to copy local file {} to cache: {}",
@@ -1077,7 +1075,7 @@ impl Builder {
                             e
                         ))
                     })?;
-                    debug!("Copied local file {} to cache", processed_uri);
+                    progress::finish_source(&pb, &label, &dest);
                 } else {
                     debug!("Local file {} already in cache", filename);
                 }

@@ -1,8 +1,6 @@
-use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
 use std::io::{Read, Write};
 use std::path::Path;
-use tracing::info;
 
 use crate::error::{Result, WrightError};
 use crate::util::compress;
@@ -15,6 +13,8 @@ use crate::util::progress;
 /// partial/corrupt files from being left in the cache when a download is
 /// interrupted.
 pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
+    let label = progress::source_label(url);
+
     if url.starts_with("file://") {
         let path_str = url.trim_start_matches("file://");
         let src_path = Path::new(path_str);
@@ -26,12 +26,14 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
             )));
         }
 
+        let pb = progress::new_source_spinner(&label, "copying");
         if src_path.is_dir() {
-            info!("Packing local directory {}...", path_str);
+            pb.set_message("packing".to_string());
             compress::create_tar_zst(src_path, dest)?;
         } else {
             std::fs::copy(src_path, dest).map_err(WrightError::IoError)?;
         }
+        progress::finish_source(&pb, &label, dest);
         return Ok(());
     }
 
@@ -75,14 +77,8 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     }
 
     let total_size = response.content_length().unwrap_or(0);
-
-    let filename = url.split('/').next_back().unwrap_or(url);
-    let pb = progress::MULTI.add(ProgressBar::new(total_size));
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-        .unwrap()
-        .progress_chars("#>-"));
-    pb.set_prefix(filename.to_string());
+    let pb = progress::new_source_transfer_bar(&label, total_size);
+    progress::set_source_bytes(&pb, 0, total_size);
 
     // Write to a temporary file in the same directory, then rename on success.
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
@@ -108,15 +104,14 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
             .map_err(|e| WrightError::IoError(e))?;
 
         downloaded += n as u64;
-        pb.set_position(downloaded);
+        progress::set_source_bytes(&pb, downloaded, total_size);
     }
-
-    pb.finish_with_message("downloaded");
 
     // Atomically move the completed download into place
     tmp_file
         .persist(dest)
         .map_err(|e| WrightError::IoError(e.error))?;
+    progress::finish_source(&pb, &label, dest);
 
     Ok(())
 }
