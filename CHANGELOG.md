@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-03-23
+
+### Changes
+- **Core module refactor**: split oversized transaction, builder orchestrator, manifest, and database modules into focused submodules while preserving the existing public API.
+- **Validation coverage**: run the full library and integration test suites after the refactor to confirm build, install, query, and verification flows still behave correctly.
+- **Design spec sync**: update the technical design document to describe the current source module layout.
+
 ## [1.11.0] - 2026-03-21
 
 ### Changes
