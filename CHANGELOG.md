@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.11.3] - 2026-03-25
+
+### Changes
+- **Pipe-friendly `wright list`**: print only part names by default for easy piping; add `-l`/`--long` flag to show origin, version, release, and arch.
+- **`wright mark` command**: change a part's install origin between `manual` and `dependency`, enabling flexible orphan cleanup workflows.
+
 ## [1.11.2] - 2026-03-23
 
 ### Changes
