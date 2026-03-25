@@ -8,6 +8,7 @@ Workflows:
   Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Upgrade everything:       wright sysupgrade
   Inspect dependencies:     wright deps zlib --reverse
+  Change install reason:    wright mark zlib --as-dependency
 
 Use `wrepo` to manage repository indexes and sources.
 Use `wbuild` to build parts from plans.";
@@ -44,9 +45,17 @@ Examples:
 const WRIGHT_LIST_AFTER_HELP: &str = "\
 Examples:
   wright list
+  wright list -l
   wright list --roots
   wright list --orphans
-  wright list --assumed";
+  wright list --assumed
+
+By default only part names are printed (one per line), suitable for piping.
+Use -l/--long to show origin, version, release, and architecture.";
+const WRIGHT_MARK_AFTER_HELP: &str = "\
+Examples:
+  wright mark zlib --as-dependency
+  wright mark openssl --as-manual";
 const WRIGHT_QUERY_AFTER_HELP: &str = "\
 Examples:
   wright query zlib";
@@ -219,6 +228,9 @@ pub enum Commands {
         after_help = WRIGHT_LIST_AFTER_HELP
     )]
     List {
+        /// Show origin, version, release, and architecture
+        #[arg(long, short)]
+        long: bool,
         /// Show only top-level (root) parts with no installed dependents
         #[arg(long, short)]
         roots: bool,
@@ -300,6 +312,22 @@ pub enum Commands {
         /// Part name
         #[arg(value_name = "PART")]
         name: String,
+    },
+    /// Change the install origin of a part
+    #[command(
+        long_about = "Change the install origin of a part.\n\nThis controls whether a part is treated as explicitly installed or as a dependency. Marking a part as a dependency makes it eligible for orphan cleanup.",
+        after_help = WRIGHT_MARK_AFTER_HELP
+    )]
+    Mark {
+        /// Part names
+        #[arg(required = true, value_name = "PART")]
+        parts: Vec<String>,
+        /// Mark as a dependency install
+        #[arg(long, group = "origin")]
+        as_dependency: bool,
+        /// Mark as an explicit (manual) install
+        #[arg(long, group = "origin")]
+        as_manual: bool,
     },
     /// Show part transaction history (install, upgrade, remove)
     #[command(

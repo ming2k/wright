@@ -399,6 +399,7 @@ fn main() -> Result<()> {
             print_paged(&String::from_utf8_lossy(&buf));
         }
         Commands::List {
+            long,
             roots,
             assumed,
             orphans,
@@ -423,13 +424,17 @@ fn main() -> Result<()> {
                     if assumed && !pkg.assumed {
                         continue;
                     }
-                    if pkg.assumed {
-                        println!("{} {} [external]", pkg.name, pkg.version);
+                    if long {
+                        if pkg.assumed {
+                            println!("{:<12} {:<24} {}", "external", pkg.name, pkg.version);
+                        } else {
+                            println!(
+                                "{:<12} {:<24} {}-{} ({})",
+                                pkg.origin, pkg.name, pkg.version, pkg.release, pkg.arch
+                            );
+                        }
                     } else {
-                        println!(
-                            "{} {}-{} ({})",
-                            pkg.name, pkg.version, pkg.release, pkg.arch
-                        );
+                        println!("{}", pkg.name);
                     }
                 }
             }
@@ -632,6 +637,32 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
+        Commands::Mark {
+            parts,
+            as_dependency,
+            as_manual,
+        } => {
+            use wright::database::Origin;
+
+            let origin = if as_dependency {
+                Origin::Dependency
+            } else if as_manual {
+                Origin::Manual
+            } else {
+                eprintln!("error: specify --as-dependency or --as-manual");
+                std::process::exit(1);
+            };
+
+            for name in &parts {
+                match db.force_set_origin(name, origin) {
+                    Ok(()) => println!("{}: marked as {}", name, origin),
+                    Err(e) => {
+                        eprintln!("error: {}: {}", name, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
         Commands::History { part } => {
             let records = db.get_history(part.as_deref())?;
             if records.is_empty() {

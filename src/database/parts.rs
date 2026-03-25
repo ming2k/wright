@@ -186,6 +186,20 @@ impl Database {
         Ok(())
     }
 
+    pub fn force_set_origin(&self, name: &str, new_origin: Origin) -> Result<()> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE parts SET origin = ?1 WHERE name = ?2",
+                rusqlite::params![new_origin, name],
+            )
+            .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
+        if rows == 0 {
+            return Err(WrightError::PartNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
     pub fn get_orphan_parts(&self) -> Result<Vec<InstalledPart>> {
         let sql = format!(
             "SELECT {} FROM parts WHERE origin = 'dependency' AND name NOT IN (
