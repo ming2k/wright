@@ -463,8 +463,8 @@ fn main() -> Result<()> {
                         .context("failed to get optional dependencies")?;
                     if !opt_deps.is_empty() {
                         println!("Optional    :");
-                        for (name, desc) in &opt_deps {
-                            println!("  {} - {}", name, desc);
+                        for name in &opt_deps {
+                            println!("  {}", name);
                         }
                     }
                 }

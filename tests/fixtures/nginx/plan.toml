@@ -14,9 +14,7 @@ runtime = [
     "zlib >= 1.2",
 ]
 build = ["perl", "gcc", "make"]
-optional = [
-    { name = "geoip", description = "GeoIP module support" },
-]
+optional = ["geoip"]
 
 [[sources]]
 uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"

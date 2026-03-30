@@ -186,13 +186,7 @@ pub struct Dependencies {
     #[serde(default)]
     pub link: Vec<String>,
     #[serde(default)]
-    pub optional: Vec<OptionalDependency>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct OptionalDependency {
-    pub name: String,
-    pub description: String,
+    pub optional: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -524,9 +518,7 @@ maintainer = "Test <test@test.com>"
 [dependencies]
 runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 build = ["perl", "gcc", "make"]
-optional = [
-    { name = "geoip", description = "GeoIP module support" },
-]
+optional = ["geoip"]
 
 [[sources]]
 uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"

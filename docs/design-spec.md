@@ -333,9 +333,7 @@ link = [
 ]
 
 # Optional dependencies: provide extra functionality, not enforced
-optional = [
-    { name = "geoip", description = "GeoIP module support" },
-]
+optional = ["geoip"]
 
 # ---- Source definitions (array-of-tables) ----
 [[sources]]
@@ -768,7 +766,6 @@ CREATE TABLE optional_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    description TEXT,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 

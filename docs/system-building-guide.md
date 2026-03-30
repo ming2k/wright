@@ -293,9 +293,7 @@ error: CRITICAL: Cannot remove 'openssl' because it is a LINK dependency of: cur
 runtime = ["bash"]
 build = ["gcc", "make", "cmake"]
 link = ["zlib", "openssl >= 3.0"]
-optional = [
-    { name = "nghttp2", description = "HTTP/2 support" },
-]
+optional = ["nghttp2"]
 ```
 
 ### 3.3 Avoiding Circular Dependencies

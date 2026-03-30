@@ -81,7 +81,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             part_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            description TEXT,
             FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
         );
 

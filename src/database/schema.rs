@@ -92,7 +92,6 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             part_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            description TEXT,
             FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
         );
 

@@ -69,7 +69,7 @@ All fields default to empty lists if omitted.
 | `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
 | `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
 | `link`      | list of strings                 | ABI-sensitive linked dependencies. Triggers rebuild on update. |
-| `optional`  | list of `{name, description}`   | Optional runtime dependencies        |
+| `optional`  | list of strings                 | Optional runtime dependencies        |
 
 #### `link` dependencies vs `runtime`
 
@@ -93,12 +93,10 @@ Supported operators: `>=`, `<=`, `>`, `<`, `=`.
 
 #### Optional dependencies
 
-Optional dependencies use an inline table with `name` and `description`:
+Optional dependencies are simple string lists, like other dependency types:
 
 ```toml
-optional = [
-    { name = "geoip", description = "GeoIP module support" },
-]
+optional = ["geoip", "nghttp2"]
 ```
 
 ### `[[sources]]`
@@ -754,9 +752,7 @@ maintainer = "Example Maintainer <maintainer@example.com>"
 [dependencies]
 runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 build = ["perl", "gcc", "make"]
-optional = [
-    { name = "geoip", description = "GeoIP module support" },
-]
+optional = ["geoip"]
 
 [[sources]]
 uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"

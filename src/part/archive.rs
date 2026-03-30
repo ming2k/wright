@@ -28,7 +28,7 @@ pub struct PartInfo {
     pub conflicts: Vec<String>,
     pub provides: Vec<String>,
     pub backup_files: Vec<String>,
-    pub optional_deps: Vec<(String, String)>,
+    pub optional_deps: Vec<String>,
 }
 
 /// Files that should never be included in a part archive.
@@ -165,10 +165,7 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
                 if i > 0 {
                     deps_toml.push_str(", ");
                 }
-                deps_toml.push_str(&format!(
-                    "{{name = \"{}\", description = \"{}\"}}",
-                    dep.name, dep.description
-                ));
+                deps_toml.push_str(&format!("\"{}\"", dep));
             }
             deps_toml.push_str("]\n");
         }
@@ -371,18 +368,12 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     }
 
     #[derive(serde::Deserialize)]
-    struct PartInfoOptDep {
-        name: String,
-        description: String,
-    }
-
-    #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct PartInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
         #[serde(default)]
-        optional: Vec<PartInfoOptDep>,
+        optional: Vec<String>,
     }
 
     #[derive(serde::Deserialize, Default)]
@@ -406,14 +397,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
 
     let (runtime_deps, optional_deps) = parsed
         .dependencies
-        .map(|d| {
-            let opt = d
-                .optional
-                .into_iter()
-                .map(|o| (o.name, o.description))
-                .collect();
-            (d.runtime, opt)
-        })
+        .map(|d| (d.runtime, d.optional))
         .unwrap_or_default();
 
     let relations = parsed.relations.unwrap_or_default();
@@ -455,18 +439,12 @@ license = "MIT"
 
 [dependencies]
 runtime = ["bash"]
-
-[[dependencies.optional]]
-name = "python"
-description = "python support"
+optional = ["python"]
 "#,
         )
         .unwrap();
 
         assert_eq!(info.runtime_deps, vec!["bash"]);
-        assert_eq!(
-            info.optional_deps,
-            vec![("python".to_string(), "python support".to_string())]
-        );
+        assert_eq!(info.optional_deps, vec!["python"]);
     }
 }
