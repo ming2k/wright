@@ -11,13 +11,31 @@ when work is skipped or repeated.
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
-| `build_dir` (default `/var/tmp/wright-build`) | Active working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
+| `build_dir` (default `/var/tmp/wright-build`) | Live working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
 | `<cache_dir>/sources/` | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
-| `<cache_dir>/builds/` | Reusable build-result cache | `<name>-<build_key>.tar.zst` snapshots containing `pkg/` and `log/` | Persistent cache across builds |
+| `<cache_dir>/builds/` | Reusable build-result cache | `<name>-<build_key>.tar.zst` snapshots containing built output and logs | Persistent cache across builds |
 
 The key distinction is that `build_dir` is an unpacked workspace, while
 `cache_dir/builds` is a formal cache entry. A cache hit can restore `pkg/` and
 `log/` even if the previous working directory under `build_dir` was deleted.
+
+### How the three layers relate
+
+Quick rule:
+
+- `build cache` decides whether Wright can skip the build entirely.
+- `build_dir/src/` decides whether Wright can reuse the previous unpacked source tree.
+- `source cache` decides whether Wright must re-download or re-copy source inputs.
+
+Execution order:
+
+1. Check `build cache`
+2. If missed, check whether `build_dir/src/` is reusable
+3. If not reusable, fetch/extract from `source cache`
+
+`build cache` and `build_dir/src/` share the same build key, but store different
+state: `build_dir/src/` is mutable workspace state; `build cache` is a compact
+result snapshot and does **not** include `src/`.
 
 ## Build Directory Layout
 
@@ -94,7 +112,12 @@ overwritten on the next build attempt.
 | Full build (key mismatch) | recreated | recreated | recreated |
 | `--stage=<s>` | preserved | recreated | recreated |
 | `--clean` then build | deleted first | recreated | recreated |
-| Cache hit | recreated from cache | restored | restored |
+| Cache hit | recreated empty | restored | restored |
+
+On a build-cache hit, Wright recreates the working directories first, then
+extracts the cached snapshot into `build_root`. Because `src/` is not part of
+that snapshot, the resulting `src/` directory exists but contains no restored
+source tree.
 
 ## Source Cache
 
@@ -117,6 +140,10 @@ Before extraction, each source is verified against its `sha256` checksum from
 `plan.toml`. If the cached file fails verification, it is deleted and
 re-downloaded. Local path sources use `"SKIP"` as their checksum and bypass
 verification.
+
+The source cache is only consulted when Wright needs to materialize `src/`
+again. If `src/` is reusable, or if a build-cache hit skips the pipeline, it is
+not used in that run.
 
 ## Build Cache
 
@@ -144,6 +171,9 @@ The cache archive contains `pkg/` and `log/` directories.
 `src/` is **not** cached to keep the archive compact. On a cache hit, Wright
 restores these directories and skips the entire build pipeline.
 
+For multi-part plans, `pkg-*` sub-part directories are also included in the
+cache entry.
+
 ### Why this exists when `build_dir` already exists
 
 `build_dir` is primarily for live build state and debugging. It keeps the
@@ -159,6 +189,16 @@ because:
 If you want to inspect source trees or rerun a stage manually, look in
 `build_dir`. If you want to understand why a later build skipped recompilation,
 look in `cache_dir/builds`.
+
+### Build Cache vs Part Archive
+
+| Item | Build cache | `.wright.tar.zst` |
+|------|-------------|-------------------|
+| Purpose | Internal reuse | Distribution / install |
+| Produced when | After lifecycle succeeds | After FHS validation and archive creation |
+| Contains | `pkg/`, `log/`, `pkg-*` | Packaged payload plus `.PARTINFO`, `.FILELIST`, optional `.HOOKS` |
+| Includes `src/` | No | No |
+| Stable public format | No | Yes |
 
 ### When the cache is bypassed or cleared
 
