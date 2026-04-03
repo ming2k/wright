@@ -107,6 +107,7 @@ struct ExecutorWrapper {
 #[derive(Debug, Clone)]
 pub struct ExecutorOptions {
     pub level: DockyardLevel,
+    pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub part_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
@@ -186,6 +187,7 @@ pub fn execute_script(
         task_id,
     );
     config.files_dir = options.files_dir.clone();
+    config.base_root = options.base_root.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
     config.cpu_count = options.cpu_count;

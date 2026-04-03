@@ -53,12 +53,24 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
 }
 
 pub(super) fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {
-    let status = std::process::Command::new("/bin/sh")
+    let use_chroot = root_dir != Path::new("/") && nix::unistd::geteuid().is_root();
+    let mut command = if use_chroot {
+        let mut command = std::process::Command::new("/usr/bin/chroot");
+        command.arg(root_dir).arg("/bin/sh");
+        command
+    } else {
+        std::process::Command::new("/bin/sh")
+    };
+
+    let root_env = if use_chroot { Path::new("/") } else { root_dir };
+    let current_dir = if use_chroot { Path::new("/") } else { root_dir };
+
+    let status = command
         .arg("-e")
         .arg("-c")
         .arg(script)
-        .env("ROOT", root_dir)
-        .current_dir(root_dir)
+        .env("ROOT", root_env)
+        .current_dir(current_dir)
         .status()
         .map_err(|e| WrightError::ScriptError(format!("failed to execute script: {}", e)))?;
 

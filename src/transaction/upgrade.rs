@@ -19,6 +19,7 @@ pub fn upgrade_part(
     archive_path: &Path,
     root_dir: &Path,
     force: bool,
+    run_hooks: bool,
 ) -> Result<()> {
     let temp_dir = tempfile::tempdir()
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
@@ -133,10 +134,12 @@ pub fn upgrade_part(
         }
     }
 
-    if let Some(ref script) = hooks.pre_install {
-        debug!("Running pre_install hook for {} (upgrade)", pkginfo.name);
-        if let Err(e) = run_install_script(script, root_dir) {
-            warn!("pre_install script failed: {}", e);
+    if run_hooks {
+        if let Some(ref script) = hooks.pre_install {
+            debug!("Running pre_install hook for {} (upgrade)", pkginfo.name);
+            if let Err(e) = run_install_script(script, root_dir) {
+                warn!("pre_install script failed: {}", e);
+            }
         }
     }
 
@@ -157,10 +160,7 @@ pub fn upgrade_part(
         }
     };
     for path in preserved_configs {
-        warn!(
-            "Config file {} has been preserved. Review the new default at {}.wnew",
-            path, path
-        );
+        info!("Preserved config: {} (.wnew: {}.wnew)", path, path);
     }
 
     for old_file in old_files.iter().rev() {
@@ -231,10 +231,12 @@ pub fn upgrade_part(
 
     db.update_transaction_status(tx_id, "completed")?;
 
-    if let Some(ref script) = hooks.post_upgrade {
-        debug!("Running post_upgrade hook for {}", pkginfo.name);
-        if let Err(e) = run_install_script(script, root_dir) {
-            warn!("post_upgrade script failed: {}", e);
+    if run_hooks {
+        if let Some(ref script) = hooks.post_upgrade {
+            debug!("Running post_upgrade hook for {}", pkginfo.name);
+            if let Err(e) = run_install_script(script, root_dir) {
+                warn!("post_upgrade script failed: {}", e);
+            }
         }
     }
 

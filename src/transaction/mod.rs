@@ -94,6 +94,7 @@ mod tests {
             .build(
                 &manifest,
                 plan_dir,
+                std::path::Path::new("/"),
                 &[],
                 false,
                 false,
@@ -402,7 +403,7 @@ build_date = "1970-01-01T00:00:00Z"
         let archive = build_hello_archive();
 
         install_part(&db, &archive, root.path(), false).unwrap();
-        let result = upgrade_part(&db, &archive, root.path(), false);
+        let result = upgrade_part(&db, &archive, root.path(), false, true);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
@@ -420,7 +421,7 @@ build_date = "1970-01-01T00:00:00Z"
         let archive = build_hello_archive();
 
         install_part(&db, &archive, root.path(), false).unwrap();
-        let result = upgrade_part(&db, &archive, root.path(), true);
+        let result = upgrade_part(&db, &archive, root.path(), true, true);
         assert!(
             result.is_ok(),
             "Force upgrade should succeed, got: {:?}",
@@ -439,7 +440,7 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let archive = build_hello_archive();
 
-        let result = upgrade_part(&db, &archive, root.path(), false);
+        let result = upgrade_part(&db, &archive, root.path(), false, true);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("not installed"));
@@ -549,7 +550,7 @@ build_date = "1970-01-01T00:00:00Z"
             out_dir.path(),
         );
 
-        upgrade_part(&db, &archive, root.path(), false).unwrap();
+        upgrade_part(&db, &archive, root.path(), false, true).unwrap();
 
         assert!(shared_path.exists(), "shared file should not be deleted");
         assert!(!old_path.exists(), "old-only file should be removed");
@@ -638,7 +639,7 @@ build_date = "1970-01-01T00:00:00Z"
         let rebuilt = out_dir.path().join("linkpkg-2.0.0-1.wright.tar.zst");
         crate::util::compress::create_tar_zst(temp_unpack.path(), &rebuilt).unwrap();
 
-        let result = upgrade_part(&db, &rebuilt, root.path(), false);
+        let result = upgrade_part(&db, &rebuilt, root.path(), false, true);
         assert!(result.is_err());
 
         let target = std::fs::read_link(&link_path).unwrap();
@@ -730,7 +731,7 @@ build_date = "1970-01-01T00:00:00Z"
 
         let v2_dir = tempfile::tempdir().unwrap();
         let v2 = make_archive(v2_dir.path(), "myapp", "2.0.0", conf_v2, out_dir.path());
-        upgrade_part(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false, true).unwrap();
 
         assert_eq!(
             std::fs::read(&live_conf).unwrap(),
@@ -800,7 +801,7 @@ build_date = "1970-01-01T00:00:00Z"
             conf_v2,
             out_dir.path(),
         );
-        upgrade_part(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false, true).unwrap();
 
         assert_eq!(
             std::fs::read(&live_conf).unwrap(),
@@ -839,7 +840,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::write(v2_dir.path().join(".PARTINFO"), pkginfo_v2).unwrap();
         let v2 = out_dir.path().join("mypkg-2.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v2_dir.path(), &v2).unwrap();
-        upgrade_part(&db, &v2, root.path(), false).unwrap();
+        upgrade_part(&db, &v2, root.path(), false, true).unwrap();
 
         let bin = root.path().join("usr/bin/mytool");
         assert_eq!(

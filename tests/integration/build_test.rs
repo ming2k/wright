@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
@@ -33,6 +33,7 @@ fn test_build_hello_fixture() {
         .build(
             &manifest,
             &plan_dir,
+            Path::new("/"),
             &[],
             false,
             false,
@@ -62,6 +63,7 @@ fn test_build_and_archive_hello() {
         .build(
             &manifest,
             &plan_dir,
+            Path::new("/"),
             &[],
             false,
             false,
@@ -133,6 +135,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
         .build(
             &manifest,
             plan_dir.path(),
+            Path::new("/"),
             &[],
             false,
             false,
@@ -201,6 +204,7 @@ fn test_build_single_stage() {
         .build(
             &manifest,
             &plan_dir,
+            Path::new("/"),
             &[],
             false,
             false,
@@ -218,6 +222,7 @@ fn test_build_single_stage() {
         .build(
             &manifest,
             &plan_dir,
+            Path::new("/"),
             &["prepare".to_string()],
             false,
             false,

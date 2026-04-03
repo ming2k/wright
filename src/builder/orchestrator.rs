@@ -18,9 +18,11 @@ mod resolver;
 
 use execute::{execute_builds, lint_dependency_graph};
 #[cfg(test)]
+use planning::construction_plan_order;
+#[cfg(test)]
 use planning::installed_matches_manifest;
 use planning::{
-    build_dep_map, compute_session_hash, construction_plan_label, construction_plan_order,
+    build_dep_map, compute_session_hash, construction_plan_batches, construction_plan_label,
     expand_missing_dependencies, expand_rebuild_deps,
 };
 use resolver::resolve_targets;
@@ -258,11 +260,11 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
     // --- Build Plan Summary ---
     if !opts.quiet {
-        for (name, _) in construction_plan_order(&graph.build_set, &graph.deps_map) {
+        for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map) {
             if session_completed.contains(&name) {
                 info!(
-                    "Skipping {}: {} (completed in previous run)",
-                    "skip",
+                    "Skipping batch {}: {} (completed in previous run)",
+                    batch,
                     name.trim_end_matches(":bootstrap"),
                 );
                 continue;
@@ -270,7 +272,8 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             let label =
                 construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
             info!(
-                "Scheduling {}: {}",
+                "Scheduling batch {} {}: {}",
+                batch,
                 label,
                 name.trim_end_matches(":bootstrap"),
             );
@@ -343,7 +346,8 @@ pub enum RebuildReason {
 #[cfg(test)]
 mod tests {
     use super::{
-        construction_plan_label, construction_plan_order, expand_missing_dependencies,
+        construction_plan_batches, construction_plan_label, construction_plan_order,
+        expand_missing_dependencies,
         installed_matches_manifest, BuildOptions, DependencyMode, RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
@@ -540,6 +544,36 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
                 ("pcre2".to_string(), 0),
                 ("gdk-pixbuf".to_string(), 1),
                 ("librsvg".to_string(), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn construction_plan_batches_use_dependency_waves() {
+        let build_set = HashSet::from([
+            "systemd".to_string(),
+            "libusb".to_string(),
+            "procps-ng".to_string(),
+            "podman".to_string(),
+        ]);
+        let deps_map = HashMap::from([
+            ("systemd".to_string(), vec![]),
+            ("libusb".to_string(), vec!["systemd".to_string()]),
+            ("procps-ng".to_string(), vec!["systemd".to_string()]),
+            (
+                "podman".to_string(),
+                vec!["libusb".to_string(), "procps-ng".to_string()],
+            ),
+        ]);
+
+        let ordered = construction_plan_batches(&build_set, &deps_map);
+        assert_eq!(
+            ordered,
+            vec![
+                ("systemd".to_string(), 0),
+                ("libusb".to_string(), 1),
+                ("procps-ng".to_string(), 1),
+                ("podman".to_string(), 2),
             ]
         );
     }

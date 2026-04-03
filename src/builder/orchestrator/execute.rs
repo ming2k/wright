@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use nix::mount::{mount, umount2, MntFlags, MsFlags};
+use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
@@ -15,6 +17,7 @@ use crate::part::fhs;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
 use super::BuildOptions;
+use super::planning::construction_plan_order;
 
 pub(super) fn execute_builds(
     config: &GlobalConfig,
@@ -30,12 +33,29 @@ pub(super) fn execute_builds(
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>();
     let completed = Arc::new(Mutex::new(session_completed.clone()));
     let in_progress = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let awaiting_install = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_count = Arc::new(Mutex::new(0usize));
+    let mut pending_install = Vec::<String>::new();
+    let mut install_state = if opts.install {
+        Some(SessionInstallState::new(
+            config,
+            build_set,
+            deps_map,
+            user_target_names,
+            session_completed,
+            name_to_path,
+        )?)
+    } else {
+        None
+    };
+    let base_root = install_state
+        .as_ref()
+        .map(|s| s.root_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/"));
 
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
-    let install_lock = Arc::new(Mutex::new(()));
     let compile_lock = Arc::new(Mutex::new(()));
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
     let session_hash = Arc::new(session_hash.map(|s| s.to_string()));
@@ -54,20 +74,22 @@ pub(super) fn execute_builds(
         opts.dockyards.min(total_cpus)
     };
 
-    info!(
-        "CPUs: {}  |  compile: one-at-a-time across dockyards",
-        total_cpus
-    );
+    info!("CPUs: {}, dockyards: {}", total_cpus, actual_dockyards);
 
     loop {
         let mut ready_to_launch = Vec::new();
         {
             let comp = completed.lock().unwrap();
             let prog = in_progress.lock().unwrap();
+            let awaiting = awaiting_install.lock().unwrap();
             let fail = failed_set.lock().unwrap();
 
             for name in build_set {
-                if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
+                if !comp.contains(name)
+                    && !prog.contains(name)
+                    && !awaiting.contains(name)
+                    && !fail.contains(name)
+                {
                     let all_deps_met = opts.checksum
                         || deps_map
                             .get(name)
@@ -116,11 +138,9 @@ pub(super) fn execute_builds(
             let path = name_to_path.get(&name).expect("plan path exists").clone();
             let builder_clone = builder.clone();
             let config_clone = config_arc.clone();
-            let install_lock_clone = install_lock.clone();
             let compile_lock_clone = compile_lock.clone();
             let bootstrap_excluded_clone = bootstrap_excluded.clone();
-            let session_hash_clone = session_hash.clone();
-            let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
+            let base_root_clone = base_root.clone();
 
             let bootstrap_excl = bootstrap_excluded_clone
                 .get(&name)
@@ -170,6 +190,7 @@ pub(super) fn execute_builds(
                     &manifest,
                     &path,
                     &config_clone,
+                    &base_root_clone,
                     &effective_opts,
                     &bootstrap_excl,
                     compile_lock_clone.clone(),
@@ -178,93 +199,6 @@ pub(super) fn execute_builds(
 
                 match res {
                     Ok(_) => {
-                        if effective_opts.install {
-                            if let Some(ref pb) = spinner {
-                                pb.set_message("installing");
-                            }
-                            let _guard = install_lock_clone.lock().unwrap();
-                            debug!("Automatically installing built part: {}", name_clone);
-
-                            let output_dir = config_clone.general.components_dir.clone();
-                            let archive_path = output_dir.join(manifest.archive_filename());
-
-                            match Database::open(&config_clone.general.db_path) {
-                                Ok(db) => {
-                                    let origin = if is_user_target {
-                                        crate::database::Origin::Build
-                                    } else {
-                                        crate::database::Origin::Dependency
-                                    };
-
-                                    if let Err(e) = crate::transaction::install_part_with_origin(
-                                        &db,
-                                        &archive_path,
-                                        &PathBuf::from("/"),
-                                        true,
-                                        origin,
-                                    ) {
-                                        if let Some(ref pb) = spinner {
-                                            pb.finish_and_clear();
-                                        }
-                                        error!(
-                                            "Build succeeded but automatic installation failed for {}: {:#}",
-                                            name_clone, e
-                                        );
-                                        let _ = tx_clone.send(Err((name_clone, e.into())));
-                                        return;
-                                    }
-
-                                    if let Some(FabricateConfig::Multi(ref pkgs)) =
-                                        manifest.fabricate
-                                    {
-                                        for (sub_name, sub_pkg) in pkgs {
-                                            if sub_name == &manifest.plan.name {
-                                                continue;
-                                            }
-                                            let sub_manifest =
-                                                sub_pkg.to_manifest(sub_name, &manifest);
-                                            let sub_archive_path =
-                                                output_dir.join(sub_manifest.archive_filename());
-                                            debug!(
-                                                "Automatically installing sub-part: {}",
-                                                sub_name
-                                            );
-                                            if let Err(e) =
-                                                crate::transaction::install_part_with_origin(
-                                                    &db,
-                                                    &sub_archive_path,
-                                                    &PathBuf::from("/"),
-                                                    true,
-                                                    origin,
-                                                )
-                                            {
-                                                warn!(
-                                                    "Automatic installation of sub-part '{}' failed: {:#}",
-                                                    sub_name, e
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    if let Some(ref pb) = spinner {
-                                        pb.finish_and_clear();
-                                    }
-                                    error!(
-                                        "Failed to open database for automatic installation: {:#}",
-                                        e
-                                    );
-                                    let _ = tx_clone.send(Err((name_clone, e.into())));
-                                    return;
-                                }
-                            }
-                        }
-
-                        if let Some(ref hash) = *session_hash_clone {
-                            if let Ok(db) = Database::open(&config_clone.general.db_path) {
-                                let _ = db.mark_session_completed(hash, &name_clone);
-                            }
-                        }
                         if let Some(ref pb) = spinner {
                             pb.finish_and_clear();
                         }
@@ -320,9 +254,17 @@ pub(super) fn execute_builds(
             }
             Ok(Ok(name)) => {
                 in_progress.lock().unwrap().remove(&name);
-                completed.lock().unwrap().insert(name.clone());
-                if !opts.quiet {
-                    info!("Completed: {}", name);
+                if opts.install {
+                    awaiting_install.lock().unwrap().insert(name.clone());
+                    pending_install.push(name);
+                } else {
+                    complete_build_task(
+                        config,
+                        session_hash.as_deref(),
+                        &completed,
+                        &name,
+                        opts.quiet,
+                    );
                 }
             }
             Ok(Err((name, _))) => {
@@ -335,6 +277,25 @@ pub(super) fn execute_builds(
                         name
                     )));
                 }
+            }
+        }
+
+        if opts.install && in_progress.lock().unwrap().is_empty() && !pending_install.is_empty() {
+            let install_state = install_state
+                .as_mut()
+                .expect("install state exists when --install is enabled");
+            pending_install.sort();
+            for name in pending_install.drain(..) {
+                let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
+                install_state.stage_install(config, name_to_path, &name, is_user_target)?;
+                awaiting_install.lock().unwrap().remove(&name);
+                complete_build_task(
+                    config,
+                    session_hash.as_deref(),
+                    &completed,
+                    &name,
+                    opts.quiet,
+                );
             }
         }
     }
@@ -353,7 +314,228 @@ pub(super) fn execute_builds(
             ));
         }
     } else {
+        if let Some(install_state) = install_state.as_ref() {
+            install_state.commit_to_host(config, name_to_path, user_target_names)?;
+        }
         info!("All {} tasks completed successfully.", final_completed);
+    }
+
+    Ok(())
+}
+
+fn complete_build_task(
+    config: &GlobalConfig,
+    session_hash: Option<&str>,
+    completed: &Arc<Mutex<HashSet<String>>>,
+    name: &str,
+    quiet: bool,
+) {
+    if let Some(hash) = session_hash {
+        if let Ok(db) = Database::open(&config.general.db_path) {
+            let _ = db.mark_session_completed(hash, name);
+        }
+    }
+    completed.lock().unwrap().insert(name.to_string());
+    if !quiet {
+        info!("Completed: {}", name);
+    }
+}
+
+struct SessionInstallState {
+    _temp_dir: TempDir,
+    root_dir: PathBuf,
+    db_path: PathBuf,
+    staged_names: Vec<String>,
+}
+
+impl SessionInstallState {
+    fn new(
+        config: &GlobalConfig,
+        build_set: &HashSet<String>,
+        deps_map: &HashMap<String, Vec<String>>,
+        user_target_names: &HashSet<String>,
+        session_completed: &HashSet<String>,
+        name_to_path: &HashMap<String, PathBuf>,
+    ) -> Result<Self> {
+        let build_dir = if config.build.build_dir.is_absolute() {
+            config.build.build_dir.clone()
+        } else {
+            std::env::current_dir()
+                .context("failed to resolve current directory for session sysroot")?
+                .join(&config.build.build_dir)
+        };
+        std::fs::create_dir_all(&build_dir)
+            .context(format!("failed to create build dir {}", build_dir.display()))?;
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("wright-session-root-")
+            .tempdir_in(&build_dir)
+            .context("failed to create session sysroot")?;
+        let upper = temp_dir.path().join("upper");
+        let work = temp_dir.path().join("work");
+        let root_dir = temp_dir.path().join("root");
+        std::fs::create_dir_all(&upper)
+            .context(format!("failed to create {}", upper.display()))?;
+        std::fs::create_dir_all(&work).context(format!("failed to create {}", work.display()))?;
+        std::fs::create_dir_all(&root_dir)
+            .context(format!("failed to create {}", root_dir.display()))?;
+
+        let opts = format!(
+            "lowerdir=/,upperdir={},workdir={}",
+            upper.to_string_lossy(),
+            work.to_string_lossy()
+        );
+        mount(
+            Some("overlay"),
+            root_dir.as_path(),
+            Some("overlay"),
+            MsFlags::empty(),
+            Some(opts.as_str()),
+        )
+        .map_err(|e| {
+            WrightError::BuildError(format!(
+                "failed to mount session sysroot {}: {}",
+                root_dir.display(),
+                e
+            ))
+        })?;
+        for dir in ["build", "output", "files", "main-pkg", "run"] {
+            std::fs::create_dir_all(root_dir.join(dir)).context(format!(
+                "failed to create session root mount point {}",
+                root_dir.join(dir).display()
+            ))?;
+        }
+
+        let db_path = temp_dir.path().join("parts.db");
+        if config.general.db_path.exists() {
+            std::fs::copy(&config.general.db_path, &db_path).context(format!(
+                "failed to copy {} to {}",
+                config.general.db_path.display(),
+                db_path.display()
+            ))?;
+        } else {
+            let _ = Database::open(&db_path)?;
+        }
+
+        let mut state = Self {
+            _temp_dir: temp_dir,
+            root_dir,
+            db_path,
+            staged_names: Vec::new(),
+        };
+
+        for (name, _) in construction_plan_order(build_set, deps_map) {
+            if session_completed.contains(&name) {
+                let is_user_target =
+                    user_target_names.contains(name.trim_end_matches(":bootstrap"));
+                state.stage_install(config, name_to_path, &name, is_user_target)?;
+            }
+        }
+
+        Ok(state)
+    }
+
+    fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+
+    fn stage_install(
+        &mut self,
+        config: &GlobalConfig,
+        name_to_path: &HashMap<String, PathBuf>,
+        name: &str,
+        is_user_target: bool,
+    ) -> Result<()> {
+        install_built_outputs_at(
+            config,
+            name_to_path,
+            name,
+            is_user_target,
+            &self.db_path,
+            &self.root_dir,
+        )?;
+        self.staged_names.push(name.to_string());
+        Ok(())
+    }
+
+    fn commit_to_host(
+        &self,
+        config: &GlobalConfig,
+        name_to_path: &HashMap<String, PathBuf>,
+        user_target_names: &HashSet<String>,
+    ) -> Result<()> {
+        for name in &self.staged_names {
+            let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
+            install_built_outputs_at(
+                config,
+                name_to_path,
+                name,
+                is_user_target,
+                &config.general.db_path,
+                Path::new("/"),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SessionInstallState {
+    fn drop(&mut self) {
+        let _ = umount2(&self.root_dir, MntFlags::MNT_DETACH);
+    }
+}
+
+fn install_built_outputs_at(
+    config: &GlobalConfig,
+    name_to_path: &HashMap<String, PathBuf>,
+    name: &str,
+    is_user_target: bool,
+    db_path: &Path,
+    root_dir: &Path,
+) -> Result<()> {
+    let path = name_to_path.get(name).expect("plan path exists");
+    let manifest = PlanManifest::from_file(path)?;
+    let output_dir = config.general.components_dir.clone();
+    let archive_path = output_dir.join(manifest.archive_filename());
+    let origin = if is_user_target {
+        crate::database::Origin::Build
+    } else {
+        crate::database::Origin::Dependency
+    };
+    let db = Database::open(db_path)?;
+
+    debug!("Automatically installing built part: {}", name);
+    crate::transaction::install_part_with_origin(
+        &db,
+        &archive_path,
+        root_dir,
+        true,
+        origin,
+        root_dir == Path::new("/"),
+    )
+    .context(format!(
+        "failed to auto-install {}",
+        name.trim_end_matches(":bootstrap")
+    ))?;
+
+    if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
+        for (sub_name, sub_pkg) in pkgs {
+            if sub_name == &manifest.plan.name {
+                continue;
+            }
+            let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
+            let sub_archive_path = output_dir.join(sub_manifest.archive_filename());
+            debug!("Automatically installing sub-part: {}", sub_name);
+            crate::transaction::install_part_with_origin(
+                &db,
+                &sub_archive_path,
+                root_dir,
+                true,
+                origin,
+                root_dir == Path::new("/"),
+            )
+            .context(format!("failed to auto-install sub-part {}", sub_name))?;
+        }
     }
 
     Ok(())
@@ -427,6 +609,7 @@ fn build_one(
     manifest: &PlanManifest,
     manifest_path: &Path,
     config: &GlobalConfig,
+    base_root: &Path,
     opts: &BuildOptions,
     bootstrap_excl: &[String],
     compile_lock: Arc<Mutex<()>>,
@@ -528,6 +711,7 @@ fn build_one(
     let result = builder.build(
         manifest,
         &plan_dir,
+        base_root,
         &opts.stages,
         opts.fetch_only,
         opts.skip_check,

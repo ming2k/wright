@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
@@ -30,6 +30,7 @@ fn build_hello_archive() -> PathBuf {
         .build(
             &manifest,
             plan_dir,
+            Path::new("/"),
             &[],
             false,
             false,

@@ -195,6 +195,7 @@ impl Builder {
         &self,
         manifest: &PlanManifest,
         plan_dir: &Path,
+        base_root: &Path,
         stages: &[String],
         fetch_only: bool,
         skip_check: bool,
@@ -397,6 +398,7 @@ impl Builder {
             vars,
             working_dir: &src_dir,
             log_dir: &log_dir,
+            base_root: base_root.to_path_buf(),
             src_dir: src_dir.clone(),
             part_dir: pkg_dir.clone(),
             files_dir: if files_dir.exists() {
@@ -454,6 +456,7 @@ impl Builder {
 
                 let sub_options = executor::ExecutorOptions {
                     level: sub_pkg.dockyard.parse().unwrap(),
+                    base_root: base_root.to_path_buf(),
                     src_dir: src_dir.clone(),
                     part_dir: sub_pkg_dir.clone(),
                     files_dir: if files_dir.exists() {

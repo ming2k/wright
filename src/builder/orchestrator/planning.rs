@@ -312,6 +312,82 @@ pub(super) fn construction_plan_order(
     ordered
 }
 
+pub(super) fn construction_plan_batches(
+    build_set: &HashSet<String>,
+    deps_map: &HashMap<String, Vec<String>>,
+) -> Vec<(String, usize)> {
+    let mut indegree: HashMap<String, usize> = build_set
+        .iter()
+        .map(|name| (name.clone(), 0usize))
+        .collect();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+
+    for name in build_set {
+        let deps = deps_map.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        for dep in deps {
+            if !build_set.contains(dep) {
+                continue;
+            }
+            *indegree.get_mut(name).expect("build node exists") += 1;
+            dependents
+                .entry(dep.clone())
+                .or_default()
+                .push(name.clone());
+        }
+    }
+
+    let mut ready: Vec<String> = indegree
+        .iter()
+        .filter_map(|(name, degree)| (*degree == 0).then_some(name.clone()))
+        .collect();
+    ready.sort();
+
+    let mut ordered = Vec::with_capacity(build_set.len());
+    let mut batch = 0usize;
+
+    while !ready.is_empty() {
+        let current_batch = ready;
+        ready = Vec::new();
+
+        for name in &current_batch {
+            ordered.push((name.clone(), batch));
+        }
+
+        for name in current_batch {
+            if let Some(children) = dependents.get(&name) {
+                let mut next_ready = Vec::new();
+                for child in children {
+                    let degree = indegree.get_mut(child).expect("dependent exists");
+                    *degree -= 1;
+                    if *degree == 0 {
+                        next_ready.push(child.clone());
+                    }
+                }
+                ready.extend(next_ready);
+            }
+        }
+
+        ready.sort();
+        ready.dedup();
+        batch += 1;
+    }
+
+    if ordered.len() != build_set.len() {
+        let ordered_set: HashSet<_> = ordered.iter().map(|(n, _)| n.clone()).collect();
+        let mut remaining: Vec<_> = build_set
+            .iter()
+            .filter(|name| !ordered_set.contains(*name))
+            .cloned()
+            .collect();
+        remaining.sort();
+        for name in remaining {
+            ordered.push((name, batch));
+        }
+    }
+
+    ordered
+}
+
 pub(super) fn construction_plan_label(
     name: &str,
     build_set: &HashSet<String>,

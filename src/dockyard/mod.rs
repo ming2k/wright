@@ -105,6 +105,7 @@ impl std::str::FromStr for DockyardLevel {
 
 pub struct DockyardConfig {
     pub level: DockyardLevel,
+    pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
     pub task_id: String, // Unique identifier for this build task
@@ -123,6 +124,7 @@ impl DockyardConfig {
     pub fn new(level: DockyardLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
         Self {
             level,
+            base_root: PathBuf::from("/"),
             src_dir,
             pkg_dir,
             task_id,

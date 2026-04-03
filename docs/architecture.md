@@ -109,7 +109,13 @@ plan.toml → PlanManifest
           → full pass: Builder::build() force=true, normal cache
           → archive::create_archive() → PARTINFO (runtime deps + relations)
       → output: .wright.tar.zst archives in components_dir
-      → if --install: acquisition of serial install lock → transaction::install_package()
+      → if --install:
+          → create a session-local overlay sysroot + temporary parts.db snapshot
+          → run dockyards against that stable session root instead of host /
+          → stage each completed package into the session root between build waves
+          → defer install/upgrade hooks during session staging
+          → after all tasks succeed, commit staged packages to host / in order
+          → run deferred hooks on the final host-root commit
 ```
 
 ### Dependency cascade rules
@@ -174,7 +180,7 @@ communication:
 | `repo.db` (SQLite) | `wrepo`, `wbuild` | `wright`, `wrepo` | `repo_db_path` |
 
 `wbuild` reads the database to check which parts are already installed
-(for `--install` skip logic and dependency expansion). `wrepo` reads the
-database to annotate `[installed]` tags in listings. Neither tool writes to
-the database — only `wright` (and `wbuild -i` via the transaction module)
-modifies it.
+(for dependency expansion and session planning). With `-i`, it first writes
+to a temporary session-local database copy, then commits successful staged
+packages to the host database at the end of the run. `wrepo` reads the
+database to annotate `[installed]` tags in listings.

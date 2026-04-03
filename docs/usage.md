@@ -106,6 +106,13 @@ wbuild run -i @qemu             # build and install the requested plans
 wbuild resolve @qemu --self --deps=sync | wbuild run -i # also sync missing/outdated upstream deps
 ```
 
+With `-i`, `wbuild` does not build directly against a live host root that is
+being modified in parallel. It creates a session-local overlay sysroot and
+temporary package database, stages completed packages into that session root
+between dependency waves, skips package install/upgrade hooks during staging,
+and commits all successful outputs to host `/` at the end of the run, where the
+deferred hooks execute.
+
 By default, `wbuild run` builds only the listed plans. Use `wbuild resolve`
 to expand upstream dependencies explicitly before piping targets into
 `wbuild run`: bare `--deps` means `missing`, `--deps=sync` adds installed

@@ -199,9 +199,9 @@ build = ["binutils", "glibc"]          # MVP: build without gcc in deps
 Wright detects the cycle automatically and schedules:
 
 ```
-INFO Scheduling build:mvp (depth 0): gcc       ← first pass, no gcc dep
-INFO Scheduling build (depth 0): binutils
-INFO Scheduling build:full (depth 1): gcc       ← second pass, full deps
+INFO Scheduling batch 0 build:mvp: gcc   ← first pass, no gcc dep
+INFO Scheduling batch 0 build: binutils
+INFO Scheduling batch 1 build:full: gcc  ← second pass, full deps
 ```
 
 To test the MVP pass explicitly without a cycle present:
@@ -281,6 +281,12 @@ wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
 `--resume` tracks progress in a build session stored in the database. Each
 successfully built and installed part is recorded. On resume, those parts are
 skipped and the rest are rebuilt.
+
+With `-i`, builds run against a session-local overlay sysroot and temporary
+package database snapshot. Completed packages are staged into that session root
+between dependency waves so later builds see a stable root state. Package
+install/upgrade hooks are skipped during staging and run only when the staged
+outputs are committed to host `/` at the end of a successful run.
 
 The session hash is deterministic — running the same `wbuild resolve | wbuild run`
 pipeline produces the same hash, so `--resume` auto-detects the session. You can

@@ -161,6 +161,12 @@ pub fn run_in_dockyard(
     args: &[String],
 ) -> Result<DockyardOutput> {
     if config.level == DockyardLevel::None {
+        if config.base_root != Path::new("/") {
+            return Err(WrightError::DockyardError(format!(
+                "dockyard level none cannot run against base root {}",
+                config.base_root.display()
+            )));
+        }
         info!("Dockyard isolation disabled, running command directly");
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
@@ -243,6 +249,12 @@ pub fn run_in_dockyard(
 
     // Probe whether the required namespaces are available.
     if !can_unshare(clone_flags) {
+        if config.base_root != Path::new("/") {
+            return Err(WrightError::DockyardError(format!(
+                "namespace isolation unavailable, cannot run against base root {}",
+                config.base_root.display()
+            )));
+        }
         tracing::warn!(
             "Namespace isolation unavailable (unshare blocked by kernel/container); \
              falling back to direct execution"
@@ -389,17 +401,21 @@ pub fn run_in_dockyard(
                         die(format!("mkdir newroot: {e}"));
                     }
 
-                    // Try OverlayFS first (much faster and cleaner)
+                    // Try OverlayFS first (much faster and cleaner).
+                    // When the lower root is already the session sysroot overlay,
+                    // avoid overlay-over-overlay and use tmpfs + bind mounts instead.
                     let mut overlay_success = false;
                     let overlay_base = scratch_base.join("overlay");
                     let upper = overlay_base.join("upper");
                     let work = overlay_base.join("work");
 
-                    if std::fs::create_dir_all(&upper).is_ok()
+                    if config.base_root == Path::new("/")
+                        && std::fs::create_dir_all(&upper).is_ok()
                         && std::fs::create_dir_all(&work).is_ok()
                     {
                         let opts = format!(
-                            "lowerdir=/,upperdir={},workdir={}",
+                            "lowerdir={},upperdir={},workdir={}",
+                            config.base_root.to_string_lossy(),
                             upper.to_string_lossy(),
                             work.to_string_lossy()
                         );
@@ -417,16 +433,38 @@ pub fn run_in_dockyard(
                         }
                     }
 
+                    let session_root_bind = !overlay_success && config.base_root != Path::new("/");
+
                     if !overlay_success {
-                        debug!("OverlayFS failed, falling back to tmpfs + bind mounts");
-                        if let Err(e) = mount(
-                            Some("tmpfs"),
-                            &newroot,
-                            Some("tmpfs"),
-                            MsFlags::empty(),
-                            None::<&str>,
-                        ) {
-                            die(format!("mount tmpfs on newroot: {e}"));
+                        if config.base_root == Path::new("/") {
+                            debug!("OverlayFS failed, falling back to tmpfs + bind mounts");
+                            if let Err(e) = mount(
+                                Some("tmpfs"),
+                                &newroot,
+                                Some("tmpfs"),
+                                MsFlags::empty(),
+                                None::<&str>,
+                            ) {
+                                die(format!("mount tmpfs on newroot: {e}"));
+                            }
+                        } else {
+                            debug!(
+                                "Using recursive bind mount from session root: {}",
+                                config.base_root.display()
+                            );
+                            if let Err(e) = mount(
+                                Some(config.base_root.as_path()),
+                                &newroot,
+                                None::<&str>,
+                                MsFlags::MS_BIND | MsFlags::MS_REC,
+                                None::<&str>,
+                            ) {
+                                die(format!(
+                                    "bind mount {} -> {}: {e}",
+                                    config.base_root.display(),
+                                    newroot.display()
+                                ));
+                            }
                         }
                     }
 
@@ -440,9 +478,11 @@ pub fn run_in_dockyard(
                         // Fix: ALWAYS ensure the destination mount point exists.
                         // Even with overlay, we need to create the directory/file in the upperdir.
                         if src.is_dir() {
-                            std::fs::create_dir_all(&dest)
-                                .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
-                        } else {
+                            if dest.symlink_metadata().is_err() {
+                                std::fs::create_dir_all(&dest)
+                                    .map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+                            }
+                        } else if dest.symlink_metadata().is_err() {
                             if let Some(parent) = dest.parent() {
                                 std::fs::create_dir_all(parent)
                                     .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -476,8 +516,8 @@ pub fn run_in_dockyard(
                     };
 
                     // If not using overlay, we must manually bind system dirs.
-                    // If using overlay, these are already present via lowerdir=/.
-                    if !overlay_success {
+                    // If using overlay, these are already present via lowerdir=base_root.
+                    if !overlay_success && config.base_root == Path::new("/") {
                         for dir in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
                             let p = Path::new(dir);
                             let dest = newroot.join(dir.trim_start_matches('/'));
@@ -541,7 +581,6 @@ pub fn run_in_dockyard(
                             }
                         }
                     }
-
                     // /dev: try devtmpfs, fall back to tmpfs + bind-mounted devices.
                     let dev = newroot.join("dev");
                     std::fs::create_dir_all(&dev).ok();
@@ -590,47 +629,65 @@ pub fn run_in_dockyard(
                         die(format!("bind mount /proc: {e}"));
                     }
 
+                    // /run
+                    let run_dir = newroot.join("run");
+                    if let Err(e) = std::fs::create_dir_all(&run_dir) {
+                        die(format!("mkdir {}: {e}", run_dir.display()));
+                    }
+                    if let Err(e) = mount(
+                        Some("tmpfs"),
+                        &run_dir,
+                        Some("tmpfs"),
+                        MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+                        Some("mode=0755"),
+                    ) {
+                        die(format!("mount tmpfs on /run: {e}"));
+                    }
+
                     // /tmp
                     let tmp = newroot.join("tmp");
-                    std::fs::create_dir_all(&tmp).ok();
-                    let _ = mount(
+                    if let Err(e) = std::fs::create_dir_all(&tmp) {
+                        die(format!("mkdir {}: {e}", tmp.display()));
+                    }
+                    if let Err(e) = mount(
                         Some("tmpfs"),
                         &tmp,
                         Some("tmpfs"),
                         MsFlags::empty(),
                         None::<&str>,
-                    );
+                    ) {
+                        die(format!("mount tmpfs on /tmp: {e}"));
+                    }
 
-                    // --- pivot_root (with chroot fallback for chroot environments) ---
-                    //
-                    // pivot_root(2) requires the current root to be a real mount
-                    // point. Inside an LFS-style chroot this condition is not met
-                    // and the syscall returns EINVAL. Fall back to chroot(2)+chdir
-                    // in that case — it provides the same filesystem isolation when
-                    // we already have a private mount namespace.
+                    // --- pivot_root ---
 
                     let old_root = newroot.join(".old_root");
-                    std::fs::create_dir_all(&old_root).ok();
-
-                    match pivot_root(&newroot, &old_root) {
-                        Ok(()) => {
-                            if let Err(e) = chdir("/") {
-                                die(format!("chdir /: {e}"));
-                            }
-                            let _ = umount2("/.old_root", MntFlags::MNT_DETACH);
-                            let _ = std::fs::remove_dir("/.old_root");
+                    if old_root.symlink_metadata().is_err() {
+                        if let Err(e) = std::fs::create_dir_all(&old_root) {
+                            die(format!("mkdir {}: {e}", old_root.display()));
                         }
-                        Err(nix::errno::Errno::EINVAL) => {
-                            let _ = std::fs::remove_dir(&old_root);
-                            if let Err(e) = nix::unistd::chroot(&newroot) {
-                                die(format!("chroot fallback: {e}"));
-                            }
-                            if let Err(e) = chdir("/") {
-                                die(format!("chdir / (chroot fallback): {e}"));
-                            }
-                        }
-                        Err(e) => die(format!("pivot_root: {e}")),
                     }
+
+                    if session_root_bind {
+                        if let Err(e) = mount(
+                            None::<&str>,
+                            &newroot,
+                            None::<&str>,
+                            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+                            None::<&str>,
+                        ) {
+                            die(format!("remount ro {}: {e}", newroot.display()));
+                        }
+                    }
+
+                    if let Err(e) = pivot_root(&newroot, &old_root) {
+                        die(format!("pivot_root: {e}"));
+                    }
+                    if let Err(e) = chdir("/") {
+                        die(format!("chdir /: {e}"));
+                    }
+                    let _ = umount2("/.old_root", MntFlags::MNT_DETACH);
+                    let _ = std::fs::remove_dir("/.old_root");
 
                     // --- Hostname ---
                     let _ = sethostname("wright-dockyard");
@@ -694,22 +751,11 @@ pub fn run_in_dockyard(
                         apply_cpu_affinity(n);
                     }
 
-                    // Retry loop for ETXTBSY (Text file busy).
-                    // This happens if an interpreter (like /bin/sh) is being overwritten
-                    // by the host while we try to exec it in the dockyard.
-                    let mut retries = 0;
-                    loop {
-                        match execvp(&c_command, &c_args) {
-                            Ok(infallible) => match infallible {},
-                            Err(e) if e == nix::errno::Errno::ETXTBSY && retries < 10 => {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                retries += 1;
-                                continue;
-                            }
-                            Err(e) => {
-                                eprintln!("exec {command}: {e}");
-                                unsafe { libc::_exit(127) }
-                            }
+                    match execvp(&c_command, &c_args) {
+                        Ok(infallible) => match infallible {},
+                        Err(e) => {
+                            eprintln!("exec {command}: {e}");
+                            unsafe { libc::_exit(127) }
                         }
                     }
                 }

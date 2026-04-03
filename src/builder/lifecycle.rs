@@ -2,10 +2,9 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use indicatif::ProgressBar;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::dockyard::ResourceLimits;
@@ -28,14 +27,12 @@ pub const DEFAULT_STAGES: &[&str] = &[
 /// Built-in stages handled by the build tool itself (not user scripts)
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
-const TEXT_FILE_BUSY_RETRIES: usize = 10;
-const TEXT_FILE_BUSY_RETRY_DELAY: Duration = Duration::from_millis(100);
-
 pub struct LifecyclePipeline<'a> {
     manifest: &'a PlanManifest,
     vars: HashMap<String, String>,
     working_dir: &'a Path,
     log_dir: &'a Path,
+    base_root: PathBuf,
     src_dir: PathBuf,
     part_dir: PathBuf,
     files_dir: Option<PathBuf>,
@@ -66,6 +63,7 @@ pub struct LifecycleContext<'a> {
     pub vars: HashMap<String, String>,
     pub working_dir: &'a Path,
     pub log_dir: &'a Path,
+    pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub part_dir: PathBuf,
     pub files_dir: Option<PathBuf>,
@@ -94,6 +92,7 @@ impl<'a> LifecyclePipeline<'a> {
             vars: ctx.vars,
             working_dir: ctx.working_dir,
             log_dir: ctx.log_dir,
+            base_root: ctx.base_root,
             src_dir: ctx.src_dir,
             part_dir: ctx.part_dir,
             files_dir: ctx.files_dir,
@@ -248,6 +247,7 @@ impl<'a> LifecyclePipeline<'a> {
 
         let options = ExecutorOptions {
             level: stage.dockyard.parse().unwrap(),
+            base_root: self.base_root.clone(),
             src_dir: self.src_dir.clone(),
             part_dir: self.part_dir.clone(),
             files_dir: self.files_dir.clone(),
@@ -258,35 +258,14 @@ impl<'a> LifecyclePipeline<'a> {
         };
 
         let t0 = std::time::Instant::now();
-        let mut retries = 0;
-        let mut result = loop {
-            let result = executor::execute_script(
-                executor,
-                &stage.script,
-                self.working_dir,
-                &stage.env,
-                &self.vars,
-                &options,
-            )?;
-
-            if !should_retry_text_file_busy(&result) {
-                break result;
-            }
-
-            if retries >= TEXT_FILE_BUSY_RETRIES {
-                break result;
-            }
-
-            retries += 1;
-            warn!(
-                "{}: stage {} hit Text file busy, retrying ({}/{})",
-                self.manifest.plan.name,
-                stage_name,
-                retries,
-                TEXT_FILE_BUSY_RETRIES
-            );
-            std::thread::sleep(TEXT_FILE_BUSY_RETRY_DELAY);
-        };
+        let mut result = executor::execute_script(
+            executor,
+            &stage.script,
+            self.working_dir,
+            &stage.env,
+            &self.vars,
+            &options,
+        )?;
         let elapsed = t0.elapsed().as_secs_f64();
 
         // Write logs — stream from captured temp files to avoid holding
@@ -340,10 +319,4 @@ impl<'a> LifecyclePipeline<'a> {
 
         Ok(())
     }
-}
-
-fn should_retry_text_file_busy(result: &executor::ExecutionResult) -> bool {
-    result.exit_code == 126
-        && (result.stderr.tail.contains("Text file busy")
-            || result.stdout.tail.contains("Text file busy"))
 }

@@ -165,7 +165,7 @@ fn main() -> Result<()> {
                 let path = PathBuf::from(arg);
                 if path.exists() {
                     // Direct archive file path
-                    match transaction::upgrade_part(&db, &path, &root_dir, force) {
+                    match transaction::upgrade_part(&db, &path, &root_dir, force, true) {
                         Ok(()) => println!("upgraded: {}", path.display()),
                         Err(e) => {
                             eprintln!("error upgrading {}: {}", path.display(), e);
@@ -205,7 +205,7 @@ fn main() -> Result<()> {
 
                 // When --version is explicitly given, force the upgrade (allows downgrade)
                 let effective_force = force || target_version.is_some();
-                match transaction::upgrade_part(&db, &selected.path, &root_dir, effective_force) {
+                match transaction::upgrade_part(&db, &selected.path, &root_dir, effective_force, true) {
                     Ok(()) => println!(
                         "upgraded: {} -> {}-{}",
                         arg, selected.version, selected.release
@@ -591,6 +591,7 @@ fn main() -> Result<()> {
                                         &latest.path,
                                         &root_dir,
                                         false,
+                                        true,
                                     ) {
                                         eprintln!("  error: {}", e);
                                     } else {

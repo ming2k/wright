@@ -5,8 +5,9 @@
 ## [1.11.4] - 2026-04-03
 
 ### Changes
-- **Scheduling log cleanup**: remove topological depth annotations from `wbuild run` scheduling summaries to avoid confusion with `wbuild resolve --depth`.
-- **Stage exec retry**: retry lifecycle stage scripts when they fail with `Text file busy` from nested shebang execution races.
+- **Wave-based scheduling summaries**: `wbuild run` now prints dependency-wave batches (`Scheduling batch N ...`) instead of topological-depth annotations, avoiding confusion with `wbuild resolve --depth`.
+- **Session sysroot installs**: `wbuild run -i` now builds against a session-local overlay root and staged package database, then commits all successful outputs to the host root at the end. This prevents build sandboxes from observing a live host root that is being mutated by concurrent auto-installation.
+- **Deferred install hooks during staging**: when `wbuild run -i` stages packages into the session root, package install/upgrade hooks are deferred until the final host-root commit instead of running inside the staging sysroot.
 
 ## [1.11.3] - 2026-03-25
 

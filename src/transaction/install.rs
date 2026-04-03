@@ -113,7 +113,7 @@ pub fn install_parts(
             if force {
                 info!("Force reinstalling {}", name);
                 let pkg = resolved_map.get(&name).expect("resolved package exists");
-                upgrade_part(db, &pkg.path, root_dir, true)?;
+                upgrade_part(db, &pkg.path, root_dir, true, true)?;
             }
             continue;
         }
@@ -130,7 +130,7 @@ pub fn install_parts(
             pkg.path.display(),
             origin
         );
-        install_part_with_origin(db, &pkg.path, root_dir, force, origin)?;
+        install_part_with_origin(db, &pkg.path, root_dir, force, origin, true)?;
     }
 
     Ok(())
@@ -178,7 +178,7 @@ pub fn install_part(
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_origin(db, archive_path, root_dir, force, Origin::Manual)
+    install_part_with_origin(db, archive_path, root_dir, force, Origin::Manual, true)
 }
 
 pub fn install_part_with_origin(
@@ -187,6 +187,7 @@ pub fn install_part_with_origin(
     root_dir: &Path,
     force: bool,
     origin: Origin,
+    run_hooks: bool,
 ) -> Result<()> {
     let temp_dir = tempfile::tempdir()
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
@@ -254,7 +255,7 @@ pub fn install_part_with_origin(
                 "Part {} already installed, attempting upgrade/reinstall",
                 pkginfo.name
             );
-            return upgrade_part(db, archive_path, root_dir, true);
+            return upgrade_part(db, archive_path, root_dir, true, run_hooks);
         }
         return Err(WrightError::PartAlreadyInstalled(pkginfo.name.clone()));
     }
@@ -301,10 +302,12 @@ pub fn install_part_with_origin(
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::InstallError(format!("failed to create backup dir: {}", e)))?;
 
-    if let Some(ref script) = hooks.pre_install {
-        debug!("Running pre_install hook for {}", pkginfo.name);
-        if let Err(e) = run_install_script(script, root_dir) {
-            warn!("pre_install script failed: {}", e);
+    if run_hooks {
+        if let Some(ref script) = hooks.pre_install {
+            debug!("Running pre_install hook for {}", pkginfo.name);
+            if let Err(e) = run_install_script(script, root_dir) {
+                warn!("pre_install script failed: {}", e);
+            }
         }
     }
 
@@ -375,10 +378,12 @@ pub fn install_part_with_origin(
 
     db.update_transaction_status(tx_id, "completed")?;
 
-    if let Some(ref script) = hooks.post_install {
-        debug!("Running post_install hook for {}", pkginfo.name);
-        if let Err(e) = run_install_script(script, root_dir) {
-            warn!("post_install script failed: {}", e);
+    if run_hooks {
+        if let Some(ref script) = hooks.post_install {
+            debug!("Running post_install hook for {}", pkginfo.name);
+            if let Err(e) = run_install_script(script, root_dir) {
+                warn!("post_install script failed: {}", e);
+            }
         }
     }
 
