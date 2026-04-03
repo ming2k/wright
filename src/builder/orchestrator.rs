@@ -258,12 +258,11 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
     // --- Build Plan Summary ---
     if !opts.quiet {
-        for (name, depth) in construction_plan_order(&graph.build_set, &graph.deps_map) {
+        for (name, _) in construction_plan_order(&graph.build_set, &graph.deps_map) {
             if session_completed.contains(&name) {
                 info!(
-                    "Skipping {} (depth {}): {} (completed in previous run)",
+                    "Skipping {}: {} (completed in previous run)",
                     "skip",
-                    depth,
                     name.trim_end_matches(":bootstrap"),
                 );
                 continue;
@@ -271,9 +270,8 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             let label =
                 construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
             info!(
-                "Scheduling {} (depth {}): {}",
+                "Scheduling {}: {}",
                 label,
-                depth,
                 name.trim_end_matches(":bootstrap"),
             );
         }

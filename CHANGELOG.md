@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.11.4] - 2026-04-03
+
+### Changes
+- **Scheduling log cleanup**: remove topological depth annotations from `wbuild run` scheduling summaries to avoid confusion with `wbuild resolve --depth`.
+- **Stage exec retry**: retry lifecycle stage scripts when they fail with `Text file busy` from nested shebang execution races.
+
 ## [1.11.3] - 2026-03-25
 
 ### Changes
