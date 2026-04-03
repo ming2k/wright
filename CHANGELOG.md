@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.11.5] - 2026-04-04
+
+### Changes
+- **Session-root native install stabilization**: `wbuild run -i` now stages native dockyard builds against the session root and commits them to the host only after the build graph succeeds, avoiding live-root mutation during parallel construction.
+- **Install hook timing cleanup**: package install and upgrade hooks are deferred until the final host-root commit instead of running inside the staging sysroot.
+- **Scheduling summary clarity**: `wbuild run` now reports dependency-wave batches (`Scheduling batch N ...`) rather than misleading topological depth values.
+- **Regression coverage and docs sync**: add dockyard shebang execution regression tests and update the architecture, CLI, cookbook, usage, plan-writing, and design docs to match the current session-root behavior.
+
 ## [1.11.4] - 2026-04-03
 
 ### Changes
