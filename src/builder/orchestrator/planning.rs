@@ -236,6 +236,7 @@ pub(super) fn installed_matches_manifest(
         && installed.release == manifest.plan.release
 }
 
+#[cfg(test)]
 pub(super) fn construction_plan_order(
     build_set: &HashSet<String>,
     deps_map: &HashMap<String, Vec<String>>,

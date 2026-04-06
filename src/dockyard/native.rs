@@ -475,6 +475,15 @@ pub fn run_in_dockyard(
                      -> std::result::Result<(), String> {
                         let dest = newroot.join(dest_rel.trim_start_matches('/'));
 
+                        // If it's a symlink, remove it so we can mount over it properly
+                        // instead of mounting onto a potentially dangling target (e.g.
+                        // /etc/resolv.conf -> /run/... when /run is a fresh tmpfs).
+                        if let Ok(meta) = dest.symlink_metadata() {
+                            if meta.file_type().is_symlink() {
+                                let _ = std::fs::remove_file(&dest);
+                            }
+                        }
+
                         // Fix: ALWAYS ensure the destination mount point exists.
                         // Even with overlay, we need to create the directory/file in the upperdir.
                         if src.is_dir() {
@@ -533,23 +542,6 @@ pub fn run_in_dockyard(
                                 }
                             } else if p.exists() {
                                 if let Err(e) = bind(p, dir, true) {
-                                    die(e);
-                                }
-                            }
-                        }
-
-                        // Essential /etc files.
-                        for etc_file in [
-                            "/etc/ld.so.conf",
-                            "/etc/ld.so.cache",
-                            "/etc/resolv.conf",
-                            "/etc/hosts",
-                            "/etc/passwd",
-                            "/etc/group",
-                        ] {
-                            let p = Path::new(etc_file);
-                            if p.exists() {
-                                if let Err(e) = bind(p, etc_file, true) {
                                     die(e);
                                 }
                             }
@@ -657,6 +649,25 @@ pub fn run_in_dockyard(
                         None::<&str>,
                     ) {
                         die(format!("mount tmpfs on /tmp: {e}"));
+                    }
+
+                    // --- Essential /etc files ---
+                    // Always bind-mount these to ensure they are available and correct,
+                    // especially when /etc/resolv.conf is a symlink to /run which we masked.
+                    for etc_file in [
+                        "/etc/ld.so.conf",
+                        "/etc/ld.so.cache",
+                        "/etc/resolv.conf",
+                        "/etc/hosts",
+                        "/etc/passwd",
+                        "/etc/group",
+                    ] {
+                        let p = Path::new(etc_file);
+                        if p.exists() {
+                            if let Err(e) = bind(p, etc_file, true) {
+                                die(e);
+                            }
+                        }
                     }
 
                     // --- pivot_root ---
