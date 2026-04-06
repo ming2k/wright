@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
@@ -17,7 +15,6 @@ use crate::part::fhs;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
 use super::BuildOptions;
-use super::planning::construction_plan_order;
 
 pub(super) fn execute_builds(
     config: &GlobalConfig,
@@ -37,22 +34,7 @@ pub(super) fn execute_builds(
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_count = Arc::new(Mutex::new(0usize));
     let mut pending_install = Vec::<String>::new();
-    let mut install_state = if opts.install {
-        Some(SessionInstallState::new(
-            config,
-            build_set,
-            deps_map,
-            user_target_names,
-            session_completed,
-            name_to_path,
-        )?)
-    } else {
-        None
-    };
-    let base_root = install_state
-        .as_ref()
-        .map(|s| s.root_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("/"));
+    let base_root = PathBuf::from("/");
 
     let builder = Arc::new(Builder::new(config.clone()));
     let config_arc = Arc::new(config.clone());
@@ -281,13 +263,17 @@ pub(super) fn execute_builds(
         }
 
         if opts.install && in_progress.lock().unwrap().is_empty() && !pending_install.is_empty() {
-            let install_state = install_state
-                .as_mut()
-                .expect("install state exists when --install is enabled");
             pending_install.sort();
             for name in pending_install.drain(..) {
                 let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
-                install_state.stage_install(config, name_to_path, &name, is_user_target)?;
+                install_built_outputs_at(
+                    config,
+                    name_to_path,
+                    &name,
+                    is_user_target,
+                    &config.general.db_path,
+                    Path::new("/"),
+                )?;
                 awaiting_install.lock().unwrap().remove(&name);
                 complete_build_task(
                     config,
@@ -314,9 +300,6 @@ pub(super) fn execute_builds(
             ));
         }
     } else {
-        if let Some(install_state) = install_state.as_ref() {
-            install_state.commit_to_host(config, name_to_path, user_target_names)?;
-        }
         info!("All {} tasks completed successfully.", final_completed);
     }
 
@@ -341,149 +324,6 @@ fn complete_build_task(
     }
 }
 
-struct SessionInstallState {
-    _temp_dir: TempDir,
-    root_dir: PathBuf,
-    db_path: PathBuf,
-    staged_names: Vec<String>,
-}
-
-impl SessionInstallState {
-    fn new(
-        config: &GlobalConfig,
-        build_set: &HashSet<String>,
-        deps_map: &HashMap<String, Vec<String>>,
-        user_target_names: &HashSet<String>,
-        session_completed: &HashSet<String>,
-        name_to_path: &HashMap<String, PathBuf>,
-    ) -> Result<Self> {
-        let build_dir = if config.build.build_dir.is_absolute() {
-            config.build.build_dir.clone()
-        } else {
-            std::env::current_dir()
-                .context("failed to resolve current directory for session sysroot")?
-                .join(&config.build.build_dir)
-        };
-        std::fs::create_dir_all(&build_dir)
-            .context(format!("failed to create build dir {}", build_dir.display()))?;
-
-        let temp_dir = tempfile::Builder::new()
-            .prefix("wright-session-root-")
-            .tempdir_in(&build_dir)
-            .context("failed to create session sysroot")?;
-        let upper = temp_dir.path().join("upper");
-        let work = temp_dir.path().join("work");
-        let root_dir = temp_dir.path().join("root");
-        std::fs::create_dir_all(&upper)
-            .context(format!("failed to create {}", upper.display()))?;
-        std::fs::create_dir_all(&work).context(format!("failed to create {}", work.display()))?;
-        std::fs::create_dir_all(&root_dir)
-            .context(format!("failed to create {}", root_dir.display()))?;
-
-        let opts = format!(
-            "lowerdir=/,upperdir={},workdir={}",
-            upper.to_string_lossy(),
-            work.to_string_lossy()
-        );
-        mount(
-            Some("overlay"),
-            root_dir.as_path(),
-            Some("overlay"),
-            MsFlags::empty(),
-            Some(opts.as_str()),
-        )
-        .map_err(|e| {
-            WrightError::BuildError(format!(
-                "failed to mount session sysroot {}: {}",
-                root_dir.display(),
-                e
-            ))
-        })?;
-        for dir in ["build", "output", "files", "main-pkg", "run"] {
-            std::fs::create_dir_all(root_dir.join(dir)).context(format!(
-                "failed to create session root mount point {}",
-                root_dir.join(dir).display()
-            ))?;
-        }
-
-        let db_path = temp_dir.path().join("parts.db");
-        if config.general.db_path.exists() {
-            std::fs::copy(&config.general.db_path, &db_path).context(format!(
-                "failed to copy {} to {}",
-                config.general.db_path.display(),
-                db_path.display()
-            ))?;
-        } else {
-            let _ = Database::open(&db_path)?;
-        }
-
-        let mut state = Self {
-            _temp_dir: temp_dir,
-            root_dir,
-            db_path,
-            staged_names: Vec::new(),
-        };
-
-        for (name, _) in construction_plan_order(build_set, deps_map) {
-            if session_completed.contains(&name) {
-                let is_user_target =
-                    user_target_names.contains(name.trim_end_matches(":bootstrap"));
-                state.stage_install(config, name_to_path, &name, is_user_target)?;
-            }
-        }
-
-        Ok(state)
-    }
-
-    fn root_dir(&self) -> &Path {
-        &self.root_dir
-    }
-
-    fn stage_install(
-        &mut self,
-        config: &GlobalConfig,
-        name_to_path: &HashMap<String, PathBuf>,
-        name: &str,
-        is_user_target: bool,
-    ) -> Result<()> {
-        install_built_outputs_at(
-            config,
-            name_to_path,
-            name,
-            is_user_target,
-            &self.db_path,
-            &self.root_dir,
-        )?;
-        self.staged_names.push(name.to_string());
-        Ok(())
-    }
-
-    fn commit_to_host(
-        &self,
-        config: &GlobalConfig,
-        name_to_path: &HashMap<String, PathBuf>,
-        user_target_names: &HashSet<String>,
-    ) -> Result<()> {
-        for name in &self.staged_names {
-            let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
-            install_built_outputs_at(
-                config,
-                name_to_path,
-                name,
-                is_user_target,
-                &config.general.db_path,
-                Path::new("/"),
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for SessionInstallState {
-    fn drop(&mut self) {
-        let _ = umount2(&self.root_dir, MntFlags::MNT_DETACH);
-    }
-}
 
 fn install_built_outputs_at(
     config: &GlobalConfig,

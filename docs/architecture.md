@@ -110,12 +110,8 @@ plan.toml → PlanManifest
           → archive::create_archive() → PARTINFO (runtime deps + relations)
       → output: .wright.tar.zst archives in components_dir
       → if --install:
-          → create a session-local overlay sysroot + temporary parts.db snapshot
-          → run dockyards against that stable session root instead of host /
-          → stage each completed package into the session root between build waves
-          → defer install/upgrade hooks during session staging
-          → after all tasks succeed, commit staged packages to host / in order
-          → run deferred hooks on the final host-root commit
+          → install each completed package directly to host / between build waves
+          → run install/upgrade hooks immediately on each package install
 ```
 
 ### Dependency cascade rules

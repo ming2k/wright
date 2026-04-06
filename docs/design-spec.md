@@ -621,7 +621,7 @@ bwrap \
 - `verify` stage: **Does not enter dockyard** — SHA-256 verification handled directly by the build tool
 - `extract` stage: **Does not enter dockyard** — extraction and file copying handled directly by the build tool
 - `[hooks]` and per-output `hooks.*`: **Do not run in dockyard** — they modify the real system during install/upgrade/remove
-- `wbuild run -i`: completed packages are first staged into a session-local sysroot between dependency waves; install/upgrade hooks are deferred until the final host-root commit
+- `wbuild run -i`: completed packages are installed directly to host `/` between dependency waves; install/upgrade hooks run immediately on each install
 
 ---
 

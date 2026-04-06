@@ -282,11 +282,9 @@ wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
 successfully built and installed part is recorded. On resume, those parts are
 skipped and the rest are rebuilt.
 
-With `-i`, builds run against a session-local overlay sysroot and temporary
-package database snapshot. Completed packages are staged into that session root
-between dependency waves so later builds see a stable root state. Package
-install/upgrade hooks are skipped during staging and run only when the staged
-outputs are committed to host `/` at the end of a successful run.
+With `-i`, completed packages are installed directly to host `/` between
+dependency waves. Later builds in the same session immediately see the
+installed outputs. Install/upgrade hooks run as each package is installed.
 
 The session hash is deterministic — running the same `wbuild resolve | wbuild run`
 pipeline produces the same hash, so `--resume` auto-detects the session. You can
