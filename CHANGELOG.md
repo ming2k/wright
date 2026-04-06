@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.11.6] - 2026-04-07
+
 ### Changes
 - **Simplified `-i` install flow**: `wbuild run -i` now installs completed packages directly to host `/` between build waves, matching the behavior of `wright install`. Removes the session-local overlay sysroot and staged package database introduced in 1.11.4–1.11.5. This eliminates the `dockyard = "none"` incompatibility and makes `-i` work consistently across all dockyard levels.
 
