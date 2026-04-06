@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.11.7] - 2026-04-07
+
+### Fixed
+- **Dockyard DNS resolution**: Fix dangling `/etc/resolv.conf` symlink issue in dockyard by ensuring essential `/etc` files are properly bind-mounted after `/run` is mounted, supporting systems using `systemd-resolved` with `xray-tproxy`.
+
 ## [1.11.6] - 2026-04-07
 
 ### Changes
