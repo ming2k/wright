@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-04-08
+
+### Performance
+- **Upgrade performance**: conflict check and old-file owner lookup during `wright upgrade` now use batch DB queries (up to 999 paths per round-trip) instead of one query per file, reducing ~33000 SQLite operations to ~34 for large packages like go (16681 files).
+
 ## [1.12.0] - 2026-04-08
 
 ### Performance
