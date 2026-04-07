@@ -93,7 +93,7 @@ fn test_build_and_archive_hello() {
 
     // Verify we can extract it
     let extract_dir = tempfile::tempdir().unwrap();
-    let extracted_info = archive::extract_archive(&archive_path, extract_dir.path()).unwrap();
+    let (extracted_info, _hash) = archive::extract_archive(&archive_path, extract_dir.path()).unwrap();
     assert_eq!(extracted_info.name, "hello");
     assert!(extract_dir.path().join("usr/bin/hello").exists());
     assert!(extract_dir.path().join(".PARTINFO").exists());

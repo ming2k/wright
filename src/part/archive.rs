@@ -93,12 +93,13 @@ pub fn create_archive(
     Ok(archive_path)
 }
 
-/// Extract a .wright.tar.zst archive and return the parsed PARTINFO.
-pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<PartInfo> {
-    crate::util::compress::extract_tar_zst(archive_path, dest_dir)?;
+/// Extract a .wright.tar.zst archive and return the parsed PARTINFO along with
+/// the SHA-256 hash of the archive file, computed in a single streaming pass.
+pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(PartInfo, String)> {
+    let hash = crate::util::compress::extract_tar_zst_hashed(archive_path, dest_dir)?;
     let partinfo_path = dest_dir.join(".PARTINFO");
     if partinfo_path.exists() {
-        return parse_partinfo(&partinfo_path);
+        return Ok((parse_partinfo(&partinfo_path)?, hash));
     }
 
     Err(WrightError::ArchiveError(

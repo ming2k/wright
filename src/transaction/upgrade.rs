@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart};
 use crate::error::{Result, WrightError};
@@ -10,7 +10,6 @@ use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_files_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
-use crate::util::checksum;
 
 use super::{journal_path_from_db, self_replace_provides_conflicts};
 
@@ -21,9 +20,16 @@ pub fn upgrade_part(
     force: bool,
     run_hooks: bool,
 ) -> Result<()> {
-    let temp_dir = tempfile::tempdir()
+    let staging_base = archive_path
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| std::path::Path::new("/var/lib/wright"));
+    let temp_dir = tempfile::Builder::new()
+        .prefix("wright-stage-")
+        .tempdir_in(staging_base)
+        .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
-    let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
+    let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
 
     let old_pkg = db.get_part(&pkginfo.name)?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
@@ -202,7 +208,6 @@ pub fn upgrade_part(
         }
     }
 
-    let pkg_hash = checksum::sha256_file(archive_path).ok();
     db.update_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
@@ -213,7 +218,7 @@ pub fn upgrade_part(
         license: &pkginfo.license,
         url: None,
         install_size: pkginfo.install_size,
-        pkg_hash: pkg_hash.as_deref(),
+        pkg_hash: Some(pkg_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         ..Default::default()
     })?;

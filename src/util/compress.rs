@@ -1,8 +1,37 @@
 use std::io::Read;
 use std::path::{Component, Path};
 
+use sha2::{Digest, Sha256};
+
 use crate::error::{Result, WrightError};
 use tracing::warn;
+
+/// A reader that computes a SHA-256 hash of every byte read through it.
+struct HashingReader<R: Read> {
+    inner: R,
+    hasher: Sha256,
+}
+
+impl<R: Read> HashingReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn finalize(self) -> String {
+        format!("{:x}", self.hasher.finalize())
+    }
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.hasher.update(&buf[..n]);
+        Ok(n)
+    }
+}
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -201,6 +230,24 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     unpack_tar_safely(archive, dest_dir)?;
 
     Ok(())
+}
+
+/// Extract a tar.zst archive and return the SHA-256 hash of the archive file,
+/// computed in a single streaming pass (no separate re-read).
+pub fn extract_tar_zst_hashed(archive_path: &Path, dest_dir: &Path) -> Result<String> {
+    let file = std::fs::File::open(archive_path).map_err(|e| {
+        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+    })?;
+
+    let mut hashing_reader = HashingReader::new(file);
+    {
+        let decoder = zstd::Decoder::new(&mut hashing_reader)
+            .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
+        let archive = tar::Archive::new(decoder);
+        unpack_tar_safely(archive, dest_dir)?;
+    }
+
+    Ok(hashing_reader.finalize())
 }
 
 /// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, .tar.lz, and .zip

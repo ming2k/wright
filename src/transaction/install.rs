@@ -11,7 +11,6 @@ use crate::repo::source::{ResolvedPart, SimpleResolver};
 use crate::transaction::fs::{collect_file_entries, copy_files_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
-use crate::util::checksum;
 
 use super::{journal_path_from_db, remove_part, upgrade_part};
 
@@ -189,10 +188,19 @@ pub fn install_part_with_origin(
     origin: Origin,
     run_hooks: bool,
 ) -> Result<()> {
-    let temp_dir = tempfile::tempdir()
+    // Prefer a staging dir on the same filesystem as root so that rename(2)
+    // can be used instead of read+write copy during installation.
+    let staging_base = archive_path
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| std::path::Path::new("/var/lib/wright"));
+    let temp_dir = tempfile::Builder::new()
+        .prefix("wright-stage-")
+        .tempdir_in(staging_base)
+        .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
-    let pkginfo = archive::extract_archive(archive_path, temp_dir.path())?;
+    let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
 
     for replaced_name in &pkginfo.replaces {
         if db.get_part(replaced_name)?.is_some() {
@@ -333,7 +341,6 @@ pub fn install_part_with_origin(
         }
     }
 
-    let pkg_hash = checksum::sha256_file(archive_path).ok();
     let pkg_id = db.insert_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
@@ -344,7 +351,7 @@ pub fn install_part_with_origin(
         license: &pkginfo.license,
         url: None,
         install_size: pkginfo.install_size,
-        pkg_hash: pkg_hash.as_deref(),
+        pkg_hash: Some(pkg_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         origin,
     })?;
