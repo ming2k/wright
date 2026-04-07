@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.11.8] - 2026-04-08
+
+### Fixed
+- **Symlink install over directory**: fix install failure when a part's symlink destination already exists as a real directory on the host (`Is a directory` error).
+
 ## [1.11.7] - 2026-04-07
 
 ### Fixed
