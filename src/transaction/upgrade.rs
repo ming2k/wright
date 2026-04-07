@@ -55,6 +55,12 @@ pub fn upgrade_part(
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
     let new_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
+    info!(
+        "Upgrading {}: {} files",
+        pkginfo.name,
+        new_entries.len()
+    );
+
     for entry in &new_entries {
         if entry.file_type == FileType::File {
             if let Some(owner) = db.find_owner(&entry.path)? {
@@ -136,7 +142,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            debug!("Running pre_install hook for {} (upgrade)", pkginfo.name);
+            info!("Running pre_install hook for {} (upgrade)", pkginfo.name);
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
@@ -233,7 +239,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_upgrade {
-            debug!("Running post_upgrade hook for {}", pkginfo.name);
+            info!("Running post_upgrade hook for {}", pkginfo.name);
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_upgrade script failed: {}", e);
             }

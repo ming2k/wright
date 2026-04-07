@@ -263,6 +263,12 @@ pub fn install_part_with_origin(
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
     let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
+    info!(
+        "Installing {}: {} files",
+        pkginfo.name,
+        file_entries.len()
+    );
+
     let mut shadows = Vec::new();
     for entry in &file_entries {
         if entry.file_type == FileType::File {
@@ -304,7 +310,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            debug!("Running pre_install hook for {}", pkginfo.name);
+            info!("Running pre_install hook for {}", pkginfo.name);
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
@@ -380,7 +386,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_install {
-            debug!("Running post_install hook for {}", pkginfo.name);
+            info!("Running post_install hook for {}", pkginfo.name);
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_install script failed: {}", e);
             }
