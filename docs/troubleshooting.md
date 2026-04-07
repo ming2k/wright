@@ -287,3 +287,43 @@ The stage exceeded the `timeout` setting in `wright.toml` or `plan.toml`.
    ```
 2. Investigate why the build is slow — a hung configure script or infinite
    loop is a more likely culprit than a genuinely slow build.
+
+---
+
+## Install Fails: "failed to remove existing file … Is a directory"
+
+**Symptom:**
+
+```
+WARN Installation failed, rolling back: install error: failed to remove existing file /usr/share/texmf: Is a directory
+```
+
+**Cause:** The part contains a path as a symlink (e.g. `ln -sfn texmf-dist texmf`), but the same path already exists on the system as a real directory from a previous install or manual action.
+
+**Fix:** This is handled automatically as of wright 1.11.8. If you see it on an older version, remove the directory manually before installing:
+
+```bash
+rm -rf /usr/share/texmf
+wright install texlive
+```
+
+---
+
+## Installation Appears Hung After "part stored"
+
+**Symptom:** `wbuild run -i` or `wright install` prints the "part stored" line and then appears to hang with one CPU core busy.
+
+**Cause:** A `post_install` or `post_upgrade` hook is running a slow single-threaded command (common with TeX Live's `fmtutil-sys --all`, font caches, `ldconfig` on very large installs).
+
+**Diagnosis:**
+
+```bash
+ps aux | grep -E 'fmtutil|mktexlsr|ldconfig|fc-cache'
+```
+
+**Fix:** The hook will complete on its own. For TeX Live specifically, consider removing `fmtutil-sys --all` from the hook and running only the formats you need:
+
+```bash
+sudo fmtutil-sys --byfmt pdflatex
+sudo fmtutil-sys --byfmt xelatex
+```

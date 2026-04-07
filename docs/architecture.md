@@ -63,8 +63,14 @@ src/
 │   ├── mod.rs                      # SQLite interface, integrity checks, shadowing records
 │   └── schema.rs                   # Database schema and migrations
 ├── transaction/
-│   ├── mod.rs                      # Atomic install/remove/upgrade with replacement support
-│   └── rollback.rs                 # Journal-based rollback
+│   ├── mod.rs                      # Public entry points and shared helpers
+│   ├── install.rs                  # First-install flow (staging dir, parallel file ops)
+│   ├── upgrade.rs                  # Upgrade flow (config preservation, file delta removal)
+│   ├── remove.rs                   # Remove and cascade-remove logic
+│   ├── verify.rs                   # Installed-file integrity verification
+│   ├── fs.rs                       # File install primitives (rename-or-copy, parallel workers)
+│   ├── hooks.rs                    # Hook script execution
+│   └── rollback.rs                 # Journal-based crash-safe rollback
 ├── repo/
 │   ├── mod.rs                      # Repository types
 │   ├── index.rs                    # Index generation and reading (wright.index.toml)
@@ -147,10 +153,17 @@ wright install <name>
   → picks latest version (or user-specified version)
   → locates .wright.tar.zst archive on disk
 
-.wright.tar.zst → transaction::install_package()
+.wright.tar.zst → transaction::install_part_with_origin()
+  → extract archive to staging dir (same filesystem as /) + stream SHA-256
   → parse .PARTINFO → handle replaces (auto-uninstall) → check conflicts
-  → BEGIN TRANSACTION → insert files → record shadows (ownership overlaps)
-  → copy files to root → COMMIT
+  → run pre_install hook (if any)
+  → Phase 1 (serial): create directories
+  → Phase 2 (parallel, rayon): rename-or-copy files and symlinks to /
+      rename(2) used when staging dir is on same filesystem (zero data copy)
+      falls back to read+write copy on EXDEV (cross-device)
+  → record DB rows: part, files, dependencies, shadows
+  → run post_install hook (if any)
+  → commit rollback journal
 
 wright remove
   → check link-dependents → block if CRITICAL

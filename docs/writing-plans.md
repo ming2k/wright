@@ -327,6 +327,18 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 | `pre_remove`         | string | Run before part removal |
 | `post_remove`        | string | Run after part removal  |
 
+Hooks run on the live system, serially, blocking the install. Keep them fast. For operations that are inherently slow and single-threaded (e.g. `fmtutil-sys --all`, `texhash`, font cache generation), prefer running only the subset needed at install time and let the user invoke the full regeneration manually afterward:
+
+```toml
+[hooks]
+post_install = """
+mktexlsr 2>/dev/null || true
+texlinks 2>/dev/null || true
+"""
+# fmtutil-sys --all is intentionally omitted — run manually:
+#   sudo fmtutil-sys --byfmt pdflatex
+```
+
 ### `[output]` — Output Metadata & Part Relations
 
 `[output]` defines install-time metadata for the main part, and
