@@ -184,7 +184,18 @@ pub(super) fn copy_files_to_root(
             }
 
             if dest_path.symlink_metadata().is_ok() {
-                std::fs::remove_file(&dest_path).map_err(|e| {
+                // dest_path may be a real directory (not a symlink); remove_file
+                // fails on directories, so fall back to remove_dir_all.
+                let remove_result = if dest_path
+                    .symlink_metadata()
+                    .map(|m| m.file_type().is_dir())
+                    .unwrap_or(false)
+                {
+                    std::fs::remove_dir_all(&dest_path)
+                } else {
+                    std::fs::remove_file(&dest_path)
+                };
+                remove_result.map_err(|e| {
                     WrightError::InstallError(format!(
                         "failed to remove existing file {}: {}",
                         dest_path.display(),
