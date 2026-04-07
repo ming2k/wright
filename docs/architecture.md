@@ -165,6 +165,18 @@ wright install <name>
   → run post_install hook (if any)
   → commit rollback journal
 
+.wright.tar.zst → transaction::upgrade_part()
+  → extract archive to staging dir + stream SHA-256
+  → parse .PARTINFO → version check (skip if not newer, unless --force)
+  → conflict check: batch DB query (≤999 paths/query) → find_owners_batch()
+  → backup overlapping files to temp dir for rollback
+  → run pre_install hook (if any)
+  → copy new files to / (config preservation: write as .wnew if unchanged)
+  → remove old files not in new package (batch other-owner check via get_other_owners_batch())
+  → update DB rows: part, files, dependencies, shadows
+  → run post_upgrade hook (if any)
+  → commit rollback journal
+
 wright remove
   → check link-dependents → block if CRITICAL
   → check file shadows → preserve files if shared by other parts

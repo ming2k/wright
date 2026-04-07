@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::error::{Result, WrightError};
 
 use super::{Database, FileEntry, FileType};
@@ -122,5 +124,92 @@ impl Database {
                 e
             ))),
         }
+    }
+
+    /// Batch version of find_owner. Returns a map of path -> owner name for all paths that have an owner.
+    pub fn find_owners_batch(&self, paths: &[&str]) -> Result<HashMap<String, String>> {
+        let mut result = HashMap::new();
+        for chunk in paths.chunks(999) {
+            let placeholders = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT f.path, p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path IN ({})",
+                placeholders
+            );
+            let mut stmt = self.conn.prepare(&sql).map_err(|e| {
+                WrightError::DatabaseError(format!("failed to prepare find_owners_batch: {}", e))
+            })?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to query find_owners_batch: {}", e))
+                })?;
+            for row in rows {
+                let (path, owner) = row.map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to read find_owners_batch row: {}", e))
+                })?;
+                result.insert(path, owner);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Batch version of get_other_owners. Returns a map of path -> list of other owner names.
+    pub fn get_other_owners_batch(
+        &self,
+        current_pkg_id: i64,
+        paths: &[&str],
+    ) -> Result<HashMap<String, Vec<String>>> {
+        let mut result: HashMap<String, Vec<String>> = HashMap::new();
+        for chunk in paths.chunks(999) {
+            let placeholders = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT f.path, p.name FROM parts p JOIN files f ON p.id = f.part_id \
+                 WHERE p.id != ?1 AND f.path IN ({})",
+                placeholders
+            );
+            let mut stmt = self.conn.prepare(&sql).map_err(|e| {
+                WrightError::DatabaseError(format!(
+                    "failed to prepare get_other_owners_batch: {}",
+                    e
+                ))
+            })?;
+            let params: Vec<Box<dyn rusqlite::ToSql>> = std::iter::once(
+                Box::new(current_pkg_id) as Box<dyn rusqlite::ToSql>,
+            )
+            .chain(chunk.iter().map(|p| Box::new(*p) as Box<dyn rusqlite::ToSql>))
+            .collect();
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!(
+                        "failed to query get_other_owners_batch: {}",
+                        e
+                    ))
+                })?;
+            for row in rows {
+                let (path, owner) = row.map_err(|e| {
+                    WrightError::DatabaseError(format!(
+                        "failed to read get_other_owners_batch row: {}",
+                        e
+                    ))
+                })?;
+                result.entry(path).or_default().push(owner);
+            }
+        }
+        Ok(result)
     }
 }

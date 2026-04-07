@@ -67,10 +67,16 @@ pub fn upgrade_part(
         new_entries.len()
     );
 
+    let file_paths: Vec<&str> = new_entries
+        .iter()
+        .filter(|e| e.file_type == FileType::File)
+        .map(|e| e.path.as_str())
+        .collect();
+    let owners = db.find_owners_batch(&file_paths)?;
     for entry in &new_entries {
         if entry.file_type == FileType::File {
-            if let Some(owner) = db.find_owner(&entry.path)? {
-                if owner != pkginfo.name {
+            if let Some(owner) = owners.get(&entry.path) {
+                if *owner != pkginfo.name {
                     if force {
                         warn!(
                             "{}: overwriting {} (owned by {})",
@@ -79,7 +85,7 @@ pub fn upgrade_part(
                     } else {
                         return Err(WrightError::FileConflict {
                             path: entry.path.clone().into(),
-                            owner,
+                            owner: owner.clone(),
                         });
                     }
                 }
@@ -175,6 +181,13 @@ pub fn upgrade_part(
         info!("Preserved config: {} (.wnew: {}.wnew)", path, path);
     }
 
+    let to_delete_paths: Vec<&str> = old_files
+        .iter()
+        .filter(|f| !new_paths.contains(f.path.as_str()) && !f.is_config)
+        .map(|f| f.path.as_str())
+        .collect();
+    let other_owners_map = db.get_other_owners_batch(old_pkg.id, &to_delete_paths)?;
+
     for old_file in old_files.iter().rev() {
         if new_paths.contains(old_file.path.as_str()) {
             continue;
@@ -185,7 +198,10 @@ pub fn upgrade_part(
             continue;
         }
 
-        let other_owners = db.get_other_owners(old_pkg.id, &old_file.path)?;
+        let other_owners = other_owners_map
+            .get(&old_file.path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         if !other_owners.is_empty() {
             tracing::debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",
