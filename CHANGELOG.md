@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-04-08
+
+### Performance
+- **Install performance**: archive SHA-256 is now computed in a single streaming pass during extraction, eliminating a full re-read of the archive after install.
+- **Same-filesystem staging**: staging temp dir is placed under the wright data dir (same filesystem as `/`) so `rename(2)` replaces read+write copy during file installation; falls back to copy on cross-device installs.
+- **Parallel file operations**: `collect_file_entries` and `copy_files_to_root` now process files in parallel with rayon while preserving serial directory creation and rollback safety.
+
 ## [1.11.8] - 2026-04-08
 
 ### Fixed
