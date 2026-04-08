@@ -6,12 +6,15 @@ use crate::error::{Result, WrightError};
 use crate::util::compress;
 use crate::util::progress;
 
+const MAX_RETRIES: u32 = 3;
+
 /// Download a file from `url` to `dest` atomically.
 ///
 /// For HTTP(S) downloads, the data is first written to a temporary file in the
 /// same directory as `dest`, then renamed into place on success. This prevents
 /// partial/corrupt files from being left in the cache when a download is
-/// interrupted.
+/// interrupted. HTTP(S) downloads are retried up to `MAX_RETRIES` times on
+/// transient network errors.
 pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     let label = progress::source_label(url);
 
@@ -49,6 +52,28 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         .build()
         .map_err(|e| WrightError::NetworkError(format!("failed to create client: {}", e)))?;
 
+    let mut last_err: Option<WrightError> = None;
+    for attempt in 1..=MAX_RETRIES {
+        match try_download_http(&client, url, dest, &label) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt < MAX_RETRIES {
+                    tracing::warn!(
+                        "Download attempt {}/{} failed for {}: {}. Retrying…",
+                        attempt,
+                        MAX_RETRIES,
+                        url,
+                        e
+                    );
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+fn try_download_http(client: &Client, url: &str, dest: &Path, label: &str) -> Result<()> {
     let mut response = client.get(url).send().map_err(|e| {
         WrightError::NetworkError(format!("failed to send request to {}: {}", url, e))
     })?;
@@ -77,7 +102,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     }
 
     let total_size = response.content_length().unwrap_or(0);
-    let pb = progress::new_source_transfer_bar(&label, total_size);
+    let pb = progress::new_source_transfer_bar(label, total_size);
     progress::set_source_bytes(&pb, 0, total_size);
 
     // Write to a temporary file in the same directory, then rename on success.
@@ -111,7 +136,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     tmp_file
         .persist(dest)
         .map_err(|e| WrightError::IoError(e.error))?;
-    progress::finish_source(&pb, &label, dest);
+    progress::finish_source(&pb, label, dest);
 
     Ok(())
 }
