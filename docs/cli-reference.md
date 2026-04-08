@@ -48,6 +48,10 @@ Parts explicitly listed by the user are marked with `manual` origin; dependencie
 | `--force` | Reinstall even if already installed; overwrite conflicting files |
 | `--nodeps` | Skip dependency checks |
 
+**File conflict behavior:** By default, installing a part that would overwrite a file already owned by another part is blocked with an error. With `--force`, the install proceeds and the overwrite is recorded as a *shadow*: the database notes that the original owner's file has been displaced. The shadowing part takes ownership of the file on disk.
+
+When the shadowing part is later removed, the file is **not deleted** — because the original owner still has it registered in its file list, removal detects the shared ownership and skips deletion. Ownership reverts to the original part in the database, but the file content on disk remains the shadowing part's version. To restore the original content, reinstall the original part. Use `wright doctor` to inspect recorded shadows on the system.
+
 ```bash
 wright install zlib
 wright install zlib openssl
