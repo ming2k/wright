@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.12.4] - 2026-04-08
+
+### Fixed
+- **Download retries**: HTTP(S) downloads now retry up to 3 times on transient network errors (e.g. `request or response body error`), preventing spurious failures when fetching large packages like sqlite.
+
 ## [1.12.3] - 2026-04-08
 
 ### Performance
