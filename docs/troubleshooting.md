@@ -327,3 +327,61 @@ ps aux | grep -E 'fmtutil|mktexlsr|ldconfig|fc-cache'
 sudo fmtutil-sys --byfmt pdflatex
 sudo fmtutil-sys --byfmt xelatex
 ```
+
+---
+
+## Slow Install for Very Large Parts
+
+**Symptom:** `wbuild run -i` or `wright install` appears to sit for a long time
+on a message such as:
+
+```text
+INFO Installing texlive-texmf: 252553 files
+```
+
+Packages with hundreds of thousands of files are dominated by filesystem
+metadata work and SQLite bookkeeping rather than raw CPU throughput. On SSDs,
+they can still take many minutes.
+
+**To see where time is going:**
+
+```bash
+wbuild run -v -i <pkg>
+# or
+wright -v install <pkg>
+```
+
+At `-v`, Wright prints `DEBUG` timings for:
+
+- archive extraction
+- file scan and metadata collection
+- owner conflict check
+- filesystem copy into the target root
+- database update
+- total time
+
+If filesystem copy dominates, the bottleneck is usually the target filesystem's
+metadata performance. If database update dominates, the package simply contains
+an unusually large number of tracked files.
+
+---
+
+## Lock File Remains After Interrupt
+
+**Symptom:** After interrupting `wbuild -i`, `wright`, or `wrepo`, you still see
+files such as:
+
+```text
+/var/lib/wright/lock/parts.db.lock
+/var/lib/wright/lock/repo.db.lock
+```
+
+This is normal.
+
+Wright uses fixed lock files as anchors for `flock(2)`. The presence of the
+file alone does **not** mean the database is still locked. The actual lock is
+held by the live process; once that process exits, the kernel releases the
+lock automatically even if the `.lock` file remains on disk.
+
+If a later command succeeds, the lock is not stale. Only investigate further if
+new commands fail with a lock timeout while no Wright process is still running.

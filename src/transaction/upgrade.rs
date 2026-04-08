@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 use std::path::Path;
+use std::time::Instant;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart};
 use crate::error::{Result, WrightError};
@@ -11,7 +12,7 @@ use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_fi
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
-use super::{journal_path_from_db, self_replace_provides_conflicts};
+use super::{journal_path_from_db, log_debug_timing, self_replace_provides_conflicts};
 
 pub fn upgrade_part(
     db: &Database,
@@ -20,6 +21,8 @@ pub fn upgrade_part(
     force: bool,
     run_hooks: bool,
 ) -> Result<()> {
+    let overall_start = Instant::now();
+
     let staging_base = archive_path
         .parent()
         .and_then(|p| p.parent())
@@ -29,7 +32,14 @@ pub fn upgrade_part(
         .tempdir_in(staging_base)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
+    let mut phase_start = Instant::now();
     let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
+    log_debug_timing(
+        "upgrade",
+        &pkginfo.name,
+        "archive extraction",
+        phase_start.elapsed(),
+    );
 
     let old_pkg = db.get_part(&pkginfo.name)?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
@@ -59,10 +69,18 @@ pub fn upgrade_part(
     }
 
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
+    phase_start = Instant::now();
     let new_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
+    log_debug_timing(
+        "upgrade",
+        &pkginfo.name,
+        "file scan and metadata collection",
+        phase_start.elapsed(),
+    );
 
-    info!(plan = %pkginfo.name, "upgrading: {} files", new_entries.len());
+    info!("Upgrading {}: {} files", pkginfo.name, new_entries.len());
 
+    phase_start = Instant::now();
     let file_paths: Vec<&str> = new_entries
         .iter()
         .filter(|e| e.file_type == FileType::File)
@@ -74,7 +92,10 @@ pub fn upgrade_part(
             if let Some(owner) = owners.get(&entry.path) {
                 if *owner != pkginfo.name {
                     if force {
-                        warn!(plan = %pkginfo.name, "overwriting {} (owned by {})", entry.path, owner);
+                        warn!(
+                            "{}: overwriting {} (owned by {})",
+                            pkginfo.name, entry.path, owner
+                        );
                     } else {
                         return Err(WrightError::FileConflict {
                             path: entry.path.clone().into(),
@@ -85,6 +106,12 @@ pub fn upgrade_part(
             }
         }
     }
+    log_debug_timing(
+        "upgrade",
+        &pkginfo.name,
+        "owner conflict check",
+        phase_start.elapsed(),
+    );
 
     let tx_id = db.record_transaction(
         "upgrade",
@@ -147,14 +174,22 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!(plan = %pkginfo.name, "running pre_install hook");
+            info!("Running pre_install hook for {}", pkginfo.name);
+            phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
+            log_debug_timing(
+                "upgrade",
+                &pkginfo.name,
+                "pre_install hook",
+                phase_start.elapsed(),
+            );
         }
     }
 
     let config_paths = collect_config_paths(&new_entries);
+    phase_start = Instant::now();
     let preserved_configs = match copy_files_to_root(
         temp_dir.path(),
         root_dir,
@@ -164,14 +199,20 @@ pub fn upgrade_part(
     ) {
         Ok(paths) => paths,
         Err(e) => {
-            warn!(plan = %pkginfo.name, "upgrade failed, rolling back: {}", e);
+            warn!("Upgrade failed for {}, rolling back: {}", pkginfo.name, e);
             rollback_state.rollback();
             db.update_transaction_status(tx_id, "rolled_back")?;
             return Err(e);
         }
     };
+    log_debug_timing(
+        "upgrade",
+        &pkginfo.name,
+        "filesystem copy into target root",
+        phase_start.elapsed(),
+    );
     for path in preserved_configs {
-        info!(plan = %pkginfo.name, "preserved config: {}", path);
+        info!("Preserved config for {}: {}", pkginfo.name, path);
     }
 
     let to_delete_paths: Vec<&str> = old_files
@@ -187,7 +228,10 @@ pub fn upgrade_part(
         }
 
         if old_file.is_config {
-            info!(plan = %pkginfo.name, "preserving config file: {}", old_file.path);
+            info!(
+                "Preserving config file for {}: {}",
+                pkginfo.name, old_file.path
+            );
             continue;
         }
 
@@ -196,7 +240,7 @@ pub fn upgrade_part(
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
         if !other_owners.is_empty() {
-            tracing::debug!(
+            debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",
                 old_file.path,
                 other_owners.join(", ")
@@ -217,6 +261,7 @@ pub fn upgrade_part(
         }
     }
 
+    phase_start = Instant::now();
     db.update_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
@@ -250,22 +295,35 @@ pub fn upgrade_part(
     self_replace_provides_conflicts(db, updated_pkg.id, &pkginfo)?;
 
     db.update_transaction_status(tx_id, "completed")?;
+    log_debug_timing(
+        "upgrade",
+        &pkginfo.name,
+        "database update",
+        phase_start.elapsed(),
+    );
 
     if run_hooks {
         if let Some(ref script) = hooks.post_upgrade {
-            info!(plan = %pkginfo.name, "running post_upgrade hook");
+            info!("Running post_upgrade hook for {}", pkginfo.name);
+            phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_upgrade script failed: {}", e);
             }
+            log_debug_timing(
+                "upgrade",
+                &pkginfo.name,
+                "post_upgrade hook",
+                phase_start.elapsed(),
+            );
         }
     }
 
     rollback_state.commit();
 
+    log_debug_timing("upgrade", &pkginfo.name, "total", overall_start.elapsed());
     info!(
-        plan = %pkginfo.name,
-        "upgraded from {}-{} to {}-{}",
-        old_pkg.version, old_pkg.release, pkginfo.version, pkginfo.release,
+        "Upgraded {}: {}-{} -> {}-{}",
+        pkginfo.name, old_pkg.version, old_pkg.release, pkginfo.version, pkginfo.release,
     );
     Ok(())
 }

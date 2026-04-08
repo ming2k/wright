@@ -162,6 +162,13 @@ your user config:
 plans_dir = "/home/alice/wright/plans"
 ```
 
+Database lock files are stored separately from the databases themselves under
+the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
+For the default database paths this means:
+
+- `parts.db` uses `/var/lib/wright/lock/parts.db.lock`
+- `repo.db` uses `/var/lib/wright/lock/repo.db.lock`
+
 ### `[general]` section
 
 | Field | Type | Default | Description |

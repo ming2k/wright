@@ -1,11 +1,10 @@
-use std::fs::File;
-use std::os::unix::io::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::{params, Connection};
 
 use crate::error::{Result, WrightError};
 use crate::part::archive;
+use crate::util::lock::ProcessLock;
 
 const BASE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS parts (
@@ -83,37 +82,12 @@ pub struct RepoPart {
 
 pub struct RepoDb {
     conn: Connection,
-    _lock_file: Option<File>,
-    db_path: Option<PathBuf>,
+    _lock: Option<ProcessLock>,
 }
 
-fn acquire_lock(db_path: &Path) -> Result<File> {
-    let lock_path = db_path.with_extension("lock");
-    let file = File::create(&lock_path).map_err(|e| {
-        WrightError::DatabaseError(format!(
-            "failed to create repo lock file {}: {}",
-            lock_path.display(),
-            e
-        ))
-    })?;
-
-    let mut delay = std::time::Duration::from_millis(50);
-    let max_wait = std::time::Duration::from_secs(30);
-    let start = std::time::Instant::now();
-
-    loop {
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if ret == 0 {
-            return Ok(file);
-        }
-        if start.elapsed() >= max_wait {
-            return Err(WrightError::DatabaseError(
-                "repo database is locked by another process (timed out after 30s)".to_string(),
-            ));
-        }
-        std::thread::sleep(delay);
-        delay = (delay * 2).min(std::time::Duration::from_secs(1));
-    }
+fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
+    crate::util::lock::acquire_db_lock(db_path)
+        .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
 fn repo_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
@@ -154,8 +128,7 @@ impl RepoDb {
 
         Ok(RepoDb {
             conn,
-            _lock_file: Some(lock_file),
-            db_path: Some(db_path.to_path_buf()),
+            _lock: Some(lock_file),
         })
     }
 
@@ -484,12 +457,4 @@ fn row_to_repo_part(row: &rusqlite::Row) -> rusqlite::Result<RepoPart> {
         install_size: row.get::<_, u64>(9)?,
         runtime_deps: Vec::new(),
     })
-}
-
-impl Drop for RepoDb {
-    fn drop(&mut self) {
-        if let Some(ref path) = self.db_path {
-            let _ = std::fs::remove_file(path.with_extension("lock"));
-        }
-    }
 }

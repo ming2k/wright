@@ -80,6 +80,8 @@ fn main() -> Result<()> {
 
     let db_path = cli.db.unwrap_or(config.general.db_path.clone());
     let root_dir = cli.root.unwrap_or_else(|| PathBuf::from("/"));
+    let _command_lock = wright::util::lock::acquire_named_lock(&db_path, "wright")
+        .context("failed to acquire wright command lock")?;
 
     let db = Database::open(&db_path).context("failed to open database")?;
 
@@ -205,7 +207,13 @@ fn main() -> Result<()> {
 
                 // When --version is explicitly given, force the upgrade (allows downgrade)
                 let effective_force = force || target_version.is_some();
-                match transaction::upgrade_part(&db, &selected.path, &root_dir, effective_force, true) {
+                match transaction::upgrade_part(
+                    &db,
+                    &selected.path,
+                    &root_dir,
+                    effective_force,
+                    true,
+                ) {
                     Ok(()) => println!(
                         "upgraded: {} -> {}-{}",
                         arg, selected.version, selected.release

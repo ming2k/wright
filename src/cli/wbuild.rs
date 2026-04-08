@@ -329,15 +329,13 @@ mod tests {
 
     #[test]
     fn parse_resolve_tree_conflicts_with_deps() {
-        let result =
-            Cli::try_parse_from(["wbuild", "resolve", "zlib", "--tree", "--deps"]);
+        let result = Cli::try_parse_from(["wbuild", "resolve", "zlib", "--tree", "--deps"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_resolve_tree_conflicts_with_self() {
-        let result =
-            Cli::try_parse_from(["wbuild", "resolve", "zlib", "--tree", "--self"]);
+        let result = Cli::try_parse_from(["wbuild", "resolve", "zlib", "--tree", "--self"]);
         assert!(result.is_err());
     }
 }

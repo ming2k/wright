@@ -201,7 +201,8 @@ communication:
 | `repo.db` (SQLite) | `wrepo`, `wbuild` | `wright`, `wrepo` | `repo_db_path` |
 
 `wbuild` reads the database to check which parts are already installed
-(for dependency expansion and session planning). With `-i`, it first writes
-to a temporary session-local database copy, then commits successful staged
-packages to the host database at the end of the run. `wrepo` reads the
-database to annotate `[installed]` tags in listings.
+(for dependency expansion and session planning). With `-i`, it installs each
+completed package directly into the host root and updates the host `parts.db`
+between build waves, so later builds in the same run immediately see newly
+installed outputs. `wrepo` reads the database to annotate `[installed]` tags in
+listings.

@@ -7,8 +7,10 @@ mod upgrade;
 mod verify;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use rusqlite::params;
+use tracing::debug;
 
 use crate::database::Database;
 use crate::error::{Result, WrightError};
@@ -49,6 +51,16 @@ pub(super) fn self_replace_provides_conflicts(
         db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
     }
     Ok(())
+}
+
+pub(super) fn log_debug_timing(operation: &str, package: &str, phase: &str, elapsed: Duration) {
+    debug!(
+        "{} {}: {} completed in {:.3}s",
+        operation,
+        package,
+        phase,
+        elapsed.as_secs_f64()
+    );
 }
 
 #[cfg(test)]

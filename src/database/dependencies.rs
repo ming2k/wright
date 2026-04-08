@@ -175,25 +175,17 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn insert_optional_dependencies(
-        &self,
-        part_id: i64,
-        deps: &[String],
-    ) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO optional_dependencies (part_id, name) VALUES (?1, ?2)",
-        )?;
+    pub fn insert_optional_dependencies(&self, part_id: i64, deps: &[String]) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("INSERT INTO optional_dependencies (part_id, name) VALUES (?1, ?2)")?;
         for name in deps {
             stmt.execute(rusqlite::params![part_id, name])?;
         }
         Ok(())
     }
 
-    pub fn replace_optional_dependencies(
-        &self,
-        part_id: i64,
-        deps: &[String],
-    ) -> Result<()> {
+    pub fn replace_optional_dependencies(&self, part_id: i64, deps: &[String]) -> Result<()> {
         self.conn
             .execute(
                 "DELETE FROM optional_dependencies WHERE part_id = ?1",
@@ -206,13 +198,11 @@ impl Database {
     }
 
     pub fn get_optional_dependencies(&self, part_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM optional_dependencies WHERE part_id = ?1 ORDER BY name",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM optional_dependencies WHERE part_id = ?1 ORDER BY name")?;
         let rows = stmt
-            .query_map(rusqlite::params![part_id], |row| {
-                row.get::<_, String>(0)
-            })?
+            .query_map(rusqlite::params![part_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to get optional deps: {}", e))

@@ -198,6 +198,66 @@ mod tests {
     }
 
     #[test]
+    fn test_find_owners_batch() {
+        let db = test_db();
+        let hello_id = db
+            .insert_part(NewPart {
+                name: "hello",
+                version: "1.0.0",
+                release: 1,
+                description: "test",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
+        let world_id = db
+            .insert_part(NewPart {
+                name: "world",
+                version: "1.0.0",
+                release: 1,
+                description: "test",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .unwrap();
+
+        db.insert_files(
+            hello_id,
+            &[FileEntry {
+                path: "/usr/bin/hello".to_string(),
+                file_hash: None,
+                file_type: FileType::File,
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            }],
+        )
+        .unwrap();
+        db.insert_files(
+            world_id,
+            &[FileEntry {
+                path: "/usr/bin/world".to_string(),
+                file_hash: None,
+                file_type: FileType::File,
+                file_mode: None,
+                file_size: None,
+                is_config: false,
+            }],
+        )
+        .unwrap();
+
+        let owners = db
+            .find_owners_batch(&["/usr/bin/hello", "/usr/bin/world", "/usr/bin/missing"])
+            .unwrap();
+
+        assert_eq!(owners.get("/usr/bin/hello"), Some(&"hello".to_string()));
+        assert_eq!(owners.get("/usr/bin/world"), Some(&"world".to_string()));
+        assert!(!owners.contains_key("/usr/bin/missing"));
+    }
+
+    #[test]
     fn test_search_packages() {
         let db = test_db();
         db.insert_part(NewPart {
@@ -442,7 +502,7 @@ mod tests {
             Err(ref e) => {
                 let err_msg = format!("{}", e);
                 assert!(
-                    err_msg.contains("locked"),
+                    err_msg.contains("locked") || err_msg.contains("holding"),
                     "Expected lock error, got: {}",
                     err_msg
                 );

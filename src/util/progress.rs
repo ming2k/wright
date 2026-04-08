@@ -17,7 +17,11 @@ pub fn source_label(uri: &str) -> String {
     let uri = uri.strip_prefix("git+").unwrap_or(uri);
     let uri = uri.strip_prefix("file://").unwrap_or(uri);
     let uri = uri.split('#').next().unwrap_or(uri);
-    let tail = uri.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(uri);
+    let tail = uri
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(uri);
     tail.trim_end_matches(".git").to_string()
 }
 

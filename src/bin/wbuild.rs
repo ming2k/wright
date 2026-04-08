@@ -67,6 +67,10 @@ fn main() -> Result<()> {
             mvp,
             clear_sessions,
         } => {
+            let _command_lock =
+                wright::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
+                    .context("failed to acquire wbuild command lock")?;
+
             if clear_sessions {
                 let db = wright::database::Database::open(&config.general.db_path)
                     .context("failed to open database")?;
@@ -125,9 +129,10 @@ fn main() -> Result<()> {
             tree,
         } => {
             if tree {
-                let target = targets.into_iter().next().ok_or_else(|| {
-                    anyhow::anyhow!("--tree requires at least one target")
-                })?;
+                let target = targets
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--tree requires at least one target"))?;
                 let effective_depth = match depth {
                     Some(0) | None => usize::MAX,
                     Some(d) => d,
@@ -138,13 +143,7 @@ fn main() -> Result<()> {
                     "Plan dependency tree for: {} (source: hold-tree plan.toml)",
                     target
                 );
-                let stats = print_plan_tree(
-                    &target,
-                    &all_plans,
-                    "",
-                    1,
-                    effective_depth,
-                )?;
+                let stats = print_plan_tree(&target, &all_plans, "", 1, effective_depth)?;
                 println!(
                     "\n{} parts, max depth {}, {} repeated, {} cycles",
                     stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
@@ -187,30 +186,48 @@ fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Commands::Check { targets } => Ok(orchestrator::run_build(
-            &config,
-            targets,
-            BuildOptions {
-                lint: true,
-                ..Default::default()
-            },
-        )?),
-        Commands::Fetch { targets } => Ok(orchestrator::run_build(
-            &config,
-            targets,
-            BuildOptions {
-                fetch_only: true,
-                ..Default::default()
-            },
-        )?),
-        Commands::Checksum { targets } => Ok(orchestrator::run_build(
-            &config,
-            targets,
-            BuildOptions {
-                checksum: true,
-                ..Default::default()
-            },
-        )?),
+        Commands::Check { targets } => {
+            let _command_lock =
+                wright::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
+                    .context("failed to acquire wbuild command lock")?;
+
+            Ok(orchestrator::run_build(
+                &config,
+                targets,
+                BuildOptions {
+                    lint: true,
+                    ..Default::default()
+                },
+            )?)
+        }
+        Commands::Fetch { targets } => {
+            let _command_lock =
+                wright::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
+                    .context("failed to acquire wbuild command lock")?;
+
+            Ok(orchestrator::run_build(
+                &config,
+                targets,
+                BuildOptions {
+                    fetch_only: true,
+                    ..Default::default()
+                },
+            )?)
+        }
+        Commands::Checksum { targets } => {
+            let _command_lock =
+                wright::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
+                    .context("failed to acquire wbuild command lock")?;
+
+            Ok(orchestrator::run_build(
+                &config,
+                targets,
+                BuildOptions {
+                    checksum: true,
+                    ..Default::default()
+                },
+            )?)
+        }
     }
 }
 

@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use std::time::Instant;
+
 use tracing::{debug, info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart, Origin};
@@ -12,7 +14,7 @@ use crate::transaction::fs::{collect_file_entries, copy_files_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
-use super::{journal_path_from_db, remove_part, upgrade_part};
+use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
 
 pub fn install_parts(
     db: &Database,
@@ -183,6 +185,8 @@ pub fn install_part_with_origin(
     origin: Origin,
     run_hooks: bool,
 ) -> Result<()> {
+    let overall_start = Instant::now();
+
     // Prefer a staging dir on the same filesystem as root so that rename(2)
     // can be used instead of read+write copy during installation.
     let staging_base = archive_path
@@ -195,11 +199,18 @@ pub fn install_part_with_origin(
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
+    let mut phase_start = Instant::now();
     let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
+    log_debug_timing(
+        "install",
+        &pkginfo.name,
+        "archive extraction",
+        phase_start.elapsed(),
+    );
 
     for replaced_name in &pkginfo.replaces {
         if db.get_part(replaced_name)?.is_some() {
-            info!(plan = %pkginfo.name, "replacing {}", replaced_name);
+            info!("Replacing {} with {}", replaced_name, pkginfo.name);
             remove_part(db, replaced_name, root_dir, true)?;
         }
     }
@@ -261,31 +272,52 @@ pub fn install_part_with_origin(
     }
 
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
+    phase_start = Instant::now();
     let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
+    log_debug_timing(
+        "install",
+        &pkginfo.name,
+        "file scan and metadata collection",
+        phase_start.elapsed(),
+    );
 
-    info!(plan = %pkginfo.name, "installing: {} files", file_entries.len());
+    info!("Installing {}: {} files", pkginfo.name, file_entries.len());
+
+    phase_start = Instant::now();
+    let file_paths: Vec<&str> = file_entries
+        .iter()
+        .filter(|e| e.file_type == FileType::File)
+        .map(|e| e.path.as_str())
+        .collect();
+    let owners = db.find_owners_batch(&file_paths)?;
 
     let mut shadows = Vec::new();
     for entry in &file_entries {
         if entry.file_type == FileType::File {
-            if let Some(owner_name) = db.find_owner(&entry.path)? {
+            if let Some(owner_name) = owners.get(&entry.path) {
                 if force {
-                    if owner_name != pkginfo.name {
+                    if owner_name.as_str() != pkginfo.name {
                         warn!(
                             "{}: overwriting {} (owned by {})",
                             pkginfo.name, entry.path, owner_name
                         );
-                        shadows.push((entry.path.clone(), owner_name));
+                        shadows.push((entry.path.clone(), owner_name.clone()));
                     }
                 } else {
                     return Err(WrightError::FileConflict {
                         path: PathBuf::from(&entry.path),
-                        owner: owner_name,
+                        owner: owner_name.clone(),
                     });
                 }
             }
         }
     }
+    log_debug_timing(
+        "install",
+        &pkginfo.name,
+        "owner conflict check",
+        phase_start.elapsed(),
+    );
 
     let tx_id = db.record_transaction(
         "install",
@@ -306,13 +338,21 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!(plan = %pkginfo.name, "running pre_install hook");
+            info!("Running pre_install hook for {}", pkginfo.name);
+            phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
+            log_debug_timing(
+                "install",
+                &pkginfo.name,
+                "pre_install hook",
+                phase_start.elapsed(),
+            );
         }
     }
 
+    phase_start = Instant::now();
     match copy_files_to_root(
         temp_dir.path(),
         root_dir,
@@ -328,7 +368,14 @@ pub fn install_part_with_origin(
             return Err(e);
         }
     }
+    log_debug_timing(
+        "install",
+        &pkginfo.name,
+        "filesystem copy into target root",
+        phase_start.elapsed(),
+    );
 
+    phase_start = Instant::now();
     let pkg_id = db.insert_part(NewPart {
         name: &pkginfo.name,
         version: &pkginfo.version,
@@ -378,18 +425,35 @@ pub fn install_part_with_origin(
     }
 
     db.update_transaction_status(tx_id, "completed")?;
+    log_debug_timing(
+        "install",
+        &pkginfo.name,
+        "database update",
+        phase_start.elapsed(),
+    );
 
     if run_hooks {
         if let Some(ref script) = hooks.post_install {
-            info!(plan = %pkginfo.name, "running post_install hook");
+            info!("Running post_install hook for {}", pkginfo.name);
+            phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_install script failed: {}", e);
             }
+            log_debug_timing(
+                "install",
+                &pkginfo.name,
+                "post_install hook",
+                phase_start.elapsed(),
+            );
         }
     }
 
     rollback_state.commit();
 
-    info!(plan = %pkginfo.name, "installed {}-{}", pkginfo.version, pkginfo.release);
+    log_debug_timing("install", &pkginfo.name, "total", overall_start.elapsed());
+    info!(
+        "Installed {}: {}-{}",
+        pkginfo.name, pkginfo.version, pkginfo.release
+    );
     Ok(())
 }

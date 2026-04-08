@@ -152,7 +152,10 @@ impl Database {
                 })?;
             for row in rows {
                 let (path, owner) = row.map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to read find_owners_batch row: {}", e))
+                    WrightError::DatabaseError(format!(
+                        "failed to read find_owners_batch row: {}",
+                        e
+                    ))
                 })?;
                 result.insert(path, owner);
             }
@@ -185,11 +188,14 @@ impl Database {
                     e
                 ))
             })?;
-            let params: Vec<Box<dyn rusqlite::ToSql>> = std::iter::once(
-                Box::new(current_pkg_id) as Box<dyn rusqlite::ToSql>,
-            )
-            .chain(chunk.iter().map(|p| Box::new(*p) as Box<dyn rusqlite::ToSql>))
-            .collect();
+            let params: Vec<Box<dyn rusqlite::ToSql>> =
+                std::iter::once(Box::new(current_pkg_id) as Box<dyn rusqlite::ToSql>)
+                    .chain(
+                        chunk
+                            .iter()
+                            .map(|p| Box::new(*p) as Box<dyn rusqlite::ToSql>),
+                    )
+                    .collect();
             let rows = stmt
                 .query_map(rusqlite::params_from_iter(params.iter()), |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

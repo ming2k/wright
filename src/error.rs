@@ -26,6 +26,9 @@ pub enum WrightError {
     #[error("config error: {0}")]
     ConfigError(String),
 
+    #[error("lock error: {0}")]
+    LockError(String),
+
     #[error("version error: {0}")]
     VersionError(String),
 

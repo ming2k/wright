@@ -347,8 +347,8 @@ pub enum RebuildReason {
 mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
-        expand_missing_dependencies,
-        installed_matches_manifest, BuildOptions, DependencyMode, RebuildReason,
+        expand_missing_dependencies, installed_matches_manifest, BuildOptions, DependencyMode,
+        RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;

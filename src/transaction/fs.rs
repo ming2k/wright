@@ -34,53 +34,52 @@ pub(super) fn collect_file_entries(
 
     // Compute per-file SHA-256 in parallel (the only CPU-bound work here).
     let backup_set: HashSet<&str> = pkginfo.backup_files.iter().map(|s| s.as_str()).collect();
-    let entries: std::result::Result<Vec<FileEntry>, WrightError> = raw
-        .par_iter()
-        .map(|entry| {
-            let relative = entry
-                .path()
-                .strip_prefix(extract_dir)
-                .unwrap_or(entry.path());
-            let relative_str = relative.to_string_lossy().to_string();
-            let file_path = format!("/{}", relative_str);
+    let entries: std::result::Result<Vec<FileEntry>, WrightError> =
+        raw.par_iter()
+            .map(|entry| {
+                let relative = entry
+                    .path()
+                    .strip_prefix(extract_dir)
+                    .unwrap_or(entry.path());
+                let relative_str = relative.to_string_lossy().to_string();
+                let file_path = format!("/{}", relative_str);
 
-            let metadata = entry
-                .path()
-                .symlink_metadata()
-                .map_err(|e| WrightError::InstallError(format!("failed to get metadata: {}", e)))?;
+                let metadata = entry.path().symlink_metadata().map_err(|e| {
+                    WrightError::InstallError(format!("failed to get metadata: {}", e))
+                })?;
 
-            let file_type = if metadata.is_dir() {
-                FileType::Directory
-            } else if metadata.file_type().is_symlink() {
-                FileType::Symlink
-            } else {
-                FileType::File
-            };
-
-            let file_hash = match file_type {
-                FileType::File => checksum::sha256_file(entry.path()).ok(),
-                FileType::Symlink => std::fs::read_link(entry.path())
-                    .ok()
-                    .map(|t| t.to_string_lossy().to_string()),
-                FileType::Directory => None,
-            };
-
-            let is_config = backup_set.contains(file_path.as_str());
-
-            Ok(FileEntry {
-                path: file_path,
-                file_hash,
-                file_size: if file_type == FileType::File {
-                    Some(metadata.len())
+                let file_type = if metadata.is_dir() {
+                    FileType::Directory
+                } else if metadata.file_type().is_symlink() {
+                    FileType::Symlink
                 } else {
-                    None
-                },
-                file_type,
-                file_mode: Some(metadata.permissions().mode()),
-                is_config,
+                    FileType::File
+                };
+
+                let file_hash = match file_type {
+                    FileType::File => checksum::sha256_file(entry.path()).ok(),
+                    FileType::Symlink => std::fs::read_link(entry.path())
+                        .ok()
+                        .map(|t| t.to_string_lossy().to_string()),
+                    FileType::Directory => None,
+                };
+
+                let is_config = backup_set.contains(file_path.as_str());
+
+                Ok(FileEntry {
+                    path: file_path,
+                    file_hash,
+                    file_size: if file_type == FileType::File {
+                        Some(metadata.len())
+                    } else {
+                        None
+                    },
+                    file_type,
+                    file_mode: Some(metadata.permissions().mode()),
+                    is_config,
+                })
             })
-        })
-        .collect();
+            .collect();
 
     entries
 }
@@ -311,7 +310,11 @@ pub(super) fn copy_files_to_root(
                         };
                     }
                     if let Err(e) = std::fs::set_permissions(&side_path, metadata.permissions()) {
-                        warn!("Failed to set permissions on {}: {}", side_path.display(), e);
+                        warn!(
+                            "Failed to set permissions on {}: {}",
+                            side_path.display(),
+                            e
+                        );
                     }
                     FileResult {
                         created: vec![side_path],
@@ -357,7 +360,11 @@ pub(super) fn copy_files_to_root(
                         };
                     }
                     if let Err(e) = std::fs::set_permissions(&dest_path, metadata.permissions()) {
-                        warn!("Failed to set permissions on {}: {}", dest_path.display(), e);
+                        warn!(
+                            "Failed to set permissions on {}: {}",
+                            dest_path.display(),
+                            e
+                        );
                     }
                     FileResult {
                         created: vec![dest_path],

@@ -264,7 +264,8 @@ pub(super) fn execute_builds(
         if opts.install && in_progress.lock().unwrap().is_empty() && !pending_install.is_empty() {
             pending_install.sort();
             for name in pending_install.drain(..) {
-                let is_user_target = user_target_names.contains(name.trim_end_matches(":bootstrap"));
+                let is_user_target =
+                    user_target_names.contains(name.trim_end_matches(":bootstrap"));
                 install_built_outputs_at(
                     config,
                     name_to_path,
@@ -322,7 +323,6 @@ fn complete_build_task(
         info!("Completed: {}", name);
     }
 }
-
 
 fn install_built_outputs_at(
     config: &GlobalConfig,

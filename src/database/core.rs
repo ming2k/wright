@@ -1,16 +1,15 @@
-use std::fs::File;
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
 use crate::error::{Result, WrightError};
+use crate::util::lock::ProcessLock;
 
 use super::{schema, InstalledPart, Origin, TransactionRecord};
 
 pub struct Database {
     pub(super) conn: Connection,
-    pub(super) _lock_file: Option<File>,
+    pub(super) _lock: Option<ProcessLock>,
     pub(super) db_path: Option<PathBuf>,
 }
 
@@ -50,33 +49,9 @@ pub(super) fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<Ins
     })
 }
 
-fn acquire_lock(db_path: &Path) -> Result<File> {
-    let lock_path = db_path.with_extension("lock");
-    let file = File::create(&lock_path).map_err(|e| {
-        WrightError::DatabaseError(format!(
-            "failed to create lock file {}: {}",
-            lock_path.display(),
-            e
-        ))
-    })?;
-
-    let mut delay = std::time::Duration::from_millis(50);
-    let max_wait = std::time::Duration::from_secs(30);
-    let start = std::time::Instant::now();
-
-    loop {
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if ret == 0 {
-            return Ok(file);
-        }
-        if start.elapsed() >= max_wait {
-            return Err(WrightError::DatabaseError(
-                "database is locked by another process (timed out after 30s)".to_string(),
-            ));
-        }
-        std::thread::sleep(delay);
-        delay = (delay * 2).min(std::time::Duration::from_secs(1));
-    }
+fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
+    crate::util::lock::acquire_db_lock(db_path)
+        .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
 impl Database {
@@ -101,7 +76,7 @@ impl Database {
 
         Ok(Database {
             conn,
-            _lock_file: Some(lock_file),
+            _lock: Some(lock_file),
             db_path: Some(path.to_path_buf()),
         })
     }
@@ -111,16 +86,8 @@ impl Database {
         schema::init_db(&conn)?;
         Ok(Database {
             conn,
-            _lock_file: None,
+            _lock: None,
             db_path: None,
         })
-    }
-}
-
-impl Drop for Database {
-    fn drop(&mut self) {
-        if let Some(ref path) = self.db_path {
-            let _ = std::fs::remove_file(path.with_extension("lock"));
-        }
     }
 }
