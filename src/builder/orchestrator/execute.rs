@@ -162,7 +162,7 @@ pub(super) fn execute_builds(
                         if let Some(ref pb) = spinner {
                             pb.finish_and_clear();
                         }
-                        let _ = tx_clone.send(Err((name_clone, e.into())));
+                        let _ = tx_clone.send(Err((name_clone, e)));
                         return;
                     }
                 };
@@ -190,7 +190,7 @@ pub(super) fn execute_builds(
                             pb.finish_and_clear();
                         }
                         error!("Failed to process {}: {:#}", name_clone, e);
-                        let _ = tx_clone.send(Err((name_clone, e.into())));
+                        let _ = tx_clone.send(Err((name_clone, e)));
                     }
                 }
             });

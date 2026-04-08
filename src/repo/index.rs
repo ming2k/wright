@@ -96,8 +96,7 @@ pub fn write_index(index: &RepoIndex, repo_dir: &Path) -> Result<()> {
         .map_err(|e| WrightError::ConfigError(format!("failed to serialize index: {}", e)))?;
     let path = index_path(repo_dir);
     std::fs::write(&path, content).map_err(|e| {
-        WrightError::IoError(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        WrightError::IoError(std::io::Error::other(
             format!("failed to write {}: {}", path.display(), e),
         ))
     })?;

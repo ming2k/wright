@@ -55,6 +55,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_files_package ON files(part_id);
+        CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
         CREATE INDEX IF NOT EXISTS idx_deps_package ON dependencies(part_id);
         CREATE INDEX IF NOT EXISTS idx_deps_on ON dependencies(depends_on);
 

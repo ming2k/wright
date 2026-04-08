@@ -535,7 +535,7 @@ mod tests {
         out.extend_from_slice(&header);
         out.extend_from_slice(data);
         let pad = (512 - (data.len() % 512)) % 512;
-        out.extend(std::iter::repeat(0u8).take(pad));
+        out.extend(std::iter::repeat_n(0u8, pad));
         out.extend_from_slice(&[0u8; 1024]);
         out
     }

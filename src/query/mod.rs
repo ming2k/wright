@@ -127,8 +127,7 @@ pub fn write_dep_tree(
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
     let mut ancestors = std::collections::HashSet::new();
-    let mut stats = TreeStats::default();
-    stats.total = 1; // root part
+    let mut stats = TreeStats { total: 1, ..TreeStats::default() };
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
     write_dep_tree_inner(
@@ -327,8 +326,7 @@ pub fn write_reverse_dep_tree(
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
     let mut ancestors = std::collections::HashSet::new();
-    let mut stats = TreeStats::default();
-    stats.total = 1;
+    let mut stats = TreeStats { total: 1, ..TreeStats::default() };
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
     write_reverse_dep_tree_inner(
@@ -593,5 +591,5 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
 
 /// Get recorded shadowed file information.
 pub fn check_shadowed_files(db: &Database) -> Result<Vec<String>> {
-    Ok(db.get_shadowed_conflicts()?)
+    db.get_shadowed_conflicts()
 }

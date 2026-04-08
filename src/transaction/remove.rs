@@ -78,6 +78,9 @@ pub fn remove_part_with_ignored_dependents(
     let tx_id = db.record_transaction("remove", name, Some(&pkg.version), None, "pending", None)?;
     let files = db.get_files(pkg.id)?;
 
+    let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    let other_owners_map = db.get_other_owners_batch(pkg.id, &file_paths)?;
+
     for file in files.iter().rev() {
         let full_path = root_dir.join(file.path.trim_start_matches('/'));
         if file.is_config {
@@ -85,7 +88,7 @@ pub fn remove_part_with_ignored_dependents(
             continue;
         }
 
-        let other_owners = db.get_other_owners(pkg.id, &file.path)?;
+        let other_owners = other_owners_map.get(&file.path).map(|v| v.as_slice()).unwrap_or(&[]);
         if !other_owners.is_empty() {
             tracing::debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",

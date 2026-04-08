@@ -55,16 +55,18 @@ fn extract_output_string_list(table: &mut toml::value::Table, key: &str) -> Resu
     }
 }
 
+struct OutputSection {
+    fabricate: Option<FabricateConfig>,
+    install_scripts: Option<InstallScripts>,
+    backup: Option<BackupConfig>,
+    relations: Relations,
+}
+
 fn parse_output_section(
     plan_name: &str,
     output_val: Option<toml::Value>,
     main_hooks: Option<FabricateHooks>,
-) -> Result<(
-    Option<FabricateConfig>,
-    Option<InstallScripts>,
-    Option<BackupConfig>,
-    Relations,
-)> {
+) -> Result<OutputSection> {
     let mut table = match output_val {
         Some(toml::Value::Table(table)) => table,
         Some(_) => {
@@ -116,7 +118,12 @@ fn parse_output_section(
         } else {
             None
         };
-        return Ok((fabricate, install_scripts, backup_cfg, main_relations));
+        return Ok(OutputSection {
+            fabricate,
+            install_scripts,
+            backup: backup_cfg,
+            relations: main_relations,
+        });
     }
 
     let table_value = toml::Value::Table(table);
@@ -143,12 +150,12 @@ fn parse_output_section(
         ),
     );
 
-    Ok((
-        Some(FabricateConfig::Multi(outputs)),
+    Ok(OutputSection {
+        fabricate: Some(FabricateConfig::Multi(outputs)),
         install_scripts,
-        backup_cfg,
-        main_relations,
-    ))
+        backup: backup_cfg,
+        relations: main_relations,
+    })
 }
 
 impl PlanManifest {
@@ -206,8 +213,8 @@ impl PlanManifest {
             }
         }
 
-        let (fabricate, install_scripts, backup, relations) =
-            parse_output_section(&plan.name, output, hooks)?;
+        let output_section = parse_output_section(&plan.name, output, hooks)?;
+        let OutputSection { fabricate, install_scripts, backup, relations } = output_section;
 
         let manifest = PlanManifest {
             plan,
