@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Local source cache refresh**: local files (patches, config files) are now always re-copied to the source cache on each fetch instead of being skipped when the cache entry already exists. This ensures that adding or modifying a patch in the plan directory is picked up correctly after `--clean`.
+
 ## [1.12.4] - 2026-04-08
 
 ### Fixed

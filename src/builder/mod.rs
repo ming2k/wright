@@ -1068,20 +1068,19 @@ impl Builder {
                 let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
                 let dest = cache_dir.join(&filename);
 
-                if !dest.exists() {
-                    let label = progress::source_label(&processed_uri);
-                    let pb = progress::new_source_spinner(&label, "copying");
-                    std::fs::copy(&local_path, &dest).map_err(|e| {
-                        WrightError::BuildError(format!(
-                            "failed to copy local file {} to cache: {}",
-                            local_path.display(),
-                            e
-                        ))
-                    })?;
-                    progress::finish_source(&pb, &label, &dest);
-                } else {
-                    debug!("Local file {} already in cache", filename);
-                }
+                // Always re-copy local files: unlike remote downloads they
+                // have no network cost and may have changed since the last
+                // fetch (e.g. a patch was updated or added).
+                let label = progress::source_label(&processed_uri);
+                let pb = progress::new_source_spinner(&label, "copying");
+                std::fs::copy(&local_path, &dest).map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to copy local file {} to cache: {}",
+                        local_path.display(),
+                        e
+                    ))
+                })?;
+                progress::finish_source(&pb, &label, &dest);
             }
         }
 
