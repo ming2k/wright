@@ -234,7 +234,9 @@ Their responsibilities are intentionally separate:
 ├── cache/
 │   ├── sources/                # Downloaded source code cache
 │   └── parts/               # Downloaded/built binary part cache
-└── lock/                       # Global lock file (prevent concurrent operations)
+└── lock/                       # flock(2) lock files (prevent concurrent operations)
+    ├── parts.db.lock
+    └── repo.db.lock
 
 /var/hold/                      # Hold tree (collection of plan files)
 ├── core/                       # Core system parts
@@ -812,6 +814,7 @@ CREATE TABLE transactions (
 
 -- Indexes
 CREATE INDEX idx_files_package ON files(part_id);
+CREATE INDEX idx_files_path ON files(path);
 CREATE INDEX idx_deps_package ON dependencies(part_id);
 CREATE INDEX idx_deps_on ON dependencies(depends_on);
 CREATE INDEX idx_opt_deps_package ON optional_dependencies(part_id);

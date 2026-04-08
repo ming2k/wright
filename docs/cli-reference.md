@@ -138,12 +138,14 @@ List installed parts.
 
 | Flag | Description |
 |------|-------------|
+| `--long` (`-l`) | Show origin, version, release, and architecture |
 | `--roots` (`-r`) | Show only top-level parts with no installed dependents |
 | `--assumed` (`-a`) | Show only assumed (externally provided) parts |
 | `--orphans` (`-o`) | Show only orphan parts — auto-installed dependencies no longer needed by any part |
 
 ```bash
 wright list
+wright list --long
 wright list --roots
 wright list --orphans
 wright list --assumed
@@ -206,6 +208,20 @@ Remove an assumed part record. This only works on parts marked as assumed (i.e. 
 
 ```sh
 wright unassume glibc
+```
+
+#### `wright mark <PACKAGES...>`
+
+Change the install origin of a part. This controls whether a part is treated as explicitly installed or as a dependency. Marking a part as a dependency makes it eligible for orphan cleanup via `wright remove --cascade`.
+
+| Flag | Description |
+|------|-------------|
+| `--as-dependency` | Mark as a dependency install |
+| `--as-manual` | Mark as an explicit (manual) install |
+
+```bash
+wright mark zlib --as-dependency
+wright mark zlib openssl --as-manual
 ```
 
 #### `wright verify [PACKAGE]`

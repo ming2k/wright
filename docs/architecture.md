@@ -179,7 +179,8 @@ wright install <name>
 
 wright remove
   → check link-dependents → block if CRITICAL
-  → check file shadows → preserve files if shared by other parts
+  → batch file-owner check via get_other_owners_batch() → skip shared files
+  → delete unshared files, remove DB rows
 
 wright remove --cascade
   → compute orphan dependencies (origin = 'dependency', not needed by others)
