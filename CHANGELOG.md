@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-04-08
+
 ### Performance
 - **Remove performance**: `wright remove` now uses batch DB queries for file-owner checks instead of one query per file, and adds an index on `files(path)`. For large packages like texlive-texmf (~300k files), this reduces removal time from minutes to seconds.
 
