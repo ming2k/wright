@@ -3,7 +3,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
-use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::database::{FileEntry, FileType};
@@ -106,42 +105,23 @@ fn move_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
-pub(super) fn copy_files_to_root(
+/// Install files from pre-collected [`FileEntry`] records into the target root,
+/// avoiding a redundant directory walk when entries have already been gathered
+/// by [`collect_file_entries`].
+pub(super) fn copy_entries_to_root(
+    entries: &[FileEntry],
     extract_dir: &Path,
     root_dir: &Path,
     rollback: &mut RollbackState,
     backup_dir: Option<&Path>,
     config_paths: &HashSet<String>,
 ) -> Result<Vec<String>> {
-    // Collect all entries up-front so we can split dir and file passes.
-    let all_entries: Vec<_> = WalkDir::new(extract_dir)
-        .follow_links(false)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let rel = e.path().strip_prefix(extract_dir).unwrap_or(e.path());
-            let s = rel.to_string_lossy();
-            !s.is_empty()
-                && !s.starts_with(".PARTINFO")
-                && !s.starts_with(".FILELIST")
-                && !s.starts_with(".HOOKS")
-        })
-        .collect();
-
     // --- Phase 1: create directories (serial, order matters) ---
-    for entry in &all_entries {
-        let metadata = match entry.path().symlink_metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if !metadata.is_dir() {
+    for entry in entries {
+        if entry.file_type != FileType::Directory {
             continue;
         }
-        let relative = entry
-            .path()
-            .strip_prefix(extract_dir)
-            .unwrap_or(entry.path());
+        let relative = entry.path.trim_start_matches('/');
         let dest_path = root_dir.join(relative);
         if !dest_path.exists() {
             std::fs::create_dir_all(&dest_path).map_err(|e| {
@@ -156,71 +136,47 @@ pub(super) fn copy_files_to_root(
     }
 
     // --- Phase 2: install files and symlinks in parallel ---
-    // Each worker returns the paths it created (for rollback) and any error.
-    // We collect all results before recording rollback or propagating errors
-    // so that partial failures are fully tracked.
 
     struct FileResult {
         created: Vec<PathBuf>,
-        backup_original: Option<(PathBuf, PathBuf)>, // (original, backup) for file backups
-        symlink_backup: Option<(PathBuf, String)>,   // (original, target) for symlink backups
+        backup_original: Option<(PathBuf, PathBuf)>,
+        symlink_backup: Option<(PathBuf, String)>,
         preserved_config: Option<String>,
         error: Option<WrightError>,
     }
 
-    let file_entries: Vec<_> = all_entries
+    let file_entries: Vec<_> = entries
         .iter()
-        .filter(|e| {
-            e.path()
-                .symlink_metadata()
-                .map(|m| !m.is_dir())
-                .unwrap_or(false)
-        })
+        .filter(|e| e.file_type != FileType::Directory)
         .collect();
 
     let results: Vec<FileResult> = file_entries
         .par_iter()
         .map(|entry| {
-            let relative = entry
-                .path()
-                .strip_prefix(extract_dir)
-                .unwrap_or(entry.path());
-            let relative_str = relative.to_string_lossy().to_string();
-            let dest_path = root_dir.join(&relative_str);
+            let relative = entry.path.trim_start_matches('/');
+            let src_path = extract_dir.join(relative);
+            let dest_path = root_dir.join(relative);
 
-            let metadata = match entry.path().symlink_metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    return FileResult {
-                        created: vec![],
-                        backup_original: None,
-                        symlink_backup: None,
-                        preserved_config: None,
-                        error: Some(WrightError::InstallError(format!(
-                            "failed to get metadata: {}",
-                            e
-                        ))),
-                    };
-                }
-            };
-
-            if metadata.file_type().is_symlink() {
+            if entry.file_type == FileType::Symlink {
                 // --- symlink ---
-                let link_target = match std::fs::read_link(entry.path()) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        return FileResult {
-                            created: vec![],
-                            backup_original: None,
-                            symlink_backup: None,
-                            preserved_config: None,
-                            error: Some(WrightError::InstallError(format!(
-                                "failed to read symlink {}: {}",
-                                entry.path().display(),
-                                e
-                            ))),
-                        };
-                    }
+                let link_target: PathBuf = match entry.file_hash {
+                    Some(ref target) => PathBuf::from(target),
+                    None => match std::fs::read_link(&src_path) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            return FileResult {
+                                created: vec![],
+                                backup_original: None,
+                                symlink_backup: None,
+                                preserved_config: None,
+                                error: Some(WrightError::InstallError(format!(
+                                    "failed to read symlink {}: {}",
+                                    src_path.display(),
+                                    e
+                                ))),
+                            };
+                        }
+                    },
                 };
 
                 let mut symlink_backup = None;
@@ -234,7 +190,7 @@ pub(super) fn copy_files_to_root(
                         }
                     } else if existing_meta.is_file() {
                         if let Some(bdir) = backup_dir {
-                            let backup_path = bdir.join(&relative_str);
+                            let backup_path = bdir.join(relative);
                             if let Some(parent) = backup_path.parent() {
                                 let _ = std::fs::create_dir_all(parent);
                             }
@@ -244,7 +200,6 @@ pub(super) fn copy_files_to_root(
                         }
                     }
 
-                    // Remove existing (file, symlink, or directory)
                     let remove_result = if existing_meta.file_type().is_dir() {
                         std::fs::remove_dir_all(&dest_path)
                     } else {
@@ -289,14 +244,13 @@ pub(super) fn copy_files_to_root(
                 }
             } else {
                 // --- regular file ---
-                let canonical_path = format!("/{}", relative_str);
-
-                if config_paths.contains(&canonical_path) && dest_path.symlink_metadata().is_ok() {
-                    // Config file that already exists: write as .wnew side file
+                if config_paths.contains(&entry.path)
+                    && dest_path.symlink_metadata().is_ok()
+                {
                     let mut new_name = dest_path.as_os_str().to_owned();
                     new_name.push(".wnew");
                     let side_path = PathBuf::from(new_name);
-                    if let Err(e) = move_or_copy(entry.path(), &side_path) {
+                    if let Err(e) = move_or_copy(&src_path, &side_path) {
                         return FileResult {
                             created: vec![],
                             backup_original: None,
@@ -309,27 +263,25 @@ pub(super) fn copy_files_to_root(
                             ))),
                         };
                     }
-                    if let Err(e) = std::fs::set_permissions(&side_path, metadata.permissions()) {
-                        warn!(
-                            "Failed to set permissions on {}: {}",
-                            side_path.display(),
-                            e
+                    if let Some(mode) = entry.file_mode {
+                        let _ = std::fs::set_permissions(
+                            &side_path,
+                            std::fs::Permissions::from_mode(mode),
                         );
                     }
                     FileResult {
                         created: vec![side_path],
                         backup_original: None,
                         symlink_backup: None,
-                        preserved_config: Some(canonical_path),
+                        preserved_config: Some(entry.path.clone()),
                         error: None,
                     }
                 } else {
-                    // Normal file install
                     let mut backup_original = None;
                     if let Some(bdir) = backup_dir {
                         if let Ok(existing_meta) = dest_path.symlink_metadata() {
                             if existing_meta.is_file() {
-                                let backup_path = bdir.join(&relative_str);
+                                let backup_path = bdir.join(relative);
                                 if let Some(parent) = backup_path.parent() {
                                     let _ = std::fs::create_dir_all(parent);
                                 }
@@ -337,7 +289,6 @@ pub(super) fn copy_files_to_root(
                                     backup_original = Some((dest_path.clone(), backup_path));
                                 }
                             } else if existing_meta.file_type().is_symlink() {
-                                // symlink in place of a file — just remove it
                                 let _ = std::fs::remove_file(&dest_path);
                             }
                         }
@@ -345,7 +296,7 @@ pub(super) fn copy_files_to_root(
                         let _ = std::fs::remove_file(&dest_path);
                     }
 
-                    if let Err(e) = move_or_copy(entry.path(), &dest_path) {
+                    if let Err(e) = move_or_copy(&src_path, &dest_path) {
                         return FileResult {
                             created: vec![],
                             backup_original,
@@ -353,17 +304,16 @@ pub(super) fn copy_files_to_root(
                             preserved_config: None,
                             error: Some(WrightError::InstallError(format!(
                                 "failed to install {} to {}: {}",
-                                entry.path().display(),
+                                src_path.display(),
                                 dest_path.display(),
                                 e
                             ))),
                         };
                     }
-                    if let Err(e) = std::fs::set_permissions(&dest_path, metadata.permissions()) {
-                        warn!(
-                            "Failed to set permissions on {}: {}",
-                            dest_path.display(),
-                            e
+                    if let Some(mode) = entry.file_mode {
+                        let _ = std::fs::set_permissions(
+                            &dest_path,
+                            std::fs::Permissions::from_mode(mode),
                         );
                     }
                     FileResult {

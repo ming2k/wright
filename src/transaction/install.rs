@@ -10,7 +10,7 @@ use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::version::{self, Version};
 use crate::repo::source::{ResolvedPart, SimpleResolver};
-use crate::transaction::fs::{collect_file_entries, copy_files_to_root};
+use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
@@ -353,7 +353,8 @@ pub fn install_part_with_origin(
     }
 
     phase_start = Instant::now();
-    match copy_files_to_root(
+    match copy_entries_to_root(
+        &file_entries,
         temp_dir.path(),
         root_dir,
         &mut rollback_state,

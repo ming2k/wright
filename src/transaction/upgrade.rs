@@ -1,14 +1,15 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use rayon::prelude::*;
 use tracing::{debug, info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::version::{self, Version};
-use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_files_to_root};
+use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
@@ -133,42 +134,99 @@ pub fn upgrade_part(
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::UpgradeError(format!("failed to create backup dir: {}", e)))?;
 
-    for old_file in &old_files {
-        if !new_paths.contains(old_file.path.as_str()) {
-            continue;
-        }
+    // Back up overlapping files in parallel, using hard links where possible.
+    let overlapping: Vec<_> = old_files
+        .iter()
+        .filter(|f| new_paths.contains(f.path.as_str()))
+        .collect();
 
-        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-        if !full_path.exists() && full_path.symlink_metadata().is_err() {
-            continue;
-        }
+    struct BackupResult {
+        file_backup: Option<(PathBuf, PathBuf)>,
+        symlink_backup: Option<(PathBuf, String)>,
+        error: Option<WrightError>,
+    }
 
-        if old_file.file_type == FileType::File {
-            let backup_path = backup_dir
-                .path()
-                .join(old_file.path.trim_start_matches('/'));
-            if let Some(parent) = backup_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    WrightError::UpgradeError(format!(
-                        "failed to create backup directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
+    let backup_results: Vec<BackupResult> = overlapping
+        .par_iter()
+        .map(|old_file| {
+            let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
+            if !full_path.exists() && full_path.symlink_metadata().is_err() {
+                return BackupResult {
+                    file_backup: None,
+                    symlink_backup: None,
+                    error: None,
+                };
             }
-            std::fs::copy(&full_path, &backup_path).map_err(|e| {
-                WrightError::UpgradeError(format!(
-                    "failed to backup {}: {}",
-                    full_path.display(),
-                    e
-                ))
-            })?;
-            rollback_state.record_backup(full_path, backup_path);
-        } else if old_file.file_type == FileType::Symlink {
-            if let Ok(target) = std::fs::read_link(&full_path) {
-                rollback_state
-                    .record_symlink_backup(full_path, target.to_string_lossy().to_string());
+
+            if old_file.file_type == FileType::File {
+                let backup_path = backup_dir
+                    .path()
+                    .join(old_file.path.trim_start_matches('/'));
+                if let Some(parent) = backup_path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return BackupResult {
+                            file_backup: None,
+                            symlink_backup: None,
+                            error: Some(WrightError::UpgradeError(format!(
+                                "failed to create backup directory {}: {}",
+                                parent.display(),
+                                e
+                            ))),
+                        };
+                    }
+                }
+                // Prefer hard_link (instant, no data copy) with copy fallback.
+                let result = std::fs::hard_link(&full_path, &backup_path)
+                    .or_else(|_| std::fs::copy(&full_path, &backup_path).map(|_| ()));
+                match result {
+                    Ok(()) => BackupResult {
+                        file_backup: Some((full_path, backup_path)),
+                        symlink_backup: None,
+                        error: None,
+                    },
+                    Err(e) => BackupResult {
+                        file_backup: None,
+                        symlink_backup: None,
+                        error: Some(WrightError::UpgradeError(format!(
+                            "failed to backup {}: {}",
+                            full_path.display(),
+                            e
+                        ))),
+                    },
+                }
+            } else if old_file.file_type == FileType::Symlink {
+                if let Ok(target) = std::fs::read_link(&full_path) {
+                    BackupResult {
+                        file_backup: None,
+                        symlink_backup: Some((full_path, target.to_string_lossy().to_string())),
+                        error: None,
+                    }
+                } else {
+                    BackupResult {
+                        file_backup: None,
+                        symlink_backup: None,
+                        error: None,
+                    }
+                }
+            } else {
+                BackupResult {
+                    file_backup: None,
+                    symlink_backup: None,
+                    error: None,
+                }
             }
+        })
+        .collect();
+
+    for result in backup_results {
+        if let Some(e) = result.error {
+            return Err(e);
+        }
+        if let Some((original, backup)) = result.file_backup {
+            rollback_state.record_backup(original, backup);
+        }
+        if let Some((original, target)) = result.symlink_backup {
+            rollback_state.record_symlink_backup(original, target);
         }
     }
 
@@ -190,7 +248,8 @@ pub fn upgrade_part(
 
     let config_paths = collect_config_paths(&new_entries);
     phase_start = Instant::now();
-    let preserved_configs = match copy_files_to_root(
+    let preserved_configs = match copy_entries_to_root(
+        &new_entries,
         temp_dir.path(),
         root_dir,
         &mut rollback_state,
