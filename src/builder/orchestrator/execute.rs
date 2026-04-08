@@ -56,7 +56,7 @@ pub(super) fn execute_builds(
         opts.dockyards.min(total_cpus)
     };
 
-    info!("CPUs: {}, dockyards: {}", total_cpus, actual_dockyards);
+    info!("cpus: {}, dockyards: {}", total_cpus, actual_dockyards);
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -93,11 +93,10 @@ pub(super) fn execute_builds(
         let planned_active = base_active + launch_batch.len();
 
         for (launch_idx, name) in launch_batch.into_iter().enumerate() {
-            let active_dockyards = {
+            {
                 let mut in_progress_guard = in_progress.lock().unwrap();
                 in_progress_guard.insert(name.clone());
-                in_progress_guard.len()
-            };
+            }
 
             let dynamic_nproc_cap = if let Some(n) = opts.nproc_per_dockyard {
                 Some(n)
@@ -113,7 +112,7 @@ pub(super) fn execute_builds(
                 Some(share as u32)
             };
 
-            info!("Dockyard {} started: {}", active_dockyards, name);
+            info!(plan = %name, "started");
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -534,19 +533,18 @@ fn build_one(
         }
         if !bootstrap_excl.is_empty() {
             info!(
-                "Executing mvp pass for {} without {}",
-                manifest.plan.name,
+                plan = %manifest.plan.name,
+                "executing mvp pass without {}",
                 bootstrap_excl.join(", ")
             );
         } else {
-            info!("Executing mvp pass for {}", manifest.plan.name);
+            info!(plan = %manifest.plan.name, "executing mvp pass");
         }
     }
 
     if !extra_env.contains_key("WRIGHT_BUILD_PHASE") {
         extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
     }
-    info!("Manufacturing part {}", manifest.plan.name);
     let plan_dir = manifest_path.parent().expect("plan parent").to_path_buf();
     let result = builder.build(
         manifest,
@@ -577,11 +575,7 @@ fn build_one(
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
-        info!(
-            "{}: part stored in {}",
-            manifest.plan.name,
-            archive_path.display()
-        );
+        info!(plan = %manifest.plan.name, "part stored in {}", archive_path.display());
         register_in_repo(&config.general.repo_db_path, &archive_path);
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
@@ -597,7 +591,7 @@ fn build_one(
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!("{}: part stored in {}", sub_name, sub_archive.display());
+                info!(plan = %sub_name, "part stored in {}", sub_archive.display());
                 register_in_repo(&config.general.repo_db_path, &sub_archive);
             }
         }

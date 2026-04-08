@@ -240,7 +240,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
                 if db.session_exists(&hash)? {
                     let completed = db.get_session_completed(&hash)?;
                     info!(
-                        "Resuming session {} ({}/{} completed)",
+                        "resuming session {} ({}/{} completed)",
                         &hash[..12.min(hash.len())],
                         completed.len(),
                         graph.build_set.len()
@@ -248,7 +248,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
                     (true, completed)
                 } else {
                     warn!(
-                        "No existing session {} found, starting fresh build",
+                        "no existing session {} found, starting fresh build",
                         &hash[..12.min(hash.len())]
                     );
                     (false, HashSet::new())
@@ -263,7 +263,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map) {
             if session_completed.contains(&name) {
                 info!(
-                    "Skipping batch {}: {} (completed in previous run)",
+                    "skipping batch {}: {} (completed in previous run)",
                     batch,
                     name.trim_end_matches(":bootstrap"),
                 );
@@ -272,7 +272,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             let label =
                 construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
             info!(
-                "Scheduling batch {} {}: {}",
+                "scheduling batch {} {}: {}",
                 batch,
                 label,
                 name.trim_end_matches(":bootstrap"),
@@ -328,7 +328,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         Err(_) => {
             // Print session hash so user can resume
             if let Some(ref hash) = active_session_hash {
-                info!("Build session: {}  (resume with: --resume {})", hash, hash);
+                info!("build session: {}  (resume with: --resume {})", hash, hash);
             }
         }
     }

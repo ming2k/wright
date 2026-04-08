@@ -361,7 +361,7 @@ By default `wbuild run` is quiet about subprocess I/O — build tool output (mak
 | `--verbose` (`-v`), multiple dockyards | echoed to terminal (may interleave) | shown | debug |
 | `--quiet` | captured only | hidden | warn |
 
-Before building, `wbuild run` displays a **Construction Plan** listing all parts to be built in stable dependency order. The plan labels describe the scheduled action; explanatory detail stays in the surrounding `INFO` logs.
+Before building, `wbuild run` displays a **Construction Plan** listing all parts to be built in stable dependency order. The plan labels describe the scheduled action; explanatory detail stays in the surrounding `INFO` log lines.
 
 | Label | Meaning |
 |-------|---------:|

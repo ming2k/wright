@@ -1,6 +1,7 @@
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::sync::LazyLock;
+use tracing::info;
 
 /// Global multi-progress coordinator.  Every progress bar should be registered
 /// through this instance so `indicatif` can manage terminal lines without
@@ -70,14 +71,14 @@ pub fn new_source_spinner(label: &str, action: &str) -> ProgressBar {
     pb
 }
 
-pub fn finish_source(pb: &ProgressBar, label: &str, dest: &Path) {
+pub fn finish_source(pb: &ProgressBar, _label: &str, dest: &Path) {
     pb.finish_and_clear();
     let filename = dest
         .file_name()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-    let _ = MULTI.println(format!("fetched {} -> {}", label, filename));
+    info!("fetched {}", filename);
 }
 
 /// A [`std::io::Write`] adapter that routes every complete line through

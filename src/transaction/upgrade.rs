@@ -61,11 +61,7 @@ pub fn upgrade_part(
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
     let new_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
-    info!(
-        "Upgrading {}: {} files",
-        pkginfo.name,
-        new_entries.len()
-    );
+    info!(plan = %pkginfo.name, "upgrading: {} files", new_entries.len());
 
     let file_paths: Vec<&str> = new_entries
         .iter()
@@ -78,10 +74,7 @@ pub fn upgrade_part(
             if let Some(owner) = owners.get(&entry.path) {
                 if *owner != pkginfo.name {
                     if force {
-                        warn!(
-                            "{}: overwriting {} (owned by {})",
-                            pkginfo.name, entry.path, owner
-                        );
+                        warn!(plan = %pkginfo.name, "overwriting {} (owned by {})", entry.path, owner);
                     } else {
                         return Err(WrightError::FileConflict {
                             path: entry.path.clone().into(),
@@ -154,7 +147,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!("Running pre_install hook for {} (upgrade)", pkginfo.name);
+            info!(plan = %pkginfo.name, "running pre_install hook");
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
@@ -171,14 +164,14 @@ pub fn upgrade_part(
     ) {
         Ok(paths) => paths,
         Err(e) => {
-            warn!("Upgrade failed, rolling back: {}", e);
+            warn!(plan = %pkginfo.name, "upgrade failed, rolling back: {}", e);
             rollback_state.rollback();
             db.update_transaction_status(tx_id, "rolled_back")?;
             return Err(e);
         }
     };
     for path in preserved_configs {
-        info!("Preserved config: {} (.wnew: {}.wnew)", path, path);
+        info!(plan = %pkginfo.name, "preserved config: {}", path);
     }
 
     let to_delete_paths: Vec<&str> = old_files
@@ -194,7 +187,7 @@ pub fn upgrade_part(
         }
 
         if old_file.is_config {
-            info!("Preserving config file: {}", old_file.path);
+            info!(plan = %pkginfo.name, "preserving config file: {}", old_file.path);
             continue;
         }
 
@@ -260,7 +253,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_upgrade {
-            info!("Running post_upgrade hook for {}", pkginfo.name);
+            info!(plan = %pkginfo.name, "running post_upgrade hook");
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_upgrade script failed: {}", e);
             }
@@ -270,8 +263,9 @@ pub fn upgrade_part(
     rollback_state.commit();
 
     info!(
-        "Upgraded {} from {}-{} to {}-{}",
-        pkginfo.name, old_pkg.version, old_pkg.release, pkginfo.version, pkginfo.release,
+        plan = %pkginfo.name,
+        "upgraded from {}-{} to {}-{}",
+        old_pkg.version, old_pkg.release, pkginfo.version, pkginfo.release,
     );
     Ok(())
 }

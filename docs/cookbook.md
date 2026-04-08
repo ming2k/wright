@@ -199,9 +199,9 @@ build = ["binutils", "glibc"]          # MVP: build without gcc in deps
 Wright detects the cycle automatically and schedules:
 
 ```
-INFO Scheduling batch 0 build:mvp: gcc   ← first pass, no gcc dep
-INFO Scheduling batch 0 build: binutils
-INFO Scheduling batch 1 build:full: gcc  ← second pass, full deps
+INFO scheduling batch 0 build:mvp: gcc   ← first pass, no gcc dep
+INFO scheduling batch 0 build: binutils
+INFO scheduling batch 1 build:full: gcc  ← second pass, full deps
 ```
 
 To test the MVP pass explicitly without a cycle present:

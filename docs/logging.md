@@ -12,6 +12,29 @@ Wright has two logging channels:
 
 They are configured separately.
 
+## Log Format
+
+CLI log lines follow a consistent format: all messages are lowercase, and logs
+scoped to a specific plan carry a `plan=` structured field so the plan name is
+clearly separated from the message text:
+
+```
+INFO cpus: 16, dockyards: 16
+INFO scheduling batch 0 build: go
+INFO plan=go started
+INFO fetched go1.26.2.linux-amd64.tar.gz
+INFO plan=go part stored in /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
+INFO plan=go installing: 16681 files
+INFO plan=go installed 1.26.2-1
+```
+
+The `plan=` field makes it straightforward to filter logs for a single part when
+building multiple packages in parallel:
+
+```bash
+wbuild run ... 2>&1 | grep 'plan=go '
+```
+
 ## CLI Verbosity (wright + wbuild)
 
 Both `wright` and `wbuild` use the same verbosity flags:

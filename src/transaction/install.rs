@@ -110,7 +110,7 @@ pub fn install_parts(
                 db.set_origin(&name, Origin::Manual)?;
             }
             if force {
-                info!("Force reinstalling {}", name);
+                info!(plan = %name, "force reinstalling");
                 let pkg = resolved_map.get(&name).expect("resolved package exists");
                 upgrade_part(db, &pkg.path, root_dir, true, true)?;
             }
@@ -123,12 +123,7 @@ pub fn install_parts(
             Origin::Dependency
         };
         let pkg = resolved_map.get(&name).expect("resolved package exists");
-        info!(
-            "Installing {} from {} (origin: {})",
-            name,
-            pkg.path.display(),
-            origin
-        );
+        info!(plan = %name, "installing (origin: {})", origin);
         install_part_with_origin(db, &pkg.path, root_dir, force, origin, true)?;
     }
 
@@ -204,10 +199,7 @@ pub fn install_part_with_origin(
 
     for replaced_name in &pkginfo.replaces {
         if db.get_part(replaced_name)?.is_some() {
-            info!(
-                "Part {} is replaced by {}. Removing {}...",
-                replaced_name, pkginfo.name, replaced_name
-            );
+            info!(plan = %pkginfo.name, "replacing {}", replaced_name);
             remove_part(db, replaced_name, root_dir, true)?;
         }
     }
@@ -271,11 +263,7 @@ pub fn install_part_with_origin(
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
     let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
 
-    info!(
-        "Installing {}: {} files",
-        pkginfo.name,
-        file_entries.len()
-    );
+    info!(plan = %pkginfo.name, "installing: {} files", file_entries.len());
 
     let mut shadows = Vec::new();
     for entry in &file_entries {
@@ -318,7 +306,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!("Running pre_install hook for {}", pkginfo.name);
+            info!(plan = %pkginfo.name, "running pre_install hook");
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
@@ -393,7 +381,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_install {
-            info!("Running post_install hook for {}", pkginfo.name);
+            info!(plan = %pkginfo.name, "running post_install hook");
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_install script failed: {}", e);
             }
@@ -402,9 +390,6 @@ pub fn install_part_with_origin(
 
     rollback_state.commit();
 
-    info!(
-        "Installed {} {}-{}",
-        pkginfo.name, pkginfo.version, pkginfo.release
-    );
+    info!(plan = %pkginfo.name, "installed {}-{}", pkginfo.version, pkginfo.release);
     Ok(())
 }

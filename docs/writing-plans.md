@@ -554,9 +554,9 @@ When a cycle is resolved, the scheduling log shows the two-pass schedule by
 dependency wave:
 
 ```
-INFO Scheduling batch 0 build:mvp: freetype
-INFO Scheduling batch 0 build: harfbuzz
-INFO Scheduling batch 1 build:full: freetype
+INFO scheduling batch 0 build:mvp: freetype
+INFO scheduling batch 0 build: harfbuzz
+INFO scheduling batch 1 build:full: freetype
 ```
 
 `build:mvp` is the first pass (incomplete). `build:full` is the second pass (complete, automatically force-rebuilt). MVP builds are never written to the build cache.
@@ -565,7 +565,7 @@ When `--mvp` is used explicitly, all targets show `build:mvp` — no `build:full
 pass follows:
 
 ```
-INFO Scheduling batch 0 build:mvp: freetype
+INFO scheduling batch 0 build:mvp: freetype
 ```
 
 ### Dependency type classification comes first

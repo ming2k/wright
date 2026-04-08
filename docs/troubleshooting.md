@@ -200,7 +200,7 @@ wbuild checksum <pkg>
 incorrect. The build log shows:
 
 ```
-INFO Skipping zlib (all archives already exist, use --force to rebuild)
+INFO skipping batch 0: zlib (completed in previous run)
 ```
 
 Wright found an existing archive in `components_dir` and skipped the build.
