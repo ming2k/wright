@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-04-08
+
+### Performance
+- **Install conflict checks**: `wright install` and `wbuild run -i` now batch file-owner lookups during install instead of querying SQLite once per file, reducing install-time database overhead for very large parts.
+
+### Changes
+- **Fixed lock-file layout**: database locks now use stable files under `/var/lib/wright/lock/` (for example `parts.db.lock` and `repo.db.lock`) and rely on `flock(2)` lifetime instead of creating and deleting transient lock files beside the databases.
+- **Install and upgrade diagnostics**: `-v` now emits debug timing for archive extraction, file scanning, owner checks, filesystem writes, database updates, hooks, and total install/upgrade time.
+- **Log wording cleanup**: install and upgrade `INFO` messages now use natural sentence order (for example `Installing texlive-texmf: 252553 files`) for easier reading.
+
 ## [1.12.1] - 2026-04-08
 
 ### Performance
