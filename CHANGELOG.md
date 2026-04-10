@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-04-11
+
+### Changed
+- **Merged `wbuild` into `wright`**: the standalone `wbuild` binary has been removed. All build, plan, and inventory management commands are now subcommands of the unified `wright` CLI tool.
+- **Refactored CLI architecture**: adopted a Thin Binary + Command Dispatcher pattern. The `wright` entry point is now a lightweight wrapper that dispatches to encapsulated command handlers, improving maintainability and testability.
+- **Unified man pages**: the build process now generates a single set of hierarchical man pages for the integrated `wright` tool.
+
+### Fixed
+- **Compiler warnings**: eliminated all unused imports and type-mapping warnings introduced during the CLI consolidation.
+
 ## [2.0.0] - 2026-04-11
 
 ### Changed
