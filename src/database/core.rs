@@ -50,8 +50,17 @@ pub(super) fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<Ins
 }
 
 fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
-    crate::util::lock::acquire_db_lock(db_path)
-        .map_err(|e| WrightError::DatabaseError(e.to_string()))
+    let file_name = db_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("database");
+
+    crate::util::lock::acquire_lock(
+        &crate::util::lock::lock_dir_from_db(db_path),
+        crate::util::lock::LockIdentity::Database(file_name),
+        crate::util::lock::LockMode::Exclusive,
+    )
+    .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
 impl Database {

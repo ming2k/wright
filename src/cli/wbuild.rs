@@ -1,22 +1,22 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 
-const WBUILD_RUN_AFTER_HELP: &str = "\
+pub const WBUILD_RUN_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
-  wright plan resolve openssl --self --dependents | wright build
+  wright resolve openssl --self --dependents | wright build
   echo -e 'curl\\nwget' | wright build --force";
-const WBUILD_RESOLVE_AFTER_HELP: &str = "\
+pub const WBUILD_RESOLVE_AFTER_HELP: &str = "\
 Examples:
-  wright plan resolve zlib --self --deps
-  wright plan resolve zlib --self --deps=sync
-  wright plan resolve openssl --self --dependents
-  wright plan resolve glibc --self --dependents=all --depth=0
-  wright plan resolve zlib --self --deps=all
+  wright resolve zlib --self --deps
+  wright resolve zlib --self --deps=sync
+  wright resolve openssl --self --dependents
+  wright resolve glibc --self --dependents=all --depth=0
+  wright resolve zlib --self --deps=all
 
 Pipe into wright build:
-  wright plan resolve openssl --self --dependents | wright build";
+  wright resolve openssl --self --dependents | wright build";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum DepsMode {
@@ -90,6 +90,18 @@ pub struct RunArgs {
     /// Remove all saved build sessions and exit
     #[arg(long)]
     pub clear_sessions: bool,
+
+    /// Download sources only; do not build
+    #[arg(long, conflicts_with_all = ["checksum", "lint"])]
+    pub fetch: bool,
+
+    /// Compute and update SHA256 checksums in plan.toml
+    #[arg(long, conflicts_with_all = ["fetch", "lint"])]
+    pub checksum: bool,
+
+    /// Validate plan.toml files for syntax and logic errors
+    #[arg(long, conflicts_with_all = ["fetch", "checksum"])]
+    pub lint: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -140,24 +152,6 @@ pub struct ResolveArgs {
 }
 
 #[derive(Parser, Debug, Clone)]
-pub struct CheckArgs {
-    /// Plans to check
-    pub targets: Vec<String>,
-}
-
-#[derive(Parser, Debug, Clone)]
-pub struct FetchArgs {
-    /// Plans to fetch
-    pub targets: Vec<String>,
-}
-
-#[derive(Parser, Debug, Clone)]
-pub struct ChecksumArgs {
-    /// Plans to checksum
-    pub targets: Vec<String>,
-}
-
-#[derive(Parser, Debug, Clone)]
 pub struct PruneArgs {
     /// Delete archives that are present on disk but not registered in the inventory DB
     #[arg(long)]
@@ -170,36 +164,4 @@ pub struct PruneArgs {
     /// Apply deletions. Without this flag, only prints what would change
     #[arg(long)]
     pub apply: bool,
-}
-
-#[derive(Subcommand)]
-pub enum Commands {
-    /// Build parts from plans (default operation)
-    #[command(
-        long_about = "Build parts from plans.\n\nTargets may be plan names, plan directories, or `@assembly` references. Reads additional targets from stdin when piped (one per line). Use `wright plan resolve` to expand dependencies/dependents before piping into `wright build`.",
-        after_help = WBUILD_RUN_AFTER_HELP
-    )]
-    Run(RunArgs),
-    /// Resolve targets and expand dependencies/dependents.
-    /// Outputs plan names to stdout, one per line.
-    /// Pipe into `wright build` to build the resolved set.
-    #[command(
-        long_about = "Resolve targets and expand their dependency graph.\n\nOutputs plan names to stdout (one per line) for piping into `wright build`. Expansion flags control which parts are included: `--deps` adds upstream dependencies, `--dependents` adds downstream dependents. Use `--self` to include the listed targets themselves.\n\nWith `--tree`, switches to a visual dependency tree from hold-tree `plan.toml` files (static analysis — does not read the installed part database).",
-        after_help = WBUILD_RESOLVE_AFTER_HELP
-    )]
-    Resolve(ResolveArgs),
-    /// Validate plan.toml files for syntax and logic errors
-    Check(CheckArgs),
-    /// Download sources for plans without building
-    Fetch(FetchArgs),
-    /// Compute and update SHA256 checksums in plan.toml
-    Checksum(ChecksumArgs),
-    /// Prune local archive inventory and stale archives
-    Prune(PruneArgs),
-}
-
-#[derive(Parser)]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
 }

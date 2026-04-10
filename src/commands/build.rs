@@ -7,8 +7,7 @@ use anyhow::{Context, Result};
 use crate::builder::orchestrator::{
     self, BuildOptions, DependencyMode, DependentsMode, ResolveOptions,
 };
-use crate::cli::wbuild::{DependentsModeArg, DepsMode, RunArgs};
-use crate::cli::PlanCommands;
+use crate::cli::wbuild::{DependentsModeArg, DepsMode, ResolveArgs, RunArgs};
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::part::version;
@@ -20,8 +19,12 @@ pub fn execute_build(
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
-    let _command_lock = crate::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
-        .context("failed to acquire wbuild command lock")?;
+    let _command_lock = crate::util::lock::acquire_lock(
+        &crate::util::lock::lock_dir_from_db(&config.general.db_path),
+        crate::util::lock::LockIdentity::Command("wbuild"),
+        crate::util::lock::LockMode::Exclusive,
+    )
+    .context("failed to acquire wbuild command lock")?;
 
     if args.clear_sessions {
         let db = Database::open(&config.general.db_path).context("failed to open database")?;
@@ -53,117 +56,79 @@ pub fn execute_build(
         all_targets,
         BuildOptions {
             stages: args.stage,
-            fetch_only: false,
+            fetch_only: args.fetch,
             clean: args.clean,
             force: args.force,
             resume: args.resume.map(|h| if h.is_empty() { None } else { Some(h) }),
             dockyards: effective_dockyards,
-            checksum: false,
-            lint: false,
+            checksum: args.checksum,
+            lint: args.lint,
             skip_check: args.skip_check,
             verbose: verbose > 0,
             quiet,
             mvp: args.mvp,
             print_archives: args.print_archives,
             nproc_per_dockyard: config.build.nproc_per_dockyard,
-            })?;
-            Ok(())
-            }
-pub fn execute_plan(cmd: PlanCommands, config: &GlobalConfig) -> Result<()> {
-    match cmd {
-        PlanCommands::Resolve(args) => {
-            if args.tree {
-                let target = args
-                    .targets
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--tree requires at least one target"))?;
-                let effective_depth = match args.depth {
-                    Some(0) | None => usize::MAX,
-                    Some(d) => d,
-                };
-                let resolver = orchestrator::setup_resolver(config)?;
-                let all_plans = resolver.get_all_plans()?;
-                println!("Plan dependency tree for: {} (source: hold-tree plan.toml)", target);
-                let stats = print_plan_tree(&target, &all_plans, "", 1, effective_depth)?;
-                println!(
-                    "\n{} parts, max depth {}, {} repeated, {} cycles",
-                    stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
-                );
-                println!("\nSource: hold-tree plan.toml");
-            } else {
-                let deps_mode = match args.deps.unwrap_or(DepsMode::None) {
-                    DepsMode::None => DependencyMode::None,
-                    DepsMode::Missing => DependencyMode::Missing,
-                    DepsMode::Sync => DependencyMode::Sync,
-                    DepsMode::All => DependencyMode::All,
-                };
-                let dependents_mode = match args.dependents {
-                    None => DependentsMode::None,
-                    Some(DependentsModeArg::Link) => DependentsMode::Link,
-                    Some(DependentsModeArg::All) => DependentsMode::All,
-                };
-                let effective_depth = match args.depth {
-                    Some(value) => Some(value),
-                    None if dependents_mode != DependentsMode::None => Some(1),
-                    None => Some(0),
-                };
+        },
+    )?;
+    Ok(())
+}
+pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
+    if args.tree {
+        let target = args
+            .targets
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("--tree requires at least one target"))?;
+        let effective_depth = match args.depth {
+            Some(0) | None => usize::MAX,
+            Some(d) => d,
+        };
+        let resolver = orchestrator::setup_resolver(config)?;
+        let all_plans = resolver.get_all_plans()?;
+        println!("Plan dependency tree for: {} (source: hold-tree plan.toml)", target);
+        let stats = print_plan_tree(&target, &all_plans, "", 1, effective_depth)?;
+        println!(
+            "\n{} parts, max depth {}, {} repeated, {} cycles",
+            stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
+        );
+        println!("\nSource: hold-tree plan.toml");
+    } else {
+        let deps_mode = match args.deps.unwrap_or(DepsMode::None) {
+            DepsMode::None => DependencyMode::None,
+            DepsMode::Missing => DependencyMode::Missing,
+            DepsMode::Sync => DependencyMode::Sync,
+            DepsMode::All => DependencyMode::All,
+        };
+        let dependents_mode = match args.dependents {
+            None => DependentsMode::None,
+            Some(DependentsModeArg::Link) => DependentsMode::Link,
+            Some(DependentsModeArg::All) => DependentsMode::All,
+        };
+        let effective_depth = match args.depth {
+            Some(value) => Some(value),
+            None if dependents_mode != DependentsMode::None => Some(1),
+            None => Some(0),
+        };
 
-                let names = orchestrator::resolve_build_set(
-                    config,
-                    args.targets,
-                    ResolveOptions {
-                        deps_mode,
-                        dependents_mode,
-                        depth: effective_depth,
-                        include_self: args.include_self,
-                    },
-                )?;
+        let names = orchestrator::resolve_build_set(
+            config,
+            args.targets,
+            ResolveOptions {
+                deps_mode,
+                dependents_mode,
+                depth: effective_depth,
+                include_self: args.include_self,
+            },
+        )?;
 
-                for name in &names {
-                    println!("{}", name);
-                }
-            }
-        }
-        PlanCommands::Check(args) => {
-            let _command_lock = crate::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
-                .context("failed to acquire wbuild command lock")?;
-            orchestrator::run_build(
-                config,
-                args.targets,
-                BuildOptions {
-                    lint: true,
-                    ..Default::default()
-                },
-            )?;
-        }
-        PlanCommands::Fetch(args) => {
-            let _command_lock = crate::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
-                .context("failed to acquire wbuild command lock")?;
-            orchestrator::run_build(
-                config,
-                args.targets,
-                BuildOptions {
-                    fetch_only: true,
-                    ..Default::default()
-                },
-            )?;
-        }
-        PlanCommands::Checksum(args) => {
-            let _command_lock = crate::util::lock::acquire_named_lock(&config.general.db_path, "wbuild")
-                .context("failed to acquire wbuild command lock")?;
-            orchestrator::run_build(
-                config,
-                args.targets,
-                BuildOptions {
-                    checksum: true,
-                    ..Default::default()
-                },
-            )?;
+        for name in &names {
+            println!("{}", name);
         }
     }
     Ok(())
 }
+
 
 #[derive(Default)]
 pub struct PlanTreeStats {

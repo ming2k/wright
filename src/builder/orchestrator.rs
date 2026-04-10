@@ -29,6 +29,8 @@ use resolver::resolve_targets;
 
 pub use resolver::setup_resolver;
 
+use crate::inventory::resolver::LocalResolver;
+
 #[derive(Debug, Clone)]
 pub struct BuildExecutionPlan {
     name_to_path: HashMap<String, PathBuf>,
@@ -109,6 +111,22 @@ impl BuildOptions {
     fn is_build_op(&self) -> bool {
         !self.checksum && !self.lint && !self.fetch_only
     }
+}
+
+/// Resolve targets to their canonical plan names without any dependency expansion.
+/// Used by `apply` to determine which targets were explicitly requested by the user
+/// (vs. pulled in as sync dependencies), so that install origin can be set correctly.
+pub fn resolve_explicit_plan_names(
+    resolver: &LocalResolver,
+    targets: &[String],
+) -> Result<HashSet<String>> {
+    let all_plans = resolver.get_all_plans()?;
+    let paths = resolve_targets(targets, &all_plans, resolver)?;
+    Ok(paths
+        .iter()
+        .filter_map(|p| PlanManifest::from_file(p).ok())
+        .map(|m| m.plan.name)
+        .collect())
 }
 
 /// Resolve targets and expand their dependency graph according to the given options.
@@ -250,6 +268,12 @@ impl BuildExecutionPlan {
 
     pub fn label_for_task(&self, task_name: &str, opts: &BuildOptions) -> &'static str {
         construction_plan_label(task_name, &self.build_set, &self.rebuild_reasons, opts)
+    }
+
+    /// Strip the internal `:bootstrap` suffix used for MVP cycle-breaking tasks
+    /// to get the canonical plan name for display and explicit-target matching.
+    pub fn task_base_name(task: &str) -> &str {
+        task.trim_end_matches(":bootstrap")
     }
 
     pub fn execute_batch(
@@ -568,7 +592,6 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             &all_plans,
             &db,
             DependencyMode::Sync,
-            false,
             usize::MAX,
         )
         .unwrap();

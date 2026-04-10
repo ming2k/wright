@@ -24,8 +24,8 @@ pub fn dispatch(
         crate::cli::Commands::Build(args) => {
             build::execute_build(args, config, cli.verbose, cli.quiet)
         }
-        crate::cli::Commands::Plan(cmd) => build::execute_plan(cmd, config),
-        crate::cli::Commands::Inventory(cmd) => inventory::execute(cmd, config),
+        crate::cli::Commands::Resolve(args) => build::execute_resolve(args, config),
+        crate::cli::Commands::Prune(args) => inventory::execute_prune(args, config),
     }
 }
 

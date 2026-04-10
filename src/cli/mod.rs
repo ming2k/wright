@@ -4,6 +4,8 @@ pub mod wright;
 use std::path::PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
 
+use wbuild::{WBUILD_RESOLVE_AFTER_HELP, WBUILD_RUN_AFTER_HELP};
+
 #[derive(Parser)]
 #[command(
     name = "wright",
@@ -39,40 +41,20 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    // --- System Management (formerly wright) ---
+    // --- System Management ---
     #[command(flatten)]
     System(wright::Commands),
 
-    // --- Build & Development (formerly wbuild) ---
-    
+    // --- Build & Development ---
+
     /// Build parts from plans
-    ///
-    /// This is the direct replacement for `wbuild run`.
+    #[command(after_help = WBUILD_RUN_AFTER_HELP)]
     Build(wbuild::RunArgs),
 
-    /// Manage build plans (resolve, check, fetch, checksum)
-    #[command(subcommand)]
-    Plan(PlanCommands),
-
-    /// Manage the local archive inventory
-    #[command(subcommand)]
-    Inventory(InventoryCommands),
-}
-
-#[derive(Subcommand)]
-pub enum PlanCommands {
     /// Resolve targets and expand their dependency graph
+    #[command(after_help = WBUILD_RESOLVE_AFTER_HELP)]
     Resolve(wbuild::ResolveArgs),
-    /// Validate plan.toml files for syntax and logic errors
-    Check(wbuild::CheckArgs),
-    /// Download sources for plans without building
-    Fetch(wbuild::FetchArgs),
-    /// Compute and update SHA256 checksums in plan.toml
-    Checksum(wbuild::ChecksumArgs),
-}
 
-#[derive(Subcommand)]
-pub enum InventoryCommands {
     /// Prune local archive inventory and stale archives
     Prune(wbuild::PruneArgs),
 }

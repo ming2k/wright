@@ -78,66 +78,6 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
     Ok(pkg_paths)
 }
 
-fn resolve_plan_targets(targets: &[String], resolver: &LocalResolver) -> Result<Vec<PathBuf>> {
-    let all_plans = resolver.get_all_plans()?;
-    let mut plans_to_build = HashSet::new();
-
-    for target in targets {
-        let clean_target = target.trim();
-        if clean_target.is_empty() {
-            continue;
-        }
-
-        if let Some(assembly_name) = clean_target.strip_prefix('@') {
-            let paths = resolver.resolve_assembly(assembly_name)?;
-            if paths.is_empty() {
-                anyhow::bail!("assembly not found or empty: {}", assembly_name);
-            }
-            for path in paths {
-                plans_to_build.insert(path);
-            }
-            continue;
-        }
-
-        if let Some(path) = all_plans.get(clean_target) {
-            plans_to_build.insert(path.clone());
-            continue;
-        }
-
-        let plan_path = PathBuf::from(clean_target);
-        let manifest_path = if plan_path.is_file() {
-            plan_path
-        } else {
-            plan_path.join("plan.toml")
-        };
-
-        if manifest_path.exists() {
-            plans_to_build.insert(manifest_path);
-            continue;
-        }
-
-        let mut found = false;
-        for plans_dir in &resolver.plans_dirs {
-            let candidate = plans_dir.join(clean_target).join("plan.toml");
-            if candidate.exists() {
-                crate::plan::manifest::PlanManifest::from_file(&candidate)
-                    .context(format!("failed to parse plan '{}'", clean_target))?;
-                plans_to_build.insert(candidate);
-                found = true;
-                break;
-            }
-        }
-
-        if !found {
-            anyhow::bail!("target not found: {}", clean_target);
-        }
-    }
-
-    let mut ordered: Vec<_> = plans_to_build.into_iter().collect();
-    ordered.sort();
-    Ok(ordered)
-}
-
 fn archive_entries_for_plan(
     plan_path: &Path,
     archives_dir: &Path,
@@ -173,26 +113,29 @@ fn apply_targets(
     nodeps: bool,
     verbose: bool,
     quiet: bool,
+    dry_run: bool,
 ) -> Result<()> {
-    let plan_paths = resolve_plan_targets(&targets, resolver)?;
-    let mut explicit_plan_names = HashSet::new();
-    for path in &plan_paths {
-        let manifest = crate::plan::manifest::PlanManifest::from_file(path)
-            .context(format!("failed to parse plan {}", path.display()))?;
-        explicit_plan_names.insert(manifest.plan.name);
-    }
+    use crate::builder::orchestrator::{
+        BuildExecutionPlan, BuildOptions, DependencyMode, DependentsMode, ResolveOptions,
+    };
+
+    // Single resolution pass to determine which targets were explicitly requested.
+    // This drives install-origin tracking (explicit vs. dependency install).
+    let explicit_plan_names =
+        crate::builder::orchestrator::resolve_explicit_plan_names(resolver, &targets)?;
+
     let build_set = crate::builder::orchestrator::resolve_build_set(
         config,
-        targets.clone(),
-        crate::builder::orchestrator::ResolveOptions {
-            deps_mode: crate::builder::orchestrator::DependencyMode::Sync,
-            dependents_mode: crate::builder::orchestrator::DependentsMode::None,
+        targets,
+        ResolveOptions {
+            deps_mode: DependencyMode::Sync,
+            dependents_mode: DependentsMode::None,
             depth: Some(0),
             include_self: true,
         },
     )?;
 
-    let build_opts = crate::builder::orchestrator::BuildOptions {
+    let build_opts = BuildOptions {
         force: force_build,
         verbose,
         quiet,
@@ -203,6 +146,26 @@ fn apply_targets(
     };
     let plan = crate::builder::orchestrator::create_execution_plan(config, build_set, &build_opts)?;
 
+    if dry_run {
+        println!("Apply plan (dry-run):");
+        for (batch_idx, tasks) in plan.batches().iter().enumerate() {
+            for task in tasks {
+                let label = plan.label_for_task(task, &build_opts);
+                let base = BuildExecutionPlan::task_base_name(task);
+                let origin = if explicit_plan_names.contains(base) {
+                    "explicit"
+                } else {
+                    "dep"
+                };
+                println!("  batch {batch_idx}  [{label}]  {base}  ({origin})");
+            }
+        }
+        return Ok(());
+    }
+
+    // Track successfully installed parts so we can report partial-apply state on failure.
+    let mut applied_parts: Vec<String> = Vec::new();
+
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
         if !quiet {
             for task in tasks {
@@ -210,17 +173,26 @@ fn apply_targets(
                     "Apply batch {} {}: {}",
                     batch_idx,
                     plan.label_for_task(task, &build_opts),
-                    task.trim_end_matches(":bootstrap"),
+                    BuildExecutionPlan::task_base_name(task),
                 );
             }
         }
 
-        plan.execute_batch(config, batch_idx, &build_opts)?;
+        plan.execute_batch(config, batch_idx, &build_opts)
+            .map_err(|e| {
+                emit_partial_apply_note(&applied_parts);
+                e
+            })?;
 
         let mut archives = Vec::new();
         let mut explicit_targets = HashSet::new();
+        let mut batch_part_names = Vec::new();
+        // Deduplicate archive paths within a batch; multi-fabricate plans produce
+        // multiple sub-parts from the same archive file.
         let mut seen_paths = HashSet::new();
+
         for task in tasks {
+            let base = BuildExecutionPlan::task_base_name(task);
             let plan_path = plan
                 .plan_path_for_task(task)
                 .context("missing plan path for batch task")?;
@@ -228,6 +200,7 @@ fn apply_targets(
                 archive_entries_for_plan(plan_path, &config.general.components_dir)?
             {
                 if !archive_path.exists() {
+                    emit_partial_apply_note(&applied_parts);
                     anyhow::bail!(
                         "expected archive was not produced: {}",
                         archive_path.display()
@@ -236,9 +209,10 @@ fn apply_targets(
                 if seen_paths.insert(archive_path.clone()) {
                     archives.push(archive_path);
                 }
-                if explicit_plan_names.contains(task.trim_end_matches(":bootstrap")) {
-                    explicit_targets.insert(part_name);
+                if explicit_plan_names.contains(base) {
+                    explicit_targets.insert(part_name.clone());
                 }
+                batch_part_names.push(part_name);
             }
         }
 
@@ -251,10 +225,25 @@ fn apply_targets(
             resolver,
             force_install,
             nodeps,
-        )?;
+        )
+        .map_err(|e| {
+            emit_partial_apply_note(&applied_parts);
+            e
+        })?;
+
+        applied_parts.extend(batch_part_names);
     }
 
     Ok(())
+}
+
+fn emit_partial_apply_note(applied_parts: &[String]) {
+    if !applied_parts.is_empty() {
+        eprintln!(
+            "note: partially applied — already installed in previous batches: {}",
+            applied_parts.join(", ")
+        );
+    }
 }
 
 pub fn execute(
@@ -265,12 +254,62 @@ pub fn execute(
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
-    let _command_lock = crate::util::lock::acquire_named_lock(db_path, "wright")
-        .context("failed to acquire wright command lock")?;
-    let db = Database::open(db_path).context("failed to open database")?;
+    let _command_lock = crate::util::lock::acquire_lock(
+        &crate::util::lock::lock_dir_from_db(db_path),
+        crate::util::lock::LockIdentity::Command("wright"),
+        crate::util::lock::LockMode::Exclusive,
+    )
+    .context("failed to acquire wright command lock")?;
     let resolver = crate::commands::setup_local_resolver(config)?;
 
+    // Apply is handled before opening the DB: it manages its own per-batch connections
+    // (each batch opens and closes a handle for its install transaction).
+    if let SystemCommands::Apply {
+        targets,
+        force_build,
+        force_install,
+        nodeps,
+        dry_run,
+    } = command
+    {
+        use std::io::IsTerminal;
+        let targets = collect_install_args(targets)?;
+        if targets.is_empty() {
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!("no targets received from stdin; did the resolve succeed?");
+            }
+            anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
+        }
+        match apply_targets(
+            config,
+            db_path,
+            &resolver,
+            root_dir,
+            targets,
+            force_build,
+            force_install,
+            nodeps,
+            verbose > 0,
+            quiet,
+            dry_run,
+        ) {
+            Ok(()) => {
+                if !dry_run {
+                    println!("apply completed successfully");
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {:#}", e);
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    let db = Database::open(db_path).context("failed to open database")?;
+
     match command {
+        SystemCommands::Apply { .. } => unreachable!(),
         SystemCommands::Install {
             parts,
             force,
@@ -290,41 +329,6 @@ pub fn execute(
 
             match transaction::install_parts(&db, &pkg_paths, root_dir, &resolver, force, nodeps) {
                 Ok(()) => println!("installation completed successfully"),
-                Err(e) => {
-                    eprintln!("error: {:#}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        SystemCommands::Apply {
-            targets,
-            force_build,
-            force_install,
-            nodeps,
-        } => {
-            use std::io::IsTerminal;
-            let targets = collect_install_args(targets)?;
-            if targets.is_empty() {
-                if !std::io::stdin().is_terminal() {
-                    anyhow::bail!("no targets received from stdin; did the resolve succeed?");
-                }
-                anyhow::bail!(
-                    "no targets specified (pass plan names/paths as arguments or via stdin)"
-                );
-            }
-            match apply_targets(
-                config,
-                db_path,
-                &resolver,
-                root_dir,
-                targets,
-                force_build,
-                force_install,
-                nodeps,
-                verbose > 0,
-                quiet,
-            ) {
-                Ok(()) => println!("apply completed successfully"),
                 Err(e) => {
                     eprintln!("error: {:#}", e);
                     std::process::exit(1);

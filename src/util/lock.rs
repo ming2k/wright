@@ -18,35 +18,60 @@ impl ProcessLock {
     }
 }
 
-pub fn acquire_named_lock(db_path: &Path, name: &str) -> Result<ProcessLock> {
-    acquire_named_lock_with_timeout(db_path, name, Duration::from_secs(30))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+    Shared,
+    Exclusive,
 }
 
-pub fn acquire_db_lock(db_path: &Path) -> Result<ProcessLock> {
-    acquire_lock_path_with_timeout(&db_lock_path(db_path), Duration::from_secs(30))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockIdentity<'a> {
+    Command(&'a str),
+    Database(&'a str),
 }
 
-fn acquire_named_lock_with_timeout(
-    db_path: &Path,
-    name: &str,
+impl<'a> LockIdentity<'a> {
+    pub fn file_name(&self) -> String {
+        match self {
+            LockIdentity::Command(name) => format!("cmd-{name}.lock"),
+            LockIdentity::Database(name) => format!("db-{name}.lock"),
+        }
+    }
+}
+
+pub fn acquire_lock(lock_dir: &Path, identity: LockIdentity, mode: LockMode) -> Result<ProcessLock> {
+    acquire_lock_with_timeout(lock_dir, identity, mode, Duration::from_secs(30))
+}
+
+pub fn acquire_lock_with_timeout(
+    lock_dir: &Path,
+    identity: LockIdentity,
+    mode: LockMode,
     timeout: Duration,
 ) -> Result<ProcessLock> {
-    acquire_lock_path_with_timeout(&lock_dir_for(db_path).join(format!("{name}.lock")), timeout)
+    let lock_path = lock_dir.join(identity.file_name());
+    acquire_lock_path_with_timeout(&lock_path, mode, timeout)
 }
 
-fn acquire_flock(file: &File, lock_path: &Path, timeout: Duration) -> Result<()> {
+fn acquire_flock(file: &File, lock_path: &Path, mode: LockMode, timeout: Duration) -> Result<()> {
     let mut delay = Duration::from_millis(50);
     let start = Instant::now();
 
+    let op = match mode {
+        LockMode::Shared => libc::LOCK_SH,
+        LockMode::Exclusive => libc::LOCK_EX,
+    };
+
     loop {
-        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        let ret = unsafe { libc::flock(file.as_raw_fd(), op | libc::LOCK_NB) };
         if ret == 0 {
             return Ok(());
         }
         if start.elapsed() >= timeout {
             return Err(WrightError::LockError(format!(
-                "another process is already holding {}; timed out after {}s",
+                "another process is already holding {} ({:?}); timed out after {}s",
                 lock_path.display(),
+                mode,
                 timeout.as_secs()
             )));
         }
@@ -55,25 +80,23 @@ fn acquire_flock(file: &File, lock_path: &Path, timeout: Duration) -> Result<()>
     }
 }
 
-pub fn lock_dir_for(db_path: &Path) -> PathBuf {
-    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
-    if let Some(root) = parent.parent() {
-        root.join("lock")
-    } else {
-        parent.join("lock")
-    }
+/// Helper to derive the standard lock directory from a root path or configuration.
+pub fn lock_dir_from_db(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("lock"))
+        .unwrap_or_else(|| {
+            // Fallback for non-standard paths, though GlobalConfig should ideally provide this
+            db_path.parent().unwrap_or(Path::new(".")).join("lock")
+        })
 }
 
-pub fn db_lock_path(db_path: &Path) -> PathBuf {
-    let file_name = db_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("database");
-    lock_dir_for(db_path).join(format!("{file_name}.lock"))
-}
-
-fn acquire_lock_path_with_timeout(lock_path: &Path, timeout: Duration) -> Result<ProcessLock> {
+fn acquire_lock_path_with_timeout(
+    lock_path: &Path,
+    mode: LockMode,
+    timeout: Duration,
+) -> Result<ProcessLock> {
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             WrightError::LockError(format!(
@@ -84,7 +107,7 @@ fn acquire_lock_path_with_timeout(lock_path: &Path, timeout: Duration) -> Result
         })?;
     }
 
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -98,50 +121,100 @@ fn acquire_lock_path_with_timeout(lock_path: &Path, timeout: Duration) -> Result
             ))
         })?;
 
-    acquire_flock(&file, lock_path, timeout)?;
+    acquire_flock(&file, lock_path, mode, timeout)?;
 
-    let _ = file.set_len(0);
-    let _ = writeln!(file, "pid={}", std::process::id());
-
-    Ok(ProcessLock {
-        _file: file,
-        path: lock_path.to_path_buf(),
-    })
+    if mode == LockMode::Exclusive {
+        // Use a more robust write pattern for PID
+        let mut f = file;
+        if let Err(e) = f.set_len(0).and_then(|_| writeln!(&f, "pid={}", std::process::id())) {
+            // Non-fatal, but we log it if we had a logger here. 
+            // For now, we continue since the flock itself is the source of truth.
+            eprintln!("warning: failed to write PID to {}: {}", lock_path.display(), e);
+        }
+        Ok(ProcessLock {
+            _file: f,
+            path: lock_path.to_path_buf(),
+        })
+    } else {
+        Ok(ProcessLock {
+            _file: file,
+            path: lock_path.to_path_buf(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{acquire_named_lock_with_timeout, db_lock_path, lock_dir_for};
+    use super::{acquire_lock_with_timeout, lock_dir_from_db, LockIdentity, LockMode};
 
     #[test]
-    fn lock_dir_uses_wright_root_when_db_is_in_db_subdir() {
+    fn lock_dir_derivation() {
         let db_path = std::path::Path::new("/var/lib/wright/db/parts.db");
         assert_eq!(
-            lock_dir_for(db_path),
+            lock_dir_from_db(db_path),
             std::path::Path::new("/var/lib/wright/lock")
-        );
-    }
-
-    #[test]
-    fn db_lock_path_uses_db_filename_under_lock_dir() {
-        let db_path = std::path::Path::new("/var/lib/wright/db/parts.db");
-        assert_eq!(
-            db_lock_path(db_path),
-            std::path::Path::new("/var/lib/wright/lock/parts.db.lock")
         );
     }
 
     #[test]
     fn named_lock_is_exclusive() {
         let dir = tempfile::tempdir().unwrap();
+        let lock_dir = dir.path().join("lock");
+
+        let identity = LockIdentity::Command("wbuild");
+        let _lock =
+            acquire_lock_with_timeout(&lock_dir, identity.clone(), LockMode::Exclusive, Duration::from_millis(100))
+                .unwrap();
+        let err =
+            acquire_lock_with_timeout(&lock_dir, identity, LockMode::Exclusive, Duration::from_millis(100))
+                .unwrap_err();
+        assert!(format!("{err}").contains("already holding"));
+    }
+
+    #[test]
+    fn shared_locks_can_coexist() {
+        let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("db").join("parts.db");
 
-        let _lock = acquire_named_lock_with_timeout(&db_path, "wbuild", Duration::from_millis(100))
-            .unwrap();
-        let err = acquire_named_lock_with_timeout(&db_path, "wbuild", Duration::from_millis(100))
-            .unwrap_err();
+        let identity = LockIdentity::Database("parts.db");
+        let _lock1 = acquire_lock_with_timeout(
+            &db_path,
+            identity.clone(),
+            LockMode::Shared,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let _lock2 = acquire_lock_with_timeout(
+            &db_path,
+            identity,
+            LockMode::Shared,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn exclusive_lock_blocks_shared_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("db").join("parts.db");
+
+        let identity = LockIdentity::Database("parts.db");
+        let _lock = acquire_lock_with_timeout(
+            &db_path,
+            identity.clone(),
+            LockMode::Exclusive,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let err = acquire_lock_with_timeout(
+            &db_path,
+            identity,
+            LockMode::Shared,
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("already holding"));
     }
 }

@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
 
-use crate::cli::InventoryCommands;
+use crate::cli::wbuild::PruneArgs;
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::inventory::db::InventoryDb;
 use crate::inventory::prune;
 
-pub fn execute(cmd: InventoryCommands, config: &GlobalConfig) -> Result<()> {
-    match cmd {
-        InventoryCommands::Prune(args) => {
-            prune_archives(config, args.untracked, args.latest, args.apply)
-        }
-    }
+pub fn execute_prune(args: PruneArgs, config: &GlobalConfig) -> Result<()> {
+    prune_archives(config, args.untracked, args.latest, args.apply)
 }
 
 fn prune_archives(

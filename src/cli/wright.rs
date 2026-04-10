@@ -176,6 +176,10 @@ pub enum Commands {
         /// Skip dependency resolution during the install phase
         #[arg(long)]
         nodeps: bool,
+
+        /// Preview what would be built and installed without making any changes
+        #[arg(long, short = 'n')]
+        dry_run: bool,
     },
     /// Upgrade installed parts by name or from archive files
     #[command(
