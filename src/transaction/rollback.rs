@@ -243,7 +243,7 @@ impl RollbackState {
                         }
                         Err(e) => {
                             tracing::debug!(
-                                "Journal replay: failed to restore {} from {}: {}",
+                                "Journal replay: Failed to restore {} from {}: {}",
                                 original,
                                 backup,
                                 e

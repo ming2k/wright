@@ -172,7 +172,7 @@ fn archive_entries_for_plan(plan_path: &Path, archives_dir: &Path) -> Result<Vec
 
 fn apply_targets(
     config: &GlobalConfig,
-    db: &Database,
+    db_path: &Path,
     resolver: &LocalResolver,
     root_dir: &Path,
     targets: Vec<String>,
@@ -220,7 +220,7 @@ fn apply_targets(
         if !quiet {
             for task in tasks {
                 tracing::info!(
-                    "apply batch {} {}: {}",
+                    "Apply batch {} {}: {}",
                     batch_idx,
                     plan.label_for_task(task, &build_opts),
                     task.trim_end_matches(":bootstrap"),
@@ -255,8 +255,9 @@ fn apply_targets(
             }
         }
 
+        let db = Database::open(db_path).context("failed to open database for install")?;
         transaction::install_parts_with_explicit_targets(
-            db,
+            &db,
             &archives,
             &explicit_targets,
             root_dir,
@@ -331,24 +332,30 @@ fn main() -> Result<()> {
             force_build,
             force_install,
             nodeps,
-        } => match apply_targets(
-            &config,
-            &db,
-            &resolver,
-            &root_dir,
-            targets,
-            force_build,
-            force_install,
-            nodeps,
-            cli.verbose > 0,
-            cli.quiet,
-        ) {
-            Ok(()) => println!("apply completed successfully"),
-            Err(e) => {
-                eprintln!("error: {}", e);
-                std::process::exit(1);
+        } => {
+            // Release the DB lock before apply_targets runs: resolve_build_set
+            // opens its own connection internally, and holding the lock here
+            // would cause a self-deadlock (wright waiting on its own parts.db.lock).
+            drop(db);
+            match apply_targets(
+                &config,
+                &db_path,
+                &resolver,
+                &root_dir,
+                targets,
+                force_build,
+                force_install,
+                nodeps,
+                cli.verbose > 0,
+                cli.quiet,
+            ) {
+                Ok(()) => println!("apply completed successfully"),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         Commands::Upgrade {
             parts,
             force,
