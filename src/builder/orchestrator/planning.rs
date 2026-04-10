@@ -33,7 +33,6 @@ pub(super) fn expand_missing_dependencies(
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
     mode: DependencyMode,
-    include_runtime: bool,
     max_depth: usize,
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
@@ -54,22 +53,13 @@ pub(super) fn expand_missing_dependencies(
         };
         let manifest = PlanManifest::from_file(path)?;
 
-        let deps_to_check = if matches!(mode, DependencyMode::All) || include_runtime {
-            manifest
-                .dependencies
-                .build
-                .iter()
-                .chain(manifest.dependencies.link.iter())
-                .chain(manifest.dependencies.runtime.iter())
-                .collect::<Vec<_>>()
-        } else {
-            manifest
-                .dependencies
-                .build
-                .iter()
-                .chain(manifest.dependencies.link.iter())
-                .collect::<Vec<_>>()
-        };
+        let deps_to_check = manifest
+            .dependencies
+            .build
+            .iter()
+            .chain(manifest.dependencies.link.iter())
+            .chain(manifest.dependencies.runtime.iter())
+            .collect::<Vec<_>>();
 
         for dep in deps_to_check {
             let dep_name = version::parse_dependency(dep)

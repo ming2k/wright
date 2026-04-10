@@ -176,7 +176,6 @@ fn main() -> Result<()> {
                         dependents_mode,
                         depth: effective_depth,
                         include_self,
-                        install: false,
                     },
                 )?;
 

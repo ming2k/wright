@@ -64,8 +64,6 @@ pub struct ResolveOptions {
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
     pub include_self: bool,
-    /// Whether runtime dependencies should also be considered while expanding deps.
-    pub install: bool,
 }
 
 /// Options for a build run.
@@ -156,7 +154,6 @@ pub fn resolve_build_set(
                 &all_plans,
                 &db,
                 opts.deps_mode,
-                opts.install,
                 actual_max,
             )?;
         }

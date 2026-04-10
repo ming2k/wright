@@ -197,7 +197,6 @@ fn apply_targets(
             dependents_mode: wright::builder::orchestrator::DependentsMode::None,
             depth: Some(0),
             include_self: true,
-            install: true,
         },
     )?;
 
@@ -322,7 +321,7 @@ fn main() -> Result<()> {
             {
                 Ok(()) => println!("installation completed successfully"),
                 Err(e) => {
-                    eprintln!("error: {}", e);
+                    eprintln!("error: {:#}", e);
                     std::process::exit(1);
                 }
             }
@@ -351,7 +350,7 @@ fn main() -> Result<()> {
             ) {
                 Ok(()) => println!("apply completed successfully"),
                 Err(e) => {
-                    eprintln!("error: {}", e);
+                    eprintln!("error: {:#}", e);
                     std::process::exit(1);
                 }
             }
@@ -832,14 +831,14 @@ fn main() -> Result<()> {
         Commands::Assume { name, version } => match db.assume_part(&name, &version) {
             Ok(()) => println!("assumed: {} {}", name, version),
             Err(e) => {
-                eprintln!("error: {}", e);
+                eprintln!("error: {:#}", e);
                 std::process::exit(1);
             }
         },
         Commands::Unassume { name } => match db.unassume_part(&name) {
             Ok(()) => println!("unassumed: {}", name),
             Err(e) => {
-                eprintln!("error: {}", e);
+                eprintln!("error: {:#}", e);
                 std::process::exit(1);
             }
         },
