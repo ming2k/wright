@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
 use crate::builder::Builder;
@@ -23,17 +23,14 @@ pub(super) fn execute_builds(
     build_set: &HashSet<String>,
     opts: &BuildOptions,
     bootstrap_excluded: &HashMap<String, Vec<String>>,
-    user_target_names: &HashSet<String>,
     session_hash: Option<&str>,
     session_completed: &HashSet<String>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>();
     let completed = Arc::new(Mutex::new(session_completed.clone()));
     let in_progress = Arc::new(Mutex::new(HashSet::<String>::new()));
-    let awaiting_install = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_set = Arc::new(Mutex::new(HashSet::<String>::new()));
     let failed_count = Arc::new(Mutex::new(0usize));
-    let mut pending_install = Vec::<String>::new();
     let base_root = PathBuf::from("/");
 
     let builder = Arc::new(Builder::new(config.clone()));
@@ -63,13 +60,11 @@ pub(super) fn execute_builds(
         {
             let comp = completed.lock().unwrap();
             let prog = in_progress.lock().unwrap();
-            let awaiting = awaiting_install.lock().unwrap();
             let fail = failed_set.lock().unwrap();
 
             for name in build_set {
                 if !comp.contains(name)
                     && !prog.contains(name)
-                    && !awaiting.contains(name)
                     && !fail.contains(name)
                 {
                     let all_deps_met = opts.checksum
@@ -235,18 +230,13 @@ pub(super) fn execute_builds(
             }
             Ok(Ok(name)) => {
                 in_progress.lock().unwrap().remove(&name);
-                if opts.install {
-                    awaiting_install.lock().unwrap().insert(name.clone());
-                    pending_install.push(name);
-                } else {
-                    complete_build_task(
-                        config,
-                        session_hash.as_deref(),
-                        &completed,
-                        &name,
-                        opts.quiet,
-                    );
-                }
+                complete_build_task(
+                    config,
+                    session_hash.as_deref(),
+                    &completed,
+                    &name,
+                    opts.quiet,
+                );
             }
             Ok(Err((name, _))) => {
                 in_progress.lock().unwrap().remove(&name);
@@ -261,29 +251,6 @@ pub(super) fn execute_builds(
             }
         }
 
-        if opts.install && in_progress.lock().unwrap().is_empty() && !pending_install.is_empty() {
-            pending_install.sort();
-            for name in pending_install.drain(..) {
-                let is_user_target =
-                    user_target_names.contains(name.trim_end_matches(":bootstrap"));
-                install_built_outputs_at(
-                    config,
-                    name_to_path,
-                    &name,
-                    is_user_target,
-                    &config.general.db_path,
-                    Path::new("/"),
-                )?;
-                awaiting_install.lock().unwrap().remove(&name);
-                complete_build_task(
-                    config,
-                    session_hash.as_deref(),
-                    &completed,
-                    &name,
-                    opts.quiet,
-                );
-            }
-        }
     }
 
     let final_failed = *failed_count.lock().unwrap();
@@ -322,62 +289,6 @@ fn complete_build_task(
     if !quiet {
         info!("Completed: {}", name);
     }
-}
-
-fn install_built_outputs_at(
-    config: &GlobalConfig,
-    name_to_path: &HashMap<String, PathBuf>,
-    name: &str,
-    is_user_target: bool,
-    db_path: &Path,
-    root_dir: &Path,
-) -> Result<()> {
-    let path = name_to_path.get(name).expect("plan path exists");
-    let manifest = PlanManifest::from_file(path)?;
-    let output_dir = config.general.components_dir.clone();
-    let archive_path = output_dir.join(manifest.archive_filename());
-    let origin = if is_user_target {
-        crate::database::Origin::Build
-    } else {
-        crate::database::Origin::Dependency
-    };
-    let db = Database::open(db_path)?;
-
-    debug!("Automatically installing built part: {}", name);
-    crate::transaction::install_part_with_origin(
-        &db,
-        &archive_path,
-        root_dir,
-        true,
-        origin,
-        root_dir == Path::new("/"),
-    )
-    .context(format!(
-        "failed to auto-install {}",
-        name.trim_end_matches(":bootstrap")
-    ))?;
-
-    if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
-        for (sub_name, sub_pkg) in pkgs {
-            if sub_name == &manifest.plan.name {
-                continue;
-            }
-            let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
-            let sub_archive_path = output_dir.join(sub_manifest.archive_filename());
-            debug!("Automatically installing sub-part: {}", sub_name);
-            crate::transaction::install_part_with_origin(
-                &db,
-                &sub_archive_path,
-                root_dir,
-                true,
-                origin,
-                root_dir == Path::new("/"),
-            )
-            .context(format!("failed to auto-install sub-part {}", sub_name))?;
-        }
-    }
-
-    Ok(())
 }
 
 pub(super) fn lint_dependency_graph(
@@ -576,7 +487,10 @@ fn build_one(
         }
         let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
         info!(plan = %manifest.plan.name, "part stored in {}", archive_path.display());
-        register_in_repo(&config.general.repo_db_path, &archive_path);
+        if opts.print_archives {
+            println!("{}", archive_path.display());
+        }
+        register_in_inventory(&config.general.inventory_db_path, &archive_path);
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
@@ -592,7 +506,10 @@ fn build_one(
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
                 info!(plan = %sub_name, "part stored in {}", sub_archive.display());
-                register_in_repo(&config.general.repo_db_path, &sub_archive);
+                if opts.print_archives {
+                    println!("{}", sub_archive.display());
+                }
+                register_in_inventory(&config.general.inventory_db_path, &sub_archive);
             }
         }
     }
@@ -600,19 +517,19 @@ fn build_one(
     Ok(())
 }
 
-fn register_in_repo(repo_db_path: &Path, archive_path: &Path) {
+fn register_in_inventory(inventory_db_path: &Path, archive_path: &Path) {
     let do_register = || -> Result<()> {
-        let repo_db = crate::repo::db::RepoDb::open(repo_db_path)?;
+        let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
         let partinfo = archive::read_partinfo(archive_path)?;
         let sha256 = crate::util::checksum::sha256_file(archive_path)?;
         let filename = archive_path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        repo_db.register_part(&partinfo, filename, &sha256)?;
+        inventory_db.register_part(&partinfo, filename, &sha256)?;
         Ok(())
     };
     if let Err(e) = do_register() {
-        warn!("Failed to register in repo DB: {}", e);
+        warn!("Failed to register in local inventory DB: {}", e);
     }
 }

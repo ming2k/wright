@@ -6,15 +6,12 @@ use clap::CommandFactory;
 
 #[path = "src/cli/wbuild.rs"]
 mod wbuild_cli;
-#[path = "src/cli/wrepo.rs"]
-mod wrepo_cli;
 #[path = "src/cli/wright.rs"]
 mod wright_cli;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/cli/wbuild.rs");
-    println!("cargo:rerun-if-changed=src/cli/wrepo.rs");
     println!("cargo:rerun-if-changed=src/cli/wright.rs");
 
     let out_dir = man_output_dir();
@@ -22,7 +19,6 @@ fn main() {
 
     render::<wright_cli::Cli>("wright", &out_dir);
     render::<wbuild_cli::Cli>("wbuild", &out_dir);
-    render::<wrepo_cli::Cli>("wrepo", &out_dir);
 }
 
 fn render<T>(name: &str, out_dir: &Path)

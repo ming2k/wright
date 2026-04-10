@@ -1,209 +1,64 @@
 # Architecture
 
-Wright is designed as a modular toolkit split into three binaries that share a core library.
+Wright is split into two binaries that share one core library.
 
-The project uses a deliberate vocabulary:
+## Roles
 
-- a `plan.toml` is a **plan**
-- a built `.wright.tar.zst` is a **part**
-- a repository stores finished parts
-- the live machine is the **system**
+| Binary | Role |
+|--------|------|
+| `wbuild` | manufacture parts from plans and maintain the local archive inventory |
+| `wright` | apply locally available parts to the live system |
 
-See [terminology.md](terminology.md) for the canonical glossary.
+## Data Flow
 
-## Binary Split
-
-| Binary | Role | Domain |
-|--------|------|--------|
-| **`wbuild`** | Part Constructor | Transforms `plan.toml` → `.wright.tar.zst` via sandboxed builds |
-| **`wrepo`** | Repository Manager | Manages indices (`wright.index.toml`) and source configuration |
-| **`wright`** | System Administrator | Manages installed parts, the SQLite database, and system health |
-
-Each binary owns a distinct phase of the part lifecycle. They share the
-core library (`src/lib.rs`) but never overlap in responsibility:
-
-```
-  wbuild                    wrepo                      wright
- ┌────────────────┐     ┌──────────────────┐     ┌──────────────────┐
- │ plan.toml      │     │ .wright.tar.zst  │     │ wright.index.toml│
- │      ↓         │     │      ↓           │     │      ↓           │
- │ resolve deps   │     │ scan archives    │     │ resolve by name  │
- │ sandbox build  │────►│ generate index   │────►│ install/upgrade  │
- │ create archive │     │ manage sources   │     │ track in database│
- └────────────────┘     └──────────────────┘     └──────────────────┘
-      builder/               repo/                 transaction/
-      dockyard/                                    database/
-      plan/                                        query/
+```text
+plan.toml -> wbuild run -> .wright.tar.zst -> inventory.db -> wright install/upgrade/apply
 ```
 
-## Module Map
+## Core Modules
 
-```
+```text
 src/
 ├── bin/
-│   ├── wright.rs                   # System management CLI
-│   ├── wbuild.rs                   # Build system CLI
-│   └── wrepo.rs                    # Repository management CLI
-├── lib.rs                          # Library root
-├── config.rs                       # GlobalConfig and AssembliesConfig
-├── plan/
-│   └── manifest.rs                 # plan.toml parsing, validation, replaces/conflicts
-├── part/
-│   ├── version.rs                  # Version comparison logic
-│   ├── archive.rs                  # .wright.tar.zst creation and PARTINFO management
-│   └── fhs.rs                      # Filesystem Hierarchy Standard validation
-├── builder/
-│   ├── mod.rs                      # The Build engine
-│   ├── orchestrator.rs             # Multi-target scheduling, upward/downward recursion
-│   ├── lifecycle.rs                # Stage execution pipeline
-│   ├── executor.rs                 # Script execution (Shell, Python, etc.)
-│   ├── variables.rs                # Variable substitution engine
-│   └── mvp.rs                      # MVP phase handling for cycle breaking
-├── database/
-│   ├── mod.rs                      # SQLite interface, integrity checks, shadowing records
-│   └── schema.rs                   # Database schema and migrations
-├── transaction/
-│   ├── mod.rs                      # Public entry points and shared helpers
-│   ├── install.rs                  # First-install flow (staging dir, parallel file ops)
-│   ├── upgrade.rs                  # Upgrade flow (config preservation, file delta removal)
-│   ├── remove.rs                   # Remove and cascade-remove logic
-│   ├── verify.rs                   # Installed-file integrity verification
-│   ├── fs.rs                       # File install primitives (rename-or-copy, parallel workers)
-│   ├── hooks.rs                    # Hook script execution
-│   └── rollback.rs                 # Journal-based crash-safe rollback
-├── repo/
-│   ├── mod.rs                      # Repository types
-│   ├── index.rs                    # Index generation and reading (wright.index.toml)
-│   └── source.rs                   # Source configuration, resolver, version picking
-├── query/
-│   └── mod.rs                      # Analysis tools (health checks, tree rendering)
-├── dockyard/                       # Sandbox isolation (bubblewrap)
-└── util/                           # Helpers (checksum, compress, download)
+│   ├── wbuild.rs
+│   └── wright.rs
+├── builder/      # build orchestration and lifecycle execution
+├── config.rs     # global config and assembly definitions
+├── database/     # installed-system DB
+├── dockyard/     # sandbox isolation
+├── inventory/    # local archive inventory DB + resolver
+├── part/         # archive format, versions, FHS validation
+├── plan/         # plan parsing and validation
+├── query/        # system analysis
+├── transaction/  # install / upgrade / remove / verify
+└── util/         # helpers
 ```
 
-### Which binary uses which modules
+## Responsibilities
 
-| Module | `wbuild` | `wrepo` | `wright` |
-|--------|:--------:|:-------:|:--------:|
-| `builder/` | primary | — | — |
-| `dockyard/` | primary | — | — |
-| `plan/` | primary | — | — |
-| `repo/index` | — | primary | read-only |
-| `repo/source` | — | primary | read-only |
-| `database/` | read-only | read-only | primary |
-| `transaction/` | via `-i` | — | primary |
-| `part/archive` | create | scan | extract |
-| `query/` | — | — | primary |
-| `config` | full | partial | full |
+### `wbuild`
 
-## Data Flow: Build (wbuild)
+- resolve plans and assemblies
+- expand dependency and rebuild scope
+- execute sandboxed stages
+- create `.wright.tar.zst` archives
+- register build outputs in `inventory.db`
+- prune stale archives
 
-```
-plan.toml → PlanManifest
-  → wbuild run
-      → resolve targets
-      → expand missing deps (Upward, build ops only)
-      → expand transitive rebuilds (Downward, build ops only)
-      → detect dependency cycles (Tarjan SCC)
-          → if cycle found and MVP overrides declared (inline [mvp.dependencies] or sibling mvp.toml):
-              inject two-pass plan ({pkg}:bootstrap build:mvp → rest → {pkg}:full build:full)
-          → if cycle found and no MVP overrides: error with cycle description
-      → log scheduling plan (build / relink / rebuild / build:mvp / build:full)
-          (suppressed with --quiet; subprocess output echoed only with --verbose and single job)
-      → parallel execution (topology-ordered):
-          → MVP pass: Builder::build() with WRIGHT_BUILD_PHASE=mvp, no cache write
-          → full pass: Builder::build() force=true, normal cache
-          → archive::create_archive() → PARTINFO (runtime deps + relations)
-      → output: .wright.tar.zst archives in components_dir
-      → if --install:
-          → install each completed package directly to host / between build waves
-          → run install/upgrade hooks immediately on each package install
-```
+### `wright`
 
-### Dependency cascade rules
+- resolve local part names from `inventory.db`
+- install and upgrade archives transactionally
+- remove parts and cascade orphan cleanup
+- verify and inspect the live system
+- run `apply` as the high-level orchestrator:
+  resolve targets, execute build waves, and install each wave before advancing
 
-`wbuild resolve` performs dependency-driven expansion and outputs plan names for piping into `wbuild run`. Scope flags (`--self`, `--deps`, `--dependents`) are composable; `--deps=all` and `--dependents=all` are force-rebuild escalators that extend the scope to already-installed or non-link dependents. `wbuild run` is a pure builder — it builds exactly the targets it receives. `checksum`, `fetch`, and `check` skip all expansion entirely.
+## Shared State
 
-See [dependencies.md](dependencies.md) for the conceptual model and [cli-reference.md](cli-reference.md) for the full flag reference.
-
-## Data Flow: Index (wrepo)
-
-```
-wrepo sync [dir]
-  → scan dir for .wright.tar.zst files
-  → for each archive: extract .PARTINFO metadata
-  → collect: name, version, release, epoch, arch, description,
-             dependencies, provides, conflicts, replaces,
-             filename, sha256, install_size
-  → write wright.index.toml
-
-wrepo source add/remove/list
-  → read/write /etc/wright/repos.toml
-
-wrepo list/search
-  → read wright.index.toml from all configured sources
-  → cross-reference with installed database for [installed] tags
-```
-
-## Data Flow: Management (wright)
-
-```
-wright install <name>
-  → resolver reads wright.index.toml from configured sources
-  → picks latest version (or user-specified version)
-  → locates .wright.tar.zst archive on disk
-
-.wright.tar.zst → transaction::install_part_with_origin()
-  → extract archive to staging dir (same filesystem as /) + stream SHA-256
-  → parse .PARTINFO → handle replaces (auto-uninstall) → check conflicts
-  → run pre_install hook (if any)
-  → Phase 1 (serial): create directories
-  → Phase 2 (parallel, rayon): rename-or-copy files and symlinks to /
-      rename(2) used when staging dir is on same filesystem (zero data copy)
-      falls back to read+write copy on EXDEV (cross-device)
-  → record DB rows: part, files, dependencies, shadows
-  → run post_install hook (if any)
-  → commit rollback journal
-
-.wright.tar.zst → transaction::upgrade_part()
-  → extract archive to staging dir + stream SHA-256
-  → parse .PARTINFO → version check (skip if not newer, unless --force)
-  → conflict check: batch DB query (≤999 paths/query) → find_owners_batch()
-  → backup overlapping files to temp dir for rollback
-  → run pre_install hook (if any)
-  → copy new files to / (config preservation: write as .wnew if unchanged)
-  → remove old files not in new package (batch other-owner check via get_other_owners_batch())
-  → update DB rows: part, files, dependencies, shadows
-  → run post_upgrade hook (if any)
-  → commit rollback journal
-
-wright remove
-  → check link-dependents → block if CRITICAL
-  → batch file-owner check via get_other_owners_batch() → skip shared files
-  → delete unshared files, remove DB rows
-
-wright remove --cascade
-  → compute orphan dependencies (origin = 'dependency', not needed by others)
-  → remove target → remove orphan deps leaf-first
-```
-
-## Cross-Tool Coordination
-
-The three tools coordinate through **shared file formats**, not direct
-communication:
-
-| Artifact | Written by | Read by | Location |
-|----------|-----------|---------|----------|
-| `plan.toml` | user | `wbuild` | `plans_dir` |
-| `.wright.tar.zst` | `wbuild` | `wrepo`, `wright` | `components_dir` |
-| `wright.index.toml` | `wrepo` | `wright` | alongside archives |
-| `/etc/wright/repos.toml` | `wrepo` | `wright`, `wrepo` | system config |
-| `parts.db` (SQLite) | `wright` | `wbuild` (read), `wrepo` (read) | `db_path` |
-| `repo.db` (SQLite) | `wrepo`, `wbuild` | `wright`, `wrepo` | `repo_db_path` |
-
-`wbuild` reads the database to check which parts are already installed
-(for dependency expansion and session planning). With `-i`, it installs each
-completed package directly into the host root and updates the host `parts.db`
-between build waves, so later builds in the same run immediately see newly
-installed outputs. `wrepo` reads the database to annotate `[installed]` tags in
-listings.
+| Artifact | Written by | Read by |
+|----------|-----------|---------|
+| `plan.toml` | user | `wbuild`, `wright apply` |
+| `.wright.tar.zst` | `wbuild` | `wright` |
+| `parts.db` | `wright` | `wright`, `wbuild resolve` |
+| `inventory.db` | `wbuild` | `wbuild`, `wright` |

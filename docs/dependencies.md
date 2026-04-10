@@ -79,24 +79,27 @@ This results in two scheduled entries for that part:
 
 If no MVP definition exists, Wright stops and reports the cycle.
 
-**Automatic Install With `wbuild run -i`**
-If you pass `-i` or `--install`, Wright installs each part as soon as it finishes building.
+**Applying Plans to the Live System**
+`wbuild` and `wright` have separate roles:
 
-- Installation is serialized to avoid parallel installs.
-- The main part is installed first.
-- Split parts are installed afterward, if they exist.
+- `wbuild` builds archives from plans.
+- `wright` installs archives onto the live system.
+
+For the common source-first workflow, use `wright apply`. It resolves plans or
+assemblies, checks the local archive inventory, builds anything missing or
+outdated, and then installs the requested outputs.
 
 **Common Examples**
-Example: Build and install only the listed target.
+Example: Build only the listed target.
 
 ```bash
-wbuild run -i curl
+wbuild run curl
 ```
 
-Example: Build and install while syncing missing/outdated upstream dependencies.
+Example: Build and install from plans while syncing missing/outdated upstream dependencies.
 
 ```bash
-wbuild resolve curl --self --deps=sync | wbuild run -i
+wright apply curl
 ```
 
 Example: Force a deep rebuild of dependencies.
@@ -105,17 +108,17 @@ Example: Force a deep rebuild of dependencies.
 wbuild resolve openssl --self --deps=all | wbuild run --force
 ```
 
-Example: Rebuild all reverse dependents (ABI-sensitive).
+Example: Rebuild all reverse dependents (ABI-sensitive), then install the
+resulting archives from stdin.
 
 ```bash
-wbuild resolve zlib --self --dependents=all --depth=0 | wbuild run --force -i
+wbuild resolve zlib --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
 ```
 
 **Install Origin Tracking**
 Wright tracks why each part was installed using the `origin` field:
 
 - `manual`: The user directly requested this part via `wright install` — never auto-removable.
-- `build`: Installed via `wbuild run -i` as a user-specified build target.
 - `dependency`: Automatically pulled in to satisfy another part's dependencies — eligible for orphan cleanup.
 
 This distinction powers two features:
@@ -123,6 +126,9 @@ This distinction powers two features:
 - `wright remove --cascade`: When removing a part, also remove its dependencies that have `dependency` origin and are no longer needed by any other part.
 - `wright list --orphans`: Show `dependency`-origin parts that are no longer needed.
 
-Origins follow a promotion hierarchy: `dependency → build → manual`. If you explicitly install a part that was previously pulled in as a dependency or built via `wbuild -i`, wright promotes it to `manual`. Upgrading via `wright upgrade` or `wbuild run -icf` preserves the existing origin.
+Origins follow a promotion hierarchy: `dependency → manual`. If you explicitly
+install or apply a part that was previously pulled in as a dependency, Wright
+promotes it to `manual`. Upgrading via `wright upgrade` preserves the existing
+origin.
 
 If you want a deeper view that maps these steps to code paths, see `docs/architecture.md`.

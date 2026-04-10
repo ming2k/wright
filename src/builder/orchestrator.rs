@@ -29,6 +29,16 @@ use resolver::resolve_targets;
 
 pub use resolver::setup_resolver;
 
+#[derive(Debug, Clone)]
+pub struct BuildExecutionPlan {
+    name_to_path: HashMap<String, PathBuf>,
+    deps_map: HashMap<String, Vec<String>>,
+    build_set: HashSet<String>,
+    bootstrap_excluded: HashMap<String, Vec<String>>,
+    rebuild_reasons: HashMap<String, RebuildReason>,
+    batches: Vec<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DependencyMode {
     #[default]
@@ -54,7 +64,7 @@ pub struct ResolveOptions {
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
     pub include_self: bool,
-    /// Whether to mark resolved deps for installation (affects install-reason tracking).
+    /// Whether runtime dependencies should also be considered while expanding deps.
     pub install: bool,
 }
 
@@ -80,11 +90,12 @@ pub struct BuildOptions {
     /// Only parts with no dependency relationship (direct or indirect)
     /// are scheduled simultaneously. 0 = auto-detect CPU count.
     pub dockyards: usize,
-    pub install: bool,
     pub verbose: bool,
     pub quiet: bool,
     /// --mvp: build using mvp.toml deps without requiring a cycle to trigger it.
     pub mvp: bool,
+    /// Print produced archive paths to stdout.
+    pub print_archives: bool,
     /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
     /// The scheduler computes this per launched task from the currently active
     /// dockyard count (`total_cpus / active_dockyards`) so resource share adapts as
@@ -180,10 +191,11 @@ pub fn resolve_build_set(
     Ok(names)
 }
 
-/// Run a multi-target build with dependency ordering and parallel execution.
-/// Targets are plan names, paths, or @assemblies — no dependency expansion is performed.
-/// Use `resolve_build_set` (via `wbuild resolve`) to expand deps/dependents before calling this.
-pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
+pub fn create_execution_plan(
+    config: &GlobalConfig,
+    targets: Vec<String>,
+    opts: &BuildOptions,
+) -> Result<BuildExecutionPlan> {
     let resolver = setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
     let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
@@ -194,17 +206,12 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         ));
     }
 
-    if opts.lint {
-        return lint_dependency_graph(&plans_to_build, &all_plans, build_dep_map);
-    }
-
     let reasons: HashMap<String, RebuildReason> = plans_to_build
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
         .map(|m| (m.plan.name, RebuildReason::Explicit))
         .collect();
 
-    // 2. Build dependency map
     let mut graph = build_dep_map(
         &plans_to_build,
         opts.checksum,
@@ -213,14 +220,81 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         &all_plans,
     )?;
 
-    // 2b. Detect and resolve bootstrap cycles (skip when --mvp: already using MVP deps)
     if opts.is_build_op() && !opts.mvp {
         inject_bootstrap_passes(&mut graph)?;
     }
 
+    let mut grouped_batches: Vec<Vec<String>> = Vec::new();
+    for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map) {
+        if grouped_batches.len() <= batch {
+            grouped_batches.resize_with(batch + 1, Vec::new);
+        }
+        grouped_batches[batch].push(name);
+    }
+
+    Ok(BuildExecutionPlan {
+        name_to_path: graph.name_to_path,
+        deps_map: graph.deps_map,
+        build_set: graph.build_set,
+        bootstrap_excluded: graph.bootstrap_excluded,
+        rebuild_reasons: graph.rebuild_reasons,
+        batches: grouped_batches,
+    })
+}
+
+impl BuildExecutionPlan {
+    pub fn batches(&self) -> &[Vec<String>] {
+        &self.batches
+    }
+
+    pub fn plan_path_for_task(&self, task_name: &str) -> Option<&PathBuf> {
+        self.name_to_path.get(task_name)
+    }
+
+    pub fn label_for_task(&self, task_name: &str, opts: &BuildOptions) -> &'static str {
+        construction_plan_label(task_name, &self.build_set, &self.rebuild_reasons, opts)
+    }
+
+    pub fn execute_batch(
+        &self,
+        config: &GlobalConfig,
+        batch_index: usize,
+        opts: &BuildOptions,
+    ) -> Result<()> {
+        let batch = self
+            .batches
+            .get(batch_index)
+            .ok_or_else(|| WrightError::BuildError(format!("unknown build batch {}", batch_index)))?;
+        let batch_set: HashSet<String> = batch.iter().cloned().collect();
+        execute_builds(
+            config,
+            &self.name_to_path,
+            &self.deps_map,
+            &batch_set,
+            opts,
+            &self.bootstrap_excluded,
+            None,
+            &HashSet::new(),
+        )
+    }
+}
+
+/// Run a multi-target build with dependency ordering and parallel execution.
+/// Targets are plan names, paths, or @assemblies — no dependency expansion is performed.
+/// Use `resolve_build_set` (via `wbuild resolve`) to expand deps/dependents before calling this.
+pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
+    if opts.lint {
+        let resolver = setup_resolver(config)?;
+        let all_plans = resolver.get_all_plans()?;
+        let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
+        return lint_dependency_graph(&plans_to_build, &all_plans, build_dep_map);
+    }
+
+    let plan = create_execution_plan(config, targets, &opts)?;
+
     // --- Session management for --resume ---
     let session_hash = if opts.resume.is_some() || opts.is_build_op() {
-        Some(compute_session_hash(&graph.build_set))
+        Some(compute_session_hash(&plan.build_set))
     } else {
         None
     };
@@ -243,7 +317,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
                         "resuming session {} ({}/{} completed)",
                         &hash[..12.min(hash.len())],
                         completed.len(),
-                        graph.build_set.len()
+                        plan.build_set.len()
                     );
                     (true, completed)
                 } else {
@@ -260,39 +334,32 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
     // --- Build Plan Summary ---
     if !opts.quiet {
-        for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map) {
-            if session_completed.contains(&name) {
+        for (batch, tasks) in plan.batches.iter().enumerate() {
+            for name in tasks {
+                if session_completed.contains(name) {
+                    info!(
+                        "skipping batch {}: {} (completed in previous run)",
+                        batch,
+                        name.trim_end_matches(":bootstrap"),
+                    );
+                    continue;
+                }
+                let label = plan.label_for_task(name, &opts);
                 info!(
-                    "skipping batch {}: {} (completed in previous run)",
+                    "scheduling batch {} {}: {}",
                     batch,
+                    label,
                     name.trim_end_matches(":bootstrap"),
                 );
-                continue;
             }
-            let label =
-                construction_plan_label(&name, &graph.build_set, &graph.rebuild_reasons, &opts);
-            info!(
-                "scheduling batch {} {}: {}",
-                batch,
-                label,
-                name.trim_end_matches(":bootstrap"),
-            );
         }
     }
-
-    // All targets passed to run_build are considered user-specified (for origin tracking).
-    // Dependency expansion (if any) was already handled by `wbuild resolve`.
-    let user_target_names: HashSet<String> = plans_to_build
-        .iter()
-        .filter_map(|p| PlanManifest::from_file(p).ok())
-        .map(|m| m.plan.name)
-        .collect();
 
     // Create/update session in DB for build operations.
     let active_session_hash = if let Some(ref hash) = session_hash {
         if opts.is_build_op() {
             if let Ok(db) = Database::open(&config.general.db_path) {
-                let packages: Vec<String> = graph.build_set.iter().cloned().collect();
+                let packages: Vec<String> = plan.name_to_path.keys().cloned().collect();
                 let _ = db.create_session(hash, &packages);
             }
             Some(hash.clone())
@@ -306,12 +373,11 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     // 3. Execute builds
     let result = execute_builds(
         config,
-        &graph.name_to_path,
-        &graph.deps_map,
-        &graph.build_set,
+        &plan.name_to_path,
+        &plan.deps_map,
+        &plan.build_set,
         &opts,
-        &graph.bootstrap_excluded,
-        &user_target_names,
+        &plan.bootstrap_excluded,
         active_session_hash.as_deref(),
         &session_completed,
     );

@@ -1,190 +1,64 @@
-# Repositories
+# Local Archive Inventory
 
-Wright resolves parts by name from configured **sources** — directories
-containing `.wright.tar.zst` archives. Repository metadata is stored in
-SQLite at `/var/lib/wright/db/repo.db` by default.
+This document keeps the old path name for compatibility, but Wright no longer
+has a separate publish/index layer.
 
-Repository management is handled by the dedicated `wrepo` tool.
+## Current Model
 
-## Concepts
+- `wbuild` builds `.wright.tar.zst` archives into `components_dir`
+- `wbuild` registers each successful build in `inventory_db_path`
+- `wright` resolves part names from that local inventory
 
-| Term | What it is |
-|------|-----------|
-| **Source** | A configured directory (local) or URL (remote, future) where wright looks for parts |
-| **Repo DB** | The SQLite catalog (`repo.db`) populated from part `.PARTINFO` metadata |
-| **Resolver** | The component that finds a part archive by name — checks the repo DB first, falls back to scanning archives |
+There is no separate indexing tool, no source list, and no sync step.
 
 ## Quick Start
 
-The default local repository is `components_dir` (`/var/lib/wright/components`
-by default). Parts built by `wbuild` are placed there automatically, so the
-simplest workflow is:
-
 ```bash
-# 1. Build parts (output goes to components_dir)
 wbuild run curl
-
-# 2. Sync the default repo into SQLite
-wrepo sync
-
-# 3. Install by name
 wright install curl
 ```
 
-For a custom repo directory, specify the path explicitly:
+For plan-first maintenance, prefer:
 
 ```bash
-mkdir -p /var/lib/wright/myrepo
-cp *.wright.tar.zst /var/lib/wright/myrepo/
-wrepo sync /var/lib/wright/myrepo
-wrepo source add myrepo --path=/var/lib/wright/myrepo
-wright install curl
+wright apply @base
+wright apply curl
 ```
 
-## Managing Sources
+`wright apply` checks the local inventory first, builds any missing or outdated
+archives from plans, and then installs the requested outputs.
 
-Sources are stored in `/etc/wright/repos.toml`. Use the `wrepo source`
-commands to manage them without editing the file by hand.
+## Inventory Records
 
-### Add a source
+The local inventory stores metadata for built archives, including:
+
+- name, version, release, epoch, architecture
+- description and runtime dependency metadata from `.PARTINFO`
+- archive path and SHA-256
+- the originating plan and build identity used to detect stale outputs
+
+Multiple versions of the same part can exist in the inventory. `wright install`
+and `wright upgrade` select from those locally registered versions.
+
+## Cleaning Old Archives
+
+Use `wbuild prune` to reconcile the archive store with the inventory:
 
 ```bash
-wrepo source add myrepo --path=/var/lib/wright/myrepo
-wrepo source add myrepo --path=/var/lib/wright/myrepo --priority=300
+wbuild prune --untracked
+wbuild prune --latest --apply
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--path=<PATH>` | *(required)* | Local directory path |
-| `--priority=<N>` | `100` | Higher number = preferred when the same part exists in multiple sources |
+- `--untracked` removes files present on disk but absent from `inventory.db`
+- `--latest` keeps only the newest tracked archive per part name while
+  preserving versions that are currently installed
+- add `--apply` to perform deletions; otherwise Wright prints a dry-run report
 
-### List sources
+## Low-Level Pipeline
+
+If you want explicit control over build and install phases, print archive paths
+from `wbuild` and pipe them into `wright install`:
 
 ```bash
-wrepo source list
-# myrepo          local    pri=300  /var/lib/wright/myrepo
+wbuild resolve openssl --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
 ```
-
-### Remove a source
-
-```bash
-wrepo source remove myrepo
-```
-
-## Indexing
-
-`wrepo sync` imports `.wright.tar.zst` metadata into the repo DB. `wbuild`
-already registers newly built parts there directly, so `sync` is mainly for
-existing or externally copied archives.
-
-```bash
-wrepo sync                          # index the default components_dir
-wrepo sync ./components             # index a specific directory
-```
-
-**Re-run `wrepo sync` whenever you add or update archives outside `wbuild`.**
-
-The repo DB records for each part:
-- Name, version, release, epoch, architecture
-- Description
-- Runtime dependencies
-- Provides, conflicts, replaces
-- Filename and SHA-256 checksum
-
-A single part name can have multiple versions in the repo DB. The resolver
-collects all versions and picks the latest (or a user-specified version).
-
-## Listing and Searching
-
-```bash
-wrepo list                   # all indexed parts
-wrepo list zlib              # all available versions of zlib
-wrepo search zlib            # search by keyword (name + description)
-wrepo search ssl             # search by keyword (name + description)
-```
-
-Output marks the currently installed version with `[installed]`:
-
-```
-gcc 15.1.0-1 (x86_64) [installed]
-gcc 14.2.0-3 (x86_64)
-gcc 14.2.0-2 (x86_64)
-```
-
-## Removing Parts from the Repository
-
-```bash
-wrepo remove zlib 1.3.1             # remove DB entry only
-wrepo remove zlib 1.3.1-2 --purge   # also delete the archive file
-```
-
-## Upgrading
-
-With an indexed repository, upgrades work by name:
-
-```bash
-wright upgrade gcc                       # upgrade to the latest available version
-wright upgrade gcc --version=14.2.0      # switch to a specific version
-wright sysupgrade                        # upgrade all installed parts to latest
-wright sysupgrade -n                     # dry-run: preview without changes
-```
-
-The resolver finds all available versions across configured sources and picks
-the latest (or the version specified with `--version`). When `--version` is
-given, `--force` is implied so downgrades work without an extra flag.
-
-## Multiple Repos
-
-When the same part exists in multiple sources, the source with the
-higher `priority` wins. This lets you layer a local build repo on top of
-a shared team repo:
-
-```bash
-wrepo source add team   --path=/mnt/shared/wright-repo --priority=100
-wrepo source add local  --path=/var/lib/wright/myrepo   --priority=300
-```
-
-Parts you build locally (priority 300) shadow the team repo (priority 100).
-
-## Typical Workflows
-
-### Personal build-and-install
-
-```bash
-wbuild run -i curl              # build and install in one step (no index needed)
-```
-
-### Build, index, upgrade
-
-```bash
-wbuild run gcc                  # build updated gcc
-wrepo sync                      # re-index
-wright upgrade gcc              # upgrade to the newly built version
-```
-
-### Shared team repo
-
-```bash
-# Builder machine
-wbuild run @core
-wrepo sync
-
-# Developer machines
-wrepo source add builds --path=/mnt/nfs/wright-components
-wright install @base
-```
-
-### Assembly build with repo
-
-```bash
-wbuild resolve @qemu --self --deps=sync | wbuild run -i # build and install, syncing missing/outdated deps
-wrepo sync                      # update the index
-```
-
-## Tool Reference
-
-| Tool | Role |
-|------|------|
-| `wright` | System administrator — install, remove, upgrade, query |
-| `wbuild` | Part builder — build from plan.toml |
-| `wrepo` | Repository manager — index, search, source management |

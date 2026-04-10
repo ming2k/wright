@@ -236,7 +236,7 @@ wbuild resolve gtk4 --deps | wbuild run
 Build everything — deps, the part, and downstream link dependents:
 
 ```bash
-wbuild resolve gtk4 --self --deps --dependents | wbuild run -i
+wbuild resolve gtk4 --self --deps --dependents | wbuild run
 ```
 
 ---
@@ -247,19 +247,19 @@ A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
 # Update the library, then cascade to all installed link dependents
-wbuild resolve libfoo --self --dependents | wbuild run --force -i
+wbuild resolve libfoo --self --dependents | wbuild run --force --print-archives | wright install
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wbuild resolve libfoo --self --dependents=all --depth=0 | wbuild run --force -i
+wbuild resolve libfoo --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wbuild resolve libfoo --self --dependents --depth=2 | wbuild run --force -i
+wbuild resolve libfoo --self --dependents --depth=2 | wbuild run --force --print-archives | wright install
 ```
 
 ---
@@ -271,27 +271,30 @@ without re-building parts that already succeeded:
 
 ```bash
 # First run — fails on package 15 of 30:
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --force -i
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --force
 # Output: Build session: a1b2c3...  (resume with: --resume a1b2c3...)
 
 # Resume — skips the 14 already-completed packages:
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume
 ```
 
 `--resume` tracks progress in a build session stored in the database. Each
-successfully built and installed part is recorded. On resume, those parts are
-skipped and the rest are rebuilt.
+successfully built part is recorded. On resume, those parts are skipped and the
+rest are rebuilt.
 
-With `-i`, completed packages are installed directly to host `/` between
-dependency waves. Later builds in the same session immediately see the
-installed outputs. Install/upgrade hooks run as each package is installed.
+If you need to install the rebuilt outputs afterward, print the archive paths
+and feed them to `wright install`:
+
+```bash
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume --print-archives | wright install
+```
 
 The session hash is deterministic — running the same `wbuild resolve | wbuild run`
 pipeline produces the same hash, so `--resume` auto-detects the session. You can
 also pass the hash explicitly:
 
 ```bash
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume a1b2c3... -i
+wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume a1b2c3...
 ```
 
 Sessions are cleaned up automatically when all parts complete successfully.
@@ -309,8 +312,8 @@ plans are deduplicated.
 ```bash
 wbuild run @base                    # build all plans in the "base" assembly
 wbuild run @base @devel mypackage   # combine assemblies and individual plans
-wbuild run -i @base                 # build and install the requested assembly
-wbuild resolve @base --self --deps=sync | wbuild run -i # also sync missing/outdated upstream deps
+wright apply @base                  # build missing/outdated archives, then install the assembly
+wbuild resolve @base --self --deps=sync | wbuild run # also sync missing/outdated upstream deps
 ```
 
 ---

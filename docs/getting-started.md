@@ -2,46 +2,30 @@
 
 ## Prerequisites
 
-- **Rust** stable toolchain — [rustup.rs](https://rustup.rs/)
-- **Linux** x86_64, kernel 5.10+
-- **bubblewrap** >= 0.5.0 — for isolated dockyard builds
-- **bash**
+- Rust stable
+- Linux x86_64
+- `bubblewrap`
+- `bash`
 
-## Build and Install
+## Build
 
-```
+```bash
 git clone <repo-url>
 cd wright
 cargo build --release
-install -m755 target/release/wright  /usr/local/bin/
-install -m755 target/release/wbuild  /usr/local/bin/
-install -m755 target/release/wrepo   /usr/local/bin/
+install -m755 target/release/wbuild /usr/local/bin/
+install -m755 target/release/wright /usr/local/bin/
 ```
-
-Three binaries, three roles:
-
-| Tool | Role |
-|------|------|
-| `wbuild` | Build parts from `plan.toml` |
-| `wrepo` | Manage the part index and sources |
-| `wright` | Install, remove, upgrade, query installed parts |
 
 ## Mental Model
 
-Wright uses a single metaphor throughout the project: treat the computer as the Ship of Theseus while it is still sailing.
+- `wbuild` turns plans into local part archives.
+- `wbuild` registers those archives in a local inventory DB.
+- `wright` installs and upgrades the live system from those local archives.
+- `wright apply` is the high-level source-first workflow: resolve the build graph,
+  build missing or outdated waves, and install each wave before continuing.
 
-- A `plan.toml` is the blueprint for one replacement **part**.
-- A built `.wright.tar.zst` is the finished **part**.
-- `wrepo` catalogs finished parts in a repository.
-- `wright` swaps parts onto the live system.
-
-If you keep that pipeline in mind, most command names become self-explanatory. See [terminology.md](terminology.md) for the full glossary.
-
-## Configuration
-
-Wright works with no config file. To customize, create `/etc/wright/wright.toml`. See [configuration.md](configuration.md).
-
-## Your First Part
+## First Part
 
 Create `plans/hello/plan.toml`:
 
@@ -74,37 +58,31 @@ dockyard = "none"
 script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 ```
 
-`staging` installs files into `${PART_DIR}`. The default pipeline then runs a
-final `fabricate` stage before Wright validates and archives the resulting
-part; most simple plans can leave `fabricate` undefined.
-
-### Build, index, install
+Build and install it:
 
 ```bash
-wbuild run plans/hello                                  # build
-wrepo sync                                              # index
-wright install hello                                    # install by name
+wbuild run plans/hello
+wright install hello
 ```
 
-Or use the shortcut to build and install in one step:
+Or let Wright drive the whole source-first flow:
 
 ```bash
-wbuild run -i plans/hello                               # build + install
+wright apply plans/hello
 ```
 
-### Verify and remove
+## Verify and Remove
 
 ```bash
-wright query hello           # show part info
-wright files hello           # list installed files
-wright verify hello          # check file integrity
-wright remove hello          # uninstall
+wright query hello
+wright files hello
+wright verify hello
+wright remove hello
 ```
 
-## Next Steps
+## Next
 
-- [Writing Plans](writing-plans.md) — complete plan.toml reference
-- [CLI Reference](cli-reference.md) — all commands and flags
-- [Usage Guide](usage.md) — build options, assemblies, tool coordination
-- [Repositories](repositories.md) — indexing, sources, multi-repo setups
-- [Configuration](configuration.md) — customize wright's behavior
+- [Usage Guide](usage.md)
+- [CLI Reference](cli-reference.md)
+- [Configuration](configuration.md)
+- [Writing Plans](writing-plans.md)

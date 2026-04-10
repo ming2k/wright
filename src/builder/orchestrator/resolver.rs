@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tracing::warn;
 
 use crate::config::{AssembliesConfig, GlobalConfig};
 use crate::error::{Result, WrightError, WrightResultExt};
+use crate::inventory::resolver::LocalResolver;
 use crate::plan::manifest::PlanManifest;
-use crate::repo::source::SimpleResolver;
 
-pub fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
+pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
     let mut all_assemblies = AssembliesConfig {
         assemblies: HashMap::new(),
     };
@@ -19,21 +19,19 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
     if let Ok(f) = AssembliesConfig::load_all(&config.general.plans_dir.join("assemblies")) {
         all_assemblies.assemblies.extend(f.assemblies);
     }
-    if let Ok(f) = AssembliesConfig::load_all(Path::new("./assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    if let Ok(f) = AssembliesConfig::load_all(Path::new("../wright-dockyard/assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
+    for extra_dir in &config.general.extra_plans_dirs {
+        if let Ok(f) = AssembliesConfig::load_all(&extra_dir.join("assemblies")) {
+            all_assemblies.assemblies.extend(f.assemblies);
+        }
     }
 
-    let mut resolver = SimpleResolver::new(config.general.cache_dir.clone());
-    resolver.download_timeout = config.network.download_timeout;
-    resolver.set_repo_db_path(config.general.repo_db_path.clone());
+    let mut resolver = LocalResolver::new();
+    resolver.set_inventory_db_path(config.general.inventory_db_path.clone());
     resolver.load_assemblies(all_assemblies);
     resolver.add_plans_dir(config.general.plans_dir.clone());
-    resolver.add_plans_dir(PathBuf::from("../wright-dockyard/plans"));
-    resolver.add_plans_dir(PathBuf::from("../plans"));
-    resolver.add_plans_dir(PathBuf::from("./plans"));
+    for extra_dir in &config.general.extra_plans_dirs {
+        resolver.add_plans_dir(extra_dir.clone());
+    }
 
     Ok(resolver)
 }
@@ -41,7 +39,7 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<SimpleResolver> {
 pub(super) fn resolve_targets(
     targets: &[String],
     all_plans: &HashMap<String, PathBuf>,
-    resolver: &SimpleResolver,
+    resolver: &LocalResolver,
 ) -> Result<HashSet<PathBuf>> {
     let mut plans_to_build = HashSet::new();
 

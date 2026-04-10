@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{BufRead, IsTerminal, Write};
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -8,8 +9,9 @@ use owo_colors::OwoColorize;
 use tracing_subscriber::EnvFilter;
 
 use wright::cli::wright::{Cli, Commands, PrefixModeArg};
-use wright::config::{GlobalConfig, KitsConfig};
+use wright::config::GlobalConfig;
 use wright::database::Database;
+use wright::inventory::resolver::{pick_latest, pick_version, LocalResolver};
 use wright::query;
 use wright::query::PrefixMode;
 use wright::transaction;
@@ -45,6 +47,228 @@ fn parse_prefix_mode(mode: PrefixModeArg) -> PrefixMode {
     }
 }
 
+fn setup_local_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
+    let mut resolver = wright::builder::orchestrator::setup_resolver(config)?;
+    resolver.add_search_dir(config.general.components_dir.clone());
+    if let Ok(cwd) = std::env::current_dir() {
+        resolver.add_search_dir(cwd);
+    }
+    Ok(resolver)
+}
+
+fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
+    if !std::io::stdin().is_terminal() {
+        for line in std::io::stdin().lock().lines() {
+            let line = line.context("failed to read install target from stdin")?;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                args.push(trimmed.to_string());
+            }
+        }
+    }
+    Ok(args)
+}
+
+fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Vec<PathBuf>> {
+    let mut pkg_paths = Vec::new();
+    for arg in args {
+        let path = PathBuf::from(arg);
+        if path.exists() {
+            pkg_paths.push(path);
+            continue;
+        }
+
+        match resolver.resolve(arg)? {
+            Some(resolved) => pkg_paths.push(resolved.path),
+            None => anyhow::bail!(
+                "'{}' is not a file and could not be resolved from the local archive inventory",
+                arg
+            ),
+        }
+    }
+    Ok(pkg_paths)
+}
+
+fn resolve_plan_targets(
+    targets: &[String],
+    resolver: &LocalResolver,
+) -> Result<Vec<PathBuf>> {
+    let all_plans = resolver.get_all_plans()?;
+    let mut plans_to_build = HashSet::new();
+
+    for target in targets {
+        let clean_target = target.trim();
+        if clean_target.is_empty() {
+            continue;
+        }
+
+        if let Some(assembly_name) = clean_target.strip_prefix('@') {
+            let paths = resolver.resolve_assembly(assembly_name)?;
+            if paths.is_empty() {
+                anyhow::bail!("assembly not found or empty: {}", assembly_name);
+            }
+            for path in paths {
+                plans_to_build.insert(path);
+            }
+            continue;
+        }
+
+        if let Some(path) = all_plans.get(clean_target) {
+            plans_to_build.insert(path.clone());
+            continue;
+        }
+
+        let plan_path = PathBuf::from(clean_target);
+        let manifest_path = if plan_path.is_file() {
+            plan_path
+        } else {
+            plan_path.join("plan.toml")
+        };
+
+        if manifest_path.exists() {
+            plans_to_build.insert(manifest_path);
+            continue;
+        }
+
+        let mut found = false;
+        for plans_dir in &resolver.plans_dirs {
+            let candidate = plans_dir.join(clean_target).join("plan.toml");
+            if candidate.exists() {
+                wright::plan::manifest::PlanManifest::from_file(&candidate)
+                    .context(format!("failed to parse plan '{}'", clean_target))?;
+                plans_to_build.insert(candidate);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            anyhow::bail!("target not found: {}", clean_target);
+        }
+    }
+
+    let mut ordered: Vec<_> = plans_to_build.into_iter().collect();
+    ordered.sort();
+    Ok(ordered)
+}
+
+fn archive_entries_for_plan(plan_path: &Path, archives_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let manifest = wright::plan::manifest::PlanManifest::from_file(plan_path)?;
+    let mut archives = vec![(
+        manifest.plan.name.clone(),
+        archives_dir.join(manifest.archive_filename()),
+    )];
+    if let Some(wright::plan::manifest::FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
+        for (sub_name, sub_pkg) in pkgs {
+            if sub_name == &manifest.plan.name {
+                continue;
+            }
+            let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
+            archives.push((sub_name.clone(), archives_dir.join(sub_manifest.archive_filename())));
+        }
+    }
+    Ok(archives)
+}
+
+fn apply_targets(
+    config: &GlobalConfig,
+    db: &Database,
+    resolver: &LocalResolver,
+    root_dir: &Path,
+    targets: Vec<String>,
+    force_build: bool,
+    force_install: bool,
+    nodeps: bool,
+    verbose: bool,
+    quiet: bool,
+) -> Result<()> {
+    let plan_paths = resolve_plan_targets(&targets, resolver)?;
+    let mut explicit_plan_names = HashSet::new();
+    for path in &plan_paths {
+        let manifest = wright::plan::manifest::PlanManifest::from_file(path)
+            .context(format!("failed to parse plan {}", path.display()))?;
+        explicit_plan_names.insert(manifest.plan.name);
+    }
+    let build_set = wright::builder::orchestrator::resolve_build_set(
+        config,
+        targets.clone(),
+        wright::builder::orchestrator::ResolveOptions {
+            deps_mode: wright::builder::orchestrator::DependencyMode::Sync,
+            dependents_mode: wright::builder::orchestrator::DependentsMode::None,
+            depth: Some(0),
+            include_self: true,
+            install: true,
+        },
+    )?;
+
+    let build_opts = wright::builder::orchestrator::BuildOptions {
+        force: force_build,
+        verbose,
+        quiet,
+        dockyards: config.build.dockyards,
+        print_archives: false,
+        nproc_per_dockyard: config.build.nproc_per_dockyard,
+        ..Default::default()
+    };
+    let plan = wright::builder::orchestrator::create_execution_plan(
+        config,
+        build_set,
+        &build_opts,
+    )?;
+
+    for (batch_idx, tasks) in plan.batches().iter().enumerate() {
+        if !quiet {
+            for task in tasks {
+                tracing::info!(
+                    "apply batch {} {}: {}",
+                    batch_idx,
+                    plan.label_for_task(task, &build_opts),
+                    task.trim_end_matches(":bootstrap"),
+                );
+            }
+        }
+
+        plan.execute_batch(config, batch_idx, &build_opts)?;
+
+        let mut archives = Vec::new();
+        let mut explicit_targets = HashSet::new();
+        let mut seen_paths = HashSet::new();
+        for task in tasks {
+            let plan_path = plan
+                .plan_path_for_task(task)
+                .context("missing plan path for batch task")?;
+            for (part_name, archive_path) in
+                archive_entries_for_plan(plan_path, &config.general.components_dir)?
+            {
+                if !archive_path.exists() {
+                    anyhow::bail!(
+                        "expected archive was not produced: {}",
+                        archive_path.display()
+                    );
+                }
+                if seen_paths.insert(archive_path.clone()) {
+                    archives.push(archive_path);
+                }
+                if explicit_plan_names.contains(task.trim_end_matches(":bootstrap")) {
+                    explicit_targets.insert(part_name);
+                }
+            }
+        }
+
+        transaction::install_parts_with_explicit_targets(
+            db,
+            &archives,
+            &explicit_targets,
+            root_dir,
+            resolver,
+            force_install,
+            nodeps,
+        )?;
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -75,9 +299,6 @@ fn main() -> Result<()> {
 
     let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
 
-    let repo_config =
-        wright::config::RepoConfig::load(None).context("failed to load repo config")?;
-
     let db_path = cli.db.unwrap_or(config.general.db_path.clone());
     let root_dir = cli.root.unwrap_or_else(|| PathBuf::from("/"));
     let _command_lock = wright::util::lock::acquire_named_lock(&db_path, "wright")
@@ -85,16 +306,7 @@ fn main() -> Result<()> {
 
     let db = Database::open(&db_path).context("failed to open database")?;
 
-    let mut resolver =
-        wright::repo::source::SimpleResolver::new(config.general.cache_dir.join("parts"));
-    resolver.load_from_config(&repo_config);
-    resolver.set_repo_db_path(config.general.repo_db_path.clone());
-    resolver.add_search_dir(config.general.cache_dir.join("parts"));
-    resolver.add_search_dir(config.general.components_dir.clone());
-    if let Ok(cwd) = std::env::current_dir() {
-        resolver.add_search_dir(cwd);
-    }
-    resolver.add_plans_dir(config.general.plans_dir.clone());
+    let resolver = setup_local_resolver(&config)?;
 
     match cli.command {
         Commands::Install {
@@ -102,53 +314,11 @@ fn main() -> Result<()> {
             force,
             nodeps,
         } => {
-            let kits = KitsConfig::load_all(&config.general.kits_dir)
-                .context("failed to load kits config")?;
+            let parts = collect_install_args(parts)?;
+            let pkg_paths = resolve_install_paths(&resolver, &parts)?;
 
-            // Expand @kit references and resolve part names to paths
-            let mut pkg_paths: Vec<PathBuf> = Vec::new();
-            for arg in &parts {
-                if let Some(kit_name) = arg.strip_prefix('@') {
-                    let members = kits.resolve(kit_name);
-                    if members.is_empty() {
-                        eprintln!("error: kit '{}' not found or empty", kit_name);
-                        std::process::exit(1);
-                    }
-                    for name in &members {
-                        match resolver.resolve(name) {
-                            Ok(Some(resolved)) => pkg_paths.push(resolved.path),
-                            Ok(None) => {
-                                eprintln!("error: part '{}' (from @{}) not found", name, kit_name);
-                                std::process::exit(1);
-                            }
-                            Err(e) => {
-                                eprintln!("error: failed to resolve '{}': {}", name, e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                } else {
-                    let path = PathBuf::from(arg);
-                    if path.exists() {
-                        pkg_paths.push(path);
-                    } else {
-                        // Try resolving as a part name
-                        match resolver.resolve(arg) {
-                            Ok(Some(resolved)) => pkg_paths.push(resolved.path),
-                            Ok(None) => {
-                                eprintln!("error: '{}' is not a file and could not be resolved as a part name", arg);
-                                std::process::exit(1);
-                            }
-                            Err(e) => {
-                                eprintln!("error: failed to resolve '{}': {}", arg, e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-            }
-
-            match transaction::install_parts(&db, &pkg_paths, &root_dir, &resolver, force, nodeps) {
+            match transaction::install_parts(&db, &pkg_paths, &root_dir, &resolver, force, nodeps)
+            {
                 Ok(()) => println!("installation completed successfully"),
                 Err(e) => {
                     eprintln!("error: {}", e);
@@ -156,13 +326,34 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Apply {
+            targets,
+            force_build,
+            force_install,
+            nodeps,
+        } => match apply_targets(
+            &config,
+            &db,
+            &resolver,
+            &root_dir,
+            targets,
+            force_build,
+            force_install,
+            nodeps,
+            cli.verbose > 0,
+            cli.quiet,
+        ) {
+            Ok(()) => println!("apply completed successfully"),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            }
+        },
         Commands::Upgrade {
             parts,
             force,
             version: target_version,
         } => {
-            use wright::repo::source::{pick_latest, pick_version};
-
             for arg in &parts {
                 let path = PathBuf::from(arg);
                 if path.exists() {
@@ -553,7 +744,6 @@ fn main() -> Result<()> {
         }
         Commands::Sysupgrade { dry_run } => {
             use wright::part::version::Version;
-            use wright::repo::source::pick_latest;
 
             let parts = db.list_parts().context("failed to list parts")?;
             let mut upgraded = 0usize;

@@ -13,7 +13,7 @@ use crate::config::GlobalConfig;
 use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
-use crate::repo::source::sanitize_cache_filename;
+use crate::inventory::resolver::sanitize_cache_filename;
 use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {

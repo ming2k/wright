@@ -17,7 +17,9 @@ use crate::error::{Result, WrightError};
 use crate::part::archive::PartInfo;
 
 pub use hooks::get_hook;
-pub use install::{install_part, install_part_with_origin, install_parts};
+pub use install::{
+    install_part, install_part_with_origin, install_parts, install_parts_with_explicit_targets,
+};
 pub use remove::{
     cascade_remove_list, order_removal_batch, remove_part, remove_part_with_ignored_dependents,
 };
@@ -143,6 +145,17 @@ mod tests {
         files: &[(&str, &[u8])],
         out_dir: &Path,
     ) -> PathBuf {
+        build_archive_with_runtime_deps(name, version, release, &[], files, out_dir)
+    }
+
+    fn build_archive_with_runtime_deps(
+        name: &str,
+        version: &str,
+        release: u32,
+        runtime_deps: &[&str],
+        files: &[(&str, &[u8])],
+        out_dir: &Path,
+    ) -> PathBuf {
         let pkg_dir = tempfile::tempdir().unwrap();
         for (rel, data) in files {
             let path = pkg_dir.path().join(rel);
@@ -151,6 +164,19 @@ mod tests {
             }
             std::fs::write(&path, data).unwrap();
         }
+
+        let deps_section = if runtime_deps.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n[dependencies]\nruntime = [{}]\n",
+                runtime_deps
+                    .iter()
+                    .map(|dep| format!("\"{}\"", dep))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
 
         let pkginfo = format!(
             r#"[part]
@@ -162,7 +188,8 @@ arch = "x86_64"
 license = "MIT"
 install_size = 0
 build_date = "1970-01-01T00:00:00Z"
-"#
+{deps}"#,
+            deps = deps_section,
         );
         std::fs::write(pkg_dir.path().join(".PARTINFO"), pkginfo).unwrap();
 
@@ -656,6 +683,95 @@ build_date = "1970-01-01T00:00:00Z"
 
         let target = std::fs::read_link(&link_path).unwrap();
         assert_eq!(target.to_string_lossy(), "target1");
+    }
+
+    #[test]
+    fn test_install_parts_with_explicit_targets_marks_dependency_origins() {
+        let (db, root) = setup_test();
+        let out_dir = tempfile::tempdir().unwrap();
+
+        let lib_archive = build_archive_with_runtime_deps(
+            "libfoo",
+            "1.0.0",
+            1,
+            &[],
+            &[("usr/lib/libfoo.so", b"libfoo")],
+            out_dir.path(),
+        );
+        let app_archive = build_archive_with_runtime_deps(
+            "app",
+            "1.0.0",
+            1,
+            &["libfoo"],
+            &[("usr/bin/app", b"app")],
+            out_dir.path(),
+        );
+
+        let mut resolver = crate::inventory::resolver::LocalResolver::new();
+        resolver.add_search_dir(out_dir.path().to_path_buf());
+
+        let explicit_targets = HashSet::from(["app".to_string()]);
+        install_parts_with_explicit_targets(
+            &db,
+            &[lib_archive, app_archive],
+            &explicit_targets,
+            root.path(),
+            &resolver,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let app = db.get_part("app").unwrap().unwrap();
+        let libfoo = db.get_part("libfoo").unwrap().unwrap();
+        assert_eq!(app.origin, crate::database::Origin::Manual);
+        assert_eq!(libfoo.origin, crate::database::Origin::Dependency);
+    }
+
+    #[test]
+    fn test_install_parts_upgrades_when_archive_hash_changes() {
+        let (db, root) = setup_test();
+        let out_dir = tempfile::tempdir().unwrap();
+
+        let first = build_minimal_archive(
+            "samepkg",
+            "1.0.0",
+            1,
+            &[("usr/bin/samepkg", b"old")],
+            out_dir.path(),
+        );
+        install_part(&db, &first, root.path(), false).unwrap();
+
+        let second = build_minimal_archive(
+            "samepkg",
+            "1.0.0",
+            1,
+            &[("usr/bin/samepkg", b"new")],
+            out_dir.path(),
+        );
+
+        let mut resolver = crate::inventory::resolver::LocalResolver::new();
+        resolver.add_search_dir(out_dir.path().to_path_buf());
+
+        let explicit_targets = HashSet::from(["samepkg".to_string()]);
+        install_parts_with_explicit_targets(
+            &db,
+            std::slice::from_ref(&second),
+            &explicit_targets,
+            root.path(),
+            &resolver,
+            false,
+            false,
+        )
+        .unwrap();
+
+        let installed = db.get_part("samepkg").unwrap().unwrap();
+        let expected_hash = crate::util::checksum::sha256_file(&second).unwrap();
+        assert_eq!(installed.pkg_hash.as_deref(), Some(expected_hash.as_str()));
+        assert_eq!(
+            std::fs::read(root.path().join("usr/bin/samepkg")).unwrap(),
+            b"new"
+        );
     }
 
     #[test]

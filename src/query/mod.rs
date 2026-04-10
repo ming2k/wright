@@ -1,6 +1,6 @@
 //! Query and analysis operations — dependency tree rendering, etc.
 
-use crate::error::{Result, WrightResultExt};
+use crate::error::{Result, WrightError};
 use rusqlite::params;
 
 use crate::database::{Database, DepType};
@@ -161,7 +161,7 @@ fn write_dep_tree_inner(
 
     let deps = db
         .get_dependencies_by_name(name)
-        .context(format!("failed to get dependencies for {}", name))?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e)))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         deps.iter().filter(|d| d.name.contains(f)).collect()
@@ -360,7 +360,7 @@ fn write_reverse_dep_tree_inner(
 
     let dependents = db
         .get_dependents(name)
-        .context(format!("failed to get dependents of {}", name))?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e)))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         dependents.iter().filter(|(n, _)| n.contains(f)).collect()

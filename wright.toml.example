@@ -1,106 +1,25 @@
-# wright.toml — Wright build system configuration
-#
-# Config files are merged in ascending priority order:
-#   1. /etc/wright/wright.toml               (system-wide base)
-#   2. $XDG_CONFIG_HOME/wright/wright.toml   (per-user overrides, non-root)
-#   3. ./wright.toml                         (project-local overrides)
-#   --config <path>                          (bypasses all layering)
-#
-# Each file only needs to contain the keys it wants to override — missing
-# keys are inherited from the layer below, down to the built-in defaults.
-# Copy this file to any of the locations above and uncomment what you need.
+# wright.toml
 
 [general]
-# Target architecture for built parts.
 arch = "x86_64"
-
-# Root directory where plan definitions (plan.toml files) are stored.
-# For non-root use, set this to a user-writable path such as ~/wright/plans.
 plans_dir = "/var/lib/wright/plans"
-
-# Directory where built package archives (.wright.tar.zst) are placed.
+# extra_plans_dirs = ["/opt/my-plans", "./plans"]
 components_dir = "/var/lib/wright/components"
-
-# Downloaded source tarballs are cached here to avoid re-downloading.
-# Non-root default: ~/.cache/wright
 cache_dir = "/var/lib/wright/cache"
-
-# SQLite database tracking installed parts.
 db_path = "/var/lib/wright/db/parts.db"
-
-# SQLite database tracking repository metadata.
-repo_db_path = "/var/lib/wright/db/repo.db"
-
-# Operation and build logs are written here.
-# Non-root default: ~/.local/state/wright
+inventory_db_path = "/var/lib/wright/db/inventory.db"
 log_dir = "/var/log/wright"
-
-# Directory containing executor definition files (*.toml).
 executors_dir = "/etc/wright/executors"
-
-# Directory containing assembly definition files (*.toml).
 assemblies_dir = "/var/lib/wright/assemblies"
 
-# Directory containing kit definition files (*.toml).
-kits_dir = "/var/lib/wright/kits"
-
-# Repository directory for archive scanning and generated indexes.
-repo_dir = "/var/lib/wright/repo"
-
 [build]
-# Working directory for build trees. Use a large persistent filesystem here;
-# kernel, LLVM, and browser builds can exceed a small /tmp quickly.
 build_dir = "/var/tmp/wright-build"
-
-# Default sandbox level applied when a stage does not specify one.
-# Options: "none", "relaxed", "strict"
-default_sandbox = "strict"
-
-# Maximum number of parts built concurrently. Wright only runs parts
-# in parallel when they have no dependency relationship; ordering is always
-# enforced automatically. 0 (default) auto-detects from the host CPU count.
-# Can be overridden per-invocation with --workers / -w on the CLI.
-# workers = 4
-
-# Static per-worker CPU count. Wright pins each sandboxed build process to
-# its computed CPU share via sched_setaffinity, so `nproc` inside the sandbox
-# returns the correct count automatically. The default share is computed as
-# total_cpus / active_workers. Set this to fix the count regardless of how
-# many workers are active at any moment.
-# nproc_per_worker = 4
-
-# C compiler flags applied to every build. Per-plan $CFLAGS can append to or
-# override these via the plan's [options] or inline script logic.
+default_dockyard = "strict"
+dockyards = 0
 cflags = "-O2 -pipe -march=x86-64"
-
-# C++ compiler flags. Same semantics as cflags above.
 cxxflags = "-O2 -pipe -march=x86-64"
-
-# Use ccache to speed up repeated compilations. Requires ccache installed.
 ccache = false
 
-# Maximum virtual address space (RLIMIT_AS) per build process, in megabytes.
-# Enforced by the kernel; a process that exceeds this receives ENOMEM.
-# Set generously — many build tools (rustc, clang, java) map large regions
-# even if they don't actively use them. 8–16 GB is a safe starting point.
-# Disabled by default (no limit).
-# memory_limit = 8192
-
-# Maximum CPU time (RLIMIT_CPU) consumed by a single build process, in seconds.
-# The kernel sends SIGXCPU when the limit is reached. Useful for catching
-# runaway builds. Note: this is CPU time, not wall-clock time.
-# Disabled by default (no limit).
-# cpu_time_limit = 7200
-
-# Wall-clock timeout per build stage, in seconds. Wright kills the entire
-# process group if a stage takes longer than this. Useful as a safety net
-# for builds that stall waiting on network or deadlock.
-# Disabled by default (no limit).
-# timeout = 14400
-
 [network]
-# HTTP download timeout in seconds. Applies per-request, not per-package.
 download_timeout = 300
-
-# Number of retry attempts for a failed download before giving up.
 retry_count = 3

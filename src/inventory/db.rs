@@ -57,16 +57,17 @@ const BASE_SCHEMA: &str = "
 ";
 
 const INDEX_SCHEMA: &str = "
-    CREATE INDEX IF NOT EXISTS idx_repo_pkg_name ON parts(name);
-    CREATE INDEX IF NOT EXISTS idx_repo_deps_pkg ON dependencies(part_id);
-    CREATE INDEX IF NOT EXISTS idx_repo_deps_on ON dependencies(depends_on);
-    CREATE INDEX IF NOT EXISTS idx_repo_provides_name ON provides(name);
-    CREATE INDEX IF NOT EXISTS idx_repo_conflicts_name ON conflicts(name);
-    CREATE INDEX IF NOT EXISTS idx_repo_replaces_name ON replaces(name);
+    CREATE INDEX IF NOT EXISTS idx_inventory_pkg_name ON parts(name);
+    CREATE INDEX IF NOT EXISTS idx_inventory_pkg_filename ON parts(filename);
+    CREATE INDEX IF NOT EXISTS idx_inventory_deps_pkg ON dependencies(part_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_deps_on ON dependencies(depends_on);
+    CREATE INDEX IF NOT EXISTS idx_inventory_provides_name ON provides(name);
+    CREATE INDEX IF NOT EXISTS idx_inventory_conflicts_name ON conflicts(name);
+    CREATE INDEX IF NOT EXISTS idx_inventory_replaces_name ON replaces(name);
 ";
 
 #[derive(Debug, Clone)]
-pub struct RepoPart {
+pub struct InventoryPart {
     pub id: i64,
     pub name: String,
     pub version: String,
@@ -80,7 +81,7 @@ pub struct RepoPart {
     pub runtime_deps: Vec<String>,
 }
 
-pub struct RepoDb {
+pub struct InventoryDb {
     conn: Connection,
     _lock: Option<ProcessLock>,
 }
@@ -90,26 +91,25 @@ fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
         .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
-fn repo_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
+fn inventory_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
     format!(
-        "failed to open repo database {} with the current schema: {}. \
-If this is an older repo.db, remove it and rebuild the index with `wrepo sync`.",
+        "failed to open inventory database {} with the current schema: {}",
         db_path.display(),
         err
     )
 }
 
-impl RepoDb {
+impl InventoryDb {
     pub fn open(db_path: &Path) -> Result<Self> {
         let parent = db_path.parent().ok_or_else(|| {
             WrightError::DatabaseError(format!(
-                "repo database path has no parent directory: {}",
+                "inventory database path has no parent directory: {}",
                 db_path.display()
             ))
         })?;
         std::fs::create_dir_all(parent).map_err(|e| {
             WrightError::DatabaseError(format!(
-                "failed to create repo database directory {}: {}",
+                "failed to create inventory database directory {}: {}",
                 parent.display(),
                 e
             ))
@@ -122,17 +122,16 @@ impl RepoDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to enable WAL: {}", e)))?;
 
         conn.execute_batch(BASE_SCHEMA)
-            .map_err(|e| WrightError::DatabaseError(repo_schema_error(db_path, e)))?;
+            .map_err(|e| WrightError::DatabaseError(inventory_schema_error(db_path, e)))?;
         conn.execute_batch(INDEX_SCHEMA)
-            .map_err(|e| WrightError::DatabaseError(repo_schema_error(db_path, e)))?;
+            .map_err(|e| WrightError::DatabaseError(inventory_schema_error(db_path, e)))?;
 
-        Ok(RepoDb {
+        Ok(Self {
             conn,
             _lock: Some(lock_file),
         })
     }
 
-    /// Register a built part in the repo database.
     pub fn register_part(
         &self,
         partinfo: &archive::PartInfo,
@@ -143,7 +142,6 @@ impl RepoDb {
             WrightError::DatabaseError(format!("failed to begin transaction: {}", e))
         })?;
 
-        // Delete existing entry for same name/version/release/epoch
         tx.execute(
             "DELETE FROM parts WHERE name = ?1 AND version = ?2 AND release = ?3 AND epoch = ?4",
             params![
@@ -176,7 +174,6 @@ impl RepoDb {
 
         let pkg_id = tx.last_insert_rowid();
 
-        // Insert dependencies
         for dep in &partinfo.runtime_deps {
             tx.execute(
                 "INSERT INTO dependencies (part_id, depends_on, dep_type) VALUES (?1, ?2, 'runtime')",
@@ -184,7 +181,6 @@ impl RepoDb {
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert runtime dep: {}", e)))?;
         }
-        // Insert relations
         for name in &partinfo.provides {
             tx.execute(
                 "INSERT INTO provides (part_id, name) VALUES (?1, ?2)",
@@ -213,8 +209,7 @@ impl RepoDb {
         Ok(pkg_id)
     }
 
-    /// List parts, optionally filtered by name.
-    pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<RepoPart>> {
+    pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<InventoryPart>> {
         let mut parts = if let Some(name) = name {
             let mut stmt = self
                 .conn
@@ -225,7 +220,7 @@ impl RepoDb {
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map(params![name], row_to_repo_part)
+                .query_map(params![name], row_to_inventory_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
@@ -239,14 +234,13 @@ impl RepoDb {
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map([], row_to_repo_part)
+                .query_map([], row_to_inventory_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
             rows
         };
 
-        // Fill in dependencies
         for pkg in &mut parts {
             pkg.runtime_deps = self.get_deps(pkg.id, "runtime")?;
         }
@@ -254,34 +248,7 @@ impl RepoDb {
         Ok(parts)
     }
 
-    /// Search parts by keyword (matches name and description).
-    pub fn search_parts(&self, keyword: &str) -> Result<Vec<RepoPart>> {
-        let pattern = format!("%{}%", keyword);
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, name, version, release, epoch, description, arch, filename, sha256, install_size
-                 FROM parts
-                 WHERE name LIKE ?1 OR description LIKE ?1
-                 ORDER BY name, epoch DESC, version DESC, release DESC",
-            )
-            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-
-        let mut parts: Vec<RepoPart> = stmt
-            .query_map(params![pattern], row_to_repo_part)
-            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        for pkg in &mut parts {
-            pkg.runtime_deps = self.get_deps(pkg.id, "runtime")?;
-        }
-
-        Ok(parts)
-    }
-
-    /// Find the latest version of a part by name.
-    pub fn find_part(&self, name: &str) -> Result<Option<RepoPart>> {
+    pub fn find_part(&self, name: &str) -> Result<Option<InventoryPart>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -293,7 +260,7 @@ impl RepoDb {
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
         let mut pkg = stmt
-            .query_map(params![name], row_to_repo_part)
+            .query_map(params![name], row_to_inventory_part)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .next();
@@ -305,12 +272,10 @@ impl RepoDb {
         Ok(pkg)
     }
 
-    /// Find all versions of a part.
-    pub fn find_all_versions(&self, name: &str) -> Result<Vec<RepoPart>> {
+    pub fn find_all_versions(&self, name: &str) -> Result<Vec<InventoryPart>> {
         self.list_parts(Some(name))
     }
 
-    /// Remove a part entry from the repo database.
     pub fn remove_part(
         &self,
         name: &str,
@@ -324,11 +289,11 @@ impl RepoDb {
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version, rel], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-                .filter_map(|r| r.ok())
-                .collect();
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
             rows
         } else {
             let mut stmt = self
@@ -339,11 +304,11 @@ impl RepoDb {
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-                .filter_map(|r| r.ok())
-                .collect();
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
             rows
         };
 
@@ -358,75 +323,31 @@ impl RepoDb {
         Ok(removed)
     }
 
-    /// Get the filename for a specific part version.
-    pub fn get_filename(
-        &self,
-        name: &str,
-        version: &str,
-        release: Option<u32>,
-    ) -> Result<Option<String>> {
-        let result = if let Some(rel) = release {
-            self.conn
-                .query_row(
-                    "SELECT filename FROM parts WHERE name = ?1 AND version = ?2 AND release = ?3",
-                    params![name, version, rel],
-                    |row| row.get(0),
-                )
-                .ok()
-        } else {
-            self.conn
-                .query_row(
-                    "SELECT filename FROM parts WHERE name = ?1 AND version = ?2 ORDER BY release DESC LIMIT 1",
-                    params![name, version],
-                    |row| row.get(0),
-                )
-                .ok()
-        };
-        Ok(result)
+    pub fn remove_missing_files(&self, dir: &Path) -> Result<Vec<String>> {
+        let filenames = self.list_filenames()?;
+        let mut removed = Vec::new();
+        for filename in filenames {
+            if !dir.join(&filename).exists() {
+                self.conn
+                    .execute("DELETE FROM parts WHERE filename = ?1", params![filename])
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                removed.push(filename);
+            }
+        }
+        Ok(removed)
     }
 
-    /// Bulk-import parts from a directory of `.wright.tar.zst` archives.
-    pub fn sync_from_archives(&self, dir: &Path) -> Result<usize> {
-        if !dir.exists() {
-            return Ok(0);
-        }
-
-        let mut count = 0;
-        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
-            let entry = entry.map_err(WrightError::IoError)?;
-            let path = entry.path();
-
-            if !path.is_file() {
-                continue;
-            }
-            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if !fname.ends_with(".wright.tar.zst") {
-                continue;
-            }
-
-            let partinfo = match archive::read_partinfo(&path) {
-                Ok(info) => info,
-                Err(e) => {
-                    tracing::warn!("Skipping {}: {}", path.display(), e);
-                    continue;
-                }
-            };
-
-            let sha256 = crate::util::checksum::sha256_file(&path)?;
-            self.register_part(&partinfo, fname, &sha256)?;
-            count += 1;
-        }
-
-        Ok(count)
-    }
-
-    /// Get the total number of parts in the repo.
-    pub fn package_count(&self) -> Result<usize> {
-        let count: i64 = self
+    pub fn list_filenames(&self) -> Result<Vec<String>> {
+        let mut stmt = self
             .conn
-            .query_row("SELECT COUNT(*) FROM parts", [], |row| row.get(0))
+            .prepare("SELECT filename FROM parts ORDER BY filename")
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-        Ok(count as usize)
+        let filenames = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect::<Vec<_>>();
+        Ok(filenames)
     }
 
     fn get_deps(&self, part_id: i64, dep_type: &str) -> Result<Vec<String>> {
@@ -443,8 +364,8 @@ impl RepoDb {
     }
 }
 
-fn row_to_repo_part(row: &rusqlite::Row) -> rusqlite::Result<RepoPart> {
-    Ok(RepoPart {
+fn row_to_inventory_part(row: &rusqlite::Row) -> rusqlite::Result<InventoryPart> {
+    Ok(InventoryPart {
         id: row.get(0)?,
         name: row.get(1)?,
         version: row.get(2)?,

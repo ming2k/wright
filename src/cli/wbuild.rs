@@ -5,10 +5,9 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 const WBUILD_AFTER_HELP: &str = "\
 Workflows:
   Build a part:            wbuild run zlib
-  Build and install:       wbuild run zlib -i
-  Resolve + build:         wbuild resolve openssl --self --dependents | wbuild run -i
-  Full reverse cascade:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --force -i
-  Resume after failure:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --resume -i
+  Resolve + build:         wbuild resolve openssl --self --dependents | wbuild run
+  Full reverse cascade:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --force
+  Resume after failure:    wbuild resolve glibc --self --dependents=all --depth=0 | wbuild run --resume
   Dependency tree:         wbuild resolve zlib --tree
   Validate plans:          wbuild check ./plans/zlib
 
@@ -16,16 +15,19 @@ Targets may be plan names, plan directories, or `@assembly` references.";
 const WBUILD_RUN_AFTER_HELP: &str = "\
 Examples:
   wbuild run zlib
-  wbuild run zlib -i
   wbuild run zlib --force --clean
   wbuild run freetype --mvp --stage=configure
-  wbuild resolve openssl --self --dependents | wbuild run -i
-  echo -e 'curl\\nwget' | wbuild run --force -i
+  wbuild resolve openssl --self --dependents | wbuild run
+  echo -e 'curl\\nwget' | wbuild run --force
 
 Resume after partial failure (auto-detect session):
-  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume -i
+  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume
 Resume with explicit session hash:
-  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume abc123... -i";
+  wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume abc123...
+
+Archive maintenance:
+  wbuild prune --untracked
+  wbuild prune --latest";
 const WBUILD_RESOLVE_AFTER_HELP: &str = "\
 Examples:
   wbuild resolve zlib --self --deps
@@ -35,7 +37,7 @@ Examples:
   wbuild resolve zlib --self --deps=all
 
 Pipe into wbuild run:
-  wbuild resolve openssl --self --dependents | wbuild run -i
+  wbuild resolve openssl --self --dependents | wbuild run
 
 Dependency tree (static plan.toml analysis):
   wbuild resolve zlib --tree
@@ -77,7 +79,7 @@ pub enum DependentsMode {
 #[command(
     name = "wbuild",
     about = "Build and validate Wright part plans",
-    long_about = "Build and validate Wright part plans.\n\nUse `wbuild` for part construction: resolve build graphs, fetch sources, run lifecycle stages, and optionally install finished archives.",
+    long_about = "Build and validate Wright part plans.\n\nUse `wbuild` for part construction: resolve build graphs, fetch sources, run lifecycle stages, store finished archives, and maintain the local part inventory.",
     after_help = WBUILD_AFTER_HELP,
     version,
     subcommand_required = true,
@@ -154,14 +156,14 @@ pub enum Commands {
         #[arg(short = 'w', long, default_value = "0")]
         dockyards: usize,
 
-        /// Automatically install each part after a successful build
-        #[arg(short = 'i', long)]
-        install: bool,
-
         /// Build using the MVP dependency set from mvp.toml without
         /// requiring a dependency cycle to trigger it
         #[arg(long)]
         mvp: bool,
+
+        /// Print produced archive paths to stdout after a successful build
+        #[arg(long)]
+        print_archives: bool,
 
         /// Remove all saved build sessions and exit
         #[arg(long)]
@@ -245,6 +247,20 @@ pub enum Commands {
     Checksum {
         /// Plans to checksum
         targets: Vec<String>,
+    },
+    /// Prune local archive inventory and stale archives
+    Prune {
+        /// Delete archives that are present on disk but not registered in the inventory DB
+        #[arg(long)]
+        untracked: bool,
+
+        /// Keep only the latest tracked archive per part name, while preserving installed versions
+        #[arg(long)]
+        latest: bool,
+
+        /// Apply deletions. Without this flag, only prints what would change
+        #[arg(long)]
+        apply: bool,
     },
 }
 

@@ -63,8 +63,8 @@ fn main() -> Result<()> {
             force,
             resume,
             dockyards,
-            install,
             mvp,
+            print_archives,
             clear_sessions,
         } => {
             let _command_lock =
@@ -107,13 +107,13 @@ fn main() -> Result<()> {
                     force,
                     resume: resume.map(|h| if h.is_empty() { None } else { Some(h) }),
                     dockyards: effective_dockyards,
-                    install,
                     checksum: false,
                     lint: false,
                     skip_check,
                     verbose: cli.verbose > 0,
                     quiet: cli.quiet,
                     mvp,
+                    print_archives,
                     // Config nproc_per_dockyard is a static override; None means the
                     // scheduler computes it dynamically as total_cpus / active_dockyards.
                     nproc_per_dockyard: config.build.nproc_per_dockyard,
@@ -228,7 +228,83 @@ fn main() -> Result<()> {
                 },
             )?)
         }
+        Commands::Prune {
+            untracked,
+            latest,
+            apply,
+        } => {
+            prune_archives(&config, untracked, latest, apply)?;
+            Ok(())
+        }
     }
+}
+
+fn prune_archives(config: &GlobalConfig, prune_untracked: bool, keep_latest: bool, apply: bool) -> Result<()> {
+    if !prune_untracked && !keep_latest {
+        anyhow::bail!("nothing to do: pass --untracked and/or --latest");
+    }
+
+    let inventory = wright::inventory::db::InventoryDb::open(&config.general.inventory_db_path)
+        .context("failed to open local inventory database")?;
+    let archives_dir = &config.general.components_dir;
+    std::fs::create_dir_all(archives_dir)
+        .with_context(|| format!("failed to create {}", archives_dir.display()))?;
+
+    let installed_db = wright::database::Database::open(&config.general.db_path)
+        .context("failed to open installed-part database")?;
+
+    let report = if apply {
+        wright::inventory::prune::apply_prune(
+            &inventory,
+            &installed_db,
+            archives_dir,
+            prune_untracked,
+            keep_latest,
+        )
+        .context("prune failed")?
+    } else {
+        // Dry-run: reconcile stale DB rows but don't delete files.
+        let stale_db_rows = inventory
+            .remove_missing_files(archives_dir)
+            .context("failed to reconcile missing archive files")?;
+        let mut report = wright::inventory::prune::plan_prune(
+            &inventory,
+            &installed_db,
+            archives_dir,
+            prune_untracked,
+            keep_latest,
+        )
+        .context("prune planning failed")?;
+        report.stale_db_rows = stale_db_rows;
+        report
+    };
+
+    for filename in &report.stale_db_rows {
+        println!("inventory-stale: {}", filename);
+    }
+    for path in &report.untracked {
+        println!("prune untracked: {}", path.display());
+    }
+    for stale in &report.stale_tracked {
+        println!(
+            "prune tracked: {} ({} {}-{})",
+            stale.path.display(),
+            stale.name,
+            stale.version,
+            stale.release
+        );
+    }
+
+    if report.untracked.is_empty() && report.stale_tracked.is_empty() {
+        println!("nothing to prune");
+        return Ok(());
+    }
+
+    if !apply {
+        println!("dry-run only; rerun with --apply to delete the listed archives");
+    }
+
+    Ok(())
 }
 
 fn print_plan_tree(

@@ -311,7 +311,7 @@ wright install texlive
 
 ## Installation Appears Hung After "part stored"
 
-**Symptom:** `wbuild run -i` or `wright install` prints the "part stored" line and then appears to hang with one CPU core busy.
+**Symptom:** `wright install` prints the "part stored" line and then appears to hang with one CPU core busy.
 
 **Cause:** A `post_install` or `post_upgrade` hook is running a slow single-threaded command (common with TeX Live's `fmtutil-sys --all`, font caches, `ldconfig` on very large installs).
 
@@ -332,7 +332,7 @@ sudo fmtutil-sys --byfmt xelatex
 
 ## Slow Install for Very Large Parts
 
-**Symptom:** `wbuild run -i` or `wright install` appears to sit for a long time
+**Symptom:** `wright install` appears to sit for a long time
 on a message such as:
 
 ```text
@@ -346,8 +346,6 @@ they can still take many minutes.
 **To see where time is going:**
 
 ```bash
-wbuild run -v -i <pkg>
-# or
 wright -v install <pkg>
 ```
 
@@ -368,12 +366,12 @@ an unusually large number of tracked files.
 
 ## Lock File Remains After Interrupt
 
-**Symptom:** After interrupting `wbuild -i`, `wright`, or `wrepo`, you still see
+**Symptom:** After interrupting `wbuild` or `wright`, you still see
 files such as:
 
 ```text
 /var/lib/wright/lock/parts.db.lock
-/var/lib/wright/lock/repo.db.lock
+/var/lib/wright/lock/inventory.db.lock
 ```
 
 This is normal.

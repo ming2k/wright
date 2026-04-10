@@ -4,20 +4,25 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 const WRIGHT_AFTER_HELP: &str = "\
 Workflows:
-  Install from repository:  wright install zlib
+  Install from inventory:   wright install zlib
   Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
+  Apply an assembly:        wright apply @base
   Upgrade everything:       wright sysupgrade
   Inspect dependencies:     wright deps zlib --reverse
   Change install reason:    wright mark zlib --as-dependency
 
-Use `wrepo` to manage repository indexes and sources.
 Use `wbuild` to build parts from plans.";
 const WRIGHT_INSTALL_AFTER_HELP: &str = "\
 Examples:
   wright install zlib
   wright install zlib openssl
-  wright install @base-devel
   wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst";
+const WRIGHT_APPLY_AFTER_HELP: &str = "\
+Examples:
+  wright apply @base
+  wright apply @base @devel
+  wright apply ./plans/bash
+  wright apply gcc";
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
   wright upgrade zlib
@@ -62,7 +67,9 @@ Examples:
 const WRIGHT_SEARCH_AFTER_HELP: &str = "\
 Examples:
   wright search ssl
-  wright search python";
+  wright search python
+
+This searches installed parts only.";
 const WRIGHT_FILES_AFTER_HELP: &str = "\
 Examples:
   wright files zlib";
@@ -130,13 +137,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Install parts from .wright.tar.zst files, part names, or @kits
+    /// Install parts from local archives or the local inventory
     #[command(
-        long_about = "Install parts from archive files, repository part names, or `@kit` references.\n\nParts explicitly named by the user are marked as explicit installs. Dependencies pulled in automatically are marked as dependency installs.",
+        long_about = "Install parts from archive files or locally registered part names.\n\nParts explicitly named by the user are marked as explicit installs. Dependencies pulled in automatically are marked as dependency installs.",
         after_help = WRIGHT_INSTALL_AFTER_HELP
     )]
     Install {
-        /// Part files, part names, or @kit names
+        /// Part files or locally registered part names
         #[arg(required = true, value_name = "PART")]
         parts: Vec<String>,
 
@@ -148,9 +155,31 @@ pub enum Commands {
         #[arg(long)]
         nodeps: bool,
     },
+    /// Build missing/outdated archives for plans or assemblies, then install the resulting parts
+    #[command(
+        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright checks the local archive inventory first, builds any missing or outdated parts from plans, and then installs the requested outputs onto the live system.",
+        after_help = WRIGHT_APPLY_AFTER_HELP
+    )]
+    Apply {
+        /// Plan names, plan directories, or @assemblies
+        #[arg(required = true, value_name = "TARGET")]
+        targets: Vec<String>,
+
+        /// Force rebuild even if matching archives already exist
+        #[arg(long)]
+        force_build: bool,
+
+        /// Force reinstall/upgrade during the install phase
+        #[arg(long)]
+        force_install: bool,
+
+        /// Skip dependency resolution during the install phase
+        #[arg(long)]
+        nodeps: bool,
+    },
     /// Upgrade installed parts by name or from archive files
     #[command(
-        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest available version from configured sources. When given an archive path, it upgrades directly from that file.",
+        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest locally registered version from the archive inventory. When given an archive path, it upgrades directly from that file.",
         after_help = WRIGHT_UPGRADE_AFTER_HELP
     )]
     Upgrade {
@@ -341,7 +370,7 @@ pub enum Commands {
     },
     /// Upgrade all installed parts to latest available versions
     #[command(
-        long_about = "Upgrade all installed parts to the latest versions available from configured sources.\n\nUse `--dry-run` to preview the transaction without making any changes.",
+        long_about = "Upgrade all installed parts to the latest versions available in the local archive inventory.\n\nUse `--dry-run` to preview the transaction without making any changes.",
         after_help = WRIGHT_SYSUPGRADE_AFTER_HELP
     )]
     Sysupgrade {

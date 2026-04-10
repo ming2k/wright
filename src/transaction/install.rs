@@ -7,9 +7,9 @@ use tracing::{debug, info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart, Origin};
 use crate::error::{Result, WrightError};
+use crate::inventory::resolver::{LocalResolver, ResolvedPart};
 use crate::part::archive;
 use crate::part::version::{self, Version};
-use crate::repo::source::{ResolvedPart, SimpleResolver};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
@@ -20,7 +20,34 @@ pub fn install_parts(
     db: &Database,
     archives: &[PathBuf],
     root_dir: &Path,
-    resolver: &SimpleResolver,
+    resolver: &LocalResolver,
+    force: bool,
+    nodeps: bool,
+) -> Result<()> {
+    let explicit_targets: HashSet<String> = archives
+        .iter()
+        .map(|path| resolver.read_archive(path))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|resolved| resolved.name)
+        .collect();
+    install_parts_with_explicit_targets(
+        db,
+        archives,
+        &explicit_targets,
+        root_dir,
+        resolver,
+        force,
+        nodeps,
+    )
+}
+
+pub fn install_parts_with_explicit_targets(
+    db: &Database,
+    archives: &[PathBuf],
+    explicit_targets: &HashSet<String>,
+    root_dir: &Path,
+    resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
@@ -102,24 +129,35 @@ pub fn install_parts(
         )?;
     }
 
-    let target_set: HashSet<String> = targets.iter().cloned().collect();
+    let mut archive_hashes: HashMap<String, String> = HashMap::new();
 
     for name in sorted_names {
-        let is_target = target_set.contains(&name);
+        let explicit_target = explicit_targets.contains(&name);
 
-        if db.get_part(&name)?.is_some() {
-            if is_target {
+        if let Some(installed) = db.get_part(&name)? {
+            if explicit_target {
                 db.set_origin(&name, Origin::Manual)?;
             }
-            if force {
-                info!(plan = %name, "force reinstalling");
+
+            let incoming_hash = if let Some(hash) = archive_hashes.get(&name) {
+                Some(hash.clone())
+            } else if let Some(pkg) = resolved_map.get(&name) {
+                let hash = crate::util::checksum::sha256_file(&pkg.path)?;
+                archive_hashes.insert(name.clone(), hash.clone());
+                Some(hash)
+            } else {
+                None
+            };
+
+            if force || incoming_hash.as_deref() != installed.pkg_hash.as_deref() {
+                info!(plan = %name, "upgrading installed part from current archive");
                 let pkg = resolved_map.get(&name).expect("resolved package exists");
                 upgrade_part(db, &pkg.path, root_dir, true, true)?;
             }
             continue;
         }
 
-        let origin = if is_target {
+        let origin = if explicit_target {
             Origin::Manual
         } else {
             Origin::Dependency

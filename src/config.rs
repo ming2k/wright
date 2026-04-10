@@ -19,6 +19,10 @@ pub struct GeneralConfig {
     pub arch: String,
     #[serde(default = "default_plans_dir")]
     pub plans_dir: PathBuf,
+    /// Additional plan search directories consulted after `plans_dir`.
+    /// Relative paths are resolved against the working directory at runtime.
+    #[serde(default)]
+    pub extra_plans_dirs: Vec<PathBuf>,
     #[serde(default = "default_components_dir")]
     pub components_dir: PathBuf,
     #[serde(default = "default_cache_dir")]
@@ -31,12 +35,8 @@ pub struct GeneralConfig {
     pub executors_dir: PathBuf,
     #[serde(default = "default_assemblies_dir")]
     pub assemblies_dir: PathBuf,
-    #[serde(default = "default_kits_dir")]
-    pub kits_dir: PathBuf,
-    #[serde(default = "default_repo_dir")]
-    pub repo_dir: PathBuf,
-    #[serde(default = "default_repo_db_path")]
-    pub repo_db_path: PathBuf,
+    #[serde(default = "default_inventory_db_path", alias = "repo_db_path")]
+    pub inventory_db_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -82,12 +82,6 @@ pub struct NetworkConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct RepoConfig {
-    #[serde(default)]
-    pub source: Vec<SourceConfig>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct AssembliesConfig {
     #[serde(default)]
     pub assemblies: std::collections::HashMap<String, Assembly>,
@@ -109,42 +103,6 @@ pub struct Assembly {
     pub includes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct KitsConfig {
-    #[serde(default)]
-    pub kits: std::collections::HashMap<String, Kit>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct KitFile {
-    #[serde(default)]
-    kit: Vec<Kit>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Kit {
-    pub name: String,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub parts: Vec<String>,
-    #[serde(default)]
-    pub includes: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct SourceConfig {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub path: Option<PathBuf>,
-    pub url: Option<String>,
-    #[serde(default)]
-    pub priority: i32,
-    pub gpg_key: Option<PathBuf>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
 fn default_general() -> GeneralConfig {
     let uid = unsafe { libc::getuid() };
     let use_xdg = uid != 0;
@@ -152,6 +110,7 @@ fn default_general() -> GeneralConfig {
     GeneralConfig {
         arch: default_arch(),
         plans_dir: default_plans_dir(),
+        extra_plans_dirs: Vec::new(),
         components_dir: default_components_dir(),
         cache_dir: if use_xdg {
             get_xdg_cache().unwrap_or_else(default_cache_dir)
@@ -170,9 +129,7 @@ fn default_general() -> GeneralConfig {
         },
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
-        kits_dir: default_kits_dir(),
-        repo_dir: default_repo_dir(),
-        repo_db_path: default_repo_db_path(),
+        inventory_db_path: default_inventory_db_path(),
     }
 }
 
@@ -241,14 +198,8 @@ fn default_executors_dir() -> PathBuf {
 fn default_assemblies_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/assemblies")
 }
-fn default_kits_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/kits")
-}
-fn default_repo_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/repo")
-}
-fn default_repo_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/db/repo.db")
+fn default_inventory_db_path() -> PathBuf {
+    PathBuf::from("/var/lib/wright/db/inventory.db")
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright-build")
@@ -261,9 +212,6 @@ fn default_cflags() -> String {
 }
 fn default_cxxflags() -> String {
     "-O2 -pipe -march=x86-64".to_string()
-}
-fn default_true() -> bool {
-    true
 }
 fn default_timeout() -> u64 {
     300
@@ -309,25 +257,6 @@ impl Default for NetworkConfig {
     }
 }
 
-impl RepoConfig {
-    pub fn load(path: Option<&Path>) -> Result<Self> {
-        let config_path = path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/etc/wright/repos.toml"));
-
-        if !config_path.exists() {
-            return Ok(RepoConfig { source: Vec::new() });
-        }
-
-        let content = std::fs::read_to_string(&config_path).map_err(|e| {
-            WrightError::ConfigError(format!("failed to read {}: {}", config_path.display(), e))
-        })?;
-
-        let config: Self = toml::from_str(&content)?;
-        Ok(config)
-    }
-}
-
 impl AssembliesConfig {
     pub fn load_all(dir: &Path) -> Result<Self> {
         let mut config = AssembliesConfig {
@@ -351,60 +280,6 @@ impl AssembliesConfig {
             }
         }
         Ok(config)
-    }
-}
-
-impl KitsConfig {
-    pub fn load_all(dir: &Path) -> Result<Self> {
-        let mut config = KitsConfig {
-            kits: std::collections::HashMap::new(),
-        };
-        if !dir.exists() {
-            return Ok(config);
-        }
-
-        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
-            let entry = entry.map_err(WrightError::IoError)?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                let content = std::fs::read_to_string(&path).map_err(|e| {
-                    WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
-                })?;
-                let file: KitFile = toml::from_str(&content)?;
-                for kit in file.kit {
-                    config.kits.insert(kit.name.clone(), kit);
-                }
-            }
-        }
-        Ok(config)
-    }
-
-    pub fn resolve(&self, name: &str) -> Vec<String> {
-        let mut parts = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        self.collect(name, &mut parts, &mut visited);
-        parts
-    }
-
-    fn collect(
-        &self,
-        name: &str,
-        parts: &mut Vec<String>,
-        visited: &mut std::collections::HashSet<String>,
-    ) {
-        if !visited.insert(name.to_string()) {
-            return;
-        }
-        if let Some(kit) = self.kits.get(name) {
-            for pkg in &kit.parts {
-                if !parts.contains(pkg) {
-                    parts.push(pkg.clone());
-                }
-            }
-            for include in &kit.includes {
-                self.collect(include, parts, visited);
-            }
-        }
     }
 }
 

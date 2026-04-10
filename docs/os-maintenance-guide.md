@@ -3,7 +3,7 @@
 This guide defines a conservative maintenance policy for operating system part sets managed with Wright. The goal is stable systems over minimal rebuild cost.
 
 Scope:
-- This document is about maintaining OS parts in your distribution/repository.
+- This document is about maintaining OS parts in your distribution plan tree.
 - This document is not about maintaining the `wright` or `wbuild` tools themselves.
 
 ## 1. Update Strategy: Start From User-Facing Tools
