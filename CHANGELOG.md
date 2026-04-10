@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-04-11
+
+### Changed
+- **Flattened CLI layout**: lifted `resolve`, `check`, `fetch`, `checksum`, and `prune` out of nested command groups, and converted build-only validation/fetch/checksum flows into `build` flags.
+- **Unified lock API**: consolidated named-lock and DB-lock acquisition behind a single `acquire_lock` interface with explicit lock identity and mode types.
+
+### Added
+- **`apply --dry-run`**: `wright apply` now supports `--dry-run` / `-n` to preview the build and install plan without making changes.
+
+### Fixed
+- **`apply` planning and failure handling**: removed duplicate explicit target resolution, isolated `:bootstrap` suffix handling, delayed DB opening in the apply path, and report already-installed parts when a partial apply fails.
+
 ## [2.0.1] - 2026-04-11
 
 ### Changed
