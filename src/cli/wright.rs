@@ -144,7 +144,7 @@ pub enum Commands {
     )]
     Install {
         /// Part files or locally registered part names
-        #[arg(required = true, value_name = "PART")]
+        #[arg(value_name = "PART")]
         parts: Vec<String>,
 
         /// Force reinstall even if already installed
@@ -162,7 +162,7 @@ pub enum Commands {
     )]
     Apply {
         /// Plan names, plan directories, or @assemblies
-        #[arg(required = true, value_name = "TARGET")]
+        #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
         /// Force rebuild even if matching archives already exist

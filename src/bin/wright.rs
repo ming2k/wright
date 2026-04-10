@@ -73,7 +73,7 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
     let mut pkg_paths = Vec::new();
     for arg in args {
         let path = PathBuf::from(arg);
-        if path.exists() {
+        if path.is_file() {
             pkg_paths.push(path);
             continue;
         }
@@ -314,8 +314,19 @@ fn main() -> Result<()> {
             force,
             nodeps,
         } => {
+            // Drop the DB connection while draining stdin so that a concurrent
+            // `wbuild run` in the same pipeline can open the database for
+            // dependency resolution without hitting a lock conflict.
+            drop(db);
             let parts = collect_install_args(parts)?;
+            if parts.is_empty() {
+                if !std::io::stdin().is_terminal() {
+                    anyhow::bail!("no archive paths received from stdin; did the build succeed?");
+                }
+                anyhow::bail!("no parts specified (pass part names/paths as arguments or via stdin)");
+            }
             let pkg_paths = resolve_install_paths(&resolver, &parts)?;
+            let db = Database::open(&db_path).context("failed to open database")?;
 
             match transaction::install_parts(&db, &pkg_paths, &root_dir, &resolver, force, nodeps)
             {
@@ -336,6 +347,13 @@ fn main() -> Result<()> {
             // opens its own connection internally, and holding the lock here
             // would cause a self-deadlock (wright waiting on its own parts.db.lock).
             drop(db);
+            let targets = collect_install_args(targets)?;
+            if targets.is_empty() {
+                if !std::io::stdin().is_terminal() {
+                    anyhow::bail!("no targets received from stdin; did the resolve succeed?");
+                }
+                anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
+            }
             match apply_targets(
                 &config,
                 &db_path,
