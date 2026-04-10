@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-11
+
+### Changed
+- **Inventory module replaces `wrepo`**: the `wrepo` binary and `src/repo/` module have been removed in favour of a new `src/inventory/` module that manages the local archive database. The tool set is now two binaries: `wbuild` and `wright`.
+- **Simplified `ResolveOptions`**: the `install` field has been removed from `ResolveOptions`; all dependency types are now always expanded, removing a source of inconsistent resolve behaviour.
+
+### Fixed
+- **`apply` self-deadlock**: `apply` now opens a fresh DB connection per batch instead of holding the main handle across `resolve_build_set`, which previously caused a deadlock on `parts.db.lock`.
+- **Tracing message capitalisation**: `INFO`/`DEBUG` messages now consistently use sentence case throughout.
+
+### Added
+- **Stdin support for `apply` and `install`**: both commands now accept targets/parts piped from stdin, enabling workflows like `wbuild resolve neovim --self | wright apply`.
+
 ## [1.12.5] - 2026-04-09
 
 ### Fixed
