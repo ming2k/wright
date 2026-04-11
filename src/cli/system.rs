@@ -193,12 +193,10 @@ pub enum Commands {
         )]
         rdeps: Option<crate::cli::resolve::DomainArg>,
 
-        /// Rebuild policy based on current installation state.
-        /// `missing` keeps only absent parts.
-        /// `outdated` keeps parts that are missing or differ from the plan.
-        /// `all` performs no filtering, keeping everything.
-        #[arg(long, value_enum, default_value = "outdated")]
-        rebuild: crate::cli::resolve::RebuildPolicyArg,
+        /// Match policy for filtering based on installation state.
+        /// Can be specified multiple times.
+        #[arg(long, value_enum, default_values = &["all"])]
+        match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,
 
         /// Maximum expansion depth. `0` means unlimited.
         #[arg(long)]

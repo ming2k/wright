@@ -266,15 +266,15 @@ pub fn execute(
         targets,
         deps,
         rdeps,
-        rebuild,
+        match_policies,
         depth,
         force_build,
         force_install,
         dry_run,
     } = command
     {
-        use crate::builder::orchestrator::{RebuildPolicy, DependentsMode, ResolveOptions};
-        use crate::cli::resolve::{DomainArg, RebuildPolicyArg};
+        use crate::builder::orchestrator::{MatchPolicy, DependentsMode, ResolveOptions};
+        use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 
         use std::io::IsTerminal;
         let targets = collect_install_args(targets)?;
@@ -299,16 +299,20 @@ pub fn execute(
             DomainArg::All => DependentsMode::All,
         });
 
-        let rebuild_policy = match rebuild {
-            RebuildPolicyArg::All => RebuildPolicy::All,
-            RebuildPolicyArg::Missing => RebuildPolicy::Missing,
-            RebuildPolicyArg::Outdated => RebuildPolicy::Outdated,
-        };
+        let policies = match_policies
+            .into_iter()
+            .map(|p| match p {
+                MatchPolicyArg::All => MatchPolicy::All,
+                MatchPolicyArg::Missing => MatchPolicy::Missing,
+                MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+                MatchPolicyArg::Installed => MatchPolicy::Installed,
+            })
+            .collect();
 
         let resolve_opts = ResolveOptions {
             deps: deps_domain,
             rdeps: rdeps_domain,
-            rebuild: rebuild_policy,
+            match_policies: policies,
             depth,
             include_targets: true,
         };

@@ -3,22 +3,24 @@ use clap::{Parser, ValueEnum};
 pub const RESOLVE_AFTER_HELP: &str = "\
 Examples:
   wright resolve zlib --deps
-  wright resolve zlib --deps --rebuild=outdated
+  wright resolve zlib --deps --match=outdated
   wright resolve openssl --rdeps
   wright resolve glibc --rdeps=all --depth=0
-  wright resolve zlib --deps=link --rebuild=outdated
+  wright resolve zlib --deps=link --match=outdated
 
 Pipe into wright build:
   wright resolve openssl --rdeps | wright build";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub enum RebuildPolicyArg {
-    /// Include all traversed plans, regardless of installed state.
-    All,
-    /// Only include plans that are not currently installed.
+pub enum MatchPolicyArg {
+    /// Include plans that are not currently installed.
     Missing,
-    /// Only include plans that are missing, or whose version/release differs from the installed one.
+    /// Include plans whose version/release differs from the installed one.
     Outdated,
+    /// Include plans that are already installed and match the plan definition.
+    Installed,
+    /// Include all plans.
+    All,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -70,12 +72,10 @@ pub struct ResolveArgs {
     )]
     pub rdeps: Option<DomainArg>,
 
-    /// Rebuild policy based on current installation state.
-    /// `missing` keeps only absent parts.
-    /// `outdated` keeps parts that are missing or differ from the plan.
-    /// `all` performs no filtering, keeping everything.
-    #[arg(long, value_enum, default_value = "all")]
-    pub rebuild: RebuildPolicyArg,
+    /// Match policy for filtering based on installation state.
+    /// Can be specified multiple times.
+    #[arg(long, value_enum, default_values = &["all"])]
+    pub match_policies: Vec<MatchPolicyArg>,
 
     /// Maximum expansion depth. `0` means unlimited.
     /// If omitted, reverse-dependent expansion defaults to depth 1;
@@ -86,6 +86,6 @@ pub struct ResolveArgs {
     /// Show a visual dependency tree from hold-tree plan.toml files.
     /// This is a static analysis mode — it does not read the installed
     /// part database.
-    #[arg(long, short = 't', conflicts_with_all = ["deps", "rdeps", "rebuild", "exclude_targets"])]
+    #[arg(long, short = 't', conflicts_with_all = ["deps", "rdeps", "match_policies", "exclude_targets"])]
     pub tree: bool,
 }

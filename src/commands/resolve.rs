@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::builder::orchestrator::{self, DependentsMode, RebuildPolicy, ResolveOptions};
-use crate::cli::resolve::{DomainArg, RebuildPolicyArg, ResolveArgs};
+use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
+use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
@@ -47,11 +47,12 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
             DomainArg::All => DependentsMode::All,
         });
 
-        let rebuild = match args.rebuild {
-            RebuildPolicyArg::All => RebuildPolicy::All,
-            RebuildPolicyArg::Missing => RebuildPolicy::Missing,
-            RebuildPolicyArg::Outdated => RebuildPolicy::Outdated,
-        };
+        let match_policies = args.match_policies.iter().map(|p| match p {
+            MatchPolicyArg::All => MatchPolicy::All,
+            MatchPolicyArg::Missing => MatchPolicy::Missing,
+            MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+            MatchPolicyArg::Installed => MatchPolicy::Installed,
+        }).collect();
 
         let effective_depth = match args.depth {
             Some(value) => Some(value),
@@ -65,7 +66,7 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
             ResolveOptions {
                 deps,
                 rdeps,
-                rebuild,
+                match_policies,
                 depth: effective_depth,
                 include_targets: !args.exclude_targets,
             },

@@ -23,7 +23,7 @@ use planning::construction_plan_order;
 use planning::installed_matches_manifest;
 use planning::{
     build_dep_map, compute_session_hash, construction_plan_batches, construction_plan_label,
-    expand_missing_dependencies, expand_rebuild_deps,
+    expand_missing_dependencies, expand_rebuild_deps, dependency_matches_policy,
 };
 use resolver::resolve_targets;
 
@@ -41,12 +41,12 @@ pub struct BuildExecutionPlan {
     batches: Vec<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RebuildPolicy {
-    #[default]
-    All,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchPolicy {
     Missing,
     Outdated,
+    Installed,
+    All,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -64,7 +64,7 @@ pub enum DependentsMode {
 pub struct ResolveOptions {
     pub deps: Option<DependentsMode>,
     pub rdeps: Option<DependentsMode>,
-    pub rebuild: RebuildPolicy,
+    pub match_policies: Vec<MatchPolicy>,
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
     pub include_targets: bool,
@@ -170,17 +170,17 @@ pub fn resolve_build_set(
                 &mut plans_to_build,
                 &all_plans,
                 &db,
-                opts.rebuild,
+                &opts.match_policies,
                 domain,
                 actual_max,
             )?;
         }
 
         // 2. Filter the targets and expanded upstream deps
-        if opts.rebuild != RebuildPolicy::All {
+        if !opts.match_policies.contains(&MatchPolicy::All) {
             plans_to_build.retain(|path| {
                 if let Ok(m) = PlanManifest::from_file(path) {
-                    crate::builder::orchestrator::planning::dependency_requires_build(&m.plan.name, &all_plans, &db, opts.rebuild).unwrap_or(true)
+                    crate::builder::orchestrator::planning::dependency_matches_policy(&m.plan.name, &all_plans, &db, &opts.match_policies).unwrap_or(true)
                 } else {
                     true
                 }
@@ -445,7 +445,7 @@ pub enum RebuildReason {
 mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
-        expand_missing_dependencies, installed_matches_manifest, BuildOptions, RebuildPolicy,
+        expand_missing_dependencies, installed_matches_manifest, BuildOptions, MatchPolicy,
         DependentsMode, RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
@@ -602,10 +602,11 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             &mut plans_to_build,
             &all_plans,
             &db,
-            RebuildPolicy::Outdated,
+            &[MatchPolicy::Outdated],
             DependentsMode::All,
             usize::MAX,
         )
+
         .unwrap();
 
         assert!(!plans_to_build.contains(&all_plans["b"]));

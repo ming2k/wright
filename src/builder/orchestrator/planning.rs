@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::part::version;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
-use super::{BuildOptions, DependentsMode, RebuildPolicy, RebuildReason};
+use super::{BuildOptions, DependentsMode, MatchPolicy, RebuildReason};
 
 const SYSTEM_TOOLCHAIN: &[&str] = &[
     "gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed",
@@ -32,7 +32,7 @@ pub(super) fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    rebuild_policy: RebuildPolicy,
+    policies: &[MatchPolicy],
     domain: DependentsMode,
     max_depth: usize,
 ) -> Result<()> {
@@ -79,19 +79,19 @@ pub(super) fn expand_missing_dependencies(
                 queue.push_back((dep_name.clone(), dep_depth));
             }
 
-            if matches!(rebuild_policy, RebuildPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
+            if policies.contains(&MatchPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
             {
                 continue;
             }
 
             if !build_set.contains(&dep_name)
-                && dependency_requires_build(&dep_name, all_plans, db, rebuild_policy)?
+                && dependency_matches_policy(&dep_name, all_plans, db, policies)?
             {
                 if let Some(plan_path) = all_plans.get(&dep_name) {
                     info!(
                         "Scheduling dependency (depth {}, reason: {}): {}",
                         dep_depth,
-                        dependency_reason_label(&dep_name, all_plans, db, rebuild_policy)?,
+                        dependency_reason_label(&dep_name, all_plans, db, policies)?,
                         dep_name,
                     );
                     plans_to_build.insert(plan_path.clone());
@@ -100,7 +100,7 @@ pub(super) fn expand_missing_dependencies(
             }
         }
 
-        if !matches!(rebuild_policy, RebuildPolicy::All) && matches!(domain, DependentsMode::All | DependentsMode::Build) {
+        if !policies.contains(&MatchPolicy::All) && matches!(domain, DependentsMode::All | DependentsMode::Build) {
             for build_dep in &manifest.dependencies.build {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
@@ -142,14 +142,14 @@ pub(super) fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_name)
-                            && dependency_requires_build(&rdep_name, all_plans, db, rebuild_policy)?
+                            && dependency_matches_policy(&rdep_name, all_plans, db, policies)?
                         {
                             if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                 info!(
                                     "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
                                     build_dep_name,
                                     rdep_depth,
-                                    dependency_reason_label(&rdep_name, all_plans, db, rebuild_policy)?,
+                                    dependency_reason_label(&rdep_name, all_plans, db, policies)?,
                                     rdep_name,
                                 );
                                 plans_to_build.insert(rdep_plan_path.clone());
@@ -171,37 +171,48 @@ fn dependency_reason_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    rebuild_policy: RebuildPolicy,
+    policies: &[MatchPolicy],
 ) -> Result<&'static str> {
-    match rebuild_policy {
-        RebuildPolicy::All => Ok("--rebuild=all"),
-        RebuildPolicy::Missing => Ok("missing"),
-        RebuildPolicy::Outdated => {
-            if dependency_plan_differs(dep_name, all_plans, db)? {
-                Ok("outdated")
-            } else {
-                Ok("missing")
-            }
+    if policies.contains(&MatchPolicy::All) {
+        Ok("--match=all")
+    } else if policies.contains(&MatchPolicy::Missing) {
+        Ok("missing")
+    } else if policies.contains(&MatchPolicy::Outdated) {
+        if dependency_plan_differs(dep_name, all_plans, db)? {
+            Ok("outdated")
+        } else {
+            Ok("missing")
         }
+    } else {
+        Ok("unknown")
     }
 }
 
-pub(super) fn dependency_requires_build(
+pub(super) fn dependency_matches_policy(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    rebuild_policy: RebuildPolicy,
+    policies: &[MatchPolicy],
 ) -> Result<bool> {
-    match rebuild_policy {
-        RebuildPolicy::All => Ok(true),
-        RebuildPolicy::Missing => Ok(db.get_part(dep_name)?.is_none()),
-        RebuildPolicy::Outdated => {
-            if db.get_part(dep_name)?.is_none() {
-                return Ok(true);
+    let installed = db.get_part(dep_name)?;
+    for policy in policies {
+        let matched = match policy {
+            MatchPolicy::All => true,
+            MatchPolicy::Missing => installed.is_none(),
+            MatchPolicy::Installed => installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db)?,
+            MatchPolicy::Outdated => {
+                if installed.is_none() {
+                    true
+                } else {
+                    dependency_plan_differs(dep_name, all_plans, db)?
+                }
             }
-            dependency_plan_differs(dep_name, all_plans, db)
+        };
+        if matched {
+            return Ok(true);
         }
     }
+    Ok(false)
 }
 
 fn dependency_plan_differs(
