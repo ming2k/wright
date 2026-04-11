@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-04-11
+
+### Changed
+- **Build CLI/doc alignment**: cleaned up the unified `wright` build command layout across the codebase and refreshed the associated documentation and examples.
+- **`resolve` flag rename**: renamed `--self` to `--include-targets` (`-s`) so the option more clearly describes including the listed targets in resolve output.
+
+### Added
+- **`apply` design notes**: added `docs/apply-design.md` to document how `wright apply` chooses build scope and keeps rebuild pressure separate from install behavior.
+
 ## [2.0.2] - 2026-04-11
 
 ### Changed
