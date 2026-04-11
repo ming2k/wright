@@ -14,13 +14,13 @@ build-side and system-side workflows.
 ## System commands
 
 - `wright install <PART...>`
-  installs archive paths or locally registered part names
+ installs archive paths or locally registered part names
 - `wright apply <TARGET...>`
-  resolves plans or assemblies, executes wave-by-wave build/install orchestration, and converges the live system to those targets
+ resolves plans or assemblies, executes wave-by-wave build/install orchestration, and converges the live system to those targets
 - `wright upgrade <PART...>`
-  upgrades installed parts by local part name or archive path
+ upgrades installed parts by local part name or archive path
 - `wright sysupgrade`
-  upgrades everything to the newest locally registered archives
+ upgrades everything to the newest locally registered archives
 - `wright remove <PART...>`
 - `wright deps [PART]`
 - `wright list`
@@ -38,11 +38,11 @@ build-side and system-side workflows.
 ## Build commands
 
 - `wright build <TARGET...>`
-  builds plans or assemblies
+ builds plans or assemblies
 - `wright resolve <TARGET...>`
-  expands dependency and rebuild scope without building
+ expands dependency and rebuild scope without building
 - `wright prune`
-  cleans tracked or stray archives from the local inventory
+ cleans tracked or stray archives from the local inventory
 
 Useful `wright build` flags:
 
@@ -54,16 +54,16 @@ Useful `wright build` flags:
 - `--mvp`
 - `--dockyards <N>`
 - `--print-archives`
-  prints only archive paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
+ prints only archive paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`
 - `--checksum`
 - `--lint`
 
 Useful `wright resolve` flags:
 
-- `--include-targets`
+- ``
 - `--deps [none|missing|sync|all]`
-- `--dependents [link|all]`
+- `--rdeps [link|all]`
 - `--depth <N>`
 - `--tree`
 
@@ -71,7 +71,6 @@ Useful `wright apply` flags:
 
 - `--force-build`
 - `--force-install`
-- `--nodeps`
 - `--dry-run`
 
 Useful `wright prune` flags:

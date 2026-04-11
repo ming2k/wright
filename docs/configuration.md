@@ -72,5 +72,5 @@ retry_count = 3
 - `plans_dir` does not automatically move to a user path; override it explicitly for non-root setups.
 - `components_dir` is just the local stock of built archives.
 - `inventory_db_path` tracks local build outputs only. The legacy config key
-  `repo_db_path` is still accepted as an alias for migration.
+ `repo_db_path` is still accepted as an alias for migration.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.

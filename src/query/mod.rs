@@ -147,6 +147,7 @@ pub fn write_dep_tree(
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_dep_tree_inner(
     db: &Database,
     name: &str,
@@ -349,6 +350,7 @@ pub fn write_reverse_dep_tree(
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_reverse_dep_tree_inner(
     db: &Database,
     name: &str,

@@ -16,6 +16,7 @@ use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
 use super::BuildOptions;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn execute_builds(
     config: &GlobalConfig,
     name_to_path: &HashMap<String, PathBuf>,
@@ -350,6 +351,7 @@ pub(super) fn lint_dependency_graph(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_one(
     builder: &Builder,
     manifest: &PlanManifest,

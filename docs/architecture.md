@@ -20,19 +20,19 @@ plan.toml -> wright build -> .wright.tar.zst -> inventory.db -> wright install/u
 ```text
 src/
 ├── bin/
-│   └── wright.rs
-├── cli/          # clap schemas grouped by subcommand (build/resolve/prune/system)
-├── commands/     # command handlers grouped by subcommand
-├── builder/      # build orchestration and lifecycle execution
-├── config.rs     # global config and assembly definitions
-├── database/     # installed-system DB
-├── dockyard/     # sandbox isolation
-├── inventory/    # local archive inventory DB + resolver
-├── part/         # archive format, versions, FHS validation
-├── plan/         # plan parsing and validation
-├── query/        # system analysis
-├── transaction/  # install / upgrade / remove / verify
-└── util/         # helpers
+│  └── wright.rs
+├── cli/     # clap schemas grouped by subcommand (build/resolve/prune/system)
+├── commands/   # command handlers grouped by subcommand
+├── builder/   # build orchestration and lifecycle execution
+├── config.rs   # global config and assembly definitions
+├── database/   # installed-system DB
+├── dockyard/   # sandbox isolation
+├── inventory/  # local archive inventory DB + resolver
+├── part/     # archive format, versions, FHS validation
+├── plan/     # plan parsing and validation
+├── query/    # system analysis
+├── transaction/ # install / upgrade / remove / verify
+└── util/     # helpers
 ```
 
 The execution path is intentionally thin at the top:
@@ -63,7 +63,7 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 - remove parts and cascade orphan cleanup
 - verify and inspect the live system
 - run `apply` as the high-level orchestrator:
-  resolve targets, execute build waves, and install each wave before advancing
+ resolve targets, execute build waves, and install each wave before advancing
 
 ## Shared State
 

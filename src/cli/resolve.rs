@@ -2,32 +2,34 @@ use clap::{Parser, ValueEnum};
 
 pub const RESOLVE_AFTER_HELP: &str = "\
 Examples:
-  wright resolve zlib --include-targets --deps
-  wright resolve zlib --include-targets --deps=sync
-  wright resolve openssl --include-targets --dependents
-  wright resolve glibc --include-targets --dependents=all --depth=0
-  wright resolve zlib --include-targets --deps=all
+  wright resolve zlib --deps
+  wright resolve zlib --deps --rebuild=outdated
+  wright resolve openssl --rdeps
+  wright resolve glibc --rdeps=all --depth=0
+  wright resolve zlib --deps=link --rebuild=outdated
 
 Pipe into wright build:
-  wright resolve openssl --include-targets --dependents | wright build";
+  wright resolve openssl --rdeps | wright build";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub enum DepsMode {
-    /// Do not auto-expand upstream dependencies.
-    None,
-    /// Add missing upstream dependencies from the hold tree.
-    Missing,
-    /// Add upstream dependencies whose installed version differs from the plan.
-    Sync,
-    /// Add all upstream dependencies, even when already installed at the same version.
+pub enum RebuildPolicyArg {
+    /// Include all traversed plans, regardless of installed state.
     All,
+    /// Only include plans that are not currently installed.
+    Missing,
+    /// Only include plans that are missing, or whose version/release differs from the installed one.
+    Outdated,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub enum DependentsModeArg {
-    /// Rebuild only direct/transitive link dependents.
+pub enum DomainArg {
+    /// Follow only ABI-sensitive link relationships.
     Link,
-    /// Rebuild link, runtime, and build dependents.
+    /// Follow only runtime relationships.
+    Runtime,
+    /// Follow only build-time relationships.
+    Build,
+    /// Follow all relationships (link + runtime + build).
     All,
 }
 
@@ -36,34 +38,44 @@ pub struct ResolveArgs {
     /// Paths to plan directories, part names, or @assemblies
     pub targets: Vec<String>,
 
-    /// Include the listed target plans themselves in the output
-    #[arg(short = 's', long = "include-targets")]
-    pub include_targets: bool,
+    /// Exclude the listed target plans themselves from the output
+    #[arg(short = 'x', long = "exclude-targets")]
+    pub exclude_targets: bool,
 
     /// Expand upstream dependencies.
-    /// `missing` adds only absent dependencies.
-    /// `sync` also rebuilds installed dependencies whose epoch/version/release
-    /// differs from the current plan.
-    /// `all` rebuilds all upstream dependencies regardless of installed state.
+    /// `link` follows ABI-sensitive link dependencies.
+    /// `runtime` follows runtime dependencies.
+    /// `build` follows build dependencies.
+    /// `all` follows all dependencies.
     #[arg(
         short = 'd',
         long = "deps",
         value_enum,
         num_args = 0..=1,
-        default_missing_value = "missing"
+        default_missing_value = "all"
     )]
-    pub deps: Option<DepsMode>,
+    pub deps: Option<DomainArg>,
 
-    /// Expand downstream dependents (installed parts only).
+    /// Expand downstream reverse dependencies (rdeps) for installed parts.
     /// `link` follows ABI-sensitive link dependents.
-    /// `all` also follows runtime and build dependents.
+    /// `runtime` follows runtime dependents.
+    /// `build` follows build dependents.
+    /// `all` follows all dependents.
     #[arg(
-        long = "dependents",
+        short = 'r',
+        long = "rdeps",
         value_enum,
         num_args = 0..=1,
         default_missing_value = "link"
     )]
-    pub dependents: Option<DependentsModeArg>,
+    pub rdeps: Option<DomainArg>,
+
+    /// Rebuild policy based on current installation state.
+    /// `missing` keeps only absent parts.
+    /// `outdated` keeps parts that are missing or differ from the plan.
+    /// `all` performs no filtering, keeping everything.
+    #[arg(long, value_enum, default_value = "all")]
+    pub rebuild: RebuildPolicyArg,
 
     /// Maximum expansion depth. `0` means unlimited.
     /// If omitted, reverse-dependent expansion defaults to depth 1;
@@ -74,6 +86,6 @@ pub struct ResolveArgs {
     /// Show a visual dependency tree from hold-tree plan.toml files.
     /// This is a static analysis mode — it does not read the installed
     /// part database.
-    #[arg(long, short = 't', conflicts_with_all = ["deps", "dependents", "include_targets"])]
+    #[arg(long, short = 't', conflicts_with_all = ["deps", "rdeps", "rebuild", "exclude_targets"])]
     pub tree: bool,
 }

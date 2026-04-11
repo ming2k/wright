@@ -5,7 +5,7 @@ Examples:
   wright build zlib
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
-  wright resolve openssl --include-targets --dependents | wright build
+  wright resolve openssl --dependents | wright build
   echo -e 'curl\\nwget' | wright build --force";
 
 #[derive(Parser, Debug, Clone)]

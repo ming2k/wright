@@ -18,9 +18,9 @@ model beyond assemblies.
 ## Tool Boundaries
 
 - `wright build` builds parts from plans and records successful outputs in the
-  local inventory
+ local inventory
 - `wright` installs, upgrades, removes, verifies, and applies those locally
-  available parts to the live system
+ available parts to the live system
 
 The main workflows are:
 
@@ -30,7 +30,7 @@ wright install curl
 
 wright apply @base
 
-wright resolve openssl --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve openssl --rdeps=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 ## Intended Workflow
@@ -40,7 +40,7 @@ Wright is optimized for self-hosted maintenance:
 - plans are the source of truth
 - built archives exist mainly for rollback, recovery, and local reuse
 - `wright apply` is the preferred command when you want the system to match
-  current plans or assemblies
+ current plans or assemblies
 - `wright prune` cleans stale or stray archives from the local store
 
 ## Data Layout

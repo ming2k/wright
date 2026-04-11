@@ -63,13 +63,13 @@ wright unassume glibc
 Minimal `plan.toml` for a C library (`zlib`):
 
 ```toml
-name    = "zlib"
+name  = "zlib"
 version = "1.3.1"
 release = 1
 description = "Compression library"
 license = "Zlib"
-arch    = "x86_64"
-url     = "https://zlib.net"
+arch  = "x86_64"
+url   = "https://zlib.net"
 
 [[sources]]
 uri = "https://zlib.net/zlib-1.3.1.tar.gz"
@@ -152,7 +152,7 @@ A common pattern: build produces both runtime files and development headers.
 Separate them so users who only need the library don't pull in headers.
 
 ```toml
-name    = "zlib"
+name  = "zlib"
 version = "1.3.1"
 release = 1
 # ...
@@ -185,23 +185,23 @@ compiles itself). Wright resolves this with a two-pass build:
 2. **Full pass** — rebuild with all dependencies, now that the cycle is broken
 
 ```toml
-name    = "gcc"
+name  = "gcc"
 version = "14.2.0"
 # ...
 
 [dependencies]
-build = ["binutils", "glibc", "gcc"]   # gcc needs itself — cycle!
+build = ["binutils", "glibc", "gcc"]  # gcc needs itself — cycle!
 
 [mvp.dependencies]
-build = ["binutils", "glibc"]          # MVP: build without gcc in deps
+build = ["binutils", "glibc"]     # MVP: build without gcc in deps
 ```
 
 Wright detects the cycle automatically and schedules:
 
 ```
-INFO scheduling batch 0 build:mvp: gcc   ← first pass, no gcc dep
+INFO scheduling batch 0 build:mvp: gcc  ← first pass, no gcc dep
 INFO scheduling batch 0 build: binutils
-INFO scheduling batch 1 build:full: gcc  ← second pass, full deps
+INFO scheduling batch 1 build:full: gcc ← second pass, full deps
 ```
 
 To test the MVP pass explicitly without a cycle present:
@@ -224,7 +224,7 @@ Build a part and all of its missing upstream dependencies:
 
 ```bash
 # Resolve gtk4 plus any missing build/link deps, then build
-wright resolve gtk4 --include-targets --deps | wright build
+wright resolve gtk4 --deps | wright build
 ```
 
 Build only the missing deps, not gtk4 itself (pre-stage before the main build):
@@ -236,7 +236,7 @@ wright resolve gtk4 --deps | wright build
 Build everything — deps, the part, and downstream link dependents:
 
 ```bash
-wright resolve gtk4 --include-targets --deps --dependents | wright build
+wright resolve gtk4 --deps --rdeps | wright build
 ```
 
 ---
@@ -247,19 +247,19 @@ A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
 # Update the library, then cascade to all installed link dependents
-wright resolve libfoo --include-targets --dependents | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps | wright build --force --print-archives | wright install
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wright resolve libfoo --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wright resolve libfoo --include-targets --dependents --depth=2 | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps --depth=2 | wright build --force --print-archives | wright install
 ```
 
 ---
@@ -271,11 +271,11 @@ without re-building parts that already succeeded:
 
 ```bash
 # First run — fails on package 15 of 30:
-wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --force
-# Output: Build session: a1b2c3...  (resume with: --resume a1b2c3...)
+wright resolve pcre2 --rdeps --depth=0 | wright build --force
+# Output: Build session: a1b2c3... (resume with: --resume a1b2c3...)
 
 # Resume — skips the 14 already-completed packages:
-wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume
+wright resolve pcre2 --rdeps --depth=0 | wright build --resume
 ```
 
 `--resume` tracks progress in a build session stored in the database. Each
@@ -286,7 +286,7 @@ If you need to install the rebuilt outputs afterward, print the archive paths
 and feed them to `wright install`:
 
 ```bash
-wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume --print-archives | wright install
+wright resolve pcre2 --rdeps --depth=0 | wright build --resume --print-archives | wright install
 ```
 
 The session hash is deterministic — running the same `wright resolve | wright build`
@@ -294,7 +294,7 @@ pipeline produces the same hash, so `--resume` auto-detects the session. You can
 also pass the hash explicitly:
 
 ```bash
-wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume a1b2c3...
+wright resolve pcre2 --rdeps --depth=0 | wright build --resume a1b2c3...
 ```
 
 Sessions are cleaned up automatically when all parts complete successfully.
@@ -310,10 +310,10 @@ membership. Multiple assemblies can be freely combined and overlapping
 plans are deduplicated.
 
 ```bash
-wright build @base                  # build all plans in the "base" assembly
+wright build @base         # build all plans in the "base" assembly
 wright build @base @devel mypackage # combine assemblies and individual plans
-wright apply @base                  # build missing/outdated archives, then install the assembly
-wright resolve @base --include-targets --deps=sync | wright build # also sync missing/outdated upstream deps
+wright apply @base         # build missing/outdated archives, then install the assembly
+wright resolve @base --deps=sync | wright build # also sync missing/outdated upstream deps
 ```
 
 ---
@@ -397,12 +397,12 @@ The preferred approach: vendor crates in the source tree so the build is fully
 offline and runs under the default `strict` dockyard.
 
 ```toml
-name    = "ripgrep"
+name  = "ripgrep"
 version = "14.1.1"
 release = 1
 description = "Fast line-oriented search tool"
 license = "MIT OR Unlicense"
-arch    = "x86_64"
+arch  = "x86_64"
 
 [[sources]]
 # Source tarball already contains a vendor/ directory generated by `cargo vendor`
@@ -467,12 +467,12 @@ Run `go mod vendor` before packaging the source tarball so the build is
 offline under `strict`.
 
 ```toml
-name    = "hugo"
+name  = "hugo"
 version = "0.136.0"
 release = 1
 description = "Fast static site generator"
 license = "Apache-2.0"
-arch    = "x86_64"
+arch  = "x86_64"
 
 [[sources]]
 # Tarball includes vendor/ generated by `go mod vendor`

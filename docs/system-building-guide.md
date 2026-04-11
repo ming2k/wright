@@ -12,42 +12,42 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 ```
 /
-├── bin             → usr/bin   (usrmerge)
-├── sbin            → usr/bin   (usrmerge; sbin is fully merged into bin)
-├── lib             → usr/lib   (usrmerge)
-├── lib64           → usr/lib   (or usr/lib64 on glibc multi-arch systems)
+├── bin       → usr/bin  (usrmerge)
+├── sbin      → usr/bin  (usrmerge; sbin is fully merged into bin)
+├── lib       → usr/lib  (usrmerge)
+├── lib64      → usr/lib  (or usr/lib64 on glibc multi-arch systems)
 ├── usr/
-│   ├── bin/        # All executables — user commands and root tools unified
-│   ├── lib/        # Shared libraries (.so) and internal libraries
-│   ├── lib64/      # Multi-arch secondary library directory (if needed)
-│   ├── share/      # Architecture-independent data
-│   │   ├── man/    # Manual pages
-│   │   ├── doc/    # Documentation
-│   │   ├── info/   # Info pages
-│   │   └── locale/ # Localization files
-│   ├── include/    # C/C++ header files
-│   └── local/      # User-installed software (NOT managed by Wright)
-├── etc/            # System configuration files
-│   ├── wright/     # Wright system configuration
-│   ├── sv/         # runit service definitions
-│   └── ...
+│  ├── bin/    # All executables — user commands and root tools unified
+│  ├── lib/    # Shared libraries (.so) and internal libraries
+│  ├── lib64/   # Multi-arch secondary library directory (if needed)
+│  ├── share/   # Architecture-independent data
+│  │  ├── man/  # Manual pages
+│  │  ├── doc/  # Documentation
+│  │  ├── info/  # Info pages
+│  │  └── locale/ # Localization files
+│  ├── include/  # C/C++ header files
+│  └── local/   # User-installed software (NOT managed by Wright)
+├── etc/      # System configuration files
+│  ├── wright/   # Wright system configuration
+│  ├── sv/     # runit service definitions
+│  └── ...
 ├── var/
-│   ├── lib/        # Persistent program state data
-│   │   └── wright/ # Wright database and cache
-│   ├── log/        # Log files
-│   ├── run/        # Runtime data (tmpfs)
-│   ├── service/    → symlinks to enabled services in /etc/sv
-│   ├── hold/       # Hold tree (collection of plan files)
-│   └── tmp/        # Temporary files (cleared on reboot)
-├── home/           # User home directories
-├── root/           # root user home directory
-├── run/            # Runtime data (tmpfs, or symlink to /var/run)
-├── tmp/            # Temporary files (tmpfs, world-writable)
-├── opt/            # Self-contained third-party software trees
-├── boot/           # Kernel and bootloader files
-├── dev/            # Device files (devtmpfs)
-├── proc/           # Process information (procfs)
-└── sys/            # Kernel interface (sysfs)
+│  ├── lib/    # Persistent program state data
+│  │  └── wright/ # Wright database and cache
+│  ├── log/    # Log files
+│  ├── run/    # Runtime data (tmpfs)
+│  ├── service/  → symlinks to enabled services in /etc/sv
+│  ├── hold/    # Hold tree (collection of plan files)
+│  └── tmp/    # Temporary files (cleared on reboot)
+├── home/      # User home directories
+├── root/      # root user home directory
+├── run/      # Runtime data (tmpfs, or symlink to /var/run)
+├── tmp/      # Temporary files (tmpfs, world-writable)
+├── opt/      # Self-contained third-party software trees
+├── boot/      # Kernel and bootloader files
+├── dev/      # Device files (devtmpfs)
+├── proc/      # Process information (procfs)
+└── sys/      # Kernel interface (sysfs)
 ```
 
 ### 1.2 Key Design Decisions
@@ -93,10 +93,10 @@ The core question for splitting is: **Do subsets of files produced from the same
 
 Consider the following factors:
 
-1.  **Runtime vs. Build-time**: Many programs only need a library's `.so` file, not the compiler itself.
-2.  **Size Difference**: A subset is huge and unnecessary for most users.
-3.  **Dependency Propagation**: Not splitting causes many parts to pull in heavy, unnecessary components.
-4.  **Hardware/Scenario Specificity**: Firmware, drivers, etc., are only relevant to specific hardware.
+1. **Runtime vs. Build-time**: Many programs only need a library's `.so` file, not the compiler itself.
+2. **Size Difference**: A subset is huge and unnecessary for most users.
+3. **Dependency Propagation**: Not splitting causes many parts to pull in heavy, unnecessary components.
+4. **Hardware/Scenario Specificity**: Firmware, drivers, etc., are only relevant to specific hardware.
 
 ### 2.3 Typical Splitting Cases
 
@@ -106,13 +106,13 @@ GCC is the classic case for mandatory splitting. A single build produces the com
 
 ```
 gcc (source)
-├── gcc              # C compiler, cc1, collect2, etc. (~100MB+)
-├── g++              # C++ compiler frontend
-├── libstdc++        # C++ standard library runtime (~5MB)
-├── libgcc           # GCC low-level runtime (~200KB)
-├── libgomp          # OpenMP runtime
-├── libatomic        # Atomic operations library
-└── gcc-doc          # Documentation (info/man, large)
+├── gcc       # C compiler, cc1, collect2, etc. (~100MB+)
+├── g++       # C++ compiler frontend
+├── libstdc++    # C++ standard library runtime (~5MB)
+├── libgcc      # GCC low-level runtime (~200KB)
+├── libgomp     # OpenMP runtime
+├── libatomic    # Atomic operations library
+└── gcc-doc     # Documentation (info/man, large)
 ```
 
 **Why it must be split:**
@@ -162,13 +162,13 @@ The upstream `linux-firmware` repository contains firmware binaries for all hard
 
 ```
 linux-firmware (source, ~800MB+)
-├── linux-firmware-amdgpu      # AMD GPU firmware (~150MB)
-├── linux-firmware-nvidia       # NVIDIA Nouveau firmware
-├── linux-firmware-intel        # Various Intel firmware (WiFi, GPU, etc.)
-├── linux-firmware-iwlwifi      # Intel wireless firmware
-├── linux-firmware-realtek      # Realtek network/WiFi firmware
-├── linux-firmware-ath          # Atheros/Qualcomm WiFi firmware
-├── linux-firmware-broadcom     # Broadcom firmware
+├── linux-firmware-amdgpu   # AMD GPU firmware (~150MB)
+├── linux-firmware-nvidia    # NVIDIA Nouveau firmware
+├── linux-firmware-intel    # Various Intel firmware (WiFi, GPU, etc.)
+├── linux-firmware-iwlwifi   # Intel wireless firmware
+├── linux-firmware-realtek   # Realtek network/WiFi firmware
+├── linux-firmware-ath     # Atheros/Qualcomm WiFi firmware
+├── linux-firmware-broadcom   # Broadcom firmware
 └── ...
 ```
 
@@ -229,10 +229,10 @@ Traditional distributions (Debian, Alpine) split header files (`.h`), static lib
 
 However, for Wright's target users (personal or small team maintained custom distributions), **NOT splitting -dev is a better default choice**:
 
-1.  **Maintenance Cost**: Each `-dev` split means extra dependency declarations, version tracking, and testing.
-2.  **Build-friendly**: Not splitting `-dev` means installing a library allows you to immediately compile software that depends on it, without needing extra steps.
-3.  **Debug-friendly**: Header files are often useful during troubleshooting.
-4.  **Negligible Disk Overhead**: Headers and `.pc` files typically take up only a few hundred KB.
+1. **Maintenance Cost**: Each `-dev` split means extra dependency declarations, version tracking, and testing.
+2. **Build-friendly**: Not splitting `-dev` means installing a library allows you to immediately compile software that depends on it, without needing extra steps.
+3. **Debug-friendly**: Header files are often useful during troubleshooting.
+4. **Negligible Disk Overhead**: Headers and `.pc` files typically take up only a few hundred KB.
 
 **Exception**: If a part's development files are exceptionally large (e.g., Qt, LLVM headers over 50MB), consider splitting.
 
@@ -300,9 +300,9 @@ optional = ["nghttp2"]
 
 Circular dependencies (A → B → A) are detected and rejected by Wright's dependency resolver. If you encounter circular dependencies upstream:
 
-1.  Determine if it's a true runtime circular dependency (usually it's not).
-2.  Change one direction to `optional` or handle it in `build` dependencies.
-3.  If necessary, consider merging them into a single part.
+1. Determine if it's a true runtime circular dependency (usually it's not).
+2. Change one direction to `optional` or handle it in `build` dependencies.
+3. If necessary, consider merging them into a single part.
 
 ---
 
@@ -338,9 +338,9 @@ When encountering compatibility issues, prioritize submitting patches upstream; 
 Parts providing daemons must include a runit service directory:
 
 ```
-/etc/sv/{service}/run          # Required, service start script
-/etc/sv/{service}/finish       # Optional, cleanup script
-/etc/sv/{service}/log/run      # Recommended, logging script
+/etc/sv/{service}/run     # Required, service start script
+/etc/sv/{service}/finish    # Optional, cleanup script
+/etc/sv/{service}/log/run   # Recommended, logging script
 ```
 
 Services are **NOT enabled by default**. Users enable services via symlinks:

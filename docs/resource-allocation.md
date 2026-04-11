@@ -16,14 +16,14 @@ The layers compose. On a 16-core machine (12 usable after the 4-core OS reserve)
 By default wright reserves 4 CPUs for the OS, keeping the system responsive during heavy parallel builds:
 
 ```
-total_cpus = available_cpus - 4   (minimum 1)
+total_cpus = available_cpus - 4  (minimum 1)
 ```
 
 Override with `max_cpus` in `wright.toml`:
 
 ```toml
 [build]
-max_cpus = 16   # use exactly 16 cores; 0 or unset = available - 4
+max_cpus = 16  # use exactly 16 cores; 0 or unset = available - 4
 ```
 
 ## Dockyard Concurrency
@@ -31,12 +31,12 @@ max_cpus = 16   # use exactly 16 cores; 0 or unset = available - 4
 The scheduler runs as many dockyards as the limit allows, but only launches a part when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the dockyard count is a ceiling, not a guarantee.
 
 ```
-dependency graph:          with dockyards = 3:
-  A ─┐
-  B ─┼─► D ─► F          step 1: A, B, C  (no deps, all launch)
-  C ─┘                    step 2: D        (waits for A, B)
-                           step 3: E        (waits for C)
-  C ──► E                 step 4: F        (waits for D)
+dependency graph:     with dockyards = 3:
+ A ─┐
+ B ─┼─► D ─► F     step 1: A, B, C (no deps, all launch)
+ C ─┘          step 2: D    (waits for A, B)
+              step 3: E    (waits for C)
+ C ──► E         step 4: F    (waits for D)
 ```
 
 Setting `dockyards` higher than the number of parts independent at any given point has no effect — the scheduler finds no additional ready work.
@@ -45,7 +45,7 @@ Configure in `wright.toml`:
 
 ```toml
 [build]
-dockyards = 4   # default: 0 (auto = total_cpus)
+dockyards = 4  # default: 0 (auto = total_cpus)
 ```
 
 Or per-invocation with `--dockyards`:
@@ -75,7 +75,7 @@ If you want a fixed per-dockyard CPU count instead of the dynamic share, set `np
 ```toml
 [build]
 dockyards = 4
-nproc_per_dockyard = 4   # each dockyard always gets exactly 4 CPUs
+nproc_per_dockyard = 4  # each dockyard always gets exactly 4 CPUs
 ```
 
 ### Per-plan control
@@ -107,13 +107,13 @@ env = { GOFLAGS = "-p=$(nproc)", GOMAXPROCS = "$(nproc)" }
 
 | `max_cpus` | `dockyards` | `nproc_per_dockyard` | Active dockyards | CPUs per dockyard |
 |------------|-------------|----------------------|------------------|-------------------|
-| unset      | 0 (→12)    | unset                | 1                | 12                |
-| unset      | 0 (→12)    | unset                | 4                | 3                 |
-| unset      | 0 (→12)    | unset                | 6                | 2                 |
-| 16         | 0 (→16)    | unset                | 4                | 4                 |
-| unset      | 4           | unset                | 4                | 3                 |
-| unset      | 4           | 2                    | any              | 2 (fixed)         |
-| unset      | 1           | unset                | 1                | 12                |
+| unset   | 0 (→12)  | unset        | 1        | 12        |
+| unset   | 0 (→12)  | unset        | 4        | 3         |
+| unset   | 0 (→12)  | unset        | 6        | 2         |
+| 16     | 0 (→16)  | unset        | 4        | 4         |
+| unset   | 4      | unset        | 4        | 3         |
+| unset   | 4      | 2          | any       | 2 (fixed)     |
+| unset   | 1      | unset        | 1        | 12        |
 
 ## Memory and Time Limits
 
@@ -130,7 +130,7 @@ Per-plan values take precedence over global config:
 ```toml
 # wright.toml — global safety nets
 [build]
-timeout = 7200        # 2-hour wall-clock limit per stage
+timeout = 7200    # 2-hour wall-clock limit per stage
 cpu_time_limit = 3600 # 1-hour CPU-time limit
 
 # plan.toml — tighter limits for a known-fast part

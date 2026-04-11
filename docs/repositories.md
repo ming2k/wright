@@ -51,7 +51,7 @@ wright prune --latest --apply
 
 - `--untracked` removes files present on disk but absent from `inventory.db`
 - `--latest` keeps only the newest tracked archive per part name while
-  preserving versions that are currently installed
+ preserving versions that are currently installed
 - add `--apply` to perform deletions; otherwise Wright prints a dry-run report
 
 ## Low-Level Pipeline
@@ -60,7 +60,7 @@ If you want explicit control over build and install phases, print archive paths
 from `wright build` and pipe them into `wright install`:
 
 ```bash
-wright resolve openssl --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve openssl --rdeps=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 `--print-archives` keeps stdout reserved for archive paths. Human-readable

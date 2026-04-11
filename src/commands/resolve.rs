@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::builder::orchestrator::{self, DependencyMode, DependentsMode, ResolveOptions};
-use crate::cli::resolve::{DependentsModeArg, DepsMode, ResolveArgs};
+use crate::builder::orchestrator::{self, DependentsMode, RebuildPolicy, ResolveOptions};
+use crate::cli::resolve::{DomainArg, RebuildPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
@@ -33,20 +33,29 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
         );
         println!("\nSource: hold-tree plan.toml");
     } else {
-        let deps_mode = match args.deps.unwrap_or(DepsMode::None) {
-            DepsMode::None => DependencyMode::None,
-            DepsMode::Missing => DependencyMode::Missing,
-            DepsMode::Sync => DependencyMode::Sync,
-            DepsMode::All => DependencyMode::All,
+        let deps = args.deps.map(|d| match d {
+            DomainArg::Link => DependentsMode::Link,
+            DomainArg::Runtime => DependentsMode::Runtime,
+            DomainArg::Build => DependentsMode::Build,
+            DomainArg::All => DependentsMode::All,
+        });
+
+        let rdeps = args.rdeps.map(|d| match d {
+            DomainArg::Link => DependentsMode::Link,
+            DomainArg::Runtime => DependentsMode::Runtime,
+            DomainArg::Build => DependentsMode::Build,
+            DomainArg::All => DependentsMode::All,
+        });
+
+        let rebuild = match args.rebuild {
+            RebuildPolicyArg::All => RebuildPolicy::All,
+            RebuildPolicyArg::Missing => RebuildPolicy::Missing,
+            RebuildPolicyArg::Outdated => RebuildPolicy::Outdated,
         };
-        let dependents_mode = match args.dependents {
-            None => DependentsMode::None,
-            Some(DependentsModeArg::Link) => DependentsMode::Link,
-            Some(DependentsModeArg::All) => DependentsMode::All,
-        };
+
         let effective_depth = match args.depth {
             Some(value) => Some(value),
-            None if dependents_mode != DependentsMode::None => Some(1),
+            None if rdeps.is_some() => Some(1),
             None => Some(0),
         };
 
@@ -54,10 +63,11 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
             config,
             args.targets,
             ResolveOptions {
-                deps_mode,
-                dependents_mode,
+                deps,
+                rdeps,
+                rebuild,
                 depth: effective_depth,
-                include_targets: args.include_targets,
+                include_targets: !args.exclude_targets,
             },
         )?;
 
@@ -101,6 +111,7 @@ pub fn print_plan_tree(
     Ok(stats)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_plan_tree_inner(
     name: &str,
     all_plans: &HashMap<String, PathBuf>,

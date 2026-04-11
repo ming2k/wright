@@ -74,6 +74,12 @@ pub fn pick_version<'a>(
         .max_by_key(|p| p.release)
 }
 
+impl Default for LocalResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalResolver {
     pub fn new() -> Self {
         Self {

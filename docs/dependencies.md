@@ -46,8 +46,8 @@ With `--deps=all`, Wright expands more aggressively:
 **Downward Expansion: Reverse Rebuilds**
 When a dependency changes, other parts may need to be rebuilt.
 
-- `link` dependencies always trigger reverse rebuilds via `wright resolve --dependents`.
-- `build` and `runtime` dependencies only trigger reverse rebuilds with `--dependents=all`.
+- `link` dependencies always trigger reverse rebuilds via `wright resolve --rdeps`.
+- `build` and `runtime` dependencies only trigger reverse rebuilds with `--rdeps=all`.
 
 This behavior keeps ABI-sensitive chains correct without forcing expensive rebuilds by default.
 
@@ -59,7 +59,7 @@ action label and its depth in the dependency graph:
 
 - `build`: Normal build for an explicitly requested target or an added dependency.
 - `relink`: Rebuilt because a `link` dependency changed.
-- `rebuild`: Rebuilt because of `--dependents=all` transitive expansion (via `wright resolve`).
+- `rebuild`: Rebuilt because of `--rdeps=all` transitive expansion (via `wright resolve`).
 - `build:mvp`: Bootstrap build used to break a dependency cycle.
 - `build:full`: Full build after an MVP bootstrap.
 
@@ -67,9 +67,9 @@ action label and its depth in the dependency graph:
 If Wright detects a dependency cycle, it tries to resolve it in a user-friendly way.
 
 - If the part declares `mvp.dependencies` inline in `plan.toml` or via a
-  sibling `mvp.toml`, Wright performs a two-pass build.
+ sibling `mvp.toml`, Wright performs a two-pass build.
 - The first pass is an **MVP build** (labeled `build:mvp` in the scheduling log).
-  It excludes the dependencies listed in that MVP override.
+ It excludes the dependencies listed in that MVP override.
 - The second pass is a full build, forced to rebuild even if a partial archive exists.
 
 This results in two scheduled entries for that part:
@@ -105,14 +105,14 @@ wright apply curl
 Example: Force a deep rebuild of dependencies.
 
 ```bash
-wright resolve openssl --include-targets --deps=all | wright build --force
+wright resolve openssl --deps=all | wright build --force
 ```
 
 Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wright resolve zlib --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve zlib --rdeps=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 **Install Origin Tracking**

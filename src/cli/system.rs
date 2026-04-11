@@ -165,6 +165,45 @@ pub enum Commands {
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
+        /// Expand upstream dependencies.
+        /// `link` follows ABI-sensitive link dependencies.
+        /// `runtime` follows runtime dependencies.
+        /// `build` follows build dependencies.
+        /// `all` follows all dependencies.
+        #[arg(
+            short = 'd',
+            long = "deps",
+            value_enum,
+            num_args = 0..=1,
+            default_missing_value = "all"
+        )]
+        deps: Option<crate::cli::resolve::DomainArg>,
+
+        /// Expand downstream reverse dependencies (rdeps) for installed parts.
+        /// `link` follows ABI-sensitive link dependents.
+        /// `runtime` follows runtime dependents.
+        /// `build` follows build dependents.
+        /// `all` follows all dependents.
+        #[arg(
+            short = 'r',
+            long = "rdeps",
+            value_enum,
+            num_args = 0..=1,
+            default_missing_value = "link"
+        )]
+        rdeps: Option<crate::cli::resolve::DomainArg>,
+
+        /// Rebuild policy based on current installation state.
+        /// `missing` keeps only absent parts.
+        /// `outdated` keeps parts that are missing or differ from the plan.
+        /// `all` performs no filtering, keeping everything.
+        #[arg(long, value_enum, default_value = "outdated")]
+        rebuild: crate::cli::resolve::RebuildPolicyArg,
+
+        /// Maximum expansion depth. `0` means unlimited.
+        #[arg(long)]
+        depth: Option<usize>,
+
         /// Force rebuild even if matching archives already exist
         #[arg(long)]
         force_build: bool,
@@ -172,10 +211,6 @@ pub enum Commands {
         /// Force reinstall/upgrade during the install phase
         #[arg(long)]
         force_install: bool,
-
-        /// Skip dependency resolution during the install phase
-        #[arg(long)]
-        nodeps: bool,
 
         /// Preview what would be built and installed without making any changes
         #[arg(long, short = 'n')]

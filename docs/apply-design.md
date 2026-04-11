@@ -54,7 +54,7 @@ to assemble one manually on every run.
 `wright apply` currently resolves its build set as if it had called:
 
 ```bash
-wright resolve <targets> --include-targets --deps=sync
+wright resolve <targets> --deps=sync
 ```
 
 More precisely:
@@ -73,7 +73,7 @@ stale dependency chain, but less destructive than a blanket rebuild.
 
 At the same time, `apply` does **not** default to reverse rebuild cascades.
 Rebuilding downstream dependents is a heavier policy decision and remains an
-explicit low-level workflow through `wright resolve --dependents`.
+explicit low-level workflow through `wright resolve --rdeps`.
 
 ### Inventory-First, Plan-Driven
 
@@ -81,7 +81,7 @@ explicit low-level workflow through `wright resolve --dependents`.
 
 - If the local inventory already contains matching build outputs, they can be reused.
 - If an upstream part is missing or out of sync with the plans, Wright builds it.
-- The install step still resolves archive dependencies from the local inventory unless `--nodeps` is used.
+- The install step still resolves archive dependencies from the local inventory.
 
 This makes `apply` neither purely build-first nor purely install-first. It is a
 coordinated plan-to-system command.
@@ -221,7 +221,7 @@ promotion.
 
 `wright apply` is intentionally not:
 
-- a replacement for `wright resolve --dependents` deep rebuild workflows
+- a replacement for `wright resolve --rdeps` deep rebuild workflows
 - a hidden alias for `wright build && wright install`
 - a global rollback boundary across all dependency waves
 - a fully user-programmable policy engine
@@ -238,7 +238,7 @@ Use this rule of thumb:
 - use `wright resolve` when you want to shape rebuild scope
 - use `wright install` when you already know which archives to apply
 - use `wright apply` when you want the live system to converge toward the
-  current plans with Wright's default maintenance policy
+ current plans with Wright's default maintenance policy
 
 That last item is the key design point. `apply` is not merely a convenience
 command. It is the policy-bearing command in Wright's source-first workflow.

@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::part::version;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
-use super::{BuildOptions, DependencyMode, RebuildReason};
+use super::{BuildOptions, DependentsMode, RebuildPolicy, RebuildReason};
 
 const SYSTEM_TOOLCHAIN: &[&str] = &[
     "gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed",
@@ -32,7 +32,8 @@ pub(super) fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    mode: DependencyMode,
+    rebuild_policy: RebuildPolicy,
+    domain: DependentsMode,
     max_depth: usize,
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
@@ -53,13 +54,16 @@ pub(super) fn expand_missing_dependencies(
         };
         let manifest = PlanManifest::from_file(path)?;
 
-        let deps_to_check = manifest
-            .dependencies
-            .build
-            .iter()
-            .chain(manifest.dependencies.link.iter())
-            .chain(manifest.dependencies.runtime.iter())
-            .collect::<Vec<_>>();
+        let mut deps_to_check = Vec::new();
+        if matches!(domain, DependentsMode::All | DependentsMode::Build) {
+            deps_to_check.extend(manifest.dependencies.build.iter());
+        }
+        if matches!(domain, DependentsMode::All | DependentsMode::Link) {
+            deps_to_check.extend(manifest.dependencies.link.iter());
+        }
+        if matches!(domain, DependentsMode::All | DependentsMode::Runtime) {
+            deps_to_check.extend(manifest.dependencies.runtime.iter());
+        }
 
         for dep in deps_to_check {
             let dep_name = version::parse_dependency(dep)
@@ -75,19 +79,19 @@ pub(super) fn expand_missing_dependencies(
                 queue.push_back((dep_name.clone(), dep_depth));
             }
 
-            if matches!(mode, DependencyMode::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
+            if matches!(rebuild_policy, RebuildPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
             {
                 continue;
             }
 
             if !build_set.contains(&dep_name)
-                && dependency_requires_build(&dep_name, all_plans, db, mode)?
+                && dependency_requires_build(&dep_name, all_plans, db, rebuild_policy)?
             {
                 if let Some(plan_path) = all_plans.get(&dep_name) {
                     info!(
                         "Scheduling dependency (depth {}, reason: {}): {}",
                         dep_depth,
-                        dependency_reason_label(&dep_name, all_plans, db, mode)?,
+                        dependency_reason_label(&dep_name, all_plans, db, rebuild_policy)?,
                         dep_name,
                     );
                     plans_to_build.insert(plan_path.clone());
@@ -96,7 +100,7 @@ pub(super) fn expand_missing_dependencies(
             }
         }
 
-        if !matches!(mode, DependencyMode::All) {
+        if !matches!(rebuild_policy, RebuildPolicy::All) && matches!(domain, DependentsMode::All | DependentsMode::Build) {
             for build_dep in &manifest.dependencies.build {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
@@ -138,14 +142,14 @@ pub(super) fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_name)
-                            && dependency_requires_build(&rdep_name, all_plans, db, mode)?
+                            && dependency_requires_build(&rdep_name, all_plans, db, rebuild_policy)?
                         {
                             if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                 info!(
                                     "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
                                     build_dep_name,
                                     rdep_depth,
-                                    dependency_reason_label(&rdep_name, all_plans, db, mode)?,
+                                    dependency_reason_label(&rdep_name, all_plans, db, rebuild_policy)?,
                                     rdep_name,
                                 );
                                 plans_to_build.insert(rdep_plan_path.clone());
@@ -167,33 +171,31 @@ fn dependency_reason_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    mode: DependencyMode,
+    rebuild_policy: RebuildPolicy,
 ) -> Result<&'static str> {
-    match mode {
-        DependencyMode::All => Ok("--deps=all"),
-        DependencyMode::Missing => Ok("missing"),
-        DependencyMode::Sync => {
+    match rebuild_policy {
+        RebuildPolicy::All => Ok("--rebuild=all"),
+        RebuildPolicy::Missing => Ok("missing"),
+        RebuildPolicy::Outdated => {
             if dependency_plan_differs(dep_name, all_plans, db)? {
                 Ok("outdated")
             } else {
                 Ok("missing")
             }
         }
-        DependencyMode::None => Ok("skipped"),
     }
 }
 
-fn dependency_requires_build(
+pub(super) fn dependency_requires_build(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &Database,
-    mode: DependencyMode,
+    rebuild_policy: RebuildPolicy,
 ) -> Result<bool> {
-    match mode {
-        DependencyMode::None => Ok(false),
-        DependencyMode::All => Ok(true),
-        DependencyMode::Missing => Ok(db.get_part(dep_name)?.is_none()),
-        DependencyMode::Sync => {
+    match rebuild_policy {
+        RebuildPolicy::All => Ok(true),
+        RebuildPolicy::Missing => Ok(db.get_part(dep_name)?.is_none()),
+        RebuildPolicy::Outdated => {
             if db.get_part(dep_name)?.is_none() {
                 return Ok(true);
             }
@@ -405,23 +407,33 @@ pub(super) fn construction_plan_label(
 pub(super) fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
-    rebuild_all: bool,
+    mode: DependentsMode,
     max_depth: usize,
     installed_names: &HashSet<String>,
 ) -> Result<HashMap<String, RebuildReason>> {
     let mut reasons = HashMap::new();
 
-    let mut build_runtime_deps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut runtime_deps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut build_deps: HashMap<String, Vec<String>> = HashMap::new();
     let mut link_deps: HashMap<String, Vec<String>> = HashMap::new();
     let mut all_name_to_path: HashMap<String, PathBuf> = HashMap::new();
 
     for (plan_name, plan_path) in all_plans {
         if let Ok(m) = PlanManifest::from_file(plan_path) {
-            let br_deps: Vec<String> = m
+            let r_deps: Vec<String> = m
                 .dependencies
                 .runtime
                 .iter()
-                .chain(m.dependencies.build.iter())
+                .map(|d| {
+                    version::parse_dependency(d)
+                        .unwrap_or_else(|_| (d.clone(), None))
+                        .0
+                })
+                .collect();
+            let b_deps: Vec<String> = m
+                .dependencies
+                .build
+                .iter()
                 .map(|d| {
                     version::parse_dependency(d)
                         .unwrap_or_else(|_| (d.clone(), None))
@@ -439,7 +451,8 @@ pub(super) fn expand_rebuild_deps(
                 })
                 .collect();
 
-            build_runtime_deps.insert(plan_name.clone(), br_deps);
+            runtime_deps.insert(plan_name.clone(), r_deps);
+            build_deps.insert(plan_name.clone(), b_deps);
             link_deps.insert(plan_name.clone(), l_deps);
             all_name_to_path.insert(plan_name.clone(), plan_path.clone());
         }
@@ -465,17 +478,24 @@ pub(super) fn expand_rebuild_deps(
                 continue;
             }
 
-            let link_changed = link_deps
-                .get(name)
-                .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
-
-            let other_changed = rebuild_all
-                && build_runtime_deps
+            let link_changed = matches!(mode, DependentsMode::All | DependentsMode::Link)
+                && link_deps
                     .get(name)
                     .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
 
-            if link_changed || other_changed {
-                if !rebuild_all && SYSTEM_TOOLCHAIN.contains(&name.as_str()) {
+            let runtime_changed = matches!(mode, DependentsMode::All | DependentsMode::Runtime)
+                && runtime_deps
+                    .get(name)
+                    .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
+
+            let build_changed = matches!(mode, DependentsMode::All | DependentsMode::Build)
+                && build_deps
+                    .get(name)
+                    .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
+
+            if link_changed || runtime_changed || build_changed {
+                if !matches!(mode, DependentsMode::All) && SYSTEM_TOOLCHAIN.contains(&name.as_str())
+                {
                     continue;
                 }
 

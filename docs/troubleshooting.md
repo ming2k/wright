@@ -103,7 +103,7 @@ grep '^name' path/to/mypackage/plan.toml
 wright build ./path/to/mypackage
 
 # Or from the plans directory root
-wright build mypackage   # looks for plans_dir/mypackage/plan.toml
+wright build mypackage  # looks for plans_dir/mypackage/plan.toml
 ```
 
 ---
@@ -123,14 +123,14 @@ Triggered during automatic dependency expansion when a dependency declared in
 
 1. Add the missing plan to your plans directory.
 2. If the dependency is already installed on the system and you don't want to
-   build it, mark it as a runtime-only dep or remove it from `build`/`link`
-   dependencies if it is genuinely not needed at build time.
-   If it is needed both at runtime and for ABI-sensitive rebuild tracking,
-   declare it in both `runtime` and `link`.
+  build it, mark it as a runtime-only dep or remove it from `build`/`link`
+  dependencies if it is genuinely not needed at build time.
+  If it is needed both at runtime and for ABI-sensitive rebuild tracking,
+  declare it in both `runtime` and `link`.
 3. Skip dependency expansion and build only the target:
-   ```bash
-   wright build mypkg
-   ```
+  ```bash
+  wright build mypkg
+  ```
 
 ---
 
@@ -140,8 +140,8 @@ Triggered during automatic dependency expansion when a dependency declared in
 
 ```
 ERROR Deadlock detected or dependency missing from plan set:
-  - pkgA is waiting for: pkgB
-  - pkgB is waiting for: pkgA
+ - pkgA is waiting for: pkgB
+ - pkgB is waiting for: pkgA
 ```
 
 A circular dependency exists and Wright could not resolve it automatically.
@@ -166,8 +166,8 @@ wright build pkgA pkgB --lint
 
 ```
 ERROR SHA256 mismatch for gcc-gcc-14.2.0.tar.xz:
-  expected: abc123...
-  actual:   def456...
+ expected: abc123...
+ actual:  def456...
 ```
 
 The downloaded file does not match the hash in `plan.toml`.
@@ -175,7 +175,7 @@ The downloaded file does not match the hash in `plan.toml`.
 **Possible causes:**
 
 - Upstream changed the tarball without bumping the version (uncommon but
-  happens with "rolling" release tarballs).
+ happens with "rolling" release tarballs).
 - A partial download is in the source cache.
 - The hash in `plan.toml` is wrong.
 
@@ -280,13 +280,13 @@ The stage exceeded the `timeout` setting in `wright.toml` or `plan.toml`.
 **Options:**
 
 1. Raise `timeout` globally or for the specific part:
-   ```toml
-   # plan.toml
-   [options]
-   timeout = 14400   # 4 hours
-   ```
+  ```toml
+  # plan.toml
+  [options]
+  timeout = 14400  # 4 hours
+  ```
 2. Investigate why the build is slow — a hung configure script or infinite
-   loop is a more likely culprit than a genuinely slow build.
+  loop is a more likely culprit than a genuinely slow build.
 
 ---
 

@@ -42,12 +42,11 @@ pub struct BuildExecutionPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DependencyMode {
+pub enum RebuildPolicy {
     #[default]
-    None,
-    Missing,
-    Sync,
     All,
+    Missing,
+    Outdated,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,14 +54,17 @@ pub enum DependentsMode {
     #[default]
     None,
     Link,
+    Runtime,
+    Build,
     All,
 }
 
 /// Options for dependency/dependent resolution via `wright resolve`.
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
-    pub deps_mode: DependencyMode,
-    pub dependents_mode: DependentsMode,
+    pub deps: Option<DependentsMode>,
+    pub rdeps: Option<DependentsMode>,
+    pub rebuild: RebuildPolicy,
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
     pub include_targets: bool,
@@ -155,10 +157,6 @@ pub fn resolve_build_set(
         }
     };
 
-    let do_deps = opts.deps_mode != DependencyMode::None;
-    let do_dependents = opts.dependents_mode != DependentsMode::None;
-    let include_targets = opts.include_targets || !do_dependents || do_deps;
-
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
     {
@@ -166,17 +164,31 @@ pub fn resolve_build_set(
         let db = Database::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
-        if do_deps {
+        // 1. Traverse upstream
+        if let Some(domain) = opts.deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
                 &all_plans,
                 &db,
-                opts.deps_mode,
+                opts.rebuild,
+                domain,
                 actual_max,
             )?;
         }
 
-        if do_dependents {
+        // 2. Filter the targets and expanded upstream deps
+        if opts.rebuild != RebuildPolicy::All {
+            plans_to_build.retain(|path| {
+                if let Ok(m) = PlanManifest::from_file(path) {
+                    crate::builder::orchestrator::planning::dependency_requires_build(&m.plan.name, &all_plans, &db, opts.rebuild).unwrap_or(true)
+                } else {
+                    true
+                }
+            });
+        }
+
+        // 3. Traverse downstream from the filtered changing set
+        if let Some(domain) = opts.rdeps {
             let installed_names: HashSet<String> = db
                 .list_parts()
                 .context("failed to list installed parts for dependents filter")?
@@ -186,14 +198,14 @@ pub fn resolve_build_set(
             expand_rebuild_deps(
                 &mut plans_to_build,
                 &all_plans,
-                opts.dependents_mode == DependentsMode::All,
+                domain,
                 actual_max,
                 &installed_names,
             )?;
         }
     }
 
-    if !include_targets {
+    if !opts.include_targets {
         plans_to_build.retain(|p| !original_plans.contains(p));
     }
 
@@ -433,8 +445,8 @@ pub enum RebuildReason {
 mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
-        expand_missing_dependencies, installed_matches_manifest, BuildOptions, DependencyMode,
-        RebuildReason,
+        expand_missing_dependencies, installed_matches_manifest, BuildOptions, RebuildPolicy,
+        DependentsMode, RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
@@ -590,7 +602,8 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             &mut plans_to_build,
             &all_plans,
             &db,
-            DependencyMode::Sync,
+            RebuildPolicy::Outdated,
+            DependentsMode::All,
             usize::MAX,
         )
         .unwrap();

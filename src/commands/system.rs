@@ -102,51 +102,51 @@ fn archive_entries_for_plan(
     Ok(archives)
 }
 
-fn apply_targets(
-    config: &GlobalConfig,
-    db_path: &Path,
-    resolver: &LocalResolver,
-    root_dir: &Path,
-    targets: Vec<String>,
+struct ApplyContext<'a> {
+    config: &'a GlobalConfig,
+    db_path: &'a Path,
+    resolver: &'a LocalResolver,
+    root_dir: &'a Path,
     force_build: bool,
     force_install: bool,
-    nodeps: bool,
     verbose: bool,
     quiet: bool,
     dry_run: bool,
+}
+
+fn apply_targets(
+    ctx: ApplyContext,
+    targets: Vec<String>,
+    resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
-    use crate::builder::orchestrator::{
-        BuildExecutionPlan, BuildOptions, DependencyMode, DependentsMode, ResolveOptions,
-    };
+    use crate::builder::orchestrator::BuildExecutionPlan;
+    use crate::builder::orchestrator::BuildOptions;
 
     // Single resolution pass to determine which targets were explicitly requested.
     // This drives install-origin tracking (explicit vs. dependency install).
     let explicit_plan_names =
-        crate::builder::orchestrator::resolve_explicit_plan_names(resolver, &targets)?;
+        crate::builder::orchestrator::resolve_explicit_plan_names(ctx.resolver, &targets)?;
+
+    let install_nodeps = resolve_opts.deps.is_none();
 
     let build_set = crate::builder::orchestrator::resolve_build_set(
-        config,
+        ctx.config,
         targets,
-        ResolveOptions {
-            deps_mode: DependencyMode::Sync,
-            dependents_mode: DependentsMode::None,
-            depth: Some(0),
-            include_targets: true,
-        },
+        resolve_opts,
     )?;
 
     let build_opts = BuildOptions {
-        force: force_build,
-        verbose,
-        quiet,
-        dockyards: config.build.dockyards,
+        force: ctx.force_build,
+        verbose: ctx.verbose,
+        quiet: ctx.quiet,
+        dockyards: ctx.config.build.dockyards,
         print_archives: false,
-        nproc_per_dockyard: config.build.nproc_per_dockyard,
+        nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
         ..Default::default()
     };
-    let plan = crate::builder::orchestrator::create_execution_plan(config, build_set, &build_opts)?;
+    let plan = crate::builder::orchestrator::create_execution_plan(ctx.config, build_set, &build_opts)?;
 
-    if dry_run {
+    if ctx.dry_run {
         println!("Apply plan (dry-run):");
         for (batch_idx, tasks) in plan.batches().iter().enumerate() {
             for task in tasks {
@@ -167,7 +167,7 @@ fn apply_targets(
     let mut applied_parts: Vec<String> = Vec::new();
 
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
-        if !quiet {
+        if !ctx.quiet {
             for task in tasks {
                 tracing::info!(
                     "Apply batch {} {}: {}",
@@ -178,10 +178,9 @@ fn apply_targets(
             }
         }
 
-        plan.execute_batch(config, batch_idx, &build_opts)
-            .map_err(|e| {
+        plan.execute_batch(ctx.config, batch_idx, &build_opts)
+            .inspect_err(|_| {
                 emit_partial_apply_note(&applied_parts);
-                e
             })?;
 
         let mut archives = Vec::new();
@@ -197,7 +196,7 @@ fn apply_targets(
                 .plan_path_for_task(task)
                 .context("missing plan path for batch task")?;
             for (part_name, archive_path) in
-                archive_entries_for_plan(plan_path, &config.general.components_dir)?
+                archive_entries_for_plan(plan_path, &ctx.config.general.components_dir)?
             {
                 if !archive_path.exists() {
                     emit_partial_apply_note(&applied_parts);
@@ -216,24 +215,23 @@ fn apply_targets(
             }
         }
 
-        let db = Database::open(db_path).context("failed to open database for install")?;
+        let db = Database::open(ctx.db_path).context("failed to open database for install")?;
+
         transaction::install_parts_with_explicit_targets(
             &db,
             &archives,
             &explicit_targets,
-            root_dir,
-            resolver,
-            force_install,
-            nodeps,
+            ctx.root_dir,
+            ctx.resolver,
+            ctx.force_install,
+            install_nodeps,
         )
-        .map_err(|e| {
+        .inspect_err(|_| {
             emit_partial_apply_note(&applied_parts);
-            e
         })?;
 
         applied_parts.extend(batch_part_names);
     }
-
     Ok(())
 }
 
@@ -266,12 +264,18 @@ pub fn execute(
     // (each batch opens and closes a handle for its install transaction).
     if let SystemCommands::Apply {
         targets,
+        deps,
+        rdeps,
+        rebuild,
+        depth,
         force_build,
         force_install,
-        nodeps,
         dry_run,
     } = command
     {
+        use crate::builder::orchestrator::{RebuildPolicy, DependentsMode, ResolveOptions};
+        use crate::cli::resolve::{DomainArg, RebuildPolicyArg};
+
         use std::io::IsTerminal;
         let targets = collect_install_args(targets)?;
         if targets.is_empty() {
@@ -280,18 +284,49 @@ pub fn execute(
             }
             anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
         }
+
+        let deps_domain = deps.map(|d| match d {
+            DomainArg::Link => DependentsMode::Link,
+            DomainArg::Runtime => DependentsMode::Runtime,
+            DomainArg::Build => DependentsMode::Build,
+            DomainArg::All => DependentsMode::All,
+        });
+
+        let rdeps_domain = rdeps.map(|d| match d {
+            DomainArg::Link => DependentsMode::Link,
+            DomainArg::Runtime => DependentsMode::Runtime,
+            DomainArg::Build => DependentsMode::Build,
+            DomainArg::All => DependentsMode::All,
+        });
+
+        let rebuild_policy = match rebuild {
+            RebuildPolicyArg::All => RebuildPolicy::All,
+            RebuildPolicyArg::Missing => RebuildPolicy::Missing,
+            RebuildPolicyArg::Outdated => RebuildPolicy::Outdated,
+        };
+
+        let resolve_opts = ResolveOptions {
+            deps: deps_domain,
+            rdeps: rdeps_domain,
+            rebuild: rebuild_policy,
+            depth,
+            include_targets: true,
+        };
+
         match apply_targets(
-            config,
-            db_path,
-            &resolver,
-            root_dir,
+            ApplyContext {
+                config,
+                db_path,
+                resolver: &resolver,
+                root_dir,
+                force_build,
+                force_install,
+                verbose: verbose > 0,
+                quiet,
+                dry_run,
+            },
             targets,
-            force_build,
-            force_install,
-            nodeps,
-            verbose > 0,
-            quiet,
-            dry_run,
+            resolve_opts,
         ) {
             Ok(()) => {
                 if !dry_run {

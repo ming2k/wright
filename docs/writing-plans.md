@@ -9,17 +9,17 @@ Plans live in a flat directory tree. Each plan is a directory named after the pa
 ```
 plans/
 ├── hello/
-│   └── plan.toml
+│  └── plan.toml
 ├── nginx/
-│   ├── plan.toml
-│   ├── mvp.toml
-│   └── patches/
-│       └── fix-headers.patch
+│  ├── plan.toml
+│  ├── mvp.toml
+│  └── patches/
+│    └── fix-headers.patch
 └── python/
-    ├── plan.toml
-    └── patches/
-        ├── 001-fix-paths.patch
-        └── 002-no-rpath.patch
+  ├── plan.toml
+  └── patches/
+    ├── 001-fix-paths.patch
+    └── 002-no-rpath.patch
 ```
 
 The directory name should match the `name` field in `plan.toml`. Local files referenced in `[[sources]]` URIs are relative to the plan directory and must not escape it.
@@ -32,17 +32,17 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 
 ### Top-Level Metadata
 
-| Field         | Type     | Required | Default | Description                        |
+| Field     | Type   | Required | Default | Description            |
 |---------------|----------|----------|---------|------------------------------------|
-| `name`        | string   | yes      | —       | Part name                          |
-| `version`     | string   | yes      | —       | Upstream version (free-form)       |
-| `release`     | integer  | yes      | —       | Build revision (must be >= 1)      |
-| `epoch`       | integer  | no       | `0`     | Version epoch — overrides version comparison (see below) |
-| `description` | string   | yes      | —       | Short description (must not be empty) |
-| `license`     | string   | yes      | —       | SPDX license identifier           |
-| `arch`        | string   | yes      | —       | Target architecture (e.g. `x86_64`) |
-| `url`         | string   | no       | —       | Upstream project URL               |
-| `maintainer`  | string   | no       | —       | Maintainer name and email          |
+| `name`    | string  | yes   | —    | Part name             |
+| `version`   | string  | yes   | —    | Upstream version (free-form)    |
+| `release`   | integer | yes   | —    | Build revision (must be >= 1)   |
+| `epoch`    | integer | no    | `0`   | Version epoch — overrides version comparison (see below) |
+| `description` | string  | yes   | —    | Short description (must not be empty) |
+| `license`   | string  | yes   | —    | SPDX license identifier      |
+| `arch`    | string  | yes   | —    | Target architecture (e.g. `x86_64`) |
+| `url`     | string  | no    | —    | Upstream project URL        |
+| `maintainer` | string  | no    | —    | Maintainer name and email     |
 
 #### Epoch
 
@@ -55,7 +55,7 @@ release = 1
 description = "Example part"
 license = "MIT"
 arch = "x86_64"
-epoch = 1       # This will upgrade over any epoch=0 part, even "9999.0"
+epoch = 1    # This will upgrade over any epoch=0 part, even "9999.0"
 ```
 
 Epoch defaults to `0` and is omitted from archive filenames and `.PARTINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
@@ -64,12 +64,12 @@ Epoch defaults to `0` and is omitted from archive filenames and `.PARTINFO` when
 
 All fields default to empty lists if omitted.
 
-| Field       | Type                            | Description                          |
+| Field    | Type              | Description             |
 |-------------|---------------------------------|--------------------------------------|
-| `runtime`   | list of strings                 | Must be installed at runtime (e.g. bash, python) |
-| `build`     | list of strings                 | Required only during build (e.g. gcc, cmake) |
-| `link`      | list of strings                 | ABI-sensitive linked dependencies. Triggers rebuild on update. |
-| `optional`  | list of strings                 | Optional runtime dependencies        |
+| `runtime`  | list of strings         | Must be installed at runtime (e.g. bash, python) |
+| `build`   | list of strings         | Required only during build (e.g. gcc, cmake) |
+| `link`   | list of strings         | ABI-sensitive linked dependencies. Triggers rebuild on update. |
+| `optional` | list of strings         | Optional runtime dependencies    |
 
 #### `link` dependencies vs `runtime`
 
@@ -103,10 +103,10 @@ optional = ["geoip", "nghttp2"]
 
 Sources use TOML's array-of-tables syntax. Each `[[sources]]` entry declares a single source with its URI and checksum:
 
-| Field     | Type   | Default  | Description                              |
+| Field   | Type  | Default | Description               |
 |-----------|--------|----------|------------------------------------------|
-| `uri`     | string | required | Source URI — remote URL (`http://`/`https://`/`git+https://`) or local path relative to the plan directory |
-| `sha256`  | string | `"SKIP"` | SHA-256 checksum. Use `"SKIP"` for local files or git sources. |
+| `uri`   | string | required | Source URI — remote URL (`http://`/`https://`/`git+https://`) or local path relative to the plan directory |
+| `sha256` | string | `"SKIP"` | SHA-256 checksum. Use `"SKIP"` for local files or git sources. |
 
 URIs support variable substitution (see [Variable Substitution](#variable-substitution)):
 
@@ -181,16 +181,16 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 ### `[options]`
 
-| Field               | Type            | Default | Description                              |
+| Field        | Type      | Default | Description               |
 |---------------------|-----------------|---------|------------------------------------------|
-| `static`            | bool            | `false` | Build statically linked binaries         |
-| `debug`             | bool            | `false` | Build with debug info                    |
-| `ccache`            | bool            | `true`  | Use ccache for compilation if available  |
-| `env`               | map of strings  | `{}`    | Environment variables injected into every lifecycle stage |
-| `memory_limit`      | integer         | —       | Max virtual address space per build process (MB), overrides global |
-| `cpu_time_limit`    | integer         | —       | Max CPU time per build process (seconds), overrides global |
-| `timeout`           | integer         | —       | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`    | bool            | `false` | Skip FHS validation after the final output stage (`fabricate`). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `static`      | bool      | `false` | Build statically linked binaries     |
+| `debug`       | bool      | `false` | Build with debug info          |
+| `ccache`      | bool      | `true` | Use ccache for compilation if available |
+| `env`        | map of strings | `{}`  | Environment variables injected into every lifecycle stage |
+| `memory_limit`   | integer     | —    | Max virtual address space per build process (MB), overrides global |
+| `cpu_time_limit`  | integer     | —    | Max CPU time per build process (seconds), overrides global |
+| `timeout`      | integer     | —    | Wall-clock timeout per build stage (seconds), overrides global |
+| `skip_fhs_check`  | bool      | `false` | Skip FHS validation after the final output stage (`fabricate`). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -212,12 +212,12 @@ make -j$(nproc)
 """
 ```
 
-| Field      | Type              | Default    | Description                            |
+| Field   | Type       | Default  | Description              |
 |------------|-------------------|------------|----------------------------------------|
-| `executor` | string            | `"shell"`  | Executor to run the script with        |
-| `dockyard` | string            | `"strict"` | Dockyard isolation level               |
-| `env`      | map of strings    | `{}`       | Extra environment variables            |
-| `script`   | string            | `""`       | The script to execute                  |
+| `executor` | string      | `"shell"` | Executor to run the script with    |
+| `dockyard` | string      | `"strict"` | Dockyard isolation level        |
+| `env`   | map of strings  | `{}`    | Extra environment variables      |
+| `script`  | string      | `""`    | The script to execute         |
 
 The `env` field can use variable substitution in values:
 
@@ -250,8 +250,8 @@ link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
 [mvp.lifecycle.configure]
 script = """
 meson setup build \
-  --prefix=/usr \
-  -Dpixbuf=disabled
+ --prefix=/usr \
+ -Dpixbuf=disabled
 """
 ```
 
@@ -319,13 +319,13 @@ post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 pre_remove = "systemctl stop nginx 2>/dev/null || true"
 ```
 
-| Field                | Type   | Description                |
+| Field        | Type  | Description        |
 |----------------------|--------|----------------------------|
-| `pre_install`        | string | Run before first install   |
-| `post_install`       | string | Run after first install    |
-| `post_upgrade`       | string | Run after upgrade          |
-| `pre_remove`         | string | Run before part removal |
-| `post_remove`        | string | Run after part removal  |
+| `pre_install`    | string | Run before first install  |
+| `post_install`    | string | Run after first install  |
+| `post_upgrade`    | string | Run after upgrade     |
+| `pre_remove`     | string | Run before part removal |
+| `post_remove`    | string | Run after part removal |
 
 Hooks run on the live system, serially, blocking the install. Keep them fast. For operations that are inherently slow and single-threaded (e.g. `fmtutil-sys --all`, `texhash`, font cache generation), prefer running only the subset needed at install time and let the user invoke the full regeneration manually afterward:
 
@@ -336,7 +336,7 @@ mktexlsr 2>/dev/null || true
 texlinks 2>/dev/null || true
 """
 # fmtutil-sys --all is intentionally omitted — run manually:
-#   sudo fmtutil-sys --byfmt pdflatex
+#  sudo fmtutil-sys --byfmt pdflatex
 ```
 
 ### `[output]` — Output Metadata & Part Relations
@@ -360,16 +360,16 @@ provides = ["nginx-documentation"]
 script = "..."
 ```
 
-| Field          | Type            | Description                              |
+| Field     | Type      | Description               |
 |----------------|-----------------|------------------------------------------|
-| `replaces`     | list of strings | Parts this output replaces (auto-removed on install) |
-| `conflicts`    | list of strings | Parts that cannot coexist with this output |
-| `provides`     | list of strings | Virtual part names this output satisfies |
-| `backup`       | list of strings | Config files preserved across upgrades   |
-| `description`  | string          | Sub-part description (multi-output mode) |
-| `script`       | string          | Script to select/install files into the sub-part (multi-output mode) |
-| `hooks.*`      | table/fields    | Transaction hooks for a sub-part      |
-| `dependencies` | table           | Sub-part dependencies (multi-output mode) |
+| `replaces`   | list of strings | Parts this output replaces (auto-removed on install) |
+| `conflicts`  | list of strings | Parts that cannot coexist with this output |
+| `provides`   | list of strings | Virtual part names this output satisfies |
+| `backup`    | list of strings | Config files preserved across upgrades  |
+| `description` | string     | Sub-part description (multi-output mode) |
+| `script`    | string     | Script to select/install files into the sub-part (multi-output mode) |
+| `hooks.*`   | table/fields  | Transaction hooks for a sub-part   |
+| `dependencies` | table      | Sub-part dependencies (multi-output mode) |
 
 #### Part Relations
 
@@ -377,20 +377,20 @@ Relations are **per-output**, not per-plan. In multi-output mode, each
 sub-part declares its own relations independently.
 
 - **`replaces`** — Automatic migration. When installing this part, Wright
-  silently removes any installed part whose name appears in this list.
-  Use for part renames and merges (e.g. `nginx-mainline` replaces `nginx`).
+ silently removes any installed part whose name appears in this list.
+ Use for part renames and merges (e.g. `nginx-mainline` replaces `nginx`).
 
 - **`conflicts`** — Mutual exclusion. Wright refuses to install this part
-  while a conflicting part is present (or vice versa). Use when two parts
-  provide overlapping functionality and cannot coexist (e.g. `nginx` and
-  `apache` both binding port 80). Conflicts are **bidirectional** — if A
-  conflicts with B, installing B when A is present is also refused.
+ while a conflicting part is present (or vice versa). Use when two parts
+ provide overlapping functionality and cannot coexist (e.g. `nginx` and
+ `apache` both binding port 80). Conflicts are **bidirectional** — if A
+ conflicts with B, installing B when A is present is also refused.
 
 - **`provides`** — Virtual names. Allows this part to satisfy dependencies
-  on an abstract capability rather than a concrete part name. Multiple parts
-  can provide the same virtual name (e.g. both `nginx` and `apache` provide
-  `http-server`), enabling consumers to depend on the capability without
-  coupling to a specific implementation.
+ on an abstract capability rather than a concrete part name. Multiple parts
+ can provide the same virtual name (e.g. both `nginx` and `apache` provide
+ `http-server`), enabling consumers to depend on the capability without
+ coupling to a specific implementation.
 
 ##### `replaces` vs `conflicts`
 
@@ -405,27 +405,27 @@ sub-part declares its own relations independently.
 Files listed in `backup` are treated as **user-owned config files**:
 
 - **On upgrade:** the new default is always written alongside as `<path>.wnew`
-  (e.g. `/etc/nginx/nginx.conf.wnew`) and a warning is printed. The live file is
-  left intact so user customisations are never lost. The user can then diff the
-  two files and merge changes manually. Files **not** listed in `backup` are
-  overwritten directly.
+ (e.g. `/etc/nginx/nginx.conf.wnew`) and a warning is printed. The live file is
+ left intact so user customisations are never lost. The user can then diff the
+ two files and merge changes manually. Files **not** listed in `backup` are
+ overwritten directly.
 - **On remove:** config files are **not deleted**, even when the part is removed.
 
 ## Default Lifecycle Pipeline
 
 The default pipeline runs these stages in order:
 
-| Stage          | Type     | Description                              |
+| Stage     | Type   | Description               |
 |----------------|----------|------------------------------------------|
-| `fetch`        | built-in | Download sources and copy local files    |
-| `verify`       | built-in | Verify SHA-256 checksums                 |
-| `extract`      | built-in | Extract archives, copy non-archives to `${FILES_DIR}` |
-| `prepare`      | user     | Pre-build setup (e.g. apply patches)     |
-| `configure`    | user     | Run configure scripts                    |
-| `compile`      | user     | Compile the software                     |
-| `check`        | user     | Run test suites                          |
-| `staging`      | user     | Install files into `${PART_DIR}`         |
-| `fabricate`    | user     | Finalize the staged part before archiving |
+| `fetch`    | built-in | Download sources and copy local files  |
+| `verify`    | built-in | Verify SHA-256 checksums         |
+| `extract`   | built-in | Extract archives, copy non-archives to `${FILES_DIR}` |
+| `prepare`   | user   | Pre-build setup (e.g. apply patches)   |
+| `configure`  | user   | Run configure scripts          |
+| `compile`   | user   | Compile the software           |
+| `check`    | user   | Run test suites             |
+| `staging`   | user   | Install files into `${PART_DIR}`     |
+| `fabricate`  | user   | Finalize the staged part before archiving |
 
 Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Most plans install files during `staging`; use `[lifecycle.fabricate]` only when you need a final post-staging script before archive creation.
 
@@ -500,8 +500,8 @@ link = ["freetype"]
 [lifecycle.configure]
 script = """
 cmake -B build \
-    ${WRIGHT_BOOTSTRAP_WITHOUT_HARFBUZZ:+-DFREETYPE_WITH_HARFBUZZ=OFF} \
-    -DCMAKE_INSTALL_PREFIX=/usr
+  ${WRIGHT_BOOTSTRAP_WITHOUT_HARFBUZZ:+-DFREETYPE_WITH_HARFBUZZ=OFF} \
+  -DCMAKE_INSTALL_PREFIX=/usr
 """
 ```
 
@@ -518,16 +518,16 @@ link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
 [lifecycle.configure]
 script = """
 meson setup build \
-  --prefix=/usr \
-  -Dpixbuf=enabled
+ --prefix=/usr \
+ -Dpixbuf=enabled
 """
 
 [mvp.lifecycle.configure]
 script = """
 meson setup build \
-  --prefix=/usr \
-  -Dpixbuf=disabled \
-  -Dpixbuf-loader=disabled
+ --prefix=/usr \
+ -Dpixbuf=disabled \
+ -Dpixbuf-loader=disabled
 """
 ```
 
@@ -583,29 +583,29 @@ Reserve phase-specific dependencies for cycles that remain after dependency type
 
 Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. Unrecognized variables are left as-is.
 
-| Variable        | Description                                |
+| Variable    | Description                |
 |-----------------|--------------------------------------------|
-| `${PART_NAME}`   | Package name from `name`                |
-| `${PART_VERSION}`| Package version from `version`          |
-| `${PART_RELEASE}`| Release number as a string                 |
-| `${PART_ARCH}`   | Target architecture                        |
-| `${SRC_DIR}`    | Extraction root directory                  |
-| `${BUILD_DIR}`  | Top-level source directory (use this in scripts) |
-| `${PART_DIR}`    | Part output directory (install files here) |
-| `${FILES_DIR}`  | Directory containing non-archive files (patches, configs, etc.) |
-| `${CFLAGS}`     | C compiler flags                           |
-| `${CXXFLAGS}`   | C++ compiler flags                         |
+| `${PART_NAME}`  | Package name from `name`        |
+| `${PART_VERSION}`| Package version from `version`     |
+| `${PART_RELEASE}`| Release number as a string         |
+| `${PART_ARCH}`  | Target architecture            |
+| `${SRC_DIR}`  | Extraction root directory         |
+| `${BUILD_DIR}` | Top-level source directory (use this in scripts) |
+| `${PART_DIR}`  | Part output directory (install files here) |
+| `${FILES_DIR}` | Directory containing non-archive files (patches, configs, etc.) |
+| `${CFLAGS}`   | C compiler flags              |
+| `${CXXFLAGS}`  | C++ compiler flags             |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
 When running inside a dockyard, path variables are remapped to dockyard mount points:
 
-| Variable        | Host value             | Dockyard value         |
+| Variable    | Host value       | Dockyard value     |
 |-----------------|------------------------|------------------------|
-| `${SRC_DIR}`    | actual host path       | `/build`               |
-| `${BUILD_DIR}`  | actual host path       | `/build/<source-dir>`  |
-| `${PART_DIR}`    | actual host path       | `/output`              |
-| `${FILES_DIR}`  | actual host path       | `/files`               |
+| `${SRC_DIR}`  | actual host path    | `/build`        |
+| `${BUILD_DIR}` | actual host path    | `/build/<source-dir>` |
+| `${PART_DIR}`  | actual host path    | `/output`       |
+| `${FILES_DIR}` | actual host path    | `/files`        |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
@@ -663,7 +663,7 @@ The recommended pattern for network-fetching build tools (Cargo, Go, npm) is to
 pre-vendor dependencies and build fully offline under `strict`:
 
 - **Cargo**: include a `vendor/` directory and set `CARGO_NET_OFFLINE=true` plus a
-  `.cargo/config.toml` pointing at the vendor dir.
+ `.cargo/config.toml` pointing at the vendor dir.
 - **Go**: run `go mod vendor` and pass `-mod=vendor` at build time.
 - **npm**: include `node_modules/` in the source archive or use `npm pack`/offline mirror.
 
@@ -695,16 +695,16 @@ required_paths = ["/usr/lib/python3"]
 default_dockyard = "strict"
 ```
 
-| Field              | Type            | Default      | Description                          |
+| Field       | Type      | Default   | Description             |
 |--------------------|-----------------|--------------|--------------------------------------|
-| `name`             | string          | required     | Executor name used in lifecycle stages |
-| `description`      | string          | `""`         | Human-readable description           |
-| `command`          | string          | required     | Path to the interpreter              |
-| `args`             | list of strings | `[]`         | Arguments before the script path     |
-| `delivery`         | string          | `"tempfile"` | How the script is passed to the command |
-| `tempfile_extension`| string         | `".sh"`      | File extension for the temp script   |
-| `required_paths`   | list of strings | `[]`         | Extra paths to bind-mount in the dockyard |
-| `default_dockyard` | string          | `""`         | Default dockyard isolation level for this executor |
+| `name`       | string     | required   | Executor name used in lifecycle stages |
+| `description`   | string     | `""`     | Human-readable description      |
+| `command`     | string     | required   | Path to the interpreter       |
+| `args`       | list of strings | `[]`     | Arguments before the script path   |
+| `delivery`     | string     | `"tempfile"` | How the script is passed to the command |
+| `tempfile_extension`| string     | `".sh"`   | File extension for the temp script  |
+| `required_paths`  | list of strings | `[]`     | Extra paths to bind-mount in the dockyard |
+| `default_dockyard` | string     | `""`     | Default dockyard isolation level for this executor |
 
 Reference a custom executor by name:
 

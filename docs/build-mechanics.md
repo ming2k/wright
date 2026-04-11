@@ -44,9 +44,9 @@ Each part gets its own working directory under `build_dir`
 
 ```
 <build_dir>/<name>-<version>/
-├── src/            # Extracted source tree (BUILD_DIR points here or a subdir)
-├── pkg/            # Main part staging root ($PART_DIR)
-├── log/            # Per-stage log files
+├── src/      # Extracted source tree (BUILD_DIR points here or a subdir)
+├── pkg/      # Main part staging root ($PART_DIR)
+├── log/      # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
 
@@ -126,10 +126,10 @@ across builds:
 
 ```
 <cache_dir>/sources/
-├── zlib-zlib-1.3.1.tar.gz          # <pkg_name>-<upstream_basename>
+├── zlib-zlib-1.3.1.tar.gz     # <pkg_name>-<upstream_basename>
 ├── gcc-gcc-14.2.0.tar.xz
 └── git/
-    └── linux                        # bare git repos
+  └── linux            # bare git repos
 ```
 
 The filename is prefixed with the part name to avoid collisions between
@@ -247,7 +247,7 @@ After a successful build the part is packed into an archive and placed in
 ```
 <components_dir>/
 ├── zlib-1.3.1-1-x86_64.wright.tar.zst
-├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst   # sub-part
+├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst  # sub-part
 └── ...
 ```
 

@@ -191,6 +191,7 @@ impl Builder {
     /// `extra_env` is merged into every lifecycle stage's variable map.
     /// For MVP builds the orchestrator injects WRIGHT_BUILD_PHASE=mvp along
     /// with WRIGHT_BOOTSTRAP_WITHOUT_<DEP>=1.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &self,
         manifest: &PlanManifest,
