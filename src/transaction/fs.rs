@@ -244,9 +244,7 @@ pub(super) fn copy_entries_to_root(
                 }
             } else {
                 // --- regular file ---
-                if config_paths.contains(&entry.path)
-                    && dest_path.symlink_metadata().is_ok()
-                {
+                if config_paths.contains(&entry.path) && dest_path.symlink_metadata().is_ok() {
                     let mut new_name = dest_path.as_os_str().to_owned();
                     new_name.push(".wnew");
                     let side_path = PathBuf::from(new_name);

@@ -63,10 +63,7 @@ pub(super) fn execute_builds(
             let fail = failed_set.lock().unwrap();
 
             for name in build_set {
-                if !comp.contains(name)
-                    && !prog.contains(name)
-                    && !fail.contains(name)
-                {
+                if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
                     let all_deps_met = opts.checksum
                         || deps_map
                             .get(name)
@@ -250,7 +247,6 @@ pub(super) fn execute_builds(
                 }
             }
         }
-
     }
 
     let final_failed = *failed_count.lock().unwrap();

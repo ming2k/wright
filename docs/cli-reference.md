@@ -1,21 +1,17 @@
 # CLI Reference
 
-Wright provides two commands:
+Wright provides one CLI, `wright`, with top-level subcommands for both
+build-side and system-side workflows.
 
-- `wbuild` for building and maintaining local archives
-- `wright` for mutating and inspecting the live system
+## Global options
 
-## `wright`
-
-Global options:
-
-- `--root <PATH>`
 - `--config <PATH>`
 - `--db <PATH>`
+- `--root <PATH>`
 - `-v`, `-vv`
 - `--quiet`
 
-Main commands:
+## System commands
 
 - `wright install <PART...>`
   installs archive paths or locally registered part names
@@ -39,27 +35,16 @@ Main commands:
 - `wright unassume <NAME>`
 - `wright mark <PART...> --as-dependency|--as-manual`
 
-## `wbuild`
+## Build commands
 
-Global options:
-
-- `--config <PATH>`
-- `--db <PATH>`
-- `-v`, `-vv`
-- `--quiet`
-
-Main commands:
-
-- `wbuild run <TARGET...>`
+- `wright build <TARGET...>`
   builds plans or assemblies
-- `wbuild resolve <TARGET...>`
+- `wright resolve <TARGET...>`
   expands dependency and rebuild scope without building
-- `wbuild check <TARGET...>`
-- `wbuild fetch <TARGET...>`
-- `wbuild checksum <TARGET...>`
-- `wbuild prune`
+- `wright prune`
+  cleans tracked or stray archives from the local inventory
 
-Useful `wbuild run` flags:
+Useful `wright build` flags:
 
 - `--force`
 - `--clean`
@@ -69,8 +54,26 @@ Useful `wbuild run` flags:
 - `--mvp`
 - `--dockyards <N>`
 - `--print-archives`
+- `--fetch`
+- `--checksum`
+- `--lint`
 
-Useful `wbuild prune` flags:
+Useful `wright resolve` flags:
+
+- `--self`
+- `--deps [none|missing|sync|all]`
+- `--dependents [link|all]`
+- `--depth <N>`
+- `--tree`
+
+Useful `wright apply` flags:
+
+- `--force-build`
+- `--force-install`
+- `--nodeps`
+- `--dry-run`
+
+Useful `wright prune` flags:
 
 - `--untracked`
 - `--latest`

@@ -1,6 +1,6 @@
 # Resource Allocation
 
-This page explains how `wbuild` allocates CPU time across builds and how to tune each layer.
+This page explains how `wright build` allocates CPU time across builds and how to tune each layer.
 
 ## Two Layers of Parallelism
 
@@ -51,7 +51,7 @@ dockyards = 4   # default: 0 (auto = total_cpus)
 Or per-invocation with `--dockyards` / `-w`:
 
 ```bash
-wbuild run -w 4 @base
+wright build -w 4 @base
 ```
 
 ## CPU Affinity Isolation

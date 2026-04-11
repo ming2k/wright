@@ -4,30 +4,30 @@
 
 Wright is source-first:
 
-- `wbuild` manufactures local `.wright.tar.zst` archives from plans
-- `wbuild` records those archives in a local inventory database
+- `wright build` manufactures local `.wright.tar.zst` archives from plans
+- `wright build` records those archives in a local inventory database
 - `wright` applies those local archives to the live system
 
 There is no required indexing or publish stage in the default workflow.
 
-## Wbuild
+## Build
 
-`wbuild` owns manufacturing.
+`wright build` owns manufacturing.
 
 ### Common Commands
 
 ```bash
-wbuild run hello
-wbuild run @base
-wbuild resolve @base --self --deps=sync | wbuild run
-wbuild check hello
-wbuild checksum zlib
+wright build hello
+wright build @base
+wright resolve @base --self --deps=sync | wright build
+wright build hello --lint
+wright build zlib --checksum
 ```
 
 ### Dependency Scope
 
-- `wbuild run` builds exactly what it receives.
-- `wbuild resolve` expands upstream dependencies and downstream rebuilds before the build starts.
+- `wright build` builds exactly what it receives.
+- `wright resolve` expands upstream dependencies and downstream rebuilds before the build starts.
 - `--deps=sync` is the usual maintenance mode: it rebuilds dependencies whose installed versions no longer match the current plans.
 
 ### Archive Inventory
@@ -38,8 +38,8 @@ Successful builds are written to `components_dir` and registered in
 To clean old or stray archives:
 
 ```bash
-wbuild prune --untracked
-wbuild prune --latest --apply
+wright prune --untracked
+wright prune --latest --apply
 ```
 
 `--latest` keeps the newest tracked archive per part name while preserving any
@@ -71,6 +71,7 @@ truth:
 wright apply @base
 wright apply @base @devel
 wright apply ./plans/bash
+wright apply @base --dry-run
 ```
 
 `wright apply`:
@@ -79,6 +80,13 @@ wright apply ./plans/bash
 2. computes dependency waves for the required build graph
 3. for each wave, builds any missing or outdated archives needed there
 4. installs that wave before continuing, so later waves see the updated system state
+
+Useful knobs:
+
+- `--dry-run` previews what would be built and installed without mutating the system
+- `--force-build` rebuilds even when matching archives already exist in the inventory
+- `--force-install` forces reinstall or upgrade during the install phase
+- `--nodeps` skips install-time dependency resolution
 
 ## Remove and Inspect
 
@@ -98,7 +106,7 @@ wright doctor
 ### First Build
 
 ```bash
-wbuild run hello
+wright build hello
 wright install hello
 ```
 
@@ -107,13 +115,13 @@ wright install hello
 ```bash
 wright apply @base
 wright sysupgrade
-wbuild prune --untracked --latest --apply
+wright prune --untracked --latest --apply
 ```
 
 ### Explicit Rebuild Scope
 
 ```bash
-wbuild resolve openssl --self --dependents=all --depth=0 | wbuild run --force
+wright resolve openssl --self --dependents=all --depth=0 | wright build --force
 wright upgrade openssl
 ```
 

@@ -1,13 +1,13 @@
 # Build Mechanics
 
-This page explains what happens on disk when `wbuild run` executes: the build
+This page explains what happens on disk when `wright build` executes: the build
 directory layout, log files, source cache, build cache, and output archives.
 Understanding these layers makes it easier to debug failures and reason about
 when work is skipped or repeated.
 
 ## Three On-Disk Layers
 
-`wbuild run` uses three different storage layers that are easy to confuse:
+`wright build` uses three different storage layers that are easy to confuse:
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|

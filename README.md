@@ -20,16 +20,15 @@ replaced.
 ```sh
 cargo build --release
 install -Dm644 target/man/wright.1 /usr/share/man/man1/wright.1
-install -Dm644 target/man/wbuild.1 /usr/share/man/man1/wbuild.1
 ```
 
 ## Quick Start
 
 ```bash
-wbuild run hello
+wright build hello
 wright install hello
 wright apply @base
-wbuild prune --untracked --latest --apply
+wright prune --untracked --latest --apply
 wright list
 ```
 

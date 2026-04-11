@@ -39,7 +39,10 @@ fn main() -> Result<()> {
     // 2. Load Configuration
     let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
 
-    let db_path = cli.db.clone().unwrap_or_else(|| config.general.db_path.clone());
+    let db_path = cli
+        .db
+        .clone()
+        .unwrap_or_else(|| config.general.db_path.clone());
     let root_dir = cli.root.clone().unwrap_or_else(|| PathBuf::from("/"));
 
     // 3. Dispatch to Command Handlers

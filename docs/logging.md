@@ -7,7 +7,7 @@ settings affect log locations.
 
 Wright has two logging channels:
 
-- **CLI logs**: structured logs from `wright` and `wbuild` themselves.
+- **CLI logs**: structured logs from `wright` system and build subcommands.
 - **Build logs**: per-stage stdout/stderr captured for part builds.
 
 They are configured separately.
@@ -34,12 +34,12 @@ it makes it straightforward to filter logs for a single part during parallel
 builds:
 
 ```bash
-wbuild run ... 2>&1 | grep 'plan=go '
+wright build ... 2>&1 | grep 'plan=go '
 ```
 
-## CLI Verbosity (wright + wbuild)
+## CLI Verbosity
 
-Both `wright` and `wbuild` use the same verbosity flags:
+All `wright` subcommands use the same verbosity flags:
 
 - `-v` enables debug logs.
 - `-vv` enables trace logs.
@@ -71,7 +71,7 @@ installs of very large small-file packages.
 
 ## Build Logs (per-stage files)
 
-`wbuild run` captures build tool output (make, cmake, etc.) to per-stage files
+`wright build` captures build tool output (make, cmake, etc.) to per-stage files
 under `<build_dir>/<name>-<version>/log/`. Every run recreates this directory
 so logs are always fresh.
 
@@ -83,7 +83,7 @@ For the full layout, log format, and recreation rules per operation, see
 To stream subprocess output to the terminal instead of capturing it:
 
 ```bash
-wbuild run -v <target>
+wright build -v <target>
 ```
 
 With multiple dockyards (`-w > 1`), `-v` keeps output captured per dockyard to

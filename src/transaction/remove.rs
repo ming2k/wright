@@ -88,7 +88,10 @@ pub fn remove_part_with_ignored_dependents(
             continue;
         }
 
-        let other_owners = other_owners_map.get(&file.path).map(|v| v.as_slice()).unwrap_or(&[]);
+        let other_owners = other_owners_map
+            .get(&file.path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         if !other_owners.is_empty() {
             tracing::debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",

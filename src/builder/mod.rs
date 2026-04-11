@@ -12,8 +12,8 @@ use tracing::{debug, info, warn};
 use crate::config::GlobalConfig;
 use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
-use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::inventory::resolver::sanitize_cache_filename;
+use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {

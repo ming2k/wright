@@ -6,7 +6,7 @@ This document explains how Wright resolves and acts on dependencies from a user 
 Wright uses three dependency types, each with a different purpose.
 
 - `build`: Required to compile a part but not necessarily needed at runtime.
-- `link`: ABI-sensitive dependencies used by `wbuild` to trigger reverse rebuilds when a linked dependency changes.
+- `link`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes.
 - `runtime`: Required for the part to run after installation.
 
 `link` and `runtime` are allowed to overlap. If something is needed after installation, it must be listed in `runtime` even if it also appears in `link`.
@@ -18,23 +18,23 @@ Dependencies are declared in `plan.toml`:
 - `dependencies.link`
 - `dependencies.runtime`
 
-Only `runtime` and part relations are serialized into binary part metadata used by `wright install`. `link` remains a build-graph concept used by `wbuild`.
+Only `runtime` and part relations are serialized into binary part metadata used by `wright install`. `link` remains a build-graph concept used by `wright resolve`.
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
-**What `wbuild resolve` Does With Dependencies**
-`wbuild resolve` is the command that performs dependency-driven expansion.
+**What `wright resolve` Does With Dependencies**
+`wright resolve` is the command that performs dependency-driven expansion.
 
-- It resolves your targets and prints plan names for `wbuild run`.
+- It resolves your targets and prints plan names for `wright build`.
 - It expands missing dependencies upward.
 - It can expand reverse rebuilds downward.
 
 **Upward Expansion: Missing Dependencies**
-By default, `wbuild run` builds only the listed targets. Add `--deps` to
-`wbuild resolve` when you want Wright to expand upstream dependencies from the
+By default, `wright build` builds only the listed targets. Add `--deps` to
+`wright resolve` when you want Wright to expand upstream dependencies from the
 hold tree before building.
 
-- With `wbuild resolve --deps` (or `--deps=missing`), missing `build` and `link` dependencies are added to the output target set.
+- With `wright resolve --deps` (or `--deps=missing`), missing `build` and `link` dependencies are added to the output target set.
 - With `--deps=sync`, missing dependencies and installed dependencies whose epoch/version/release differs from `plan.toml` are added.
 - If the dependency is missing and no plan exists, the build fails with a clear error.
 
@@ -46,7 +46,7 @@ With `--deps=all`, Wright expands more aggressively:
 **Downward Expansion: Reverse Rebuilds**
 When a dependency changes, other parts may need to be rebuilt.
 
-- `link` dependencies always trigger reverse rebuilds via `wbuild resolve --dependents`.
+- `link` dependencies always trigger reverse rebuilds via `wright resolve --dependents`.
 - `build` and `runtime` dependencies only trigger reverse rebuilds with `--dependents=all`.
 
 This behavior keeps ABI-sensitive chains correct without forcing expensive rebuilds by default.
@@ -54,12 +54,12 @@ This behavior keeps ABI-sensitive chains correct without forcing expensive rebui
 This rebuild behavior does not make `link` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
 
 **Scheduling Labels**
-`wbuild run` logs a scheduling plan before building. Each entry includes an
+`wright build` logs a scheduling plan before building. Each entry includes an
 action label and its depth in the dependency graph:
 
 - `build`: Normal build for an explicitly requested target or an added dependency.
 - `relink`: Rebuilt because a `link` dependency changed.
-- `rebuild`: Rebuilt because of `--dependents=all` transitive expansion (via `wbuild resolve`).
+- `rebuild`: Rebuilt because of `--dependents=all` transitive expansion (via `wright resolve`).
 - `build:mvp`: Bootstrap build used to break a dependency cycle.
 - `build:full`: Full build after an MVP bootstrap.
 
@@ -80,10 +80,10 @@ This results in two scheduled entries for that part:
 If no MVP definition exists, Wright stops and reports the cycle.
 
 **Applying Plans to the Live System**
-`wbuild` and `wright` have separate roles:
+Wright exposes separate build and install flows:
 
-- `wbuild` builds archives from plans.
-- `wright` installs archives onto the live system.
+- `wright build` creates archives from plans.
+- `wright install` installs archives onto the live system.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
 assemblies, checks the local archive inventory, builds anything missing or
@@ -93,7 +93,7 @@ outdated, and then installs the requested outputs.
 Example: Build only the listed target.
 
 ```bash
-wbuild run curl
+wright build curl
 ```
 
 Example: Build and install from plans while syncing missing/outdated upstream dependencies.
@@ -105,14 +105,14 @@ wright apply curl
 Example: Force a deep rebuild of dependencies.
 
 ```bash
-wbuild resolve openssl --self --deps=all | wbuild run --force
+wright resolve openssl --self --deps=all | wright build --force
 ```
 
 Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wbuild resolve zlib --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
+wright resolve zlib --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 **Install Origin Tracking**

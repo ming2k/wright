@@ -58,7 +58,7 @@ pub enum DependentsMode {
     All,
 }
 
-/// Options for dependency/dependent resolution via `wbuild resolve`.
+/// Options for dependency/dependent resolution via `wright resolve`.
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
     pub deps_mode: DependencyMode,
@@ -130,7 +130,7 @@ pub fn resolve_explicit_plan_names(
 }
 
 /// Resolve targets and expand their dependency graph according to the given options.
-/// Returns a list of plan names suitable for piping into `wbuild run`.
+/// Returns a list of plan names suitable for piping into `wright build`.
 pub fn resolve_build_set(
     config: &GlobalConfig,
     targets: Vec<String>,
@@ -282,10 +282,9 @@ impl BuildExecutionPlan {
         batch_index: usize,
         opts: &BuildOptions,
     ) -> Result<()> {
-        let batch = self
-            .batches
-            .get(batch_index)
-            .ok_or_else(|| WrightError::BuildError(format!("unknown build batch {}", batch_index)))?;
+        let batch = self.batches.get(batch_index).ok_or_else(|| {
+            WrightError::BuildError(format!("unknown build batch {}", batch_index))
+        })?;
         let batch_set: HashSet<String> = batch.iter().cloned().collect();
         execute_builds(
             config,
@@ -302,7 +301,7 @@ impl BuildExecutionPlan {
 
 /// Run a multi-target build with dependency ordering and parallel execution.
 /// Targets are plan names, paths, or @assemblies — no dependency expansion is performed.
-/// Use `resolve_build_set` (via `wbuild resolve`) to expand deps/dependents before calling this.
+/// Use `resolve_build_set` (via `wright resolve`) to expand deps/dependents before calling this.
 pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
     if opts.lint {
         let resolver = setup_resolver(config)?;

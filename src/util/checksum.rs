@@ -11,9 +11,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0; 8192];
     loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(WrightError::IoError)?;
+        let count = file.read(&mut buffer).map_err(WrightError::IoError)?;
         if count == 0 {
             break;
         }

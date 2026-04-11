@@ -180,7 +180,7 @@ pub struct Dependencies {
     pub runtime: Vec<String>,
     #[serde(default)]
     pub build: Vec<String>,
-    /// ABI-sensitive build edges used by `wbuild` to drive reverse rebuilds.
+    /// ABI-sensitive build edges used by `wright resolve` to drive reverse rebuilds.
     /// Entries may overlap with `runtime`; overlap is expected for shared
     /// libraries that are both linked and needed after installation.
     #[serde(default)]

@@ -13,14 +13,13 @@
 git clone <repo-url>
 cd wright
 cargo build --release
-install -m755 target/release/wbuild /usr/local/bin/
 install -m755 target/release/wright /usr/local/bin/
 ```
 
 ## Mental Model
 
-- `wbuild` turns plans into local part archives.
-- `wbuild` registers those archives in a local inventory DB.
+- `wright build` turns plans into local part archives.
+- `wright build` registers those archives in a local inventory DB.
 - `wright` installs and upgrades the live system from those local archives.
 - `wright apply` is the high-level source-first workflow: resolve the build graph,
   build missing or outdated waves, and install each wave before continuing.
@@ -61,7 +60,7 @@ script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 Build and install it:
 
 ```bash
-wbuild run plans/hello
+wright build plans/hello
 wright install hello
 ```
 

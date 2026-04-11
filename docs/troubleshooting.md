@@ -4,7 +4,7 @@ Common problems and how to diagnose them.
 
 ## Build Stage Failed
 
-**Symptom:** `wbuild run` exits with an error like:
+**Symptom:** `wright build` exits with an error like:
 
 ```
 ERROR stage 'compile' failed with exit code 2
@@ -23,13 +23,13 @@ cat /var/tmp/wright-build/<name>-<version>/log/<stage>.log
 **To re-run only the failed stage** after fixing the plan:
 
 ```bash
-wbuild run <pkg> --stage=compile
+wright build <pkg> --stage=compile
 ```
 
 **To see output live** instead of buffered to the log:
 
 ```bash
-wbuild run -v <pkg>
+wright build -v <pkg>
 ```
 
 Note: with multiple dockyards (`-w > 1`), `-v` still captures output per dockyard
@@ -100,10 +100,10 @@ directory but could not find a `plan.toml` for `mypackage`.
 grep '^name' path/to/mypackage/plan.toml
 
 # Run with a path instead of a name
-wbuild run ./path/to/mypackage
+wright build ./path/to/mypackage
 
 # Or from the plans directory root
-wbuild run mypackage   # looks for plans_dir/mypackage/plan.toml
+wright build mypackage   # looks for plans_dir/mypackage/plan.toml
 ```
 
 ---
@@ -127,9 +127,9 @@ Triggered during automatic dependency expansion when a dependency declared in
    dependencies if it is genuinely not needed at build time.
    If it is needed both at runtime and for ABI-sensitive rebuild tracking,
    declare it in both `runtime` and `link`.
-3. Use `--self` to skip dependency expansion entirely:
+3. Skip dependency expansion and build only the target:
    ```bash
-   wbuild run mypkg --self   # build only mypkg, assume deps are installed
+   wright build mypkg
    ```
 
 ---
@@ -155,7 +155,7 @@ full pattern.
 To inspect which cycles exist without triggering a build:
 
 ```bash
-wbuild check pkgA pkgB
+wright build pkgA pkgB --lint
 ```
 
 ---
@@ -186,10 +186,10 @@ The downloaded file does not match the hash in `plan.toml`.
 rm <cache_dir>/sources/<pkg>-<filename>
 
 # Re-run to download fresh and re-verify
-wbuild run <pkg>
+wright build <pkg>
 
 # If you need to update the hash in plan.toml:
-wbuild checksum <pkg>
+wright build <pkg> --checksum
 ```
 
 ---
@@ -211,7 +211,7 @@ bumped.
 
 ```bash
 # Force rebuild regardless of existing archives
-wbuild run <pkg> --force
+wright build <pkg> --force
 
 # Or bump the top-level release in plan.toml to invalidate both the archive
 # skip check and the build cache
@@ -237,10 +237,10 @@ the key does not hash).
 
 ```bash
 # Clear the build cache and force a full recompile
-wbuild run <pkg> --clean
+wright build <pkg> --clean
 
 # Also overwrite the existing output archive
-wbuild run <pkg> --clean --force
+wright build <pkg> --clean --force
 ```
 
 ---
@@ -253,7 +253,7 @@ scratch, but if you hit issues:
 
 ```bash
 # Manually clean the working directory for one part
-wbuild run <pkg> --clean
+wright build <pkg> --clean
 
 # Or remove it directly
 rm -rf /var/tmp/wright-build/<name>-<version>
@@ -366,7 +366,7 @@ an unusually large number of tracked files.
 
 ## Lock File Remains After Interrupt
 
-**Symptom:** After interrupting `wbuild` or `wright`, you still see
+**Symptom:** After interrupting `wright`, you still see
 files such as:
 
 ```text

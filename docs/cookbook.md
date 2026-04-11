@@ -88,19 +88,19 @@ script = "make DESTDIR=$PART_DIR install"
 Fetch checksums automatically:
 
 ```bash
-wbuild checksum zlib
+wright build zlib --checksum
 ```
 
 Build:
 
 ```bash
-wbuild run zlib
+wright build zlib
 ```
 
 Build and install immediately:
 
 ```bash
-wbuild run zlib -i
+wright apply zlib
 ```
 
 ---
@@ -112,28 +112,28 @@ run specific stages against the existing build tree:
 
 ```bash
 # Full first build (extracts, configures, compiles, fabricates parts)
-wbuild run mypkg
+wright build mypkg
 
 # Edit lifecycle.staging in plan.toml, then re-run the output phases:
-wbuild run mypkg --stage=staging --stage=fabricate
+wright build mypkg --stage=staging --stage=fabricate
 ```
 
 To iterate on a subset of stages and inspect the result:
 
 ```bash
-wbuild run mypkg --stage=configure
+wright build mypkg --stage=configure
 # Inspect $SRC_DIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
-wbuild run mypkg --stage=compile
-wbuild run mypkg --stage=staging --stage=fabricate
+wright build mypkg --stage=compile
+wright build mypkg --stage=staging --stage=fabricate
 
 # Or run compile plus the output phases together in one command:
-wbuild run mypkg --stage=compile --stage=staging --stage=fabricate
+wright build mypkg --stage=compile --stage=staging --stage=fabricate
 ```
 
 To skip the `check` stage (e.g. tests are slow or broken upstream):
 
 ```bash
-wbuild run mypkg --stage=prepare --stage=configure --stage=compile --stage=staging --stage=fabricate
+wright build mypkg --stage=prepare --stage=configure --stage=compile --stage=staging --stage=fabricate
 ```
 
 Or more concisely, run the full pipeline but skip `check` by doing a full build
@@ -141,7 +141,7 @@ and using `--stage` to re-run only the stages you need after a prior full
 configure+compile:
 
 ```bash
-wbuild run mypkg --stage=compile --stage=staging --stage=fabricate
+wright build mypkg --stage=compile --stage=staging --stage=fabricate
 ```
 
 ---
@@ -207,13 +207,13 @@ INFO scheduling batch 1 build:full: gcc  ← second pass, full deps
 To test the MVP pass explicitly without a cycle present:
 
 ```bash
-wbuild run gcc --mvp
+wright build gcc --mvp
 ```
 
 To inspect what cycles exist and which parts are MVP candidates:
 
 ```bash
-wbuild check gcc binutils glibc
+wright build gcc binutils glibc --lint
 ```
 
 ---
@@ -224,19 +224,19 @@ Build a part and all of its missing upstream dependencies:
 
 ```bash
 # Resolve gtk4 plus any missing build/link deps, then build
-wbuild resolve gtk4 --self --deps | wbuild run
+wright resolve gtk4 --self --deps | wright build
 ```
 
 Build only the missing deps, not gtk4 itself (pre-stage before the main build):
 
 ```bash
-wbuild resolve gtk4 --deps | wbuild run
+wright resolve gtk4 --deps | wright build
 ```
 
 Build everything — deps, the part, and downstream link dependents:
 
 ```bash
-wbuild resolve gtk4 --self --deps --dependents | wbuild run
+wright resolve gtk4 --self --deps --dependents | wright build
 ```
 
 ---
@@ -247,19 +247,19 @@ A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
 # Update the library, then cascade to all installed link dependents
-wbuild resolve libfoo --self --dependents | wbuild run --force --print-archives | wright install
+wright resolve libfoo --self --dependents | wright build --force --print-archives | wright install
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wbuild resolve libfoo --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
+wright resolve libfoo --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wbuild resolve libfoo --self --dependents --depth=2 | wbuild run --force --print-archives | wright install
+wright resolve libfoo --self --dependents --depth=2 | wright build --force --print-archives | wright install
 ```
 
 ---
@@ -271,11 +271,11 @@ without re-building parts that already succeeded:
 
 ```bash
 # First run — fails on package 15 of 30:
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --force
+wright resolve pcre2 --self --dependents --depth=0 | wright build --force
 # Output: Build session: a1b2c3...  (resume with: --resume a1b2c3...)
 
 # Resume — skips the 14 already-completed packages:
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume
+wright resolve pcre2 --self --dependents --depth=0 | wright build --resume
 ```
 
 `--resume` tracks progress in a build session stored in the database. Each
@@ -286,15 +286,15 @@ If you need to install the rebuilt outputs afterward, print the archive paths
 and feed them to `wright install`:
 
 ```bash
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume --print-archives | wright install
+wright resolve pcre2 --self --dependents --depth=0 | wright build --resume --print-archives | wright install
 ```
 
-The session hash is deterministic — running the same `wbuild resolve | wbuild run`
+The session hash is deterministic — running the same `wright resolve | wright build`
 pipeline produces the same hash, so `--resume` auto-detects the session. You can
 also pass the hash explicitly:
 
 ```bash
-wbuild resolve pcre2 --self --dependents --depth=0 | wbuild run --resume a1b2c3...
+wright resolve pcre2 --self --dependents --depth=0 | wright build --resume a1b2c3...
 ```
 
 Sessions are cleaned up automatically when all parts complete successfully.
@@ -310,10 +310,10 @@ membership. Multiple assemblies can be freely combined and overlapping
 plans are deduplicated.
 
 ```bash
-wbuild run @base                    # build all plans in the "base" assembly
-wbuild run @base @devel mypackage   # combine assemblies and individual plans
+wright build @base                  # build all plans in the "base" assembly
+wright build @base @devel mypackage # combine assemblies and individual plans
 wright apply @base                  # build missing/outdated archives, then install the assembly
-wbuild resolve @base --self --deps=sync | wbuild run # also sync missing/outdated upstream deps
+wright resolve @base --self --deps=sync | wright build # also sync missing/outdated upstream deps
 ```
 
 ---
@@ -324,7 +324,7 @@ Useful when global flags change (e.g. new `CFLAGS`) and you want to rebuild
 all parts in an assembly:
 
 ```bash
-wbuild run @base --force
+wright build @base --force
 ```
 
 `--force` bypasses both the archive skip check and the build cache for every
@@ -362,13 +362,13 @@ wright install pcre-8.45-1-x86_64.wright.tar.zst
 Print the full build-time dependency tree for a plan:
 
 ```bash
-wbuild resolve gtk4 --tree
+wright resolve gtk4 --tree
 ```
 
 Limit depth:
 
 ```bash
-wbuild resolve gtk4 --tree --depth=2
+wright resolve gtk4 --tree --depth=2
 ```
 
 ---

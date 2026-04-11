@@ -1,8 +1,8 @@
 # Current Design Summary
 
 This document replaces the older historical spec. Wright is now a
-source-first, local-first system with two primary tools and one local archive
-inventory.
+source-first, local-first system with one primary CLI, distinct build/system
+subcommands, and one local archive inventory.
 
 ## Core Objects
 
@@ -17,20 +17,20 @@ model beyond assemblies.
 
 ## Tool Boundaries
 
-- `wbuild` builds parts from plans and records successful outputs in the local
-  inventory
+- `wright build` builds parts from plans and records successful outputs in the
+  local inventory
 - `wright` installs, upgrades, removes, verifies, and applies those locally
   available parts to the live system
 
 The main workflows are:
 
 ```bash
-wbuild run curl
+wright build curl
 wright install curl
 
 wright apply @base
 
-wbuild resolve openssl --self --dependents=all --depth=0 | wbuild run --force --print-archives | wright install
+wright resolve openssl --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 ## Intended Workflow
@@ -41,7 +41,7 @@ Wright is optimized for self-hosted maintenance:
 - built archives exist mainly for rollback, recovery, and local reuse
 - `wright apply` is the preferred command when you want the system to match
   current plans or assemblies
-- `wbuild prune` cleans stale or stray archives from the local store
+- `wright prune` cleans stale or stray archives from the local store
 
 ## Data Layout
 

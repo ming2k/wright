@@ -1,18 +1,18 @@
 # Architecture
 
-Wright is split into two binaries that share one core library.
+Wright is a single CLI binary backed by one core library.
 
 ## Roles
 
-| Binary | Role |
-|--------|------|
-| `wbuild` | manufacture parts from plans and maintain the local archive inventory |
-| `wright` | apply locally available parts to the live system |
+| CLI surface | Role |
+|-------------|------|
+| `wright build`, `wright resolve`, `wright prune` | manufacture parts from plans and maintain the local archive inventory |
+| `wright install`, `wright upgrade`, `wright apply`, other system subcommands | apply locally available parts to the live system |
 
 ## Data Flow
 
 ```text
-plan.toml -> wbuild run -> .wright.tar.zst -> inventory.db -> wright install/upgrade/apply
+plan.toml -> wright build -> .wright.tar.zst -> inventory.db -> wright install/upgrade/apply
 ```
 
 ## Core Modules
@@ -20,9 +20,9 @@ plan.toml -> wbuild run -> .wright.tar.zst -> inventory.db -> wright install/upg
 ```text
 src/
 ├── bin/
-│   ├── wbuild.rs
 │   └── wright.rs
 ├── builder/      # build orchestration and lifecycle execution
+├── cli/          # clap definitions for system/build subcommands
 ├── config.rs     # global config and assembly definitions
 ├── database/     # installed-system DB
 ├── dockyard/     # sandbox isolation
@@ -36,7 +36,7 @@ src/
 
 ## Responsibilities
 
-### `wbuild`
+### `wright build` / `wright resolve` / `wright prune`
 
 - resolve plans and assemblies
 - expand dependency and rebuild scope
@@ -58,7 +58,7 @@ src/
 
 | Artifact | Written by | Read by |
 |----------|-----------|---------|
-| `plan.toml` | user | `wbuild`, `wright apply` |
-| `.wright.tar.zst` | `wbuild` | `wright` |
-| `parts.db` | `wright` | `wright`, `wbuild resolve` |
-| `inventory.db` | `wbuild` | `wbuild`, `wright` |
+| `plan.toml` | user | `wright build`, `wright resolve`, `wright apply` |
+| `.wright.tar.zst` | `wright build` | `wright` |
+| `parts.db` | `wright` | `wright`, `wright resolve` |
+| `inventory.db` | `wright build` | `wright build`, `wright`, `wright apply` |

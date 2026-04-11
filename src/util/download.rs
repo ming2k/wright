@@ -117,16 +117,13 @@ fn try_download_http(client: &Client, url: &str, dest: &Path, label: &str) -> Re
     let mut buffer = [0; 8192];
 
     loop {
-        let n = response
-            .read(&mut buffer)
-            .map_err(WrightError::IoError)?;
+        let n = response.read(&mut buffer).map_err(WrightError::IoError)?;
 
         if n == 0 {
             break;
         }
 
-        file.write_all(&buffer[..n])
-            .map_err(WrightError::IoError)?;
+        file.write_all(&buffer[..n]).map_err(WrightError::IoError)?;
 
         downloaded += n as u64;
         progress::set_source_bytes(&pb, downloaded, total_size);

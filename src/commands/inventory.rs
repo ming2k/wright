@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::cli::wbuild::PruneArgs;
+use crate::cli::build::PruneArgs;
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::inventory::db::InventoryDb;

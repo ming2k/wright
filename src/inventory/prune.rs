@@ -137,7 +137,13 @@ pub fn apply_prune(
     // Remove DB rows whose files are gone.
     let stale_db_rows = inventory.remove_missing_files(archives_dir)?;
 
-    let mut report = plan_prune(inventory, installed_db, archives_dir, prune_untracked, keep_latest)?;
+    let mut report = plan_prune(
+        inventory,
+        installed_db,
+        archives_dir,
+        prune_untracked,
+        keep_latest,
+    )?;
     report.stale_db_rows = stale_db_rows;
 
     for path in &report.untracked {

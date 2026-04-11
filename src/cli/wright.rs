@@ -11,7 +11,7 @@ Workflows:
   Inspect dependencies:     wright deps zlib --reverse
   Change install reason:    wright mark zlib --as-dependency
 
-Use `wbuild` to build parts from plans.";
+Use `wright build` to build parts from plans.";
 const WRIGHT_INSTALL_AFTER_HELP: &str = "\
 Examples:
   wright install zlib

@@ -127,7 +127,10 @@ pub fn write_dep_tree(
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
     let mut ancestors = std::collections::HashSet::new();
-    let mut stats = TreeStats { total: 1, ..TreeStats::default() };
+    let mut stats = TreeStats {
+        total: 1,
+        ..TreeStats::default()
+    };
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
     write_dep_tree_inner(
@@ -159,9 +162,9 @@ fn write_dep_tree_inner(
         return Ok(());
     }
 
-    let deps = db
-        .get_dependencies_by_name(name)
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e)))?;
+    let deps = db.get_dependencies_by_name(name).map_err(|e| {
+        WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e))
+    })?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         deps.iter().filter(|d| d.name.contains(f)).collect()
@@ -326,7 +329,10 @@ pub fn write_reverse_dep_tree(
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
     let mut ancestors = std::collections::HashSet::new();
-    let mut stats = TreeStats { total: 1, ..TreeStats::default() };
+    let mut stats = TreeStats {
+        total: 1,
+        ..TreeStats::default()
+    };
     visited.insert(name.to_string());
     ancestors.insert(name.to_string());
     write_reverse_dep_tree_inner(
@@ -358,9 +364,9 @@ fn write_reverse_dep_tree_inner(
         return Ok(());
     }
 
-    let dependents = db
-        .get_dependents(name)
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e)))?;
+    let dependents = db.get_dependents(name).map_err(|e| {
+        WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e))
+    })?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         dependents.iter().filter(|(n, _)| n.contains(f)).collect()

@@ -1,13 +1,13 @@
 use clap::{Parser, ValueEnum};
 
-pub const WBUILD_RUN_AFTER_HELP: &str = "\
+pub const BUILD_RUN_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
   wright resolve openssl --self --dependents | wright build
   echo -e 'curl\\nwget' | wright build --force";
-pub const WBUILD_RESOLVE_AFTER_HELP: &str = "\
+pub const BUILD_RESOLVE_AFTER_HELP: &str = "\
 Examples:
   wright resolve zlib --self --deps
   wright resolve zlib --self --deps=sync

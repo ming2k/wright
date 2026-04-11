@@ -7,24 +7,19 @@ use anyhow::{Context, Result};
 use crate::builder::orchestrator::{
     self, BuildOptions, DependencyMode, DependentsMode, ResolveOptions,
 };
-use crate::cli::wbuild::{DependentsModeArg, DepsMode, ResolveArgs, RunArgs};
+use crate::cli::build::{DependentsModeArg, DepsMode, ResolveArgs, RunArgs};
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
 
-pub fn execute_build(
-    args: RunArgs,
-    config: &GlobalConfig,
-    verbose: u8,
-    quiet: bool,
-) -> Result<()> {
+pub fn execute_build(args: RunArgs, config: &GlobalConfig, verbose: u8, quiet: bool) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
         &crate::util::lock::lock_dir_from_db(&config.general.db_path),
-        crate::util::lock::LockIdentity::Command("wbuild"),
+        crate::util::lock::LockIdentity::Command("build"),
         crate::util::lock::LockMode::Exclusive,
     )
-    .context("failed to acquire wbuild command lock")?;
+    .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
         let db = Database::open(&config.general.db_path).context("failed to open database")?;
@@ -59,7 +54,9 @@ pub fn execute_build(
             fetch_only: args.fetch,
             clean: args.clean,
             force: args.force,
-            resume: args.resume.map(|h| if h.is_empty() { None } else { Some(h) }),
+            resume: args
+                .resume
+                .map(|h| if h.is_empty() { None } else { Some(h) }),
             dockyards: effective_dockyards,
             checksum: args.checksum,
             lint: args.lint,
@@ -86,7 +83,10 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
         };
         let resolver = orchestrator::setup_resolver(config)?;
         let all_plans = resolver.get_all_plans()?;
-        println!("Plan dependency tree for: {} (source: hold-tree plan.toml)", target);
+        println!(
+            "Plan dependency tree for: {} (source: hold-tree plan.toml)",
+            target
+        );
         let stats = print_plan_tree(&target, &all_plans, "", 1, effective_depth)?;
         println!(
             "\n{} parts, max depth {}, {} repeated, {} cycles",
@@ -128,7 +128,6 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     }
     Ok(())
 }
-
 
 #[derive(Default)]
 pub struct PlanTreeStats {

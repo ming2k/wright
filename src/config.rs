@@ -118,7 +118,7 @@ fn default_general() -> GeneralConfig {
             default_cache_dir()
         },
         // Use the system-installed part database for both root and non-root
-        // by default so `wbuild resolve ... | sudo wbuild run ...` consult the
+        // by default so `wright resolve ... | sudo wright build ...` consult the
         // same installation state. Per-user overrides can still point db_path
         // elsewhere explicitly.
         db_path: default_db_path(),

@@ -1,10 +1,10 @@
-pub mod wbuild;
+pub mod build;
 pub mod wright;
 
-use std::path::PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
+use std::path::PathBuf;
 
-use wbuild::{WBUILD_RESOLVE_AFTER_HELP, WBUILD_RUN_AFTER_HELP};
+use build::{BUILD_RESOLVE_AFTER_HELP, BUILD_RUN_AFTER_HELP};
 
 #[derive(Parser)]
 #[command(
@@ -46,15 +46,14 @@ pub enum Commands {
     System(wright::Commands),
 
     // --- Build & Development ---
-
     /// Build parts from plans
-    #[command(after_help = WBUILD_RUN_AFTER_HELP)]
-    Build(wbuild::RunArgs),
+    #[command(after_help = BUILD_RUN_AFTER_HELP)]
+    Build(build::RunArgs),
 
     /// Resolve targets and expand their dependency graph
-    #[command(after_help = WBUILD_RESOLVE_AFTER_HELP)]
-    Resolve(wbuild::ResolveArgs),
+    #[command(after_help = BUILD_RESOLVE_AFTER_HELP)]
+    Resolve(build::ResolveArgs),
 
     /// Prune local archive inventory and stale archives
-    Prune(wbuild::PruneArgs),
+    Prune(build::PruneArgs),
 }

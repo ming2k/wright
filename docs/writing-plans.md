@@ -73,12 +73,12 @@ All fields default to empty lists if omitted.
 
 #### `link` dependencies vs `runtime`
 
-- **`link`**: Use this for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wbuild` concept, not an implicit install-time dependency.
+- **`link`**: Use this for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wright resolve` concept, not an implicit install-time dependency.
 - **`runtime`**: Use this for anything that must exist after installation for the part to work.
 
 These lists may overlap, and overlap is often correct for shared libraries. If a library is both linked and required at runtime, declare it in both `link` and `runtime`.
 
-`wbuild` uses `link` for reverse rebuild expansion. `wright install` uses `runtime` from `.PARTINFO`. Do not rely on `link` alone to pull in runtime requirements.
+`wright resolve` uses `link` for reverse rebuild expansion. `wright install` uses `runtime` from `.PARTINFO`. Do not rely on `link` alone to pull in runtime requirements.
 
 #### Version constraints
 
@@ -477,7 +477,7 @@ Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds 
 The MVP phase can also be triggered **manually** without a cycle being present, using the `--mvp` flag:
 
 ```bash
-wbuild run freetype --mvp
+wright build freetype --mvp
 ```
 
 This builds using `[mvp.dependencies]` and sets the same `WRIGHT_BUILD_PHASE=mvp` environment variables as an automatic cycle-breaking pass. It is useful for testing that a plan's MVP configuration is correct before it is needed in a real cycle.
@@ -541,7 +541,7 @@ fragile shell conditionals.
 
 ### Dependency Graph Analysis
 
-`wbuild check` validates each plan and prints a dependency graph report:
+`wright build --lint` validates each plan and prints a dependency graph report:
 
 - Whether the graph is acyclic
 - Each detected cycle (if any)

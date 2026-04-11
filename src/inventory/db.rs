@@ -297,11 +297,11 @@ impl InventoryDb {
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version, rel], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
-            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+                .filter_map(|r| r.ok())
+                .collect();
             rows
         } else {
             let mut stmt = self
@@ -312,11 +312,11 @@ impl InventoryDb {
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
                 .query_map(params![name, version], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
-            .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+                .filter_map(|r| r.ok())
+                .collect();
             rows
         };
 

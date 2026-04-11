@@ -214,7 +214,12 @@ impl PlanManifest {
         }
 
         let output_section = parse_output_section(&plan.name, output, hooks)?;
-        let OutputSection { fabricate, install_scripts, backup, relations } = output_section;
+        let OutputSection {
+            fabricate,
+            install_scripts,
+            backup,
+            relations,
+        } = output_section;
 
         let manifest = PlanManifest {
             plan,

@@ -39,7 +39,11 @@ impl<'a> LockIdentity<'a> {
     }
 }
 
-pub fn acquire_lock(lock_dir: &Path, identity: LockIdentity, mode: LockMode) -> Result<ProcessLock> {
+pub fn acquire_lock(
+    lock_dir: &Path,
+    identity: LockIdentity,
+    mode: LockMode,
+) -> Result<ProcessLock> {
     acquire_lock_with_timeout(lock_dir, identity, mode, Duration::from_secs(30))
 }
 
@@ -125,11 +129,18 @@ fn acquire_lock_path_with_timeout(
 
     if mode == LockMode::Exclusive {
         // Use a more robust write pattern for PID
-        let mut f = file;
-        if let Err(e) = f.set_len(0).and_then(|_| writeln!(&f, "pid={}", std::process::id())) {
-            // Non-fatal, but we log it if we had a logger here. 
+        let f = file;
+        if let Err(e) = f
+            .set_len(0)
+            .and_then(|_| writeln!(&f, "pid={}", std::process::id()))
+        {
+            // Non-fatal, but we log it if we had a logger here.
             // For now, we continue since the flock itself is the source of truth.
-            eprintln!("warning: failed to write PID to {}: {}", lock_path.display(), e);
+            eprintln!(
+                "warning: failed to write PID to {}: {}",
+                lock_path.display(),
+                e
+            );
         }
         Ok(ProcessLock {
             _file: f,
@@ -163,13 +174,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let lock_dir = dir.path().join("lock");
 
-        let identity = LockIdentity::Command("wbuild");
-        let _lock =
-            acquire_lock_with_timeout(&lock_dir, identity.clone(), LockMode::Exclusive, Duration::from_millis(100))
-                .unwrap();
-        let err =
-            acquire_lock_with_timeout(&lock_dir, identity, LockMode::Exclusive, Duration::from_millis(100))
-                .unwrap_err();
+        let identity = LockIdentity::Command("build");
+        let _lock = acquire_lock_with_timeout(
+            &lock_dir,
+            identity.clone(),
+            LockMode::Exclusive,
+            Duration::from_millis(100),
+        )
+        .unwrap();
+        let err = acquire_lock_with_timeout(
+            &lock_dir,
+            identity,
+            LockMode::Exclusive,
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("already holding"));
     }
 
