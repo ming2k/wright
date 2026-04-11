@@ -2,18 +2,15 @@
 
 ## [Unreleased]
 
-## [2.1.0] - 2026-04-12
+## [2.1.1] - 2026-04-12
 
 ### Changed
-- **CLI/API Refactor**: Significant refactor of `resolve` and `apply` commands to enhance semantic clarity and consistency.
-  - `dependents` is renamed to `rdeps`.
-  - `include-targets` is renamed to `exclude-targets` (defaulting to including the target).
-  - `--rebuild` flag (supporting `all`, `missing`, `outdated`) replaces the confusing `filter` logic.
-  - `--nodeps` is removed in favor of explicit `rebuild` and `deps` configuration.
-- **Architectural Cleanup**: Introduced `ApplyContext` pattern to eliminate function argument limits and clippy warnings.
-- **Docs**: Fully updated documentation for `apply` and `resolve` usage to reflect the new API.
+- **CLI/API Refactor**: Finalized API refinement for `apply` and `resolve` commands:
+  - Replaced ambiguous rebuild/filter flags with a explicit `--match` flag (supporting `missing`, `outdated`, `installed`, `all`) to provide total control over installation state selection.
+  - Standardized reverse dependency flag to `--rdeps`.
+  - Removed all implicit default behaviors in `apply` to ensure strict, explicit user control.
 
-## [2.0.4] - 2026-04-11
+## [2.1.0] - 2026-04-12
 
 ### Fixed
 - **Pipe-safe verbose build output**: `wright build --print-archives` now keeps stdout reserved for archive paths even under `-v`, while live subprocess output is mirrored to stderr so `... | wright install` pipelines remain observable and machine-safe.
