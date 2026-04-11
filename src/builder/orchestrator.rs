@@ -65,7 +65,7 @@ pub struct ResolveOptions {
     pub dependents_mode: DependentsMode,
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
-    pub include_self: bool,
+    pub include_targets: bool,
 }
 
 /// Options for a build run.
@@ -157,7 +157,7 @@ pub fn resolve_build_set(
 
     let do_deps = opts.deps_mode != DependencyMode::None;
     let do_dependents = opts.dependents_mode != DependentsMode::None;
-    let do_self = opts.include_self || !do_dependents || do_deps;
+    let include_targets = opts.include_targets || !do_dependents || do_deps;
 
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
@@ -193,7 +193,7 @@ pub fn resolve_build_set(
         }
     }
 
-    if !do_self {
+    if !include_targets {
         plans_to_build.retain(|p| !original_plans.contains(p));
     }
 

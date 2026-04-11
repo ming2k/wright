@@ -19,7 +19,7 @@ There is no required indexing or publish stage in the default workflow.
 ```bash
 wright build hello
 wright build @base
-wright resolve @base --self --deps=sync | wright build
+wright resolve @base --include-targets --deps=sync | wright build
 wright build hello --lint
 wright build zlib --checksum
 ```
@@ -88,6 +88,9 @@ Useful knobs:
 - `--force-install` forces reinstall or upgrade during the install phase
 - `--nodeps` skips install-time dependency resolution
 
+For the design rationale behind this command's defaults and wave model, see
+[Apply Design](apply-design.md).
+
 ## Remove and Inspect
 
 ```bash
@@ -121,7 +124,7 @@ wright prune --untracked --latest --apply
 ### Explicit Rebuild Scope
 
 ```bash
-wright resolve openssl --self --dependents=all --depth=0 | wright build --force
+wright resolve openssl --include-targets --dependents=all --depth=0 | wright build --force
 wright upgrade openssl
 ```
 

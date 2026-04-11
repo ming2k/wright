@@ -60,5 +60,5 @@ If you want explicit control over build and install phases, print archive paths
 from `wright build` and pipe them into `wright install`:
 
 ```bash
-wright resolve openssl --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve openssl --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```

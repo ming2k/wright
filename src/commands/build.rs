@@ -118,7 +118,7 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
                 deps_mode,
                 dependents_mode,
                 depth: effective_depth,
-                include_self: args.include_self,
+                include_targets: args.include_targets,
             },
         )?;
 

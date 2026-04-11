@@ -60,7 +60,7 @@ Useful `wright build` flags:
 
 Useful `wright resolve` flags:
 
-- `--self`
+- `--include-targets`
 - `--deps [none|missing|sync|all]`
 - `--dependents [link|all]`
 - `--depth <N>`

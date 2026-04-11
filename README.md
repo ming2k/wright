@@ -49,6 +49,7 @@ wright list
 - [CLI Reference](docs/cli-reference.md)
 - [Configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)
+- [Apply Design](docs/apply-design.md)
 - [Dependencies](docs/dependencies.md)
 - [Cookbook](docs/cookbook.md)
 

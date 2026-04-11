@@ -224,7 +224,7 @@ Build a part and all of its missing upstream dependencies:
 
 ```bash
 # Resolve gtk4 plus any missing build/link deps, then build
-wright resolve gtk4 --self --deps | wright build
+wright resolve gtk4 --include-targets --deps | wright build
 ```
 
 Build only the missing deps, not gtk4 itself (pre-stage before the main build):
@@ -236,7 +236,7 @@ wright resolve gtk4 --deps | wright build
 Build everything — deps, the part, and downstream link dependents:
 
 ```bash
-wright resolve gtk4 --self --deps --dependents | wright build
+wright resolve gtk4 --include-targets --deps --dependents | wright build
 ```
 
 ---
@@ -247,19 +247,19 @@ A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
 # Update the library, then cascade to all installed link dependents
-wright resolve libfoo --self --dependents | wright build --force --print-archives | wright install
+wright resolve libfoo --include-targets --dependents | wright build --force --print-archives | wright install
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wright resolve libfoo --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve libfoo --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wright resolve libfoo --self --dependents --depth=2 | wright build --force --print-archives | wright install
+wright resolve libfoo --include-targets --dependents --depth=2 | wright build --force --print-archives | wright install
 ```
 
 ---
@@ -271,11 +271,11 @@ without re-building parts that already succeeded:
 
 ```bash
 # First run — fails on package 15 of 30:
-wright resolve pcre2 --self --dependents --depth=0 | wright build --force
+wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --force
 # Output: Build session: a1b2c3...  (resume with: --resume a1b2c3...)
 
 # Resume — skips the 14 already-completed packages:
-wright resolve pcre2 --self --dependents --depth=0 | wright build --resume
+wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume
 ```
 
 `--resume` tracks progress in a build session stored in the database. Each
@@ -286,7 +286,7 @@ If you need to install the rebuilt outputs afterward, print the archive paths
 and feed them to `wright install`:
 
 ```bash
-wright resolve pcre2 --self --dependents --depth=0 | wright build --resume --print-archives | wright install
+wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume --print-archives | wright install
 ```
 
 The session hash is deterministic — running the same `wright resolve | wright build`
@@ -294,7 +294,7 @@ pipeline produces the same hash, so `--resume` auto-detects the session. You can
 also pass the hash explicitly:
 
 ```bash
-wright resolve pcre2 --self --dependents --depth=0 | wright build --resume a1b2c3...
+wright resolve pcre2 --include-targets --dependents --depth=0 | wright build --resume a1b2c3...
 ```
 
 Sessions are cleaned up automatically when all parts complete successfully.
@@ -313,7 +313,7 @@ plans are deduplicated.
 wright build @base                  # build all plans in the "base" assembly
 wright build @base @devel mypackage # combine assemblies and individual plans
 wright apply @base                  # build missing/outdated archives, then install the assembly
-wright resolve @base --self --deps=sync | wright build # also sync missing/outdated upstream deps
+wright resolve @base --include-targets --deps=sync | wright build # also sync missing/outdated upstream deps
 ```
 
 ---

@@ -105,14 +105,14 @@ wright apply curl
 Example: Force a deep rebuild of dependencies.
 
 ```bash
-wright resolve openssl --self --deps=all | wright build --force
+wright resolve openssl --include-targets --deps=all | wright build --force
 ```
 
 Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wright resolve zlib --self --dependents=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve zlib --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
 
 **Install Origin Tracking**

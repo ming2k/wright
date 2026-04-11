@@ -5,18 +5,18 @@ Examples:
   wright build zlib
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
-  wright resolve openssl --self --dependents | wright build
+  wright resolve openssl --include-targets --dependents | wright build
   echo -e 'curl\\nwget' | wright build --force";
 pub const BUILD_RESOLVE_AFTER_HELP: &str = "\
 Examples:
-  wright resolve zlib --self --deps
-  wright resolve zlib --self --deps=sync
-  wright resolve openssl --self --dependents
-  wright resolve glibc --self --dependents=all --depth=0
-  wright resolve zlib --self --deps=all
+  wright resolve zlib --include-targets --deps
+  wright resolve zlib --include-targets --deps=sync
+  wright resolve openssl --include-targets --dependents
+  wright resolve glibc --include-targets --dependents=all --depth=0
+  wright resolve zlib --include-targets --deps=all
 
 Pipe into wright build:
-  wright resolve openssl --self --dependents | wright build";
+  wright resolve openssl --include-targets --dependents | wright build";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum DepsMode {
@@ -109,9 +109,9 @@ pub struct ResolveArgs {
     /// Paths to plan directories, part names, or @assemblies
     pub targets: Vec<String>,
 
-    /// Include the listed parts themselves in the output
-    #[arg(short = 's', long = "self")]
-    pub include_self: bool,
+    /// Include the listed target plans themselves in the output
+    #[arg(short = 's', long = "include-targets")]
+    pub include_targets: bool,
 
     /// Expand upstream dependencies.
     /// `missing` adds only absent dependencies.
@@ -147,7 +147,7 @@ pub struct ResolveArgs {
     /// Show a visual dependency tree from hold-tree plan.toml files.
     /// This is a static analysis mode — it does not read the installed
     /// part database.
-    #[arg(long, short = 't', conflicts_with_all = ["deps", "dependents", "include_self"])]
+    #[arg(long, short = 't', conflicts_with_all = ["deps", "dependents", "include_targets"])]
     pub tree: bool,
 }
 

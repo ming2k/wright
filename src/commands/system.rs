@@ -131,7 +131,7 @@ fn apply_targets(
             deps_mode: DependencyMode::Sync,
             dependents_mode: DependentsMode::None,
             depth: Some(0),
-            include_self: true,
+            include_targets: true,
         },
     )?;
 
