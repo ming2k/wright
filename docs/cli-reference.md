@@ -54,6 +54,7 @@ Useful `wright build` flags:
 - `--mvp`
 - `--dockyards <N>`
 - `--print-archives`
+  prints only archive paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`
 - `--checksum`
 - `--lint`

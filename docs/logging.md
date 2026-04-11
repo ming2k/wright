@@ -86,6 +86,10 @@ To stream subprocess output to the terminal instead of capturing it:
 wright build -v <target>
 ```
 
+Verbose subprocess output is mirrored to stderr, not stdout. This keeps
+`wright build --print-archives` safe to pipe into `wright install` while still
+showing live build logs.
+
 With multiple dockyards (`-w > 1`), `-v` keeps output captured per dockyard to
 avoid interleaving noise. Use `-w 1 -v` for fully live output.
 

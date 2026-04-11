@@ -62,3 +62,7 @@ from `wright build` and pipe them into `wright install`:
 ```bash
 wright resolve openssl --include-targets --dependents=all --depth=0 | wright build --force --print-archives | wright install
 ```
+
+`--print-archives` keeps stdout reserved for archive paths. Human-readable
+logs, including live `-v` subprocess output, stay on stderr so this pipeline
+remains safe.

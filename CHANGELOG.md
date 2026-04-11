@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Pipe-safe verbose build output**: `wright build --print-archives` now keeps stdout reserved for archive paths even under `-v`, while live subprocess output is mirrored to stderr so `... | wright install` pipelines remain observable and machine-safe.
+
 ## [2.0.3] - 2026-04-11
 
 ### Changed

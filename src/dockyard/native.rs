@@ -22,12 +22,9 @@ use crate::error::{Result, WrightError};
 fn make_stream_capture<R: std::io::Read + Send + 'static>(
     source: R,
     verbose: bool,
-    to_stdout: bool,
 ) -> std::thread::JoinHandle<CapturedOutput> {
     let dest = tempfile::tempfile().expect("failed to create capture temp file");
-    let echo: Option<Box<dyn std::io::Write + Send>> = if verbose && to_stdout {
-        Some(Box::new(std::io::stdout()))
-    } else if verbose {
+    let echo: Option<Box<dyn std::io::Write + Send>> = if verbose {
         Some(Box::new(std::io::stderr()))
     } else {
         None
@@ -197,9 +194,8 @@ pub fn run_in_dockyard(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle =
-            make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
+        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose);
+        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose);
         let status = child
             .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
@@ -285,9 +281,8 @@ pub fn run_in_dockyard(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose, true);
-        let stderr_handle =
-            make_stream_capture(child.stderr.take().unwrap(), config.verbose, false);
+        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose);
+        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose);
         let status = child
             .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
@@ -819,8 +814,8 @@ pub fn run_in_dockyard(
                 .timeout_secs
                 .map(|t| spawn_timeout_watchdog(child.as_raw() as u32, t, false));
 
-            let stdout_handle = make_stream_capture(out_file, config.verbose, true);
-            let stderr_handle = make_stream_capture(err_file, config.verbose, false);
+            let stdout_handle = make_stream_capture(out_file, config.verbose);
+            let stderr_handle = make_stream_capture(err_file, config.verbose);
 
             let status = wait_for_child(child)?;
             if let Some(done) = watchdog {

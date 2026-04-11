@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
@@ -240,4 +241,125 @@ fn test_build_single_stage() {
     // (pkg_dir is recreated fresh for single-stage runs)
     assert!(result.src_dir.join("hello.c").exists());
     assert!(!result.pkg_dir.join("usr/bin/hello").exists());
+}
+
+#[test]
+fn test_print_archives_keeps_verbose_build_output_off_stdout() {
+    let root = tempfile::tempdir().unwrap();
+    let plans_dir = root.path().join("plans");
+    let components_dir = root.path().join("components");
+    let cache_dir = root.path().join("cache");
+    let db_dir = root.path().join("db");
+    let log_dir = root.path().join("log");
+    let build_dir = root.path().join("build");
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&components_dir).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::create_dir_all(&db_dir).unwrap();
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::create_dir_all(&build_dir).unwrap();
+
+    let plan_dir = plans_dir.join("verbose-pipe-test");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "verbose-pipe-test"
+version = "1.0.0"
+release = 1
+description = "verify stdout/stderr split for --print-archives"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+runtime = []
+build = []
+
+[lifecycle.staging]
+executor = "shell"
+dockyard = "none"
+script = """
+echo LIVE-BUILD-OUTPUT
+install -Dm755 /bin/sh ${PART_DIR}/usr/bin/verbose-pipe-test
+"""
+"#,
+    )
+    .unwrap();
+
+    let config_path = root.path().join("wright.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+components_dir = "{}"
+cache_dir = "{}"
+db_path = "{}"
+inventory_db_path = "{}"
+log_dir = "{}"
+executors_dir = "/etc/wright/executors"
+assemblies_dir = "{}"
+
+[build]
+build_dir = "{}"
+default_dockyard = "none"
+dockyards = 1
+cflags = "-O2 -pipe -march=x86-64"
+cxxflags = "-O2 -pipe -march=x86-64"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans_dir.display(),
+            components_dir.display(),
+            cache_dir.display(),
+            db_dir.join("parts.db").display(),
+            db_dir.join("inventory.db").display(),
+            log_dir.display(),
+            root.path().join("assemblies").display(),
+            build_dir.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("-v")
+        .arg("build")
+        .arg("verbose-pipe-test")
+        .arg("--print-archives")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wright build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout_lines: Vec<_> = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    assert_eq!(stdout_lines.len(), 1, "unexpected stdout: {stdout:?}");
+    assert!(
+        stdout_lines[0].ends_with(".wright.tar.zst"),
+        "stdout should contain only archive paths: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("LIVE-BUILD-OUTPUT"),
+        "subprocess stdout leaked into stdout: {stdout:?}"
+    );
+    assert!(
+        stderr.contains("LIVE-BUILD-OUTPUT"),
+        "expected live verbose build output on stderr: {stderr:?}"
+    );
 }
