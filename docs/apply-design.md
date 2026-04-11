@@ -88,14 +88,12 @@ coordinated plan-to-system command.
 
 ### Separate Force Controls
 
-`wright apply` keeps build and install pressure independent:
+`wright apply` uses a unified force mechanism:
 
-- `--force-build` forces rebuilds even when matching archives already exist
-- `--force-install` forces the install or upgrade step
+- `-f`, `--force` forces both a rebuild (even if matching archives exist) and a re-installation of the resulting parts.
 
-This split matters. A maintainer may trust the inventory but want to force
-reinstallation, or may want to rebuild artifacts while leaving install behavior
-otherwise normal.
+This consolidates the previous separate flags into a single control for situations where you want to ensure the system is completely refreshed from the plan state.
+
 
 ## Execution Model
 

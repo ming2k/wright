@@ -84,8 +84,7 @@ wright apply @base --dry-run
 Useful knobs:
 
 - `--dry-run` previews what would be built and installed without mutating the system
-- `--force-build` rebuilds even when matching parts already exist in the inventory
-- `--force-install` forces reinstall or upgrade during the install phase
+- `--force`, `-f` forces rebuild and re-installation even if matching parts already exist in the inventory
 
 For the design rationale behind this command's defaults and wave model, see
 [Apply Design](apply-design.md).

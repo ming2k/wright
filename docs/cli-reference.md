@@ -69,9 +69,9 @@ Useful `wright resolve` flags:
 
 Useful `wright apply` flags:
 
-- `--force-build`
-- `--force-install`
+- `-f`, `--force`
 - `--dry-run`
+
 
 Useful `wright prune` flags:
 
