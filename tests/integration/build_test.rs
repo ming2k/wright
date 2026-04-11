@@ -3,7 +3,7 @@ use std::process::Command;
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
-use wright::part::archive;
+use wright::part::part;
 use wright::plan::manifest::{FabricateConfig, PlanManifest};
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -79,14 +79,14 @@ fn test_build_and_archive_hello() {
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+        part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".wright.tar.zst"));
 
     // Verify we can read PARTINFO from it
-    let pkginfo = archive::read_partinfo(&archive_path).unwrap();
+    let pkginfo = part::read_partinfo(&archive_path).unwrap();
     assert_eq!(pkginfo.name, "hello");
     assert_eq!(pkginfo.version, "1.0.0");
     assert_eq!(pkginfo.release, 1);
@@ -95,7 +95,7 @@ fn test_build_and_archive_hello() {
     // Verify we can extract it
     let extract_dir = tempfile::tempdir().unwrap();
     let (extracted_info, _hash) =
-        archive::extract_archive(&archive_path, extract_dir.path()).unwrap();
+        part::extract_part(&archive_path, extract_dir.path()).unwrap();
     assert_eq!(extracted_info.name, "hello");
     assert!(extract_dir.path().join("usr/bin/hello").exists());
     assert!(extract_dir.path().join(".PARTINFO").exists());
@@ -152,13 +152,13 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
-    let pkginfo = archive::read_partinfo(&archive_path).unwrap();
+        part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let pkginfo = part::read_partinfo(&archive_path).unwrap();
 
     assert_eq!(pkginfo.runtime_deps, vec!["openssl", "zlib"]);
 
     let extract_dir = tempfile::tempdir().unwrap();
-    archive::extract_archive(&archive_path, extract_dir.path()).unwrap();
+    part::extract_part(&archive_path, extract_dir.path()).unwrap();
     let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
     assert!(partinfo.contains("runtime = [\"openssl\", \"zlib\"]"));
     assert!(!partinfo.contains("link ="));
@@ -244,7 +244,7 @@ fn test_build_single_stage() {
 }
 
 #[test]
-fn test_print_archives_keeps_verbose_build_output_off_stdout() {
+fn test_print_parts_keeps_verbose_build_output_off_stdout() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");
     let components_dir = root.path().join("components");
@@ -267,7 +267,7 @@ fn test_print_archives_keeps_verbose_build_output_off_stdout() {
 name = "verbose-pipe-test"
 version = "1.0.0"
 release = 1
-description = "verify stdout/stderr split for --print-archives"
+description = "verify stdout/stderr split for --print-parts"
 license = "MIT"
 arch = "x86_64"
 
@@ -331,7 +331,7 @@ retry_count = 3
         .arg("-v")
         .arg("build")
         .arg("verbose-pipe-test")
-        .arg("--print-archives")
+        .arg("--print-parts")
         .output()
         .unwrap();
 

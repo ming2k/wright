@@ -12,7 +12,7 @@ replaced.
 - Declarative TOML plans
 - Sandboxed builds via bubblewrap
 - Transactional install / upgrade / remove
-- Local archive inventory for reuse and rollback
+- Local part inventory for reuse and rollback
 - Source-first maintenance through wave-aware `wright apply`
 
 ## Build
@@ -35,9 +35,9 @@ wright list
 ## Terms
 
 - **Plan**: the `plan.toml` blueprint for building one part
-- **Part**: the built `.wright.tar.zst` archive
+- **Part**: the built `.wright.tar.zst` part
 - **Assembly**: a build-time grouping of plans
-- **Inventory**: the local database of built archives on this machine
+- **Inventory**: the local database of built parts on this machine
 - **System**: the live machine being maintained
 
 ## Documentation

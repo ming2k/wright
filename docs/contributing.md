@@ -18,10 +18,10 @@ src/
 ├── cli/      # clap schemas grouped by subcommand
 ├── commands/    # command handlers grouped by subcommand
 ├── config.rs    # Configuration
-├── part/      # Part archive and version handling
+├── part/      # Part part and version handling
 ├── builder/    # Build pipeline, executors, variables
 ├── database/    # SQLite layer
-├── inventory/   # Local archive inventory and resolver
+├── inventory/   # Local part inventory and resolver
 ├── transaction/  # Install/remove with rollback
 ├── dockyard/    # Dockyard isolation
 ├── query/     # Read-only system inspection

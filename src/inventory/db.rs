@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 
 use crate::error::{Result, WrightError};
-use crate::part::archive;
+use crate::part::part;
 use crate::util::lock::ProcessLock;
 
 const BASE_SCHEMA: &str = "
@@ -142,7 +142,7 @@ impl InventoryDb {
 
     pub fn register_part(
         &self,
-        partinfo: &archive::PartInfo,
+        partinfo: &part::PartInfo,
         filename: &str,
         sha256: &str,
     ) -> Result<i64> {

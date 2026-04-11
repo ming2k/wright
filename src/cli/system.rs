@@ -137,7 +137,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Install parts from local archives or the local inventory
+    /// Install parts from local parts or the local inventory
     #[command(
         long_about = "Install parts from archive files or locally registered part names.\n\nParts explicitly named by the user are marked as explicit installs. Dependencies pulled in automatically are marked as dependency installs.",
         after_help = WRIGHT_INSTALL_AFTER_HELP
@@ -155,7 +155,7 @@ pub enum Commands {
         #[arg(long)]
         nodeps: bool,
     },
-    /// Build missing/outdated archives for plans or assemblies, then install the resulting parts
+    /// Build missing/outdated parts for plans or assemblies, then install the resulting parts
     #[command(
         long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright checks the local archive inventory first, builds any missing or outdated parts from plans, and then installs the requested outputs onto the live system.",
         after_help = WRIGHT_APPLY_AFTER_HELP
@@ -202,7 +202,7 @@ pub enum Commands {
         #[arg(long)]
         depth: Option<usize>,
 
-        /// Force rebuild even if matching archives already exist
+        /// Force rebuild even if matching parts already exist
         #[arg(long)]
         force_build: bool,
 

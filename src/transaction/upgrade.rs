@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 
 use crate::database::{Database, DepType, Dependency, FileType, NewPart};
 use crate::error::{Result, WrightError};
-use crate::part::archive;
+use crate::part::part;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
@@ -17,14 +17,14 @@ use super::{journal_path_from_db, log_debug_timing, self_replace_provides_confli
 
 pub fn upgrade_part(
     db: &Database,
-    archive_path: &Path,
+    part_path: &Path,
     root_dir: &Path,
     force: bool,
     run_hooks: bool,
 ) -> Result<()> {
     let overall_start = Instant::now();
 
-    let staging_base = archive_path
+    let staging_base = part_path
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or_else(|| std::path::Path::new("/var/lib/wright"));
@@ -34,7 +34,7 @@ pub fn upgrade_part(
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let mut phase_start = Instant::now();
-    let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
+    let (pkginfo, pkg_hash) = part::extract_part(part_path, temp_dir.path())?;
     log_debug_timing(
         "upgrade",
         &pkginfo.name,

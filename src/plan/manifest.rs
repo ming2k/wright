@@ -412,7 +412,7 @@ impl PlanManifest {
 
     /// Get the archive filename for this part.
     /// Includes epoch only when > 0: `name-epoch:version-release-arch.wright.tar.zst`
-    pub fn archive_filename(&self) -> String {
+    pub fn part_filename(&self) -> String {
         if self.plan.epoch > 0 {
             format!(
                 "{}-{}:{}-{}-{}.wright.tar.zst",
@@ -653,7 +653,7 @@ arch = "x86_64"
     }
 
     #[test]
-    fn test_archive_filename() {
+    fn test_part_filename() {
         let toml_str = r#"
 name = "hello"
 version = "1.0.0"
@@ -664,7 +664,7 @@ arch = "x86_64"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(
-            manifest.archive_filename(),
+            manifest.part_filename(),
             "hello-1.0.0-1-x86_64.wright.tar.zst"
         );
     }
@@ -715,7 +715,7 @@ runtime = ["libgcc"]
                 assert_eq!(sub_manifest.plan.description, "GNU C++ standard library");
                 assert_eq!(sub_manifest.dependencies.runtime, vec!["libgcc"]);
                 assert_eq!(
-                    sub_manifest.archive_filename(),
+                    sub_manifest.part_filename(),
                     "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
                 );
             }
@@ -1129,7 +1129,7 @@ arch = "x86_64"
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.epoch, 2);
         assert_eq!(
-            manifest.archive_filename(),
+            manifest.part_filename(),
             "test-2:1.0.0-1-x86_64.wright.tar.zst"
         );
     }
@@ -1148,7 +1148,7 @@ arch = "x86_64"
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.epoch, 0);
         assert_eq!(
-            manifest.archive_filename(),
+            manifest.part_filename(),
             "test-1.0.0-1-x86_64.wright.tar.zst"
         );
     }

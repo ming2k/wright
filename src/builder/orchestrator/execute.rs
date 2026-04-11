@@ -10,7 +10,7 @@ use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::error::{Result, WrightError, WrightResultExt};
-use crate::part::archive;
+use crate::part::part;
 use crate::part::fhs;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
@@ -401,8 +401,8 @@ fn build_one(
     };
 
     if !opts.force && opts.resume.is_none() && opts.stages.is_empty() && !opts.fetch_only {
-        let archive_name = manifest.archive_filename();
-        let existing = output_dir.join(&archive_name);
+        let part_name = manifest.part_filename();
+        let existing = output_dir.join(&part_name);
         let all_exist = existing.exists()
             && match manifest.fabricate {
                 Some(FabricateConfig::Multi(ref pkgs)) => pkgs
@@ -410,13 +410,13 @@ fn build_one(
                     .filter(|(name, _)| *name != &manifest.plan.name)
                     .all(|(sub_name, sub_pkg)| {
                         let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
-                        output_dir.join(sub_manifest.archive_filename()).exists()
+                        output_dir.join(sub_manifest.part_filename()).exists()
                     }),
                 _ => true,
             };
         if all_exist && existing.exists() {
             info!(
-                "Skipping {} (all archives already exist, use --force to rebuild)",
+                "Skipping {} (all parts already exist, use --force to rebuild)",
                 manifest.plan.name
             );
             return Ok(());
@@ -483,12 +483,12 @@ fn build_one(
         if !manifest.options.skip_fhs_check {
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
-        let archive_path = archive::create_archive(&result.pkg_dir, manifest, &output_dir)?;
-        info!(plan = %manifest.plan.name, "part stored in {}", archive_path.display());
-        if opts.print_archives {
-            println!("{}", archive_path.display());
+        let part_path = part::create_part(&result.pkg_dir, manifest, &output_dir)?;
+        info!(plan = %manifest.plan.name, "part stored in {}", part_path.display());
+        if opts.print_parts {
+            println!("{}", part_path.display());
         }
-        register_in_inventory(&config.general.inventory_db_path, &archive_path);
+        register_in_inventory(&config.general.inventory_db_path, &part_path);
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
@@ -502,12 +502,12 @@ fn build_one(
                     fhs::validate(sub_pkg_dir, sub_name)?;
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
-                let sub_archive = archive::create_archive(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!(plan = %sub_name, "part stored in {}", sub_archive.display());
-                if opts.print_archives {
-                    println!("{}", sub_archive.display());
+                let sub_part = part::create_part(sub_pkg_dir, &sub_manifest, &output_dir)?;
+                info!(plan = %sub_name, "part stored in {}", sub_part.display());
+                if opts.print_parts {
+                    println!("{}", sub_part.display());
                 }
-                register_in_inventory(&config.general.inventory_db_path, &sub_archive);
+                register_in_inventory(&config.general.inventory_db_path, &sub_part);
             }
         }
     }
@@ -515,12 +515,12 @@ fn build_one(
     Ok(())
 }
 
-fn register_in_inventory(inventory_db_path: &Path, archive_path: &Path) {
+fn register_in_inventory(inventory_db_path: &Path, part_path: &Path) {
     let do_register = || -> Result<()> {
         let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
-        let partinfo = archive::read_partinfo(archive_path)?;
-        let sha256 = crate::util::checksum::sha256_file(archive_path)?;
-        let filename = archive_path
+        let partinfo = part::read_partinfo(part_path)?;
+        let sha256 = crate::util::checksum::sha256_file(part_path)?;
+        let filename = part_path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");

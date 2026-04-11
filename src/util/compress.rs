@@ -40,25 +40,25 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 /// Handles symlinks by archiving them as symlinks (not following them).
 pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
     let file = std::fs::File::create(output_path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to create {}: {}", output_path.display(), e))
+        WrightError::PartError(format!("failed to create {}: {}", output_path.display(), e))
     })?;
 
     let encoder = zstd::Encoder::new(file, 3)
-        .map_err(|e| WrightError::ArchiveError(format!("zstd encoder init failed: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("zstd encoder init failed: {}", e)))?;
 
     let mut tar_builder = tar::Builder::new(encoder);
     tar_builder.follow_symlinks(false);
 
     for entry in walkdir::WalkDir::new(source_dir).sort_by_file_name() {
         let entry = entry
-            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to walk directory: {}", e)))?;
         let full_path = entry.path();
         let raw_rel_path = full_path.strip_prefix(source_dir).unwrap_or(full_path);
         // The root entry itself produces an empty relative path — skip silently.
         if raw_rel_path == std::path::Path::new("") {
             continue;
         }
-        let Some(rel_path) = normalize_archive_path(raw_rel_path) else {
+        let Some(rel_path) = normalize_part_path(raw_rel_path) else {
             warn!(
                 "Skipping unsafe archive path: {} (source: {})",
                 raw_rel_path.display(),
@@ -68,7 +68,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         };
 
         let metadata = entry.path().symlink_metadata().map_err(|e| {
-            WrightError::ArchiveError(format!(
+            WrightError::PartError(format!(
                 "failed to read metadata for {}: {}",
                 full_path.display(),
                 e
@@ -77,7 +77,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
 
         if metadata.is_symlink() {
             let target = std::fs::read_link(full_path).map_err(|e| {
-                WrightError::ArchiveError(format!(
+                WrightError::PartError(format!(
                     "failed to read symlink {}: {}",
                     full_path.display(),
                     e
@@ -100,12 +100,12 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
             tar_builder
                 .append_link(&mut header, &rel_path, &target)
                 .map_err(|e| {
-                    WrightError::ArchiveError(format!("tar append symlink failed: {}", e))
+                    WrightError::PartError(format!("tar append symlink failed: {}", e))
                 })?;
         } else if metadata.is_dir() {
             tar_builder
                 .append_dir(&rel_path, full_path)
-                .map_err(|e| WrightError::ArchiveError(format!("tar append dir failed: {}", e)))?;
+                .map_err(|e| WrightError::PartError(format!("tar append dir failed: {}", e)))?;
         } else {
             // The tar crate's append_path_with_name passes the absolute source path
             // to append_special for device/FIFO entries, ignoring the archive name.
@@ -122,7 +122,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                 {
                     let mut header = tar::Header::new_gnu();
                     header.set_path(&rel_path).map_err(|e| {
-                        WrightError::ArchiveError(format!(
+                        WrightError::PartError(format!(
                             "tar set path failed for {}: {}",
                             rel_path.display(),
                             e
@@ -155,15 +155,15 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                             header.set_entry_type(tar::EntryType::Block);
                         }
                         header.set_device_major(dev_major as u32).map_err(|e| {
-                            WrightError::ArchiveError(format!("tar set device major failed: {}", e))
+                            WrightError::PartError(format!("tar set device major failed: {}", e))
                         })?;
                         header.set_device_minor(dev_minor as u32).map_err(|e| {
-                            WrightError::ArchiveError(format!("tar set device minor failed: {}", e))
+                            WrightError::PartError(format!("tar set device minor failed: {}", e))
                         })?;
                     }
                     header.set_cksum();
                     tar_builder.append(&header, std::io::empty()).map_err(|e| {
-                        WrightError::ArchiveError(format!(
+                        WrightError::PartError(format!(
                             "tar append special failed for {}: {}",
                             rel_path.display(),
                             e
@@ -173,7 +173,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                     tar_builder
                         .append_path_with_name(full_path, &rel_path)
                         .map_err(|e| {
-                            WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                            WrightError::PartError(format!("tar append file failed: {}", e))
                         })?;
                 }
             }
@@ -182,7 +182,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                 tar_builder
                     .append_path_with_name(full_path, &rel_path)
                     .map_err(|e| {
-                        WrightError::ArchiveError(format!("tar append file failed: {}", e))
+                        WrightError::PartError(format!("tar append file failed: {}", e))
                     })?;
             }
         }
@@ -190,17 +190,17 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
 
     let encoder = tar_builder
         .into_inner()
-        .map_err(|e| WrightError::ArchiveError(format!("tar finalize failed: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("tar finalize failed: {}", e)))?;
 
     encoder
         .finish()
-        .map_err(|e| WrightError::ArchiveError(format!("zstd finish failed: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("zstd finish failed: {}", e)))?;
 
     Ok(())
 }
 
 /// Normalize a filesystem path into a safe, relative path for archive entry names.
-fn normalize_archive_path(path: &Path) -> Option<std::path::PathBuf> {
+fn normalize_part_path(path: &Path) -> Option<std::path::PathBuf> {
     let mut normalized = std::path::PathBuf::new();
     for comp in path.components() {
         match comp {
@@ -218,13 +218,13 @@ fn normalize_archive_path(path: &Path) -> Option<std::path::PathBuf> {
 }
 
 /// Extract a tar.zst archive to a directory.
-pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
-    let file = std::fs::File::open(archive_path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+pub fn extract_tar_zst(part_path: &Path, dest_dir: &Path) -> Result<()> {
+    let file = std::fs::File::open(part_path).map_err(|e| {
+        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
     })?;
 
     let decoder = zstd::Decoder::new(file)
-        .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
 
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
@@ -234,15 +234,15 @@ pub fn extract_tar_zst(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
 /// Extract a tar.zst archive and return the SHA-256 hash of the archive file,
 /// computed in a single streaming pass (no separate re-read).
-pub fn extract_tar_zst_hashed(archive_path: &Path, dest_dir: &Path) -> Result<String> {
-    let file = std::fs::File::open(archive_path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+pub fn extract_tar_zst_hashed(part_path: &Path, dest_dir: &Path) -> Result<String> {
+    let file = std::fs::File::open(part_path).map_err(|e| {
+        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
     })?;
 
     let mut hashing_reader = HashingReader::new(file);
     {
         let decoder = zstd::Decoder::new(&mut hashing_reader)
-            .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
         let archive = tar::Archive::new(decoder);
         unpack_tar_safely(archive, dest_dir)?;
     }
@@ -251,80 +251,80 @@ pub fn extract_tar_zst_hashed(archive_path: &Path, dest_dir: &Path) -> Result<St
 }
 
 /// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, .tar.lz, and .zip
-pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<()> {
-    let filename = archive_path
+pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<()> {
+    let filename = part_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
     if filename.ends_with(".tar.zst") {
-        extract_tar_zst(archive_path, dest_dir)
+        extract_tar_zst(part_path, dest_dir)
     } else if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
-        extract_tar_gz(archive_path, dest_dir)
+        extract_tar_gz(part_path, dest_dir)
     } else if filename.ends_with(".tar.xz") {
-        extract_tar_xz(archive_path, dest_dir)
+        extract_tar_xz(part_path, dest_dir)
     } else if filename.ends_with(".tar.bz2") {
-        extract_tar_bz2(archive_path, dest_dir)
+        extract_tar_bz2(part_path, dest_dir)
     } else if filename.ends_with(".tar.lz") {
-        extract_tar_lz(archive_path, dest_dir)
+        extract_tar_lz(part_path, dest_dir)
     } else if filename.ends_with(".zip") {
-        extract_zip(archive_path, dest_dir)
+        extract_zip(part_path, dest_dir)
     } else {
-        Err(WrightError::ArchiveError(format!(
+        Err(WrightError::PartError(format!(
             "unsupported archive format: {}",
             filename
         )))
     }
 }
 
-pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_tar_gz(part_path: &Path, dest_dir: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
+    let file = std::fs::File::open(part_path).map_err(WrightError::IoError)?;
     let decoder = GzDecoder::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
-pub fn extract_tar_bz2(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_tar_bz2(part_path: &Path, dest_dir: &Path) -> Result<()> {
     use bzip2::read::BzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
+    let file = std::fs::File::open(part_path).map_err(WrightError::IoError)?;
     let decoder = BzDecoder::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
-pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_tar_xz(part_path: &Path, dest_dir: &Path) -> Result<()> {
     use xz2::read::XzDecoder;
-    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
+    let file = std::fs::File::open(part_path).map_err(WrightError::IoError)?;
     let decoder = XzDecoder::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
-pub fn extract_tar_lz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+pub fn extract_tar_lz(part_path: &Path, dest_dir: &Path) -> Result<()> {
     use lzma_rust::LzipReader;
-    let file = std::fs::File::open(archive_path).map_err(WrightError::IoError)?;
+    let file = std::fs::File::open(part_path).map_err(WrightError::IoError)?;
     let decoder = LzipReader::new(file);
     let archive = tar::Archive::new(decoder);
     unpack_tar_safely(archive, dest_dir)?;
     Ok(())
 }
 
-pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
-    let file = std::fs::File::open(archive_path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
+    let file = std::fs::File::open(part_path).map_err(|e| {
+        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
     })?;
 
     let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| WrightError::ArchiveError(format!("failed to read zip archive: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("failed to read zip archive: {}", e)))?;
 
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| WrightError::ArchiveError(format!("failed to read zip entry: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to read zip entry: {}", e)))?;
 
         let raw_path = match entry.enclosed_name() {
             Some(p) => p.to_owned(),
@@ -335,7 +335,7 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         };
 
         if !is_path_safe(&raw_path) {
-            return Err(WrightError::ArchiveError(format!(
+            return Err(WrightError::PartError(format!(
                 "unsafe path in zip archive: {}",
                 raw_path.display()
             )));
@@ -345,7 +345,7 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
 
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path).map_err(|e| {
-                WrightError::ArchiveError(format!(
+                WrightError::PartError(format!(
                     "failed to create directory {}: {}",
                     out_path.display(),
                     e
@@ -354,7 +354,7 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         } else {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    WrightError::ArchiveError(format!(
+                    WrightError::PartError(format!(
                         "failed to create parent directory {}: {}",
                         parent.display(),
                         e
@@ -363,7 +363,7 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
             }
 
             let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
-                WrightError::ArchiveError(format!(
+                WrightError::PartError(format!(
                     "failed to create file {}: {}",
                     out_path.display(),
                     e
@@ -371,7 +371,7 @@ pub fn extract_zip(archive_path: &Path, dest_dir: &Path) -> Result<()> {
             })?;
 
             std::io::copy(&mut entry, &mut outfile).map_err(|e| {
-                WrightError::ArchiveError(format!(
+                WrightError::PartError(format!(
                     "failed to extract {}: {}",
                     raw_path.display(),
                     e
@@ -407,17 +407,17 @@ fn is_path_safe(path: &Path) -> bool {
 fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> Result<()> {
     for entry in archive
         .entries()
-        .map_err(|e| WrightError::ArchiveError(format!("failed to read archive entries: {}", e)))?
+        .map_err(|e| WrightError::PartError(format!("failed to read archive entries: {}", e)))?
     {
         let mut entry = entry
-            .map_err(|e| WrightError::ArchiveError(format!("failed to read tar entry: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to read tar entry: {}", e)))?;
 
         let path = entry
             .path()
-            .map_err(|e| WrightError::ArchiveError(format!("failed to read entry path: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to read entry path: {}", e)))?;
 
         if !is_path_safe(&path) {
-            return Err(WrightError::ArchiveError(format!(
+            return Err(WrightError::PartError(format!(
                 "unsafe path in archive: {}",
                 path.to_string_lossy()
             )));
@@ -439,7 +439,7 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
 
         entry
             .unpack_in(dest_dir)
-            .map_err(|e| WrightError::ArchiveError(format!("tar extract failed: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("tar extract failed: {}", e)))?;
 
         #[cfg(unix)]
         {

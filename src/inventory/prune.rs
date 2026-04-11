@@ -26,7 +26,7 @@ pub struct StaleArchive {
 pub fn plan_prune(
     inventory: &InventoryDb,
     installed_db: &Database,
-    archives_dir: &Path,
+    parts_dir: &Path,
     prune_untracked: bool,
     keep_latest: bool,
 ) -> Result<PruneReport> {
@@ -36,9 +36,9 @@ pub fn plan_prune(
     let mut untracked = Vec::new();
     let mut stale_tracked = Vec::new();
 
-    // Collect archives not registered in the inventory DB.
+    // Collect parts not registered in the inventory DB.
     if prune_untracked {
-        let entries = std::fs::read_dir(archives_dir).map_err(WrightError::IoError)?;
+        let entries = std::fs::read_dir(parts_dir).map_err(WrightError::IoError)?;
         for entry in entries {
             let entry = entry.map_err(WrightError::IoError)?;
             let path = entry.path();
@@ -109,7 +109,7 @@ pub fn plan_prune(
         for part in &tracked {
             if !keep_filenames.contains(&part.filename) {
                 stale_tracked.push(StaleArchive {
-                    path: archives_dir.join(&part.filename),
+                    path: parts_dir.join(&part.filename),
                     name: part.name.clone(),
                     version: part.version.clone(),
                     release: part.release,
@@ -130,17 +130,17 @@ pub fn plan_prune(
 pub fn apply_prune(
     inventory: &InventoryDb,
     installed_db: &Database,
-    archives_dir: &Path,
+    parts_dir: &Path,
     prune_untracked: bool,
     keep_latest: bool,
 ) -> Result<PruneReport> {
     // Remove DB rows whose files are gone.
-    let stale_db_rows = inventory.remove_missing_files(archives_dir)?;
+    let stale_db_rows = inventory.remove_missing_files(parts_dir)?;
 
     let mut report = plan_prune(
         inventory,
         installed_db,
-        archives_dir,
+        parts_dir,
         prune_untracked,
         keep_latest,
     )?;

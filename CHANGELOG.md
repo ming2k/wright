@@ -13,7 +13,7 @@
 ## [2.1.0] - 2026-04-12
 
 ### Fixed
-- **Pipe-safe verbose build output**: `wright build --print-archives` now keeps stdout reserved for archive paths even under `-v`, while live subprocess output is mirrored to stderr so `... | wright install` pipelines remain observable and machine-safe.
+- **Pipe-safe verbose build output**: `wright build --print-parts` now keeps stdout reserved for part paths even under `-v`, while live subprocess output is mirrored to stderr so `... | wright install` pipelines remain observable and machine-safe.
 
 ## [2.0.3] - 2026-04-11
 
@@ -49,7 +49,7 @@
 ## [2.0.0] - 2026-04-11
 
 ### Changed
-- **Inventory module replaces `wrepo`**: the `wrepo` binary and `src/repo/` module have been removed in favour of a new `src/inventory/` module that manages the local archive database. The tool set is now two binaries: `wbuild` and `wright`.
+- **Inventory module replaces `wrepo`**: the `wrepo` binary and `src/repo/` module have been removed in favour of a new `src/inventory/` module that manages the local part database. The tool set is now two binaries: `wbuild` and `wright`.
 - **Simplified `ResolveOptions`**: the `install` field has been removed from `ResolveOptions`; all dependency types are now always expanded, removing a source of inconsistent resolve behaviour.
 
 ### Fixed
@@ -81,7 +81,7 @@
 
 ### Changes
 - **Fixed lock-file layout**: database locks now use stable files under `/var/lib/wright/lock/` (for example `parts.db.lock` and `repo.db.lock`) and rely on `flock(2)` lifetime instead of creating and deleting transient lock files beside the databases.
-- **Install and upgrade diagnostics**: `-v` now emits debug timing for archive extraction, file scanning, owner checks, filesystem writes, database updates, hooks, and total install/upgrade time.
+- **Install and upgrade diagnostics**: `-v` now emits debug timing for part extraction, file scanning, owner checks, filesystem writes, database updates, hooks, and total install/upgrade time.
 - **Log wording cleanup**: install and upgrade `INFO` messages now use natural sentence order (for example `Installing texlive-texmf: 252553 files`) for easier reading.
 
 ## [1.12.1] - 2026-04-08
@@ -92,7 +92,7 @@
 ## [1.12.0] - 2026-04-08
 
 ### Performance
-- **Install performance**: archive SHA-256 is now computed in a single streaming pass during extraction, eliminating a full re-read of the archive after install.
+- **Install performance**: part SHA-256 is now computed in a single streaming pass during extraction, eliminating a full re-read of the part after install.
 - **Same-filesystem staging**: staging temp dir is placed under the wright data dir (same filesystem as `/`) so `rename(2)` replaces read+write copy during file installation; falls back to copy on cross-device installs.
 - **Parallel file operations**: `collect_file_entries` and `copy_files_to_root` now process files in parallel with rayon while preserving serial directory creation and rollback safety.
 
@@ -199,8 +199,8 @@
 ## [1.7.10] - 2026-03-18
 
 ### Changes
-- **Archive metadata completeness**: preserve build dependency metadata in generated archives for downstream tooling and inspection.
-- **Docs sync**: update dependency and build documentation to reflect the archived build-dependency metadata behavior.
+- **part metadata completeness**: preserve build dependency metadata in generated parts for downstream tooling and inspection.
+- **Docs sync**: update dependency and build documentation to reflect the partd build-dependency metadata behavior.
 
 ## [1.7.9] - 2026-03-18
 
@@ -250,7 +250,7 @@
 ### Changes
 - **Repository metadata moved to SQLite**: `wrepo` now stores repository metadata in `/var/lib/wright/repo/repo.db` by default, and creates the directory automatically if it does not exist.
 - **Resolvers now prefer `wbuild` package metadata**: package resolution reads `.PARTINFO` metadata produced by `wbuild` and registered in the repo database, rather than treating the plan tree as a repository source.
-- **`wbuild` now auto-registers built archives**: newly created `.wright.tar.zst` packages are added to the repo database immediately after a successful build; `wrepo sync` remains available for importing pre-existing archives.
+- **`wbuild` now auto-registers built parts**: newly created `.wright.tar.zst` packages are added to the repo database immediately after a successful build; `wrepo sync` remains available for importing pre-existing parts.
 
 ### Documentation
 - Update repository and CLI docs to describe the SQLite-backed repository catalog and binary-only `wrepo source` workflow.
@@ -288,7 +288,7 @@
 ## [1.6.1] - 2026-03-15
 
 ### Features
-- **Local repository management**: add `wright repo sync/list/remove` commands. `wright repo sync <dir>` generates the repository index directly from wright, replacing the need for `wbuild index` in the typical workflow. `wright repo list [name]` shows all available versions with `[installed]` markers. `wright repo remove` removes index entries with optional `--purge` to delete archive files.
+- **Local repository management**: add `wright repo sync/list/remove` commands. `wright repo sync <dir>` generates the repository index directly from wright, replacing the need for `wbuild index` in the typical workflow. `wright repo list [name]` shows all available versions with `[installed]` markers. `wright repo remove` removes index entries with optional `--purge` to delete part files.
 - **Name-based upgrades**: `wright upgrade` now accepts package names in addition to file paths. The resolver finds the latest version from all configured sources. Use `--version` to target a specific version (enables downgrades).
 - **Multi-version resolver**: `resolve_all()` returns all available versions of a part across sources, with `pick_latest()` and `pick_version()` helpers.
 
@@ -347,14 +347,14 @@
 ## [1.4.1] - 2026-03-07
 
 ### Features
-- Built-in `.zip` archive extraction using the pure-Rust `zip` crate — no external `unzip` tool required. Includes path traversal protection and Unix permission preservation.
+- Built-in `.zip` part extraction using the pure-Rust `zip` crate — no external `unzip` tool required. Includes path traversal protection and Unix permission preservation.
 
 ## [1.4.0] - 2026-03-06
 
 ### Features
 - **Kits**: new package grouping concept for `wright install @name`. Kits group packages (distinct from assemblies which group plans). One file per kit in `kits_dir`, filename is the kit name.
 - **Repository management**: `wright source add/remove/list` commands to manage `repos.toml` without manual editing.
-- **Repository indexing**: `wbuild index [PATH]` generates `wright.index.toml` from built packages for fast name-based resolution. Resolver uses the index when available, falls back to archive scanning.
+- **Repository indexing**: `wbuild index [PATH]` generates `wright.index.toml` from built packages for fast name-based resolution. Resolver uses the index when available, falls back to part scanning.
 - **Repository sync**: `wright sync` reports available packages from all indexed sources.
 - **Available package search**: `wright search --available` (`-a`) searches indexed repos, showing `[installed]` tags for packages already on the system.
 - **Flexible install targets**: `wright install` now accepts `.wright.tar.zst` file paths, package names (resolved from sources), and `@kit` references.
@@ -371,7 +371,7 @@
 ### Features
 - Restructure `[sources]` from positional `uris`/`sha256` arrays to `[[sources]]` array-of-tables. Each source entry is now self-contained with `uri` and `sha256` fields.
 - New `[relations]` section for `replaces`, `conflicts`, and `provides` — moved out of `[dependencies]` where they did not belong.
-- Add `epoch` field to `[plan]` metadata (default 0). Epoch overrides version comparison for version scheme changes. Included in archive filename only when non-zero.
+- Add `epoch` field to `[plan]` metadata (default 0). Epoch overrides version comparison for version scheme changes. Included in part filename only when non-zero.
 - Add `pre_install` hook — executed before file extraction during install and upgrade.
 - Document `git+` URI format for cloning git repositories as sources (`git+https://...#tag`).
 - Backward compatibility: old `[sources]`/`[dependencies]` relations syntax auto-converts with deprecation warnings. Mixing old and new syntax in the same file is rejected with a clear error.
@@ -384,15 +384,15 @@
 - `[split.<name>]` replaced by `[lifecycle.package.<name>]` (multi-package mode). All sub-packages including the main package must be explicitly declared.
 - `[install_scripts]` and `[backup]` top-level sections replaced by `[lifecycle.package]` with `hooks.*` fields and `backup = [...]` (single-package mode), or per-sub-package fields in multi-package mode.
 - `post_package` lifecycle stage removed.
-- Package hook metadata file changed from `.INSTALL` (ini) to `.HOOKS` (TOML) inside `.wright.tar.zst` archives.
+- Package hook metadata file changed from `.INSTALL` (ini) to `.HOOKS` (TOML) inside `.wright.tar.zst` parts.
 
 ### Features
 - New `[lifecycle.package]` section for single-package output declarations (hooks + backup).
 - New `[lifecycle.package.<name>]` syntax for multi-package output, replacing `[split]`. Sub-packages support `description`, `version`, `release`, `arch`, `license`, `dependencies`, `script`, `hooks`, and `backup` fields.
 - Single-package and multi-package modes are mutually exclusive with a clear error on conflict.
 - Add `post_remove` hook support — executed after file removal during `wright remove`.
-- Structured `.HOOKS` TOML format for hook storage in archives and database, replacing the `.INSTALL` ini format.
-- Backward compatibility: old `[split]`/`[install_scripts]`/`[backup]` syntax auto-converts with deprecation warnings. Old `.INSTALL` ini in archives and database is transparently parsed via fallback.
+- Structured `.HOOKS` TOML format for hook storage in parts and database, replacing the `.INSTALL` ini format.
+- Backward compatibility: old `[split]`/`[install_scripts]`/`[backup]` syntax auto-converts with deprecation warnings. Old `.INSTALL` ini in parts and database is transparently parsed via fallback.
 
 ## [1.2.8] - 2026-03-03
 
@@ -445,7 +445,7 @@
 ## [1.2.3] - 2026-02-22
 
 ### Features
-- FHS validation after the `package` stage: every file and symlink in `$PKG_DIR` is checked against the distribution's merged-usr path whitelist before the archive is created. Violations produce a `ValidationError` with a clear hint (e.g. "install to /usr/bin"). Absolute symlink targets are also validated. Set `[options] skip_fhs_check = true` to bypass for edge cases such as kernel modules.
+- FHS validation after the `package` stage: every file and symlink in `$PKG_DIR` is checked against the distribution's merged-usr path whitelist before the part is created. Violations produce a `ValidationError` with a clear hint (e.g. "install to /usr/bin"). Absolute symlink targets are also validated. Set `[options] skip_fhs_check = true` to bypass for edge cases such as kernel modules.
 
 ## [1.2.2] - 2026-02-21
 
@@ -497,7 +497,7 @@
 
 ### Fixes
 - Add `-c` short alias for `--clean` flag in `wbuild run`
-- Fix spurious WARN on archive root entry during package creation
+- Fix spurious WARN on part root entry during package creation
 - Track `Cargo.lock` for reproducible builds (removed from `.gitignore`)
 
 ## [1.0.0] - 2026-02-20
@@ -507,23 +507,23 @@
 - Sandboxed builds using Linux namespaces (mount, PID, network isolation)
 - Split-package support for producing multiple output packages from a single build
 - Bootstrap mode for building the initial system toolchain
-- Git source support alongside HTTP archive downloads
+- Git source support alongside HTTP part downloads
 - Dependency resolution with build / runtime / link classification
 - `replaces` and `conflicts` fields for package compatibility management
 - `doctor` subcommand for system health diagnostics
 - Stage-level exec (`wbuild run <pkg> --stage <stage>`) for targeted rebuilds
 - Resource limits on build processes to prevent runaway builds
 - SHA-256 checksum verification for downloaded sources
-- Archive support: `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.zip`
-- Symlink-aware tar packaging (archives symlinks as symlinks, not followed)
-- Special file handling in archives (FIFO, char/block devices)
+- part support: `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.zip`
+- Symlink-aware tar packaging (parts symlinks as symlinks, not followed)
+- Special file handling in parts (FIFO, char/block devices)
 - Progress indicators for downloads and package operations
 - Structured logging with `RUST_LOG` / `--log-level` control
 - SQLite-backed package database
 
 ### Fixes
-- Resolved empty root-entry warning during tar archive creation
-- Fixed unsafe archive path detection (empty path vs. path traversal)
+- Resolved empty root-entry warning during tar part creation
+- Fixed unsafe part path detection (empty path vs. path traversal)
 - Fixed URI name substitution for packages with version-templated URLs
 - Fixed duplicate/conflicting file handling across split packages
 - Mitigated potential resource exhaustion in allocation paths

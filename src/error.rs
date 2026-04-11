@@ -20,8 +20,8 @@ pub enum WrightError {
     #[error("remove error: {0}")]
     RemoveError(String),
 
-    #[error("archive error: {0}")]
-    ArchiveError(String),
+    #[error("part error: {0}")]
+    PartError(String),
 
     #[error("config error: {0}")]
     ConfigError(String),

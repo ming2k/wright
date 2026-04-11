@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use crate::database::{FileEntry, FileType};
 use crate::error::{Result, WrightError};
-use crate::part::archive::PartInfo;
+use crate::part::part::PartInfo;
 use crate::transaction::rollback::RollbackState;
 use crate::util::checksum;
 

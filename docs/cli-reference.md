@@ -14,13 +14,13 @@ build-side and system-side workflows.
 ## System commands
 
 - `wright install <PART...>`
- installs archive paths or locally registered part names
+ installs part paths or locally registered part names
 - `wright apply <TARGET...>`
  resolves plans or assemblies, executes wave-by-wave build/install orchestration, and converges the live system to those targets
 - `wright upgrade <PART...>`
- upgrades installed parts by local part name or archive path
+ upgrades installed parts by local part name or part path
 - `wright sysupgrade`
- upgrades everything to the newest locally registered archives
+ upgrades everything to the newest locally registered parts
 - `wright remove <PART...>`
 - `wright deps [PART]`
 - `wright list`
@@ -42,7 +42,7 @@ build-side and system-side workflows.
 - `wright resolve <TARGET...>`
  expands dependency and rebuild scope without building
 - `wright prune`
- cleans tracked or stray archives from the local inventory
+ cleans tracked or stray parts from the local inventory
 
 Useful `wright build` flags:
 
@@ -53,8 +53,8 @@ Useful `wright build` flags:
 - `--skip-check`
 - `--mvp`
 - `--dockyards <N>`
-- `--print-archives`
- prints only archive paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
+- `--print-parts`
+ prints only part paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`
 - `--checksum`
 - `--lint`

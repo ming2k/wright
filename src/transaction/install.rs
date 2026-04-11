@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use crate::database::{Database, DepType, Dependency, FileType, NewPart, Origin};
 use crate::error::{Result, WrightError};
 use crate::inventory::resolver::{LocalResolver, ResolvedPart};
-use crate::part::archive;
+use crate::part::part;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{read_hooks, run_install_script};
@@ -18,22 +18,22 @@ use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
 
 pub fn install_parts(
     db: &Database,
-    archives: &[PathBuf],
+    parts: &[PathBuf],
     root_dir: &Path,
     resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
-    let explicit_targets: HashSet<String> = archives
+    let explicit_targets: HashSet<String> = parts
         .iter()
-        .map(|path| resolver.read_archive(path))
+        .map(|path| resolver.read_part(path))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .map(|resolved| resolved.name)
         .collect();
     install_parts_with_explicit_targets(
         db,
-        archives,
+        parts,
         &explicit_targets,
         root_dir,
         resolver,
@@ -44,7 +44,7 @@ pub fn install_parts(
 
 pub fn install_parts_with_explicit_targets(
     db: &Database,
-    archives: &[PathBuf],
+    parts: &[PathBuf],
     explicit_targets: &HashSet<String>,
     root_dir: &Path,
     resolver: &LocalResolver,
@@ -54,8 +54,8 @@ pub fn install_parts_with_explicit_targets(
     let mut resolved_map = HashMap::new();
     let mut targets = Vec::new();
 
-    for path in archives {
-        let resolved = resolver.read_archive(path)?;
+    for path in parts {
+        let resolved = resolver.read_part(path)?;
         targets.push(resolved.name.clone());
         resolved_map.insert(resolved.name.clone(), resolved);
     }
@@ -208,16 +208,16 @@ fn visit_resolved(
 
 pub fn install_part(
     db: &Database,
-    archive_path: &Path,
+    part_path: &Path,
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_origin(db, archive_path, root_dir, force, Origin::Manual, true)
+    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true)
 }
 
 pub fn install_part_with_origin(
     db: &Database,
-    archive_path: &Path,
+    part_path: &Path,
     root_dir: &Path,
     force: bool,
     origin: Origin,
@@ -227,7 +227,7 @@ pub fn install_part_with_origin(
 
     // Prefer a staging dir on the same filesystem as root so that rename(2)
     // can be used instead of read+write copy during installation.
-    let staging_base = archive_path
+    let staging_base = part_path
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or_else(|| std::path::Path::new("/var/lib/wright"));
@@ -238,7 +238,7 @@ pub fn install_part_with_origin(
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
     let mut phase_start = Instant::now();
-    let (pkginfo, pkg_hash) = archive::extract_archive(archive_path, temp_dir.path())?;
+    let (pkginfo, pkg_hash) = part::extract_part(part_path, temp_dir.path())?;
     log_debug_timing(
         "install",
         &pkginfo.name,
@@ -304,7 +304,7 @@ pub fn install_part_with_origin(
                 "Part {} already installed, attempting upgrade/reinstall",
                 pkginfo.name
             );
-            return upgrade_part(db, archive_path, root_dir, true, run_hooks);
+            return upgrade_part(db, part_path, root_dir, true, run_hooks);
         }
         return Err(WrightError::PartAlreadyInstalled(pkginfo.name.clone()));
     }

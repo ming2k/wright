@@ -66,7 +66,7 @@ fn git_cache_dir_name(uri: &str) -> String {
 }
 
 /// Check whether a filename looks like a supported archive format.
-fn is_archive(filename: &str) -> bool {
+fn is_part_file(filename: &str) -> bool {
     filename.ends_with(".tar.gz")
         || filename.ends_with(".tgz")
         || filename.ends_with(".tar.xz")
@@ -242,7 +242,7 @@ impl Builder {
             }
 
             // Extract cache into build_root
-            compress::extract_archive(&cache_file, &build_root)?;
+            compress::extract_part(&cache_file, &build_root)?;
 
             // Re-detect sub-part directories from the cached build_root
             let mut split_pkg_dirs = std::collections::HashMap::new();
@@ -312,7 +312,7 @@ impl Builder {
                 // Verify sources
                 self.verify(manifest)?;
 
-                // Extract archives and copy non-archive files to files_dir
+                // Extract parts and copy non-archive files to files_dir
                 self.extract(manifest, &src_dir, &files_dir)?;
 
                 // Mark extraction complete so incremental builds can skip it
@@ -662,7 +662,7 @@ impl Builder {
         Ok(())
     }
 
-    /// Extract archives to the build directory and copy non-archive files to files_dir.
+    /// Extract parts to the build directory and copy non-archive files to files_dir.
     /// Returns the path to the top-level source directory (for BUILD_DIR).
     pub fn extract(
         &self,
@@ -738,9 +738,9 @@ impl Builder {
             let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
             let path = cache_dir.join(&cache_filename);
 
-            if is_archive(&cache_filename) {
+            if is_part_file(&cache_filename) {
                 debug!("Extracting {}...", cache_filename);
-                compress::extract_archive(&path, dest_dir)?;
+                compress::extract_part(&path, dest_dir)?;
             } else {
                 // Non-archive file: copy to files_dir using the original basename
                 // so build scripts can reference it by its natural name (e.g. $FILES_DIR/config).

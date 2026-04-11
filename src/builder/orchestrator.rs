@@ -96,8 +96,8 @@ pub struct BuildOptions {
     pub quiet: bool,
     /// --mvp: build using mvp.toml deps without requiring a cycle to trigger it.
     pub mvp: bool,
-    /// Print produced archive paths to stdout.
-    pub print_archives: bool,
+    /// Print produced part paths to stdout.
+    pub print_parts: bool,
     /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
     /// The scheduler computes this per launched task from the currently active
     /// dockyard count (`total_cpus / active_dockyards`) so resource share adapts as

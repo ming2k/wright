@@ -56,7 +56,7 @@ pub struct BuildArgs {
     /// Print produced archive paths to stdout after a successful build.
     /// Human-readable logs continue to go to stderr so this remains pipe-safe.
     #[arg(long)]
-    pub print_archives: bool,
+    pub print_parts: bool,
 
     /// Remove all saved build sessions and exit
     #[arg(long)]

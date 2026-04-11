@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::Database;
-use wright::part::archive;
+use wright::part::part;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
 
@@ -44,7 +44,7 @@ fn build_hello_archive() -> PathBuf {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive = archive::create_archive(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let archive = part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};

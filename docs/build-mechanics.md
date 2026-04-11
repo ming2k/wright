@@ -1,7 +1,7 @@
 # Build Mechanics
 
 This page explains what happens on disk when `wright build` executes: the build
-directory layout, log files, source cache, build cache, and output archives.
+directory layout, log files, source cache, build cache, and output parts.
 Understanding these layers makes it easier to debug failures and reason about
 when work is skipped or repeated.
 
@@ -133,7 +133,7 @@ across builds:
 ```
 
 The filename is prefixed with the part name to avoid collisions between
-plans that use similarly-named upstream archives (e.g. two parts both
+plans that use similarly-named upstream parts (e.g. two parts both
 fetching `v1.0.tar.gz` from different projects).
 
 Before extraction, each source is verified against its `sha256` checksum from
@@ -167,8 +167,8 @@ rebuilds from scratch.
 
 ### What the build cache stores
 
-The cache archive contains `pkg/` and `log/` directories.
-`src/` is **not** cached to keep the archive compact. On a cache hit, Wright
+The cache part contains `pkg/` and `log/` directories.
+`src/` is **not** cached to keep the part compact. On a cache hit, Wright
 restores these directories and skips the entire build pipeline.
 
 For multi-part plans, `pkg-*` sub-part directories are also included in the
@@ -184,18 +184,18 @@ because:
 - the working directory may be removed manually or by `--clean`
 - `src/` is intentionally excluded from the build cache to keep cache entries smaller
 - the cache key provides a precise "can this build be reused?" decision
-- restoring a compact archive is more predictable than relying on an old working tree
+- restoring a compact part is more predictable than relying on an old working tree
 
 If you want to inspect source trees or rerun a stage manually, look in
 `build_dir`. If you want to understand why a later build skipped recompilation,
 look in `cache_dir/builds`.
 
-### Build Cache vs Part Archive
+### Build Cache vs Output Part
 
 | Item | Build cache | `.wright.tar.zst` |
 |------|-------------|-------------------|
 | Purpose | Internal reuse | Distribution / install |
-| Produced when | After lifecycle succeeds | After FHS validation and archive creation |
+| Produced when | After lifecycle succeeds | After FHS validation and part creation |
 | Contains | `pkg/`, `log/`, `pkg-*` | Packaged payload plus `.PARTINFO`, `.FILELIST`, optional `.HOOKS` |
 | Includes `src/` | No | No |
 | Stable public format | No | Yes |
@@ -212,13 +212,13 @@ look in `cache_dir/builds`.
 | Bootstrap (MVP first pass) | kept | ✗ | ✗ |
 
 Bootstrap passes are intentionally incomplete builds — caching them would
-produce a broken archive that a later full pass would have to overwrite anyway.
+produce a broken part that a later full pass would have to overwrite anyway.
 
 ## FHS Validation
 
 After the final output stage completes (`fabricate`), Wright validates every
 file and symlink in `$PART_DIR` against the distribution's FHS whitelist before
-creating the archive. This catches silent packaging mistakes
+creating the part. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 
 ```
@@ -239,9 +239,9 @@ layout, set `skip_fhs_check = true` in `[options]`:
 skip_fhs_check = true
 ```
 
-## Output Archives (Components)
+## Output parts (Components)
 
-After a successful build the part is packed into an archive and placed in
+After a successful build the part is packed into an part and placed in
 `components_dir` (default `/var/lib/wright/components`):
 
 ```
@@ -251,24 +251,24 @@ After a successful build the part is packed into an archive and placed in
 └── ...
 ```
 
-Archive filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
+part filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
 
 ### Skip condition
 
-If the archive (and all sub-part archives) already exist in `components_dir`,
+If the part (and all sub-part parts) already exist in `components_dir`,
 the build is skipped entirely — the source cache and build cache are not even
 consulted. Use `--force` to override this and rebuild regardless.
 
-### What the archive contains
+### What the part contains
 
-The archive is created from the staged root (`pkg/`) after the final
+The part is created from the staged root (`pkg/`) after the final
 `fabricate` phase and records the full part metadata (name, version,
 dependencies, file list) for the installer. Sub-parts each get their own
-archive produced by their `script`.
+part produced by their `script`.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Build cache | Output archive | `src/` | `pkg/` / `log/` |
+| Flag | Source cache | Build cache | Output part | `src/` | `pkg/` / `log/` |
 |------|:---:|:---:|:---:|:---:|:---:|
 | (default) | reuse | reuse | skip if exists | reuse if key matches | recreated |
 | `--force` | reuse | bypass read, overwrite | overwrite | reuse if key matches | recreated |
@@ -278,8 +278,8 @@ archive produced by their `script`.
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
 - `--clean` — invalidate the build cache **and** force a clean `src/` re-extraction
-- `--force` — bypass the output archive skip check (always produce a new archive)
-- `--clean --force` — "start completely from scratch": clear cache, re-extract sources, and always write a new archive
+- `--force` — bypass the output part skip check (always produce a new part)
+- `--clean --force` — "start completely from scratch": clear cache, re-extract sources, and always write a new part
 
 ### Incremental builds
 

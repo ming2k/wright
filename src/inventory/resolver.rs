@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::AssembliesConfig;
 use crate::error::{Result, WrightError};
-use crate::part::archive;
+use crate::part::part;
 use crate::part::version::Version;
 
 /// Strip path separators and dangerous components from a filename derived from a URL.
@@ -163,8 +163,8 @@ impl LocalResolver {
         Ok(results)
     }
 
-    pub fn read_archive(&self, path: &Path) -> Result<ResolvedPart> {
-        let partinfo = archive::read_partinfo(path)?;
+    pub fn read_part(&self, path: &Path) -> Result<ResolvedPart> {
+        let partinfo = part::read_partinfo(path)?;
         Ok(ResolvedPart {
             name: partinfo.name,
             path: path.to_path_buf(),

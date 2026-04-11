@@ -4,9 +4,9 @@
 
 Wright is source-first:
 
-- `wright build` manufactures local `.wright.tar.zst` archives from plans
-- `wright build` records those archives in a local inventory database
-- `wright` applies those local archives to the live system
+- `wright build` manufactures local `.wright.tar.zst` parts from plans
+- `wright build` records those parts in a local inventory database
+- `wright` applies those local parts to the live system
 
 There is no required indexing or publish stage in the default workflow.
 
@@ -30,20 +30,20 @@ wright build zlib --checksum
 - `wright resolve` expands upstream dependencies and downstream rebuilds before the build starts.
 - `--deps=sync` is the usual maintenance mode: it rebuilds dependencies whose installed versions no longer match the current plans.
 
-### Archive Inventory
+### Part Inventory
 
 Successful builds are written to `components_dir` and registered in
 `inventory_db_path`.
 
-To clean old or stray archives:
+To clean old or stray parts:
 
 ```bash
 wright prune --untracked
 wright prune --latest --apply
 ```
 
-`--latest` keeps the newest tracked archive per part name while preserving any
-currently installed versions. `--untracked` removes archive files that exist on
+`--latest` keeps the newest tracked part per part name while preserving any
+currently installed versions. `--untracked` removes part files that exist on
 disk but are not registered in the inventory DB.
 
 ## Wright
@@ -60,7 +60,7 @@ wright upgrade hello --version=1.0.0
 wright sysupgrade
 ```
 
-Part names are resolved from the local archive inventory.
+Part names are resolved from the local part inventory.
 
 ### Apply Assemblies
 
@@ -78,13 +78,13 @@ wright apply @base --dry-run
 
 1. resolves the requested plans or assemblies
 2. computes dependency waves for the required build graph
-3. for each wave, builds any missing or outdated archives needed there
+3. for each wave, builds any missing or outdated parts needed there
 4. installs that wave before continuing, so later waves see the updated system state
 
 Useful knobs:
 
 - `--dry-run` previews what would be built and installed without mutating the system
-- `--force-build` rebuilds even when matching archives already exist in the inventory
+- `--force-build` rebuilds even when matching parts already exist in the inventory
 - `--force-install` forces reinstall or upgrade during the install phase
 
 For the design rationale behind this command's defaults and wave model, see

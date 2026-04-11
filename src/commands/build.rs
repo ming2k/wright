@@ -63,7 +63,7 @@ pub fn execute_build(
             verbose: verbose > 0,
             quiet,
             mvp: args.mvp,
-            print_archives: args.print_archives,
+            print_parts: args.print_parts,
             nproc_per_dockyard: config.build.nproc_per_dockyard,
         },
     )?;

@@ -47,7 +47,7 @@ fn purge_excluded_files(part_dir: &Path) {
 }
 
 /// Create a .wright.tar.zst binary part archive.
-pub fn create_archive(
+pub fn create_part(
     part_dir: &Path,
     manifest: &PlanManifest,
     output_path: &Path,
@@ -65,81 +65,81 @@ pub fn create_archive(
 
     // Write metadata files into part_dir
     std::fs::write(part_dir.join(".PARTINFO"), &partinfo)
-        .map_err(|e| WrightError::ArchiveError(format!("failed to write .PARTINFO: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("failed to write .PARTINFO: {}", e)))?;
 
     std::fs::write(part_dir.join(".FILELIST"), &filelist)
-        .map_err(|e| WrightError::ArchiveError(format!("failed to write .FILELIST: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("failed to write .FILELIST: {}", e)))?;
 
     // Write .HOOKS (TOML) if install scripts exist
     if let Some(ref scripts) = manifest.install_scripts {
         let hooks_content = generate_hooks_toml(scripts);
         if !hooks_content.is_empty() {
             std::fs::write(part_dir.join(".HOOKS"), &hooks_content)
-                .map_err(|e| WrightError::ArchiveError(format!("failed to write .HOOKS: {}", e)))?;
+                .map_err(|e| WrightError::PartError(format!("failed to write .HOOKS: {}", e)))?;
         }
     }
 
     // Create the archive
-    let archive_name = manifest.archive_filename();
-    let archive_path = output_path.join(&archive_name);
+    let archive_name = manifest.part_filename();
+    let part_path = output_path.join(&archive_name);
 
-    crate::util::compress::create_tar_zst(part_dir, &archive_path)?;
+    crate::util::compress::create_tar_zst(part_dir, &part_path)?;
 
     // Clean up metadata files from part_dir
     let _ = std::fs::remove_file(part_dir.join(".PARTINFO"));
     let _ = std::fs::remove_file(part_dir.join(".FILELIST"));
     let _ = std::fs::remove_file(part_dir.join(".HOOKS"));
 
-    Ok(archive_path)
+    Ok(part_path)
 }
 
 /// Extract a .wright.tar.zst archive and return the parsed PARTINFO along with
 /// the SHA-256 hash of the archive file, computed in a single streaming pass.
-pub fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(PartInfo, String)> {
-    let hash = crate::util::compress::extract_tar_zst_hashed(archive_path, dest_dir)?;
+pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<(PartInfo, String)> {
+    let hash = crate::util::compress::extract_tar_zst_hashed(part_path, dest_dir)?;
     let partinfo_path = dest_dir.join(".PARTINFO");
     if partinfo_path.exists() {
         return Ok((parse_partinfo(&partinfo_path)?, hash));
     }
 
-    Err(WrightError::ArchiveError(
+    Err(WrightError::PartError(
         "archive does not contain .PARTINFO".to_string(),
     ))
 }
 
 /// Read .PARTINFO from an archive without full extraction.
-pub fn read_partinfo(archive_path: &Path) -> Result<PartInfo> {
-    let file = std::fs::File::open(archive_path).map_err(|e| {
-        WrightError::ArchiveError(format!("failed to open {}: {}", archive_path.display(), e))
+pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
+    let file = std::fs::File::open(part_path).map_err(|e| {
+        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
     })?;
 
     let decoder = zstd::Decoder::new(file)
-        .map_err(|e| WrightError::ArchiveError(format!("zstd decoder init failed: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
 
     let mut archive = tar::Archive::new(decoder);
 
     for entry in archive
         .entries()
-        .map_err(|e| WrightError::ArchiveError(format!("failed to read archive entries: {}", e)))?
+        .map_err(|e| WrightError::PartError(format!("failed to read archive entries: {}", e)))?
     {
         let mut entry =
-            entry.map_err(|e| WrightError::ArchiveError(format!("failed to read entry: {}", e)))?;
+            entry.map_err(|e| WrightError::PartError(format!("failed to read entry: {}", e)))?;
 
         let path = entry
             .path()
-            .map_err(|e| WrightError::ArchiveError(format!("failed to read entry path: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to read entry path: {}", e)))?;
 
         let path_str = path.to_string_lossy();
         if path_str.ends_with(".PARTINFO") {
             let mut content = String::new();
             entry.read_to_string(&mut content).map_err(|e| {
-                WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e))
+                WrightError::PartError(format!("failed to read .PARTINFO: {}", e))
             })?;
             return parse_partinfo_str(&content);
         }
     }
 
-    Err(WrightError::ArchiveError(
+    Err(WrightError::PartError(
         "archive does not contain .PARTINFO".to_string(),
     ))
 }
@@ -263,7 +263,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(part_dir).sort_by_file_name() {
         let entry = entry
-            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to walk directory: {}", e)))?;
         let relative = entry.path().strip_prefix(part_dir).unwrap_or(entry.path());
         let relative_str = relative.to_string_lossy();
         // Skip metadata files and root
@@ -326,7 +326,7 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
     let mut size = 0;
     for entry in WalkDir::new(dir) {
         let entry = entry
-            .map_err(|e| WrightError::ArchiveError(format!("failed to walk directory: {}", e)))?;
+            .map_err(|e| WrightError::PartError(format!("failed to walk directory: {}", e)))?;
         if entry.file_type().is_file() {
             size += entry.metadata().map(|m| m.len()).unwrap_or(0);
         }
@@ -336,7 +336,7 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
 
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| WrightError::ArchiveError(format!("failed to read .PARTINFO: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
     parse_partinfo_str(&content)
 }
 
@@ -394,7 +394,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     }
 
     let parsed: PartInfoToml = toml::from_str(content)
-        .map_err(|e| WrightError::ArchiveError(format!("failed to parse .PARTINFO: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("failed to parse .PARTINFO: {}", e)))?;
 
     let (runtime_deps, optional_deps) = parsed
         .dependencies

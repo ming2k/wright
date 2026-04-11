@@ -70,7 +70,7 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
         match resolver.resolve(arg)? {
             Some(resolved) => pkg_paths.push(resolved.path),
             None => anyhow::bail!(
-                "'{}' is not a file and could not be resolved from the local archive inventory",
+                "'{}' is not a file and could not be resolved from the local part inventory",
                 arg
             ),
         }
@@ -78,14 +78,14 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
     Ok(pkg_paths)
 }
 
-fn archive_entries_for_plan(
+fn part_entries_for_plan(
     plan_path: &Path,
-    archives_dir: &Path,
+    parts_dir: &Path,
 ) -> Result<Vec<(String, PathBuf)>> {
     let manifest = crate::plan::manifest::PlanManifest::from_file(plan_path)?;
-    let mut archives = vec![(
+    let mut parts = vec![(
         manifest.plan.name.clone(),
-        archives_dir.join(manifest.archive_filename()),
+        parts_dir.join(manifest.part_filename()),
     )];
     if let Some(crate::plan::manifest::FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
         for (sub_name, sub_pkg) in pkgs {
@@ -93,13 +93,13 @@ fn archive_entries_for_plan(
                 continue;
             }
             let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
-            archives.push((
+            parts.push((
                 sub_name.clone(),
-                archives_dir.join(sub_manifest.archive_filename()),
+                parts_dir.join(sub_manifest.part_filename()),
             ));
         }
     }
-    Ok(archives)
+    Ok(parts)
 }
 
 struct ApplyContext<'a> {
@@ -140,7 +140,7 @@ fn apply_targets(
         verbose: ctx.verbose,
         quiet: ctx.quiet,
         dockyards: ctx.config.build.dockyards,
-        print_archives: false,
+        print_parts: false,
         nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
         ..Default::default()
     };
@@ -183,11 +183,11 @@ fn apply_targets(
                 emit_partial_apply_note(&applied_parts);
             })?;
 
-        let mut archives = Vec::new();
+        let mut parts = Vec::new();
         let mut explicit_targets = HashSet::new();
         let mut batch_part_names = Vec::new();
-        // Deduplicate archive paths within a batch; multi-fabricate plans produce
-        // multiple sub-parts from the same archive file.
+        // Deduplicate part paths within a batch; multi-fabricate plans produce
+        // multiple sub-parts from the same part file.
         let mut seen_paths = HashSet::new();
 
         for task in tasks {
@@ -195,18 +195,18 @@ fn apply_targets(
             let plan_path = plan
                 .plan_path_for_task(task)
                 .context("missing plan path for batch task")?;
-            for (part_name, archive_path) in
-                archive_entries_for_plan(plan_path, &ctx.config.general.components_dir)?
+            for (part_name, part_path) in
+                part_entries_for_plan(plan_path, &ctx.config.general.components_dir)?
             {
-                if !archive_path.exists() {
+                if !part_path.exists() {
                     emit_partial_apply_note(&applied_parts);
                     anyhow::bail!(
-                        "expected archive was not produced: {}",
-                        archive_path.display()
+                        "expected part was not produced: {}",
+                        part_path.display()
                     );
                 }
-                if seen_paths.insert(archive_path.clone()) {
-                    archives.push(archive_path);
+                if seen_paths.insert(part_path.clone()) {
+                    parts.push(part_path);
                 }
                 if explicit_plan_names.contains(base) {
                     explicit_targets.insert(part_name.clone());
@@ -219,7 +219,7 @@ fn apply_targets(
 
         transaction::install_parts_with_explicit_targets(
             &db,
-            &archives,
+            &parts,
             &explicit_targets,
             ctx.root_dir,
             ctx.resolver,
@@ -358,7 +358,7 @@ pub fn execute(
             let parts = collect_install_args(parts)?;
             if parts.is_empty() {
                 if !std::io::stdin().is_terminal() {
-                    anyhow::bail!("no archive paths received from stdin; did the build succeed?");
+                    anyhow::bail!("no part paths received from stdin; did the build succeed?");
                 }
                 anyhow::bail!(
                     "no parts specified (pass part names/paths as arguments or via stdin)"
@@ -382,7 +382,7 @@ pub fn execute(
             for arg in &parts {
                 let path = PathBuf::from(arg);
                 if path.exists() {
-                    // Direct archive file path
+                    // Direct part file path
                     match transaction::upgrade_part(&db, &path, root_dir, force, true) {
                         Ok(()) => println!("upgraded: {}", path.display()),
                         Err(e) => {
