@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-04-12
+
+### Changed
+- **CLI Refactor**: Renamed `apply --force-build` to `apply --force` (`-f`) and consolidated the `force` behavior to trigger both a forced rebuild and a forced re-installation.
+
 ## [2.1.1] - 2026-04-12
 
 ### Changed
