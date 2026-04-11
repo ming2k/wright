@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
-use crate::cli::wright::{Commands as SystemCommands, PrefixModeArg};
+use crate::cli::system::{Commands as SystemCommands, PrefixModeArg};
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::inventory::resolver::{pick_latest, pick_version, LocalResolver};

@@ -90,8 +90,8 @@ Verbose subprocess output is mirrored to stderr, not stdout. This keeps
 `wright build --print-archives` safe to pipe into `wright install` while still
 showing live build logs.
 
-With multiple dockyards (`-w > 1`), `-v` keeps output captured per dockyard to
-avoid interleaving noise. Use `-w 1 -v` for fully live output.
+With multiple dockyards (`--dockyards > 1`), `-v` keeps output captured per dockyard to
+avoid interleaving noise. Use `--dockyards 1 -v` for fully live output.
 
 ## Configuration
 

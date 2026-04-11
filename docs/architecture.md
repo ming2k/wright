@@ -15,14 +15,15 @@ Wright is a single CLI binary backed by one core library.
 plan.toml -> wright build -> .wright.tar.zst -> inventory.db -> wright install/upgrade/apply
 ```
 
-## Core Modules
+## Entry Points and Layers
 
 ```text
 src/
 ├── bin/
 │   └── wright.rs
+├── cli/          # clap schemas grouped by subcommand (build/resolve/prune/system)
+├── commands/     # command handlers grouped by subcommand
 ├── builder/      # build orchestration and lifecycle execution
-├── cli/          # clap definitions for system/build subcommands
 ├── config.rs     # global config and assembly definitions
 ├── database/     # installed-system DB
 ├── dockyard/     # sandbox isolation
@@ -33,6 +34,16 @@ src/
 ├── transaction/  # install / upgrade / remove / verify
 └── util/         # helpers
 ```
+
+The execution path is intentionally thin at the top:
+
+```text
+src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
+```
+
+- `src/bin/wright.rs` parses args, initializes logging, loads config, and dispatches.
+- `src/cli/` owns clap-facing argument and help-text definitions only.
+- `src/commands/` turns parsed args into calls into `builder`, `inventory`, `transaction`, and `query`.
 
 ## Responsibilities
 

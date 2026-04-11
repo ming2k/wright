@@ -15,16 +15,19 @@ cargo test
 src/
 ├── bin/wright.rs   # CLI entry point
 ├── lib.rs          # Library root
+├── cli/            # clap schemas grouped by subcommand
+├── commands/       # command handlers grouped by subcommand
 ├── config.rs       # Configuration
 ├── part/           # Part archive and version handling
 ├── builder/        # Build pipeline, executors, variables
 ├── database/       # SQLite layer
+├── inventory/      # Local archive inventory and resolver
 ├── transaction/    # Install/remove with rollback
-├── dockyard/       # Dockyard isolation (bubblewrap + native)
-├── repo/           # Repository index, sync, source resolution
+├── dockyard/       # Dockyard isolation
+├── query/          # Read-only system inspection
 └── util/           # Download, checksum, compression
 tests/
-├── integration/    # End-to-end tests
+├── integration.rs  # Integration test entry point
 └── fixtures/       # Test plan data
 ```
 

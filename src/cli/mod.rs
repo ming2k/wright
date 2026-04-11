@@ -1,10 +1,13 @@
 pub mod build;
-pub mod wright;
+pub mod prune;
+pub mod resolve;
+pub mod system;
 
 use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
-use build::{BUILD_RESOLVE_AFTER_HELP, BUILD_RUN_AFTER_HELP};
+use build::BUILD_AFTER_HELP;
+use resolve::RESOLVE_AFTER_HELP;
 
 #[derive(Parser)]
 #[command(
@@ -43,17 +46,17 @@ pub struct Cli {
 pub enum Commands {
     // --- System Management ---
     #[command(flatten)]
-    System(wright::Commands),
+    System(system::Commands),
 
     // --- Build & Development ---
     /// Build parts from plans
-    #[command(after_help = BUILD_RUN_AFTER_HELP)]
-    Build(build::RunArgs),
+    #[command(after_help = BUILD_AFTER_HELP)]
+    Build(build::BuildArgs),
 
     /// Resolve targets and expand their dependency graph
-    #[command(after_help = BUILD_RESOLVE_AFTER_HELP)]
-    Resolve(build::ResolveArgs),
+    #[command(after_help = RESOLVE_AFTER_HELP)]
+    Resolve(resolve::ResolveArgs),
 
     /// Prune local archive inventory and stale archives
-    Prune(build::PruneArgs),
+    Prune(prune::PruneArgs),
 }

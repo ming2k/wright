@@ -6,7 +6,7 @@ This page explains how `wright build` allocates CPU time across builds and how t
 
 | Layer | Controls | Where to configure |
 |-------|----------|--------------------|
-| **Dockyard concurrency** | How many parts build simultaneously | `build.dockyards` in `wright.toml`, overridden by `-w` / `--dockyards` |
+| **Dockyard concurrency** | How many parts build simultaneously | `build.dockyards` in `wright.toml`, overridden by `--dockyards` |
 | **CPU affinity** | How many CPUs each dockyard process can use | Computed as `total_cpus / active_dockyards`; overridden by `build.nproc_per_dockyard` in `wright.toml` |
 
 The layers compose. On a 16-core machine (12 usable after the 4-core OS reserve) with 4 concurrent dockyards, each dockyard process is pinned to 3 CPUs — so `nproc` inside the dockyard returns 3, and `make -j$(nproc)` uses 3 threads. 12 threads total.
@@ -48,10 +48,10 @@ Configure in `wright.toml`:
 dockyards = 4   # default: 0 (auto = total_cpus)
 ```
 
-Or per-invocation with `--dockyards` / `-w`:
+Or per-invocation with `--dockyards`:
 
 ```bash
-wright build -w 4 @base
+wright build --dockyards 4 @base
 ```
 
 ## CPU Affinity Isolation

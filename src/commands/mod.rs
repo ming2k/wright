@@ -1,5 +1,6 @@
 pub mod build;
-pub mod inventory;
+pub mod prune;
+pub mod resolve;
 pub mod system;
 
 use std::path::PathBuf;
@@ -24,8 +25,8 @@ pub fn dispatch(
         crate::cli::Commands::Build(args) => {
             build::execute_build(args, config, cli.verbose, cli.quiet)
         }
-        crate::cli::Commands::Resolve(args) => build::execute_resolve(args, config),
-        crate::cli::Commands::Prune(args) => inventory::execute_prune(args, config),
+        crate::cli::Commands::Resolve(args) => resolve::execute_resolve(args, config),
+        crate::cli::Commands::Prune(args) => prune::execute_prune(args, config),
     }
 }
 

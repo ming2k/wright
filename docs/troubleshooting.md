@@ -32,8 +32,8 @@ wright build <pkg> --stage=compile
 wright build -v <pkg>
 ```
 
-Note: with multiple dockyards (`-w > 1`), `-v` still captures output per dockyard
-to avoid interleaving. Run with `-w 1 -v` for fully live output.
+Note: with multiple dockyards (`--dockyards > 1`), `-v` still captures output per dockyard
+to avoid interleaving. Run with `--dockyards 1 -v` for fully live output.
 
 ---
 
