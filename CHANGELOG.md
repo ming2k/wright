@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-12
+
+### Changed
+- **CLI/API Refactor**: Significant refactor of `resolve` and `apply` commands to enhance semantic clarity and consistency.
+  - `dependents` is renamed to `rdeps`.
+  - `include-targets` is renamed to `exclude-targets` (defaulting to including the target).
+  - `--rebuild` flag (supporting `all`, `missing`, `outdated`) replaces the confusing `filter` logic.
+  - `--nodeps` is removed in favor of explicit `rebuild` and `deps` configuration.
+- **Architectural Cleanup**: Introduced `ApplyContext` pattern to eliminate function argument limits and clippy warnings.
+- **Docs**: Fully updated documentation for `apply` and `resolve` usage to reflect the new API.
+
 ## [2.0.4] - 2026-04-11
 
 ### Fixed
