@@ -107,8 +107,7 @@ struct ApplyContext<'a> {
     db_path: &'a Path,
     resolver: &'a LocalResolver,
     root_dir: &'a Path,
-    force_build: bool,
-    force_install: bool,
+    force: bool,
     verbose: bool,
     quiet: bool,
     dry_run: bool,
@@ -136,7 +135,7 @@ fn apply_targets(
     )?;
 
     let build_opts = BuildOptions {
-        force: ctx.force_build,
+        force: ctx.force,
         verbose: ctx.verbose,
         quiet: ctx.quiet,
         dockyards: ctx.config.build.dockyards,
@@ -223,7 +222,7 @@ fn apply_targets(
             &explicit_targets,
             ctx.root_dir,
             ctx.resolver,
-            ctx.force_install,
+            ctx.force,
             install_nodeps,
         )
         .inspect_err(|_| {
@@ -268,8 +267,7 @@ pub fn execute(
         rdeps,
         match_policies,
         depth,
-        force_build,
-        force_install,
+        force,
         dry_run,
     } = command
     {
@@ -278,6 +276,12 @@ pub fn execute(
 
         use std::io::IsTerminal;
         let targets = collect_install_args(targets)?;
+        
+        // ... (skipping ahead to where these variables are used)
+
+        // Inside the call to `apply_targets` (approx line 320), pass `force` as both build and install force:
+        // match apply_targets(ApplyContext { ..., force_build: force, force_install: force, ... })
+
         if targets.is_empty() {
             if !std::io::stdin().is_terminal() {
                 anyhow::bail!("no targets received from stdin; did the resolve succeed?");
@@ -323,8 +327,7 @@ pub fn execute(
                 db_path,
                 resolver: &resolver,
                 root_dir,
-                force_build,
-                force_install,
+                force,
                 verbose: verbose > 0,
                 quiet,
                 dry_run,
