@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{error, info, warn};
 
+use crate::builder::logging;
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
@@ -93,7 +94,7 @@ pub(super) fn execute_builds(
                 Some(share as u32)
             };
 
-            info!("Starting build for plan {}", name);
+            info!("{}", logging::build_started(&name));
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -275,7 +276,7 @@ fn complete_build_task(
     }
     completed.lock().unwrap().insert(name.to_string());
     if !quiet {
-        info!("Completed build for plan {}", name);
+        info!("{}", logging::build_finished(name));
     }
 }
 
@@ -406,10 +407,7 @@ fn build_one(
                 _ => true,
             };
         if all_exist && existing.exists() {
-            info!(
-                "Skipping plan {} because all parts already exist. Use --force to rebuild.",
-                manifest.plan.name
-            );
+            info!("{}", logging::plan_skipped_existing(&manifest.plan.name));
             return Ok(());
         }
     }
@@ -475,11 +473,7 @@ fn build_one(
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
         let part_path = part::create_part(&result.pkg_dir, manifest, &output_dir)?;
-        info!(
-            "Stored part for plan {} at {}",
-            manifest.plan.name,
-            part_path.display()
-        );
+        info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
         if opts.print_parts {
             println!("{}", part_path.display());
         }
@@ -498,11 +492,7 @@ fn build_one(
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_part = part::create_part(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!(
-                    "Stored part for plan {} at {}",
-                    sub_name,
-                    sub_part.display()
-                );
+                info!("{}", logging::plan_packed(sub_name, &sub_part));
                 if opts.print_parts {
                     println!("{}", sub_part.display());
                 }

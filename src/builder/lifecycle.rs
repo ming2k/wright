@@ -7,6 +7,7 @@ use indicatif::ProgressBar;
 use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
+use crate::builder::logging;
 use crate::dockyard::DockyardLevel;
 use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
@@ -177,22 +178,18 @@ impl<'a> LifecyclePipeline<'a> {
         // Run the actual stage
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            let pkg = &self.manifest.plan.name;
 
             if let Some(ref pb) = self.progress {
                 pb.set_message(stage_name.to_string());
-            } else {
-                info!("{}: running stage: {}", pkg, stage_name);
             }
 
             self.run_stage(stage_name, stage)?;
 
             let elapsed = t0.elapsed().as_secs_f64();
-            if self.progress.is_some() {
-                debug!("{}: stage {} finished in {:.1}s", pkg, stage_name, elapsed);
-            } else {
-                info!("{}: stage {} finished in {:.1}s", pkg, stage_name, elapsed);
-            }
+            info!(
+                "{}",
+                logging::stage_finished(&self.manifest.plan.name, stage_name, elapsed)
+            );
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
         }
@@ -261,14 +258,9 @@ impl<'a> LifecyclePipeline<'a> {
         };
 
         let t0 = std::time::Instant::now();
-        let isolation_label = match dockyard_level {
-            DockyardLevel::None => "without dockyard isolation",
-            DockyardLevel::Relaxed => "with relaxed dockyard isolation",
-            DockyardLevel::Strict => "with strict dockyard isolation",
-        };
         info!(
-            "Plan {}: starting stage {} {}.",
-            self.manifest.plan.name, stage_name, isolation_label
+            "{}",
+            logging::stage_started(&self.manifest.plan.name, stage_name, dockyard_level)
         );
         let mut result = executor::execute_script(
             executor,
@@ -328,11 +320,6 @@ impl<'a> LifecyclePipeline<'a> {
                 output_snippet
             )));
         }
-
-        info!(
-            "Plan {}: finished stage {} in {:.1}s.",
-            self.manifest.plan.name, stage_name, elapsed
-        );
 
         Ok(())
     }

@@ -1,5 +1,6 @@
 pub mod executor;
 pub mod lifecycle;
+pub mod logging;
 pub mod mvp;
 pub mod orchestrator;
 pub mod variables;

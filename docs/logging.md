@@ -1,7 +1,8 @@
 # Logging
 
 This page explains where Wright writes logs, how to control verbosity, and which
-settings affect log locations.
+settings affect log locations. For the operator-facing log style and message
+constraints, see [logging-design.md](logging-design.md).
 
 ## What Gets Logged
 
@@ -14,16 +15,23 @@ They are configured separately.
 
 ## Log Format
 
-CLI log lines follow a consistent format and use human-readable sentences for
-both scheduler and transaction messages:
+CLI log lines are structured by ownership:
+
+- Scheduler lines announce capacity, batches, resume state, and final summary.
+- Plan lines use a stable `[plan]` scope for build and stage progress.
+- Transaction lines report install/upgrade work.
+
+Example:
 
 ```
-INFO Build resources: using up to 16 concurrent build tasks across 16 usable CPU cores.
-INFO Planned batch 1 with 1 task(s): build plan go.
-INFO Starting build for plan go
-INFO Plan go: starting stage configure with strict dockyard isolation.
+INFO Build capacity: 16 parallel tasks on 16 CPU cores.
+INFO Build batch 1/1: build go.
+INFO [go] build started
+INFO [go] configure started (strict isolation)
+INFO [go] configure done in 2.3s
 INFO Fetched go1.26.2.linux-amd64.tar.gz
-INFO Stored part for plan go at /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
+INFO [go] packed /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
+INFO [go] build done
 INFO Installing go: 16681 files
 INFO Installed go: 1.26.2-1
 ```

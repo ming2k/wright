@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::builder::logging;
 use crate::builder::mvp::inject_bootstrap_passes;
 use crate::error::{Result, WrightError, WrightResultExt};
 use tracing::{info, warn};
@@ -340,21 +341,18 @@ pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary 
 }
 
 pub fn describe_build_resources(resources: BuildResourceSummary) -> String {
-    format!(
-        "Build resources: using up to {} concurrent build tasks across {} usable CPU cores.",
-        resources.concurrent_tasks, resources.total_cpus
-    )
+    logging::describe_build_capacity(resources.concurrent_tasks, resources.total_cpus)
 }
 
 pub fn describe_task_action(task_name: &str, label: &str) -> String {
     let plan_name = BuildExecutionPlan::task_base_name(task_name);
     match label {
-        "build" => format!("build plan {}", plan_name),
-        "rebuild" => format!("rebuild plan {}", plan_name),
-        "relink" => format!("relink plan {}", plan_name),
-        "build:mvp" => format!("run the MVP bootstrap build for plan {}", plan_name),
-        "build:full" => format!("run the full rebuild for plan {}", plan_name),
-        _ => format!("process plan {}", plan_name),
+        "build" => format!("build {}", plan_name),
+        "rebuild" => format!("rebuild {}", plan_name),
+        "relink" => format!("relink {}", plan_name),
+        "build:mvp" => format!("bootstrap {}", plan_name),
+        "build:full" => format!("full rebuild {}", plan_name),
+        _ => format!("process {}", plan_name),
     }
 }
 
@@ -449,10 +447,13 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
 
             if !pending.is_empty() {
                 info!(
-                    "Planned batch {} with {} task(s): {}.",
-                    batch + 1,
-                    pending.len(),
-                    describe_batch_actions(&plan, &pending, &opts),
+                    "{}",
+                    logging::describe_batch(
+                        "Build",
+                        batch + 1,
+                        plan.batches.len(),
+                        &describe_batch_actions(&plan, &pending, &opts),
+                    ),
                 );
             }
         }
@@ -792,15 +793,15 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
 
         assert_eq!(
             describe_task_action("librsvg:bootstrap", "build:mvp"),
-            "run the MVP bootstrap build for plan librsvg"
+            "bootstrap librsvg"
         );
         assert_eq!(
             describe_task_action("librsvg", "build:full"),
-            "run the full rebuild for plan librsvg"
+            "full rebuild librsvg"
         );
-        assert_eq!(describe_task_action("pcre2", "build"), "build plan pcre2");
-        assert_eq!(describe_task_action("gtk4", "relink"), "relink plan gtk4");
-        assert_eq!(describe_task_action("vala", "rebuild"), "rebuild plan vala");
+        assert_eq!(describe_task_action("pcre2", "build"), "build pcre2");
+        assert_eq!(describe_task_action("gtk4", "relink"), "relink gtk4");
+        assert_eq!(describe_task_action("vala", "rebuild"), "rebuild vala");
     }
 
     #[test]
@@ -810,7 +811,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
                 total_cpus: 14,
                 concurrent_tasks: 14,
             }),
-            "Build resources: using up to 14 concurrent build tasks across 14 usable CPU cores."
+            "Build capacity: 14 parallel tasks on 14 CPU cores."
         );
     }
 }

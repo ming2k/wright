@@ -130,6 +130,7 @@ fn apply_targets(
     targets: Vec<String>,
     resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
+    use crate::builder::logging;
     use crate::builder::orchestrator::{
         describe_batch_actions, describe_build_resources, BuildExecutionPlan,
     };
@@ -180,10 +181,13 @@ fn apply_targets(
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
         if !ctx.quiet {
             tracing::info!(
-                "Starting apply batch {} with {} task(s): {}.",
-                batch_idx + 1,
-                tasks.len(),
-                describe_batch_actions(&plan, tasks, &build_opts),
+                "{}",
+                logging::describe_batch(
+                    "Apply",
+                    batch_idx + 1,
+                    plan.batches().len(),
+                    &describe_batch_actions(&plan, tasks, &build_opts),
+                ),
             );
         }
 
