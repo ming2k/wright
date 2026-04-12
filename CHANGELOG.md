@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-04-12
+
 ### Changed
 - **Removed user-configurable build concurrency**: Wright no longer supports `[build].dockyards` or `wright build --dockyards`; build task parallelism is now selected automatically from the usable CPU budget.
 - **Removed global compiler-flag config**: Wright no longer supports `[build].cflags` or `[build].cxxflags`; compiler flags should now be set per plan, per stage, or via the invoking environment.
