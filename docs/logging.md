@@ -14,27 +14,18 @@ They are configured separately.
 
 ## Log Format
 
-CLI log lines follow a consistent format. Human-facing `INFO` messages use
-natural sentence order, while some scheduler-oriented messages still carry
-structured fields such as `plan=` when that improves filtering during
-multi-package builds:
+CLI log lines follow a consistent format and use human-readable sentences for
+both scheduler and transaction messages:
 
 ```
-INFO cpus: 16, dockyards: 16
-INFO scheduling batch 0 build: go
-INFO plan=go started
-INFO fetched go1.26.2.linux-amd64.tar.gz
-INFO plan=go part stored in /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
+INFO Build resources: using up to 16 concurrent build tasks across 16 usable CPU cores.
+INFO Planned batch 1 with 1 task(s): build plan go.
+INFO Starting build for plan go
+INFO Plan go: starting stage configure with strict dockyard isolation.
+INFO Fetched go1.26.2.linux-amd64.tar.gz
+INFO Stored part for plan go at /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
 INFO Installing go: 16681 files
 INFO Installed go: 1.26.2-1
-```
-
-The `plan=` field still appears on scheduler and artifact-storage messages where
-it makes it straightforward to filter logs for a single part during parallel
-builds:
-
-```bash
-wright build ... 2>&1 | grep 'plan=go '
 ```
 
 ## CLI Verbosity
@@ -90,8 +81,9 @@ Verbose subprocess output is mirrored to stderr, not stdout. This keeps
 `wright build --print-archives` safe to pipe into `wright install` while still
 showing live build logs.
 
-With multiple dockyards (`--dockyards > 1`), `-v` keeps output captured per dockyard to
-avoid interleaving noise. Use `--dockyards 1 -v` for fully live output.
+When Wright runs multiple build tasks in parallel, `-v` still keeps subprocess
+output captured per task to avoid interleaving noise. For fully live output,
+build a single target or narrow the build set.
 
 ## Configuration
 

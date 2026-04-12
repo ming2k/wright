@@ -52,6 +52,10 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
     }
 }
 
+pub(super) fn log_running_hook(pkg_name: &str, hook_name: &str) {
+    tracing::info!("Running hook [{}] for {}", hook_name, pkg_name);
+}
+
 pub(super) fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {
     let use_chroot = root_dir != Path::new("/") && nix::unistd::geteuid().is_root();
     let mut command = if use_chroot {

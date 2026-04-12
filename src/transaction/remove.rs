@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::database::{Database, FileType, InstalledPart};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
-use crate::transaction::hooks::run_install_script;
+use crate::transaction::hooks::{log_running_hook, run_install_script};
 
 pub fn remove_part(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
     remove_part_with_ignored_dependents(db, name, root_dir, force, &HashSet::new())
@@ -68,7 +68,7 @@ pub fn remove_part_with_ignored_dependents(
 
     if let Some(ref content) = pkg.install_scripts {
         if let Some(script) = get_hook(content, "pre_remove") {
-            debug!("Running pre_remove hook for {}", name);
+            log_running_hook(name, "pre_remove");
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("pre_remove script failed (continuing removal): {}", e);
             }
@@ -123,7 +123,7 @@ pub fn remove_part_with_ignored_dependents(
 
     if let Some(ref content) = pkg.install_scripts {
         if let Some(script) = get_hook(content, "post_remove") {
-            debug!("Running post_remove hook for {}", name);
+            log_running_hook(name, "post_remove");
             if let Err(e) = run_install_script(&script, root_dir) {
                 warn!("post_remove script failed (continuing removal): {}", e);
             }

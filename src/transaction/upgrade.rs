@@ -10,7 +10,7 @@ use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
-use crate::transaction::hooks::{read_hooks, run_install_script};
+use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, self_replace_provides_conflicts};
@@ -232,7 +232,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!("Running pre_install hook for {}", pkginfo.name);
+            log_running_hook(&pkginfo.name, "pre_install");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
@@ -363,7 +363,7 @@ pub fn upgrade_part(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_upgrade {
-            info!("Running post_upgrade hook for {}", pkginfo.name);
+            log_running_hook(&pkginfo.name, "post_upgrade");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_upgrade script failed: {}", e);

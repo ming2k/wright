@@ -46,9 +46,6 @@ assemblies_dir = "/var/lib/wright/assemblies"
 [build]
 build_dir = "/var/tmp/wright-build"
 default_dockyard = "strict"
-dockyards = 0
-cflags = "-O2 -pipe -march=x86-64"
-cxxflags = "-O2 -pipe -march=x86-64"
 ccache = false
 
 [network]

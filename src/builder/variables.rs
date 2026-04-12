@@ -19,8 +19,6 @@ pub struct VariableContext<'a> {
     pub src_dir: &'a str,
     pub part_dir: &'a str,
     pub files_dir: &'a str,
-    pub cflags: &'a str,
-    pub cxxflags: &'a str,
 }
 
 /// Build the standard variable map for a build context.
@@ -33,8 +31,6 @@ pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     vars.insert("SRC_DIR".to_string(), ctx.src_dir.to_string());
     vars.insert("PART_DIR".to_string(), ctx.part_dir.to_string());
     vars.insert("FILES_DIR".to_string(), ctx.files_dir.to_string());
-    vars.insert("CFLAGS".to_string(), ctx.cflags.to_string());
-    vars.insert("CXXFLAGS".to_string(), ctx.cxxflags.to_string());
     vars
 }
 
@@ -82,8 +78,6 @@ mod tests {
             src_dir: "/tmp/src",
             part_dir: "/tmp/pkg",
             files_dir: "/tmp/patches",
-            cflags: "-O2",
-            cxxflags: "-O2",
         };
         let vars = standard_variables(ctx);
         assert_eq!(vars["PART_NAME"], "hello");
@@ -91,5 +85,7 @@ mod tests {
         assert_eq!(vars["PART_RELEASE"], "1");
         assert!(!vars.contains_key("NPROC"));
         assert!(!vars.contains_key("version"));
+        assert!(!vars.contains_key("CFLAGS"));
+        assert!(!vars.contains_key("CXXFLAGS"));
     }
 }

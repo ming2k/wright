@@ -46,10 +46,6 @@ pub struct BuildConfig {
     pub build_dir: PathBuf,
     #[serde(default = "default_dockyard")]
     pub default_dockyard: String,
-    #[serde(default = "default_cflags")]
-    pub cflags: String,
-    #[serde(default = "default_cxxflags")]
-    pub cxxflags: String,
     #[serde(default)]
     pub ccache: bool,
     #[serde(default)]
@@ -58,9 +54,6 @@ pub struct BuildConfig {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Max concurrent dockyards. 0 = auto-detect (matches CPU count).
-    #[serde(default)]
-    pub dockyards: usize,
     /// Static per-dockyard compiler thread budget. When set, overrides the
     /// dynamic `total_cpus / active_dockyards` calculation in the scheduler.
     /// When unset, the scheduler divides CPUs evenly across active dockyards.
@@ -207,12 +200,6 @@ fn default_build_dir() -> PathBuf {
 fn default_dockyard() -> String {
     "strict".to_string()
 }
-fn default_cflags() -> String {
-    "-O2 -pipe -march=x86-64".to_string()
-}
-fn default_cxxflags() -> String {
-    "-O2 -pipe -march=x86-64".to_string()
-}
 fn default_timeout() -> u64 {
     300
 }
@@ -235,13 +222,10 @@ impl Default for BuildConfig {
         Self {
             build_dir: default_build_dir(),
             default_dockyard: default_dockyard(),
-            cflags: default_cflags(),
-            cxxflags: default_cxxflags(),
             ccache: false,
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
-            dockyards: 0,
             nproc_per_dockyard: None,
             max_cpus: None,
         }

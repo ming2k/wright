@@ -40,21 +40,9 @@ pub(super) fn execute_builds(
     let bootstrap_excluded = Arc::new(bootstrap_excluded.clone());
     let session_hash = Arc::new(session_hash.map(|s| s.to_string()));
 
-    let available_cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    let total_cpus = if let Some(cap) = config.build.max_cpus {
-        available_cpus.min(cap.max(1))
-    } else {
-        available_cpus
-    };
-    let actual_dockyards = if opts.dockyards == 0 {
-        total_cpus
-    } else {
-        opts.dockyards.min(total_cpus)
-    };
-
-    info!("cpus: {}, dockyards: {}", total_cpus, actual_dockyards);
+    let resources = super::summarize_build_resources(config);
+    let total_cpus = resources.total_cpus;
+    let actual_dockyards = resources.concurrent_tasks;
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -105,7 +93,7 @@ pub(super) fn execute_builds(
                 Some(share as u32)
             };
 
-            info!(plan = %name, "started");
+            info!("Starting build for plan {}", name);
 
             let tx_clone = tx.clone();
             let name_clone = name.clone();
@@ -133,7 +121,7 @@ pub(super) fn execute_builds(
             }
             effective_opts.nproc_per_dockyard = dynamic_nproc_cap;
 
-            let spinner = if actual_dockyards > 1 && !opts.quiet {
+            let spinner = if actual_dockyards > 1 && build_set.len() > 1 && !opts.quiet {
                 let pb = crate::util::progress::MULTI.add(indicatif::ProgressBar::new_spinner());
                 pb.set_style(
                     indicatif::ProgressStyle::default_spinner()
@@ -264,7 +252,10 @@ pub(super) fn execute_builds(
             ));
         }
     } else {
-        info!("All {} tasks completed successfully.", final_completed);
+        info!(
+            "Completed all {} build tasks successfully.",
+            final_completed
+        );
     }
 
     Ok(())
@@ -284,7 +275,7 @@ fn complete_build_task(
     }
     completed.lock().unwrap().insert(name.to_string());
     if !quiet {
-        info!("Completed: {}", name);
+        info!("Completed build for plan {}", name);
     }
 }
 
@@ -367,7 +358,7 @@ fn build_one(
         builder
             .update_hashes(manifest, manifest_path)
             .context("failed to update hashes")?;
-        info!("Updated plan hashes: {}", manifest.plan.name);
+        info!("Updated source hashes in plan {}", manifest.plan.name);
         return Ok(());
     }
 
@@ -416,7 +407,7 @@ fn build_one(
             };
         if all_exist && existing.exists() {
             info!(
-                "Skipping {} (all parts already exist, use --force to rebuild)",
+                "Skipping plan {} because all parts already exist. Use --force to rebuild.",
                 manifest.plan.name
             );
             return Ok(());
@@ -442,12 +433,12 @@ fn build_one(
         }
         if !bootstrap_excl.is_empty() {
             info!(
-                plan = %manifest.plan.name,
-                "executing mvp pass without {}",
+                "Executing MVP pass for plan {} without {}",
+                manifest.plan.name,
                 bootstrap_excl.join(", ")
             );
         } else {
-            info!(plan = %manifest.plan.name, "executing mvp pass");
+            info!("Executing MVP pass for plan {}", manifest.plan.name);
         }
     }
 
@@ -484,7 +475,11 @@ fn build_one(
             fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
         }
         let part_path = part::create_part(&result.pkg_dir, manifest, &output_dir)?;
-        info!(plan = %manifest.plan.name, "part stored in {}", part_path.display());
+        info!(
+            "Stored part for plan {} at {}",
+            manifest.plan.name,
+            part_path.display()
+        );
         if opts.print_parts {
             println!("{}", part_path.display());
         }
@@ -503,7 +498,11 @@ fn build_one(
                 }
                 let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
                 let sub_part = part::create_part(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!(plan = %sub_name, "part stored in {}", sub_part.display());
+                info!(
+                    "Stored part for plan {} at {}",
+                    sub_name,
+                    sub_part.display()
+                );
                 if opts.print_parts {
                     println!("{}", sub_part.display());
                 }

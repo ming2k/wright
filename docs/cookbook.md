@@ -320,8 +320,8 @@ wright resolve @base --deps=sync | wright build # also sync missing/outdated ups
 
 ## Force-Rebuild Everything from Source
 
-Useful when global flags change (e.g. new `CFLAGS`) and you want to rebuild
-all parts in an assembly:
+Useful when shared build inputs change and you want to rebuild all parts in an
+assembly:
 
 ```bash
 wright build @base --force

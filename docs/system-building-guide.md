@@ -310,13 +310,8 @@ Circular dependencies (A → B → A) are detected and rejected by Wright's depe
 
 ### 4.1 Common Compilation Flags
 
-Recommended default compilation flags (configured in `wright.toml`):
-
-```toml
-[build]
-cflags = "-O2 -pipe -march=x86-64"
-cxxflags = "${cflags}"
-```
+Prefer setting compilation flags per plan or per stage, instead of relying on a
+global config knob:
 
 - `-O2`: Balanced optimization and compilation speed.
 - `-pipe`: Uses pipes instead of temporary files, speeding up compilation.

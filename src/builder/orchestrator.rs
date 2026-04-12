@@ -23,7 +23,7 @@ use planning::construction_plan_order;
 use planning::installed_matches_manifest;
 use planning::{
     build_dep_map, compute_session_hash, construction_plan_batches, construction_plan_label,
-    dependency_matches_policy, expand_missing_dependencies, expand_rebuild_deps,
+    expand_missing_dependencies, expand_rebuild_deps,
 };
 use resolver::resolve_targets;
 
@@ -39,6 +39,12 @@ pub struct BuildExecutionPlan {
     bootstrap_excluded: HashMap<String, Vec<String>>,
     rebuild_reasons: HashMap<String, RebuildReason>,
     batches: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildResourceSummary {
+    pub total_cpus: usize,
+    pub concurrent_tasks: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,10 +94,6 @@ pub struct BuildOptions {
     /// Skip the lifecycle `check` stage during a full build.
     /// Ignored for metadata-only operations and when explicit `--stage` selection is used.
     pub skip_check: bool,
-    /// Max number of concurrently active dockyards.
-    /// Only parts with no dependency relationship (direct or indirect)
-    /// are scheduled simultaneously. 0 = auto-detect CPU count.
-    pub dockyards: usize,
     pub verbose: bool,
     pub quiet: bool,
     /// --mvp: build using mvp.toml deps without requiring a cycle to trigger it.
@@ -288,6 +290,10 @@ impl BuildExecutionPlan {
         construction_plan_label(task_name, &self.build_set, &self.rebuild_reasons, opts)
     }
 
+    pub fn describe_task(&self, task_name: &str, opts: &BuildOptions) -> String {
+        describe_task_action(task_name, self.label_for_task(task_name, opts))
+    }
+
     /// Strip the internal `:bootstrap` suffix used for MVP cycle-breaking tasks
     /// to get the canonical plan name for display and explicit-target matching.
     pub fn task_base_name(task: &str) -> &str {
@@ -315,6 +321,53 @@ impl BuildExecutionPlan {
             &HashSet::new(),
         )
     }
+}
+
+pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary {
+    let available_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let total_cpus = if let Some(cap) = config.build.max_cpus {
+        available_cpus.min(cap.max(1))
+    } else {
+        available_cpus
+    };
+
+    BuildResourceSummary {
+        total_cpus,
+        concurrent_tasks: total_cpus,
+    }
+}
+
+pub fn describe_build_resources(resources: BuildResourceSummary) -> String {
+    format!(
+        "Build resources: using up to {} concurrent build tasks across {} usable CPU cores.",
+        resources.concurrent_tasks, resources.total_cpus
+    )
+}
+
+pub fn describe_task_action(task_name: &str, label: &str) -> String {
+    let plan_name = BuildExecutionPlan::task_base_name(task_name);
+    match label {
+        "build" => format!("build plan {}", plan_name),
+        "rebuild" => format!("rebuild plan {}", plan_name),
+        "relink" => format!("relink plan {}", plan_name),
+        "build:mvp" => format!("run the MVP bootstrap build for plan {}", plan_name),
+        "build:full" => format!("run the full rebuild for plan {}", plan_name),
+        _ => format!("process plan {}", plan_name),
+    }
+}
+
+pub fn describe_batch_actions(
+    plan: &BuildExecutionPlan,
+    tasks: &[String],
+    opts: &BuildOptions,
+) -> String {
+    let mut actions = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        actions.push(plan.describe_task(task, opts));
+    }
+    actions.join(", ")
 }
 
 /// Run a multi-target build with dependency ordering and parallel execution.
@@ -370,24 +423,36 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         None => (false, HashSet::new()),
     };
 
+    if !opts.quiet {
+        let resources = summarize_build_resources(config);
+        info!("{}", describe_build_resources(resources));
+    }
+
     // --- Build Plan Summary ---
     if !opts.quiet {
         for (batch, tasks) in plan.batches.iter().enumerate() {
+            let pending: Vec<String> = tasks
+                .iter()
+                .filter(|name| !session_completed.contains(*name))
+                .cloned()
+                .collect();
+
             for name in tasks {
                 if session_completed.contains(name) {
                     info!(
-                        "skipping batch {}: {} (completed in previous run)",
-                        batch,
+                        "Skipping batch {}: plan {} was already completed in a previous run.",
+                        batch + 1,
                         name.trim_end_matches(":bootstrap"),
                     );
-                    continue;
                 }
-                let label = plan.label_for_task(name, &opts);
+            }
+
+            if !pending.is_empty() {
                 info!(
-                    "scheduling batch {} {}: {}",
-                    batch,
-                    label,
-                    name.trim_end_matches(":bootstrap"),
+                    "Planned batch {} with {} task(s): {}.",
+                    batch + 1,
+                    pending.len(),
+                    describe_batch_actions(&plan, &pending, &opts),
                 );
             }
         }
@@ -432,7 +497,10 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         Err(_) => {
             // Print session hash so user can resume
             if let Some(ref hash) = active_session_hash {
-                info!("build session: {}  (resume with: --resume {})", hash, hash);
+                info!(
+                    "Build session saved as {}. Resume with --resume {}.",
+                    hash, hash
+                );
             }
         }
     }
@@ -451,7 +519,8 @@ pub enum RebuildReason {
 mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
-        expand_missing_dependencies, installed_matches_manifest, BuildOptions, DependentsMode,
+        describe_build_resources, describe_task_action, expand_missing_dependencies,
+        installed_matches_manifest, BuildOptions, BuildResourceSummary, DependentsMode,
         MatchPolicy, RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
@@ -719,6 +788,29 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
         assert_eq!(
             construction_plan_label("freetype", &HashSet::new(), &HashMap::new(), &mvp_opts),
             "build:mvp"
+        );
+
+        assert_eq!(
+            describe_task_action("librsvg:bootstrap", "build:mvp"),
+            "run the MVP bootstrap build for plan librsvg"
+        );
+        assert_eq!(
+            describe_task_action("librsvg", "build:full"),
+            "run the full rebuild for plan librsvg"
+        );
+        assert_eq!(describe_task_action("pcre2", "build"), "build plan pcre2");
+        assert_eq!(describe_task_action("gtk4", "relink"), "relink plan gtk4");
+        assert_eq!(describe_task_action("vala", "rebuild"), "rebuild plan vala");
+    }
+
+    #[test]
+    fn build_resource_summary_messages_are_human_readable() {
+        assert_eq!(
+            describe_build_resources(BuildResourceSummary {
+                total_cpus: 14,
+                concurrent_tasks: 14,
+            }),
+            "Build resources: using up to 14 concurrent build tasks across 14 usable CPU cores."
         );
     }
 }

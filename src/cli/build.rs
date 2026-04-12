@@ -41,13 +41,6 @@ pub struct BuildArgs {
     #[arg(long, short, num_args = 0..=1, default_missing_value = "")]
     pub resume: Option<String>,
 
-    /// Max number of concurrent dockyards. Only parts with no
-    /// direct or indirect dependency relationship run simultaneously;
-    /// the scheduler enforces ordering automatically.
-    /// 0 = auto-detect CPU count.
-    #[arg(long, default_value = "0")]
-    pub dockyards: usize,
-
     /// Build using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it
     #[arg(long)]

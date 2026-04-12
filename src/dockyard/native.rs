@@ -8,7 +8,7 @@ use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::{
     spawn_stream_reader, CapturedOutput, DockyardConfig, DockyardLevel, DockyardOutput,
@@ -164,7 +164,7 @@ pub fn run_in_dockyard(
                 config.base_root.display()
             )));
         }
-        info!("Dockyard isolation disabled, running command directly");
+        debug!("Dockyard isolation disabled for this stage");
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);

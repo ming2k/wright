@@ -593,8 +593,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${BUILD_DIR}` | Top-level source directory (use this in scripts) |
 | `${PART_DIR}`  | Part output directory (install files here) |
 | `${FILES_DIR}` | Directory containing non-archive files (patches, configs, etc.) |
-| `${CFLAGS}`   | C compiler flags              |
-| `${CXXFLAGS}`  | C++ compiler flags             |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 

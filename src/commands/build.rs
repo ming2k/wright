@@ -39,12 +39,6 @@ pub fn execute_build(
         }
     }
 
-    let effective_dockyards = if args.dockyards != 0 {
-        args.dockyards
-    } else {
-        config.build.dockyards
-    };
-
     orchestrator::run_build(
         config,
         all_targets,
@@ -56,7 +50,6 @@ pub fn execute_build(
             resume: args
                 .resume
                 .map(|h| if h.is_empty() { None } else { Some(h) }),
-            dockyards: effective_dockyards,
             checksum: args.checksum,
             lint: args.lint,
             skip_check: args.skip_check,

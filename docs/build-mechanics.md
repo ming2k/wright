@@ -160,7 +160,6 @@ The build key is a SHA-256 hash of:
 - Part name, version, and release number
 - All source URIs and their expected checksums
 - All lifecycle stage scripts and executor names
-- Global `CFLAGS` and `CXXFLAGS` from `wright.toml`
 
 If any of these change, the key changes and the cache is a miss — the part
 rebuilds from scratch.

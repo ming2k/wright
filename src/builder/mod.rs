@@ -153,10 +153,6 @@ impl Builder {
             }
         }
 
-        // 4. Hash global build flags (CFLAGS, etc.)
-        hasher.update(self.config.build.cflags.as_bytes());
-        hasher.update(self.config.build.cxxflags.as_bytes());
-
         Ok(format!("{:x}", hasher.finalize()))
     }
 
@@ -373,8 +369,6 @@ impl Builder {
             src_dir: &src_dir.to_string_lossy(),
             part_dir: &pkg_dir.to_string_lossy(),
             files_dir: &files_dir_str,
-            cflags: &self.config.build.cflags,
-            cxxflags: &self.config.build.cxxflags,
         });
         let mut vars = vars;
         vars.insert(

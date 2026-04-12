@@ -82,7 +82,7 @@ pub fn finish_source(pb: &ProgressBar, _label: &str, dest: &Path) {
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-    info!("fetched {}", filename);
+    info!("Fetched {}", filename);
 }
 
 /// A [`std::io::Write`] adapter that routes every complete line through

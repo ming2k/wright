@@ -301,9 +301,6 @@ assemblies_dir = "{}"
 [build]
 build_dir = "{}"
 default_dockyard = "none"
-dockyards = 1
-cflags = "-O2 -pipe -march=x86-64"
-cxxflags = "-O2 -pipe -march=x86-64"
 ccache = false
 
 [network]

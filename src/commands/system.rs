@@ -119,7 +119,6 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
         force: ctx.force,
         verbose: ctx.verbose,
         quiet: ctx.quiet,
-        dockyards: ctx.config.build.dockyards,
         print_parts: false,
         nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
         ..Default::default()
@@ -131,7 +130,9 @@ fn apply_targets(
     targets: Vec<String>,
     resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
-    use crate::builder::orchestrator::BuildExecutionPlan;
+    use crate::builder::orchestrator::{
+        describe_batch_actions, describe_build_resources, BuildExecutionPlan,
+    };
 
     // Single resolution pass to determine which targets were explicitly requested.
     // This drives install-origin tracking (explicit vs. dependency install).
@@ -151,14 +152,18 @@ fn apply_targets(
         println!("Apply plan (dry-run):");
         for (batch_idx, tasks) in plan.batches().iter().enumerate() {
             for task in tasks {
-                let label = plan.label_for_task(task, &build_opts);
                 let base = BuildExecutionPlan::task_base_name(task);
                 let origin = if explicit_plan_names.contains(base) {
                     "explicit"
                 } else {
                     "dep"
                 };
-                println!("  batch {batch_idx}  [{label}]  {base}  ({origin})");
+                println!(
+                    "  batch {}  {}  ({})",
+                    batch_idx + 1,
+                    plan.describe_task(task, &build_opts),
+                    origin
+                );
             }
         }
         return Ok(());
@@ -167,16 +172,19 @@ fn apply_targets(
     // Track successfully installed parts so we can report partial-apply state on failure.
     let mut applied_parts: Vec<String> = Vec::new();
 
+    if !ctx.quiet {
+        let resources = crate::builder::orchestrator::summarize_build_resources(ctx.config);
+        tracing::info!("{}", describe_build_resources(resources));
+    }
+
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
         if !ctx.quiet {
-            for task in tasks {
-                tracing::info!(
-                    "Apply batch {} {}: {}",
-                    batch_idx,
-                    plan.label_for_task(task, &build_opts),
-                    BuildExecutionPlan::task_base_name(task),
-                );
-            }
+            tracing::info!(
+                "Starting apply batch {} with {} task(s): {}.",
+                batch_idx + 1,
+                tasks.len(),
+                describe_batch_actions(&plan, tasks, &build_opts),
+            );
         }
 
         plan.execute_batch(ctx.config, batch_idx, &build_opts)

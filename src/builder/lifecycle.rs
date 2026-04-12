@@ -7,6 +7,7 @@ use indicatif::ProgressBar;
 use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
+use crate::dockyard::DockyardLevel;
 use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{LifecycleStage, PlanManifest};
@@ -241,12 +242,14 @@ impl<'a> LifecyclePipeline<'a> {
             return Ok(());
         }
 
+        let dockyard_level: DockyardLevel = stage.dockyard.parse().unwrap();
+
         let executor = self.executors.get(&stage.executor).ok_or_else(|| {
             WrightError::BuildError(format!("executor not found: {}", stage.executor))
         })?;
 
         let options = ExecutorOptions {
-            level: stage.dockyard.parse().unwrap(),
+            level: dockyard_level,
             base_root: self.base_root.clone(),
             src_dir: self.src_dir.clone(),
             part_dir: self.part_dir.clone(),
@@ -258,6 +261,15 @@ impl<'a> LifecyclePipeline<'a> {
         };
 
         let t0 = std::time::Instant::now();
+        let isolation_label = match dockyard_level {
+            DockyardLevel::None => "without dockyard isolation",
+            DockyardLevel::Relaxed => "with relaxed dockyard isolation",
+            DockyardLevel::Strict => "with strict dockyard isolation",
+        };
+        info!(
+            "Plan {}: starting stage {} {}.",
+            self.manifest.plan.name, stage_name, isolation_label
+        );
         let mut result = executor::execute_script(
             executor,
             &stage.script,
@@ -316,6 +328,11 @@ impl<'a> LifecyclePipeline<'a> {
                 output_snippet
             )));
         }
+
+        info!(
+            "Plan {}: finished stage {} in {:.1}s.",
+            self.manifest.plan.name, stage_name, elapsed
+        );
 
         Ok(())
     }

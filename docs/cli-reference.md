@@ -52,7 +52,6 @@ Useful `wright build` flags:
 - `--stage <NAME>`
 - `--skip-check`
 - `--mvp`
-- `--dockyards <N>`
 - `--print-parts`
  prints only part paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`

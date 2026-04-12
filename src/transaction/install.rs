@@ -11,7 +11,7 @@ use crate::inventory::resolver::{LocalResolver, ResolvedPart};
 use crate::part::part;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
-use crate::transaction::hooks::{read_hooks, run_install_script};
+use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
@@ -150,7 +150,7 @@ pub fn install_parts_with_explicit_targets(
             };
 
             if force || incoming_hash.as_deref() != installed.pkg_hash.as_deref() {
-                info!(plan = %name, "upgrading installed part from current archive");
+                info!("Upgrading installed part {} from the current archive", name);
                 let pkg = resolved_map.get(&name).expect("resolved package exists");
                 upgrade_part(db, &pkg.path, root_dir, true, true)?;
             }
@@ -163,7 +163,7 @@ pub fn install_parts_with_explicit_targets(
             Origin::Dependency
         };
         let pkg = resolved_map.get(&name).expect("resolved package exists");
-        info!(plan = %name, "installing (origin: {})", origin);
+        info!("Installing part {} (origin: {})", name, origin);
         install_part_with_origin(db, &pkg.path, root_dir, force, origin, true)?;
     }
 
@@ -371,7 +371,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            info!("Running pre_install hook for {}", pkginfo.name);
+            log_running_hook(&pkginfo.name, "pre_install");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
@@ -468,7 +468,7 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.post_install {
-            info!("Running post_install hook for {}", pkginfo.name);
+            log_running_hook(&pkginfo.name, "post_install");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_install script failed: {}", e);

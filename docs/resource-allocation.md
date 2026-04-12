@@ -1,15 +1,15 @@
 # Resource Allocation
 
-This page explains how `wright build` allocates CPU time across builds and how to tune each layer.
+This page explains how `wright build` allocates CPU time across builds.
 
-## Two Layers of Parallelism
+## Automatic Parallelism
 
-| Layer | Controls | Where to configure |
-|-------|----------|--------------------|
-| **Dockyard concurrency** | How many parts build simultaneously | `build.dockyards` in `wright.toml`, overridden by `--dockyards` |
-| **CPU affinity** | How many CPUs each dockyard process can use | Computed as `total_cpus / active_dockyards`; overridden by `build.nproc_per_dockyard` in `wright.toml` |
+Wright no longer exposes a user-facing `dockyards` concurrency setting. Build
+task parallelism is chosen automatically from the usable CPU budget, and the
+scheduler still respects dependency ordering.
 
-The layers compose. On a 16-core machine (12 usable after the 4-core OS reserve) with 4 concurrent dockyards, each dockyard process is pinned to 3 CPUs — so `nproc` inside the dockyard returns 3, and `make -j$(nproc)` uses 3 threads. 12 threads total.
+On a 16-core machine with 12 usable CPUs, Wright can run up to 12 independent
+build tasks in parallel. If only one task is ready, only one task runs.
 
 ## CPU Budget
 
@@ -26,56 +26,51 @@ Override with `max_cpus` in `wright.toml`:
 max_cpus = 16  # use exactly 16 cores; 0 or unset = available - 4
 ```
 
-## Dockyard Concurrency
+## Build Task Concurrency
 
-The scheduler runs as many dockyards as the limit allows, but only launches a part when **all of its dependencies in the current build set have finished**. Dependency ordering is enforced automatically; the dockyard count is a ceiling, not a guarantee.
+The scheduler launches a build task only when **all of its dependencies in the
+current build set have finished**. Dependency ordering is enforced
+automatically. The concurrency limit is internal and derived from the usable
+CPU budget, not from a user-configured `dockyards` value.
 
 ```
-dependency graph:     with dockyards = 3:
+dependency graph:
  A ─┐
- B ─┼─► D ─► F     step 1: A, B, C (no deps, all launch)
- C ─┘          step 2: D    (waits for A, B)
-              step 3: E    (waits for C)
- C ──► E         step 4: F    (waits for D)
+ B ─┼─► D ─► F     step 1: A, B, C may start together if CPU budget allows
+ C ─┘             step 2: D waits for A and B
+                  step 3: E waits for C
+ C ──► E          step 4: F waits for D
 ```
 
-Setting `dockyards` higher than the number of parts independent at any given point has no effect — the scheduler finds no additional ready work.
-
-Configure in `wright.toml`:
-
-```toml
-[build]
-dockyards = 4  # default: 0 (auto = total_cpus)
-```
-
-Or per-invocation with `--dockyards`:
-
-```bash
-wright build --dockyards 4 @base
-```
+Even on a machine with many CPUs, Wright cannot exceed the number of currently
+independent tasks in the graph.
 
 ## CPU Affinity Isolation
 
-Wright pins each dockyard process to its computed CPU share using `sched_setaffinity`. Tools like `nproc` inside the dockyard return the correct count without any environment variable injection — the kernel enforces it.
+Wright pins each build task process to its computed CPU share using
+`sched_setaffinity`. Tools like `nproc` inside the stage return the correct
+count without any environment variable injection — the kernel enforces it.
 
-The CPU share for each dockyard is computed as:
+The CPU share for each active build task is computed as:
 
 ```
-cpu_share = total_cpus / active_dockyards
+cpu_share = total_cpus / active_tasks
 ```
 
-`active_dockyards` is the number of parts actually building at the moment a stage launches — not the dockyards ceiling. When the graph fans out, each part gets a smaller share; when it collapses to a single runnable part, that part gets the full CPU budget.
+`active_tasks` is the number of parts actually building at the moment a stage
+launches. When the graph fans out, each part gets a smaller share; when it
+collapses to a single runnable part, that part gets the full CPU budget.
 
 **CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another dockyard finishes mid-flight.
 
 ### Static override
 
-If you want a fixed per-dockyard CPU count instead of the dynamic share, set `nproc_per_dockyard` in `wright.toml`:
+If you want a fixed per-task CPU count instead of the dynamic share, set
+`nproc_per_dockyard` in `wright.toml`:
 
 ```toml
 [build]
-dockyards = 4
-nproc_per_dockyard = 4  # each dockyard always gets exactly 4 CPUs
+nproc_per_dockyard = 4  # each build task always gets exactly 4 CPUs
 ```
 
 ### Per-plan control
@@ -105,15 +100,13 @@ env = { GOFLAGS = "-p=$(nproc)", GOMAXPROCS = "$(nproc)" }
 
 ## Example: 16-core machine (12 usable, OS reserve = 4)
 
-| `max_cpus` | `dockyards` | `nproc_per_dockyard` | Active dockyards | CPUs per dockyard |
-|------------|-------------|----------------------|------------------|-------------------|
-| unset   | 0 (→12)  | unset        | 1        | 12        |
-| unset   | 0 (→12)  | unset        | 4        | 3         |
-| unset   | 0 (→12)  | unset        | 6        | 2         |
-| 16     | 0 (→16)  | unset        | 4        | 4         |
-| unset   | 4      | unset        | 4        | 3         |
-| unset   | 4      | 2          | any       | 2 (fixed)     |
-| unset   | 1      | unset        | 1        | 12        |
+| `max_cpus` | `nproc_per_dockyard` | Active build tasks | CPUs per task |
+|------------|----------------------|--------------------|---------------|
+| unset      | unset                | 1                  | 12            |
+| unset      | unset                | 4                  | 3             |
+| unset      | unset                | 6                  | 2             |
+| 16         | unset                | 4                  | 4             |
+| unset      | 2                    | any                | 2 (fixed)     |
 
 ## Memory and Time Limits
 
