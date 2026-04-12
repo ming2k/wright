@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.1.6] - 2026-04-13
+
+### Changed
+- **Compact diversion logging**: Warning logs for file diversion during `install` and `upgrade` are now aligned with the overall logging style and automatically abbreviate long file paths to improve readability.
+
 ## [2.1.5] - 2026-04-13
 
 ### Added

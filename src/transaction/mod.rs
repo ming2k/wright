@@ -26,6 +26,20 @@ pub use remove::{
 pub use upgrade::upgrade_part;
 pub use verify::verify_part;
 
+/// Compacts a file path for cleaner logging by replacing middle directories with `...`
+/// if the path exceeds a reasonable length threshold.
+pub fn compact_path(path: &str) -> String {
+    if path.len() <= 45 {
+        return path.to_string();
+    }
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() < 4 {
+        return path.to_string();
+    }
+    let n = parts.len();
+    format!("/{}/.../{}/{}", parts[0], parts[n - 2], parts[n - 1])
+}
+
 /// Derive journal path from the database path.
 pub(super) fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))

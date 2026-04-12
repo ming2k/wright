@@ -95,8 +95,10 @@ pub fn upgrade_part(
             if let Some(owner) = owners.get(&entry.path) {
                 if *owner != pkginfo.name {
                     warn!(
-                        "{}: overwriting {} (owned by {}), original will be diverted",
-                        pkginfo.name, entry.path, owner
+                        "[{}] diverted {} (owned by {})",
+                        pkginfo.name,
+                        super::compact_path(&entry.path),
+                        owner
                     );
                     shadows.push((entry.path.clone(), owner.clone()));
                     divert_paths.insert(entry.path.clone());

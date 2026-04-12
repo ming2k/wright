@@ -331,8 +331,10 @@ pub fn install_part_with_origin(
             if let Some(owner_name) = owners.get(&entry.path) {
                 if owner_name.as_str() != pkginfo.name {
                     warn!(
-                        "{}: overwriting {} (owned by {}), original will be diverted",
-                        pkginfo.name, entry.path, owner_name
+                        "[{}] diverted {} (owned by {})",
+                        pkginfo.name,
+                        super::compact_path(&entry.path),
+                        owner_name
                     );
                     shadows.push((entry.path.clone(), owner_name.clone()));
                     divert_paths.insert(entry.path.clone());
