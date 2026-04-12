@@ -29,7 +29,7 @@ INFO Build batch 1/1: build go.
 INFO [go] build started
 INFO [go] configure started (strict isolation)
 INFO [go] configure done in 2.3s
-INFO Fetched go1.26.2.linux-amd64.tar.gz
+INFO [go] Fetched go1.26.2.linux-amd64.tar.gz
 INFO [go] packed /var/lib/wright/components/go-1.26.2-1-x86_64.wright.tar.zst
 INFO [go] build done
 INFO Installing go: 16681 files

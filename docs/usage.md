@@ -60,7 +60,9 @@ wright upgrade hello --version=1.0.0
 wright sysupgrade
 ```
 
-Part names are resolved from the local part inventory.
+Part names are resolved from the local part inventory. 
+
+**File Diversion**: If an incoming part contains files that conflict with paths owned by another installed part, Wright automatically diverts the original files by renaming them with a `.wright-diverted` extension rather than aborting the transaction. When the new part is later removed, the diverted files are restored to their original paths.
 
 ### Apply Assemblies
 
