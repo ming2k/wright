@@ -132,9 +132,9 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
         let path_str = path.to_string_lossy();
         if path_str.ends_with(".PARTINFO") {
             let mut content = String::new();
-            entry.read_to_string(&mut content).map_err(|e| {
-                WrightError::PartError(format!("failed to read .PARTINFO: {}", e))
-            })?;
+            entry
+                .read_to_string(&mut content)
+                .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
             return parse_partinfo_str(&content);
         }
     }

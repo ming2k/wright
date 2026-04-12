@@ -206,12 +206,7 @@ fn visit_resolved(
     Ok(())
 }
 
-pub fn install_part(
-    db: &Database,
-    part_path: &Path,
-    root_dir: &Path,
-    force: bool,
-) -> Result<()> {
+pub fn install_part(db: &Database, part_path: &Path, root_dir: &Path, force: bool) -> Result<()> {
     install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true)
 }
 

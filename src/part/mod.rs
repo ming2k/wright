@@ -1,5 +1,5 @@
-pub mod part;
 pub mod fhs;
+pub mod part;
 pub use part::*;
 pub mod version;
 

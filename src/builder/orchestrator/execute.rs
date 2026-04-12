@@ -10,8 +10,8 @@ use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::database::Database;
 use crate::error::{Result, WrightError, WrightResultExt};
-use crate::part::part;
 use crate::part::fhs;
+use crate::part::part;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 
 use super::BuildOptions;
@@ -520,10 +520,7 @@ fn register_in_inventory(inventory_db_path: &Path, part_path: &Path) {
         let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
         let partinfo = part::read_partinfo(part_path)?;
         let sha256 = crate::util::checksum::sha256_file(part_path)?;
-        let filename = part_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let filename = part_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         inventory_db.register_part(&partinfo, filename, &sha256)?;
         Ok(())
     };

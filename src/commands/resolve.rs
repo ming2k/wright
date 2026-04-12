@@ -47,12 +47,16 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
             DomainArg::All => DependentsMode::All,
         });
 
-        let match_policies = args.match_policies.iter().map(|p| match p {
-            MatchPolicyArg::All => MatchPolicy::All,
-            MatchPolicyArg::Missing => MatchPolicy::Missing,
-            MatchPolicyArg::Outdated => MatchPolicy::Outdated,
-            MatchPolicyArg::Installed => MatchPolicy::Installed,
-        }).collect();
+        let match_policies = args
+            .match_policies
+            .iter()
+            .map(|p| match p {
+                MatchPolicyArg::All => MatchPolicy::All,
+                MatchPolicyArg::Missing => MatchPolicy::Missing,
+                MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+                MatchPolicyArg::Installed => MatchPolicy::Installed,
+            })
+            .collect();
 
         let effective_depth = match args.depth {
             Some(value) => Some(value),

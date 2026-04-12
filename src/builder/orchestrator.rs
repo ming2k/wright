@@ -23,7 +23,7 @@ use planning::construction_plan_order;
 use planning::installed_matches_manifest;
 use planning::{
     build_dep_map, compute_session_hash, construction_plan_batches, construction_plan_label,
-    expand_missing_dependencies, expand_rebuild_deps, dependency_matches_policy,
+    dependency_matches_policy, expand_missing_dependencies, expand_rebuild_deps,
 };
 use resolver::resolve_targets;
 
@@ -180,7 +180,13 @@ pub fn resolve_build_set(
         if !opts.match_policies.contains(&MatchPolicy::All) {
             plans_to_build.retain(|path| {
                 if let Ok(m) = PlanManifest::from_file(path) {
-                    crate::builder::orchestrator::planning::dependency_matches_policy(&m.plan.name, &all_plans, &db, &opts.match_policies).unwrap_or(true)
+                    crate::builder::orchestrator::planning::dependency_matches_policy(
+                        &m.plan.name,
+                        &all_plans,
+                        &db,
+                        &opts.match_policies,
+                    )
+                    .unwrap_or(true)
                 } else {
                     true
                 }
@@ -445,8 +451,8 @@ pub enum RebuildReason {
 mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
-        expand_missing_dependencies, installed_matches_manifest, BuildOptions, MatchPolicy,
-        DependentsMode, RebuildReason,
+        expand_missing_dependencies, installed_matches_manifest, BuildOptions, DependentsMode,
+        MatchPolicy, RebuildReason,
     };
     use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
@@ -606,7 +612,6 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             DependentsMode::All,
             usize::MAX,
         )
-
         .unwrap();
 
         assert!(!plans_to_build.contains(&all_plans["b"]));

@@ -99,9 +99,7 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
             );
             tar_builder
                 .append_link(&mut header, &rel_path, &target)
-                .map_err(|e| {
-                    WrightError::PartError(format!("tar append symlink failed: {}", e))
-                })?;
+                .map_err(|e| WrightError::PartError(format!("tar append symlink failed: {}", e)))?;
         } else if metadata.is_dir() {
             tar_builder
                 .append_dir(&rel_path, full_path)
@@ -252,10 +250,7 @@ pub fn extract_tar_zst_hashed(part_path: &Path, dest_dir: &Path) -> Result<Strin
 
 /// Generic extraction function that supports .tar.gz, .tar.xz, .tar.bz2, .tar.zst, .tar.lz, and .zip
 pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<()> {
-    let filename = part_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let filename = part_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
     if filename.ends_with(".tar.zst") {
         extract_tar_zst(part_path, dest_dir)
@@ -371,11 +366,7 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
             })?;
 
             std::io::copy(&mut entry, &mut outfile).map_err(|e| {
-                WrightError::PartError(format!(
-                    "failed to extract {}: {}",
-                    raw_path.display(),
-                    e
-                ))
+                WrightError::PartError(format!("failed to extract {}: {}", raw_path.display(), e))
             })?;
 
             #[cfg(unix)]

@@ -123,8 +123,7 @@ mod tests {
 
         let output_dir = tempfile::tempdir().unwrap();
         let part =
-            crate::part::part::create_part(&result.pkg_dir, &manifest, output_dir.path())
-                .unwrap();
+            crate::part::part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
 
         let persistent = std::env::temp_dir().join(format!(
             "hello-test-{}-{}.wright.tar.zst",
@@ -831,10 +830,10 @@ build_date = "1970-01-01T00:00:00Z"
         let conf_v2 = b"setting = updated\n";
 
         let make_part = |dir: &std::path::Path,
-                            name: &str,
-                            ver: &str,
-                            content: &[u8],
-                            out: &std::path::Path| {
+                         name: &str,
+                         ver: &str,
+                         content: &[u8],
+                         out: &std::path::Path| {
             std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
             std::fs::write(dir.join(conf_rel), content).unwrap();
             let pkginfo = format!(
@@ -883,11 +882,11 @@ build_date = "1970-01-01T00:00:00Z"
         let conf_v2 = b"setting = updated\n";
 
         let make_part = |dir: &std::path::Path,
-                            name: &str,
-                            ver: &str,
-                            include_conf: bool,
-                            content: &[u8],
-                            out: &std::path::Path| {
+                         name: &str,
+                         ver: &str,
+                         include_conf: bool,
+                         content: &[u8],
+                         out: &std::path::Path| {
             if include_conf {
                 std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
                 std::fs::write(dir.join(conf_rel), content).unwrap();

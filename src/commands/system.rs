@@ -78,10 +78,7 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
     Ok(pkg_paths)
 }
 
-fn part_entries_for_plan(
-    plan_path: &Path,
-    parts_dir: &Path,
-) -> Result<Vec<(String, PathBuf)>> {
+fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
     let manifest = crate::plan::manifest::PlanManifest::from_file(plan_path)?;
     let mut parts = vec![(
         manifest.plan.name.clone(),
@@ -113,13 +110,28 @@ struct ApplyContext<'a> {
     dry_run: bool,
 }
 
+fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::BuildOptions {
+    crate::builder::orchestrator::BuildOptions {
+        // `apply --force` is a whole-pipeline override for the build/install
+        // flow. Keep downloaded sources cached, but clear the per-plan
+        // workspace and build cache so the build side really rebuilds.
+        clean: ctx.force,
+        force: ctx.force,
+        verbose: ctx.verbose,
+        quiet: ctx.quiet,
+        dockyards: ctx.config.build.dockyards,
+        print_parts: false,
+        nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
+        ..Default::default()
+    }
+}
+
 fn apply_targets(
     ctx: ApplyContext,
     targets: Vec<String>,
     resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
     use crate::builder::orchestrator::BuildExecutionPlan;
-    use crate::builder::orchestrator::BuildOptions;
 
     // Single resolution pass to determine which targets were explicitly requested.
     // This drives install-origin tracking (explicit vs. dependency install).
@@ -128,22 +140,12 @@ fn apply_targets(
 
     let install_nodeps = resolve_opts.deps.is_none();
 
-    let build_set = crate::builder::orchestrator::resolve_build_set(
-        ctx.config,
-        targets,
-        resolve_opts,
-    )?;
+    let build_set =
+        crate::builder::orchestrator::resolve_build_set(ctx.config, targets, resolve_opts)?;
 
-    let build_opts = BuildOptions {
-        force: ctx.force,
-        verbose: ctx.verbose,
-        quiet: ctx.quiet,
-        dockyards: ctx.config.build.dockyards,
-        print_parts: false,
-        nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
-        ..Default::default()
-    };
-    let plan = crate::builder::orchestrator::create_execution_plan(ctx.config, build_set, &build_opts)?;
+    let build_opts = build_options_for_apply(&ctx);
+    let plan =
+        crate::builder::orchestrator::create_execution_plan(ctx.config, build_set, &build_opts)?;
 
     if ctx.dry_run {
         println!("Apply plan (dry-run):");
@@ -199,10 +201,7 @@ fn apply_targets(
             {
                 if !part_path.exists() {
                     emit_partial_apply_note(&applied_parts);
-                    anyhow::bail!(
-                        "expected part was not produced: {}",
-                        part_path.display()
-                    );
+                    anyhow::bail!("expected part was not produced: {}", part_path.display());
                 }
                 if seen_paths.insert(part_path.clone()) {
                     parts.push(part_path);
@@ -271,16 +270,11 @@ pub fn execute(
         dry_run,
     } = command
     {
-        use crate::builder::orchestrator::{MatchPolicy, DependentsMode, ResolveOptions};
+        use crate::builder::orchestrator::{DependentsMode, MatchPolicy, ResolveOptions};
         use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 
         use std::io::IsTerminal;
         let targets = collect_install_args(targets)?;
-        
-        // ... (skipping ahead to where these variables are used)
-
-        // Inside the call to `apply_targets` (approx line 320), pass `force` as both build and install force:
-        // match apply_targets(ApplyContext { ..., force_build: force, force_install: force, ... })
 
         if targets.is_empty() {
             if !std::io::stdin().is_terminal() {
@@ -1020,4 +1014,47 @@ pub fn execute(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_options_for_apply, ApplyContext};
+    use crate::config::GlobalConfig;
+    use crate::inventory::resolver::LocalResolver;
+    use std::path::Path;
+
+    fn apply_ctx<'a>(
+        config: &'a GlobalConfig,
+        resolver: &'a LocalResolver,
+        force: bool,
+    ) -> ApplyContext<'a> {
+        ApplyContext {
+            config,
+            db_path: Path::new("/tmp/wright-test.db"),
+            resolver,
+            root_dir: Path::new("/"),
+            force,
+            verbose: false,
+            quiet: false,
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn apply_force_enables_clean_builds() {
+        let config = GlobalConfig::default();
+        let resolver = LocalResolver::new();
+        let opts = build_options_for_apply(&apply_ctx(&config, &resolver, true));
+        assert!(opts.force);
+        assert!(opts.clean);
+    }
+
+    #[test]
+    fn apply_without_force_keeps_incremental_build_defaults() {
+        let config = GlobalConfig::default();
+        let resolver = LocalResolver::new();
+        let opts = build_options_for_apply(&apply_ctx(&config, &resolver, false));
+        assert!(!opts.force);
+        assert!(!opts.clean);
+    }
 }

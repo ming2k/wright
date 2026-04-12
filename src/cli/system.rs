@@ -202,7 +202,7 @@ pub enum Commands {
         #[arg(long)]
         depth: Option<usize>,
 
-        /// Force rebuild and reinstall even if matching parts already exist
+        /// Force a clean rebuild and reinstall even if matching parts already exist
         #[arg(long, short = 'f')]
         force: bool,
 

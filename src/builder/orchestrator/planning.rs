@@ -100,7 +100,9 @@ pub(super) fn expand_missing_dependencies(
             }
         }
 
-        if !policies.contains(&MatchPolicy::All) && matches!(domain, DependentsMode::All | DependentsMode::Build) {
+        if !policies.contains(&MatchPolicy::All)
+            && matches!(domain, DependentsMode::All | DependentsMode::Build)
+        {
             for build_dep in &manifest.dependencies.build {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
@@ -199,7 +201,9 @@ pub(super) fn dependency_matches_policy(
         let matched = match policy {
             MatchPolicy::All => true,
             MatchPolicy::Missing => installed.is_none(),
-            MatchPolicy::Installed => installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db)?,
+            MatchPolicy::Installed => {
+                installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db)?
+            }
             MatchPolicy::Outdated => {
                 if installed.is_none() {
                     true
