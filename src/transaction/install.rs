@@ -325,22 +325,17 @@ pub fn install_part_with_origin(
     let owners = db.find_owners_batch(&file_paths)?;
 
     let mut shadows = Vec::new();
+    let mut divert_paths = HashSet::new();
     for entry in &file_entries {
         if entry.file_type == FileType::File {
             if let Some(owner_name) = owners.get(&entry.path) {
-                if force {
-                    if owner_name.as_str() != pkginfo.name {
-                        warn!(
-                            "{}: overwriting {} (owned by {})",
-                            pkginfo.name, entry.path, owner_name
-                        );
-                        shadows.push((entry.path.clone(), owner_name.clone()));
-                    }
-                } else {
-                    return Err(WrightError::FileConflict {
-                        path: PathBuf::from(&entry.path),
-                        owner: owner_name.clone(),
-                    });
+                if owner_name.as_str() != pkginfo.name {
+                    warn!(
+                        "{}: overwriting {} (owned by {}), original will be diverted",
+                        pkginfo.name, entry.path, owner_name
+                    );
+                    shadows.push((entry.path.clone(), owner_name.clone()));
+                    divert_paths.insert(entry.path.clone());
                 }
             }
         }
@@ -393,6 +388,7 @@ pub fn install_part_with_origin(
         &mut rollback_state,
         Some(backup_dir.path()),
         &HashSet::new(),
+        &divert_paths,
     ) {
         Ok(_) => {}
         Err(e) => {
@@ -427,7 +423,16 @@ pub fn install_part_with_origin(
 
     for (path, owner_name) in shadows {
         if let Some(owner_pkg) = db.get_part(&owner_name)? {
-            let _ = db.record_shadowed_file(&path, owner_pkg.id, pkg_id);
+            let diverted_to = if divert_paths.contains(&path) {
+                let mut p = PathBuf::from(&path);
+                let mut os = p.file_name().unwrap().to_os_string();
+                os.push(".wright-diverted");
+                p.set_file_name(os);
+                Some(p.to_string_lossy().to_string())
+            } else {
+                None
+            };
+            let _ = db.record_shadowed_file(&path, owner_pkg.id, pkg_id, diverted_to.as_deref());
         }
     }
 

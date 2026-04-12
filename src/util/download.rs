@@ -15,7 +15,7 @@ const MAX_RETRIES: u32 = 3;
 /// partial/corrupt files from being left in the cache when a download is
 /// interrupted. HTTP(S) downloads are retried up to `MAX_RETRIES` times on
 /// transient network errors.
-pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
+pub fn download_file(url: &str, dest: &Path, timeout: u64, scope: &str) -> Result<()> {
     let label = progress::source_label(url);
 
     if url.starts_with("file://") {
@@ -36,7 +36,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
         } else {
             std::fs::copy(src_path, dest).map_err(WrightError::IoError)?;
         }
-        progress::finish_source(&pb, &label, dest);
+        progress::finish_source(&pb, scope, dest);
         return Ok(());
     }
 
@@ -54,7 +54,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
 
     let mut last_err: Option<WrightError> = None;
     for attempt in 1..=MAX_RETRIES {
-        match try_download_http(&client, url, dest, &label) {
+        match try_download_http(&client, url, dest, &label, scope) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 if attempt < MAX_RETRIES {
@@ -73,7 +73,13 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64) -> Result<()> {
     Err(last_err.unwrap())
 }
 
-fn try_download_http(client: &Client, url: &str, dest: &Path, label: &str) -> Result<()> {
+fn try_download_http(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    label: &str,
+    scope: &str,
+) -> Result<()> {
     let mut response = client.get(url).send().map_err(|e| {
         WrightError::NetworkError(format!("failed to send request to {}: {}", url, e))
     })?;
@@ -133,7 +139,7 @@ fn try_download_http(client: &Client, url: &str, dest: &Path, label: &str) -> Re
     tmp_file
         .persist(dest)
         .map_err(|e| WrightError::IoError(e.error))?;
-    progress::finish_source(&pb, label, dest);
+    progress::finish_source(&pb, scope, dest);
 
     Ok(())
 }

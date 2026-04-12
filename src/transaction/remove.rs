@@ -130,7 +130,24 @@ pub fn remove_part_with_ignored_dependents(
         }
     }
 
+    let diversions = db.get_all_diverted_files(pkg.id).unwrap_or_default();
+
     db.remove_part(name)?;
+    
+    // Restore diverted files
+    for (original_path, diverted_path) in diversions {
+        let full_original = root_dir.join(original_path.trim_start_matches('/'));
+        let full_diverted = root_dir.join(diverted_path.trim_start_matches('/'));
+
+        if full_diverted.exists() || full_diverted.symlink_metadata().is_ok() {
+            info!("Restoring diverted file: {}", original_path);
+            if let Err(e) = std::fs::rename(&full_diverted, &full_original) {
+                warn!("Failed to restore diverted file {}: {}", original_path, e);
+            }
+        }
+    }
+    let _ = db.remove_shadowed_records(pkg.id);
+
     db.update_transaction_status(tx_id, "completed")?;
 
     info!("Removed {}", name);

@@ -65,6 +65,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             path TEXT NOT NULL,
             original_owner_id INTEGER NOT NULL,
             shadowed_by_id INTEGER NOT NULL,
+            diverted_to TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (original_owner_id) REFERENCES parts(id) ON DELETE CASCADE,
             FOREIGN KEY (shadowed_by_id) REFERENCES parts(id) ON DELETE CASCADE
@@ -84,6 +85,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Migration: add epoch column (default 0 for existing parts).
     let _ = conn.execute_batch("ALTER TABLE parts ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;");
+
+    // Migration: add diverted_to column to shadowed_files
+    let _ = conn.execute_batch("ALTER TABLE shadowed_files ADD COLUMN diverted_to TEXT;");
 
     conn.execute_batch(
         "

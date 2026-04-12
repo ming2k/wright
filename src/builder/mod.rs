@@ -827,6 +827,7 @@ impl Builder {
                     &processed_uri,
                     &cache_path,
                     self.config.network.download_timeout,
+                    &manifest.plan.name,
                 )
                 .map_err(|e| {
                     WrightError::BuildError(format!("Failed to download {}: {}", processed_uri, e))
@@ -907,7 +908,7 @@ impl Builder {
     }
 
     /// Fetch a Git repository into the cache using native git2 library.
-    fn fetch_git_repo(&self, uri: &str, dest: &Path) -> Result<String> {
+    fn fetch_git_repo(&self, uri: &str, dest: &Path, scope: &str) -> Result<String> {
         let uri_body = uri
             .strip_prefix("git+")
             .ok_or_else(|| WrightError::BuildError(format!("invalid git URI: {}", uri)))?;
@@ -927,7 +928,7 @@ impl Builder {
         let label = progress::source_label(&git_url);
 
         let repo = if !dest.exists() {
-            info!("Cloning Git repository (native): {}", git_url);
+            info!("[{}] Cloning Git repository: {}", scope, git_url);
             git2::Repository::init_bare(dest)
                 .map_err(|e| WrightError::BuildError(format!("git init failed: {}", e)))?
         } else {
@@ -970,7 +971,7 @@ impl Builder {
             )
             .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)));
         fetch_result?;
-        progress::finish_source(&pb, &label, dest);
+        progress::finish_source(&pb, scope, dest);
 
         // Resolve the ref to a commit
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
@@ -1000,7 +1001,7 @@ impl Builder {
                 }
                 let dest = git_cache_dir.join(&git_dir_name);
 
-                let commit_id = self.fetch_git_repo(&processed_uri, &dest)?;
+                let commit_id = self.fetch_git_repo(&processed_uri, &dest, &manifest.plan.name)?;
                 debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
                 continue;
             }
@@ -1043,6 +1044,7 @@ impl Builder {
                         &processed_uri,
                         &dest,
                         self.config.network.download_timeout,
+                        &manifest.plan.name,
                     )?;
 
                     // Verify immediately after download
@@ -1076,7 +1078,7 @@ impl Builder {
                         e
                     ))
                 })?;
-                progress::finish_source(&pb, &label, &dest);
+                progress::finish_source(&pb, &manifest.plan.name, &dest);
             }
         }
 

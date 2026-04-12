@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-04-13
+
+### Added
+- **File diversion**: Wright now automatically resolves file conflicts during `install` and `upgrade` by diverting the original files to `.wright-diverted` rather than aborting. Diverted files are safely restored when the shadowing part is removed.
+
+### Changed
+- **Scoped fetch logging**: Source fetch logs are now consistently scoped to their respective plans (e.g., `[gdb] Fetched ...`) for clearer progress output during concurrent builds.
+
 ## [2.1.4] - 2026-04-12
 
 ### Changed

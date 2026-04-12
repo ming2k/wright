@@ -10,10 +10,11 @@ impl Database {
         path: &str,
         original_owner_id: i64,
         shadowed_by_id: i64,
+        diverted_to: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO shadowed_files (path, original_owner_id, shadowed_by_id) VALUES (?1, ?2, ?3)",
-            rusqlite::params![path, original_owner_id, shadowed_by_id],
+            "INSERT INTO shadowed_files (path, original_owner_id, shadowed_by_id, diverted_to) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![path, original_owner_id, shadowed_by_id, diverted_to],
         )?;
         Ok(())
     }
@@ -49,8 +50,8 @@ impl Database {
 
     pub fn get_other_owners(&self, current_pkg_id: i64, path: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id 
-             WHERE f.path = ?1 AND p.id != ?2",
+            "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id
+              WHERE f.path = ?1 AND p.id != ?2",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![path, current_pkg_id], |row| {
@@ -60,6 +61,40 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn get_diverted_file(&self, path: &str, shadowed_by_id: i64) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT diverted_to FROM shadowed_files WHERE path = ?1 AND shadowed_by_id = ?2",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![path, shadowed_by_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_all_diverted_files(&self, shadowed_by_id: i64) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, diverted_to FROM shadowed_files WHERE shadowed_by_id = ?1 AND diverted_to IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![shadowed_by_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn remove_shadowed_records(&self, shadowed_by_id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM shadowed_files WHERE shadowed_by_id = ?1",
+            rusqlite::params![shadowed_by_id],
+        )?;
+        Ok(())
+    }
     pub fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
         self.conn
             .execute(

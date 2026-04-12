@@ -75,14 +75,14 @@ pub fn new_source_spinner(label: &str, action: &str) -> ProgressBar {
     pb
 }
 
-pub fn finish_source(pb: &ProgressBar, _label: &str, dest: &Path) {
+pub fn finish_source(pb: &ProgressBar, scope: &str, dest: &Path) {
     pb.finish_and_clear();
     let filename = dest
         .file_name()
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-    info!("Fetched {}", filename);
+    info!("[{}] Fetched {}", scope, filename);
 }
 
 /// A [`std::io::Write`] adapter that routes every complete line through

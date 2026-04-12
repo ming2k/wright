@@ -115,6 +115,7 @@ pub(super) fn copy_entries_to_root(
     rollback: &mut RollbackState,
     backup_dir: Option<&Path>,
     config_paths: &HashSet<String>,
+    divert_paths: &HashSet<String>,
 ) -> Result<Vec<String>> {
     // --- Phase 1: create directories (serial, order matters) ---
     for entry in entries {
@@ -272,6 +273,57 @@ pub(super) fn copy_entries_to_root(
                         backup_original: None,
                         symlink_backup: None,
                         preserved_config: Some(entry.path.clone()),
+                        error: None,
+                    }
+                } else if divert_paths.contains(&entry.path) {
+                    let mut divert_name = dest_path.as_os_str().to_owned();
+                    divert_name.push(".wright-diverted");
+                    let divert_path = PathBuf::from(divert_name);
+
+                    let mut backup_original = None;
+                    if dest_path.exists() || dest_path.symlink_metadata().is_ok() {
+                        if let Err(e) = move_or_copy(&dest_path, &divert_path) {
+                            return FileResult {
+                                created: vec![],
+                                backup_original: None,
+                                symlink_backup: None,
+                                preserved_config: None,
+                                error: Some(WrightError::InstallError(format!(
+                                    "failed to divert {} to {}: {}",
+                                    dest_path.display(),
+                                    divert_path.display(),
+                                    e
+                                ))),
+                            };
+                        }
+                        backup_original = Some((dest_path.clone(), divert_path));
+                    }
+
+                    if let Err(e) = move_or_copy(&src_path, &dest_path) {
+                        return FileResult {
+                            created: vec![],
+                            backup_original,
+                            symlink_backup: None,
+                            preserved_config: None,
+                            error: Some(WrightError::InstallError(format!(
+                                "failed to install {} to {}: {}",
+                                src_path.display(),
+                                dest_path.display(),
+                                e
+                            ))),
+                        };
+                    }
+                    if let Some(mode) = entry.file_mode {
+                        let _ = std::fs::set_permissions(
+                            &dest_path,
+                            std::fs::Permissions::from_mode(mode),
+                        );
+                    }
+                    FileResult {
+                        created: vec![dest_path],
+                        backup_original,
+                        symlink_backup: None,
+                        preserved_config: None,
                         error: None,
                     }
                 } else {
