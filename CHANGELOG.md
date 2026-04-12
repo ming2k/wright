@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-04-12
+
 ### Changed
 - **`apply --force` semantics**: `wright apply --force` now performs a clean rebuild across the apply pipeline by clearing each plan's build workspace and build cache before rebuilding, while still reusing the source download cache.
 
