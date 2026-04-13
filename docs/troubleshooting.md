@@ -204,7 +204,7 @@ incorrect. The build log shows:
 INFO skipping batch 0: zlib (completed in previous run)
 ```
 
-Wright found an existing archive in `components_dir` and skipped the build.
+Wright found an existing archive in `parts_dir` and skipped the build.
 This happens after a plan edit if the version and release number were not
 bumped.
 
@@ -371,8 +371,8 @@ an unusually large number of tracked files.
 files such as:
 
 ```text
-/var/lib/wright/lock/parts.db.lock
-/var/lib/wright/lock/inventory.db.lock
+/var/lib/wright/lock/installed.db.lock
+/var/lib/wright/lock/archives.db.lock
 ```
 
 This is normal.

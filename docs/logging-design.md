@@ -77,7 +77,7 @@ Rules:
 Artifact lines surface paths only when the path is actionable:
 
 ```text
-INFO [linux] packed /var/lib/wright/components/linux-6.14.2-1-x86_64.wright.tar.zst
+INFO [linux] packed /var/lib/wright/parts/linux-6.14.2-1-x86_64.wright.tar.zst
 ```
 
 Rules:

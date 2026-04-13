@@ -33,7 +33,7 @@ pub fn dispatch(
 /// Helper function to setup the local resolver for commands that need it.
 pub(crate) fn setup_local_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
     let mut resolver = crate::builder::orchestrator::setup_resolver(config)?;
-    resolver.add_search_dir(config.general.components_dir.clone());
+    resolver.add_search_dir(config.general.parts_dir.clone());
     if let Ok(cwd) = std::env::current_dir() {
         resolver.add_search_dir(cwd);
     }

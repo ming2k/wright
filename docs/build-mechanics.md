@@ -241,10 +241,10 @@ skip_fhs_check = true
 ## Output parts (Components)
 
 After a successful build the part is packed into an part and placed in
-`components_dir` (default `/var/lib/wright/components`):
+`parts_dir` (default `/var/lib/wright/parts`):
 
 ```
-<components_dir>/
+<parts_dir>/
 ├── zlib-1.3.1-1-x86_64.wright.tar.zst
 ├── zlib-devel-1.3.1-1-x86_64.wright.tar.zst  # sub-part
 └── ...
@@ -254,7 +254,7 @@ part filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
 
 ### Skip condition
 
-If the part (and all sub-part parts) already exist in `components_dir`,
+If the part (and all sub-part parts) already exist in `parts_dir`,
 the build is skipped entirely — the source cache and build cache are not even
 consulted. Use `--force` to override this and rebuild regardless.
 

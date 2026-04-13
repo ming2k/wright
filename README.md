@@ -46,6 +46,7 @@ wright list
 - [Usage Guide](docs/usage.md)
 - [Terminology](docs/terminology.md)
 - [Writing Plans](docs/writing-plans.md)
+- [Writing Assemblies](docs/writing-assemblies.md)
 - [CLI Reference](docs/cli-reference.md)
 - [Configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)

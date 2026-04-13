@@ -629,7 +629,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
     #[test]
     fn sync_traversal_reaches_outdated_descendant_through_up_to_date_parent() {
         let temp = tempfile::tempdir().unwrap();
-        let db_path = temp.path().join("parts.db");
+        let db_path = temp.path().join("installed.db");
         let db = Database::open(&db_path).unwrap();
         db.insert_part(NewPart {
             name: "b",

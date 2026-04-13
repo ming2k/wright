@@ -209,7 +209,7 @@ fn apply_targets(
                 .plan_path_for_task(task)
                 .context("missing plan path for batch task")?;
             for (part_name, part_path) in
-                part_entries_for_plan(plan_path, &ctx.config.general.components_dir)?
+                part_entries_for_plan(plan_path, &ctx.config.general.parts_dir)?
             {
                 if !part_path.exists() {
                     emit_partial_apply_note(&applied_parts);

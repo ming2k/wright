@@ -5,7 +5,7 @@ has a separate publish/index layer.
 
 ## Current Model
 
-- `wright build` builds `.wright.tar.zst` parts into `components_dir`
+- `wright build` builds `.wright.tar.zst` parts into `parts_dir`
 - `wright build` registers each successful build in `inventory_db_path`
 - `wright` resolves part names from that local inventory
 
@@ -49,7 +49,7 @@ wright prune --untracked
 wright prune --latest --apply
 ```
 
-- `--untracked` removes files present on disk but absent from `inventory.db`
+- `--untracked` removes files present on disk but absent from `archives.db`
 - `--latest` keeps only the newest tracked part per part name while
  preserving versions that are currently installed
 - add `--apply` to perform deletions; otherwise Wright prints a dry-run report

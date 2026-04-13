@@ -9,8 +9,8 @@ subcommands, and one local archive inventory.
 - `plan`: the source definition for one buildable unit
 - `part`: a built `.wright.tar.zst` archive
 - `assembly`: a named set of plans used as a build or apply target
-- `system`: the installed live state tracked in `parts.db`
-- `inventory`: the local catalog of built archives tracked in `inventory.db`
+- `system`: the installed live state tracked in `installed.db`
+- `inventory`: the local catalog of built archives tracked in `archives.db`
 
 There is no separate indexing/publish manager and no install-time grouping
 model beyond assemblies.
@@ -51,14 +51,14 @@ Typical paths:
 /etc/wright/wright.toml
 /var/lib/wright/plans/
 /var/lib/wright/assemblies/
-/var/lib/wright/components/
-/var/lib/wright/db/parts.db
-/var/lib/wright/db/inventory.db
-/var/lib/wright/lock/parts.db.lock
-/var/lib/wright/lock/inventory.db.lock
+/var/lib/wright/parts/
+/var/lib/wright/state/installed.db
+/var/lib/wright/state/archives.db
+/var/lib/wright/lock/installed.db.lock
+/var/lib/wright/lock/archives.db.lock
 ```
 
-`parts.db` tracks installed system state. `inventory.db` tracks built archives
+`installed.db` tracks installed system state. `archives.db` tracks built archives
 available for reuse or installation.
 
 ## Design Constraints

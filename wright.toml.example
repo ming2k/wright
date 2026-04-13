@@ -4,10 +4,10 @@
 arch = "x86_64"
 plans_dir = "/var/lib/wright/plans"
 # extra_plans_dirs = ["/opt/my-plans", "./plans"]
-components_dir = "/var/lib/wright/components"
+parts_dir = "/var/lib/wright/parts"
 cache_dir = "/var/lib/wright/cache"
-db_path = "/var/lib/wright/db/parts.db"
-inventory_db_path = "/var/lib/wright/db/inventory.db"
+db_path = "/var/lib/wright/state/installed.db"
+inventory_db_path = "/var/lib/wright/state/archives.db"
 log_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "/var/lib/wright/assemblies"

@@ -4,7 +4,7 @@
 SQLite does not support ALTER COLUMN RENAME, so this rebuilds the table.
 
 Usage:
-    python3 tools/migrate_origin.py /path/to/parts.db
+    python3 tools/migrate_origin.py /path/to/installed.db
 """
 
 import shutil
@@ -78,6 +78,6 @@ def migrate(db_path: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <parts.db>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <installed.db>", file=sys.stderr)
         sys.exit(1)
     migrate(sys.argv[1])

@@ -10,13 +10,13 @@ Wright loads `wright.toml` in this order:
 4. `/etc/wright/wright.toml`
 
 Higher-priority files override lower-priority ones by key.
-
 ## Assemblies
 
-Assemblies live under `assemblies_dir` and use `[[assembly]]` tables:
+Assemblies live under `assemblies_dir` and allow you to group plans together. For a detailed guide, see [Writing Assemblies](writing-assemblies.md).
 
 ```toml
 [[assembly]]
+...
 name = "base"
 description = "Base system maintenance set"
 plans = ["bash", "coreutils", "grep"]
@@ -35,10 +35,10 @@ Assemblies are convenience sets, not dependency graphs.
 [general]
 arch = "x86_64"
 plans_dir = "/var/lib/wright/plans"
-components_dir = "/var/lib/wright/components"
+parts_dir = "/var/lib/wright/parts"
 cache_dir = "/var/lib/wright/cache"
-db_path = "/var/lib/wright/db/parts.db"
-inventory_db_path = "/var/lib/wright/db/inventory.db"
+db_path = "/var/lib/wright/state/installed.db"
+inventory_db_path = "/var/lib/wright/state/archives.db"
 log_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "/var/lib/wright/assemblies"
@@ -58,16 +58,16 @@ retry_count = 3
 | Field | Default | Meaning |
 |------|---------|---------|
 | `plans_dir` | `/var/lib/wright/plans` | plan tree root |
-| `components_dir` | `/var/lib/wright/components` | local archive store |
-| `db_path` | `/var/lib/wright/db/parts.db` | installed-system DB |
-| `inventory_db_path` | `/var/lib/wright/db/inventory.db` | local built-archive inventory |
+| `parts_dir` | `/var/lib/wright/parts` | local archive store |
+| `db_path` | `/var/lib/wright/state/installed.db` | installed-system DB |
+| `inventory_db_path` | `/var/lib/wright/state/archives.db` | local built-archive inventory |
 | `assemblies_dir` | `/var/lib/wright/assemblies` | assembly definition files |
 | `build_dir` | `/var/tmp/wright-build` | build work directory |
 
 ## Notes
 
 - `plans_dir` does not automatically move to a user path; override it explicitly for non-root setups.
-- `components_dir` is just the local stock of built archives.
+- `parts_dir` is just the local stock of built archives.
 - `inventory_db_path` tracks local build outputs only. The legacy config key
  `repo_db_path` is still accepted as an alias for migration.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.

@@ -244,13 +244,13 @@ fn test_build_single_stage() {
 fn test_print_parts_keeps_verbose_build_output_off_stdout() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");
-    let components_dir = root.path().join("components");
+    let parts_dir = root.path().join("components");
     let cache_dir = root.path().join("cache");
-    let db_dir = root.path().join("db");
+    let db_dir = root.path().join("state");
     let log_dir = root.path().join("log");
     let build_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
-    std::fs::create_dir_all(&components_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::create_dir_all(&db_dir).unwrap();
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -290,7 +290,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/verbose-pipe-test
             r#"[general]
 arch = "x86_64"
 plans_dir = "{}"
-components_dir = "{}"
+parts_dir = "{}"
 cache_dir = "{}"
 db_path = "{}"
 inventory_db_path = "{}"
@@ -308,10 +308,10 @@ download_timeout = 300
 retry_count = 3
 "#,
             plans_dir.display(),
-            components_dir.display(),
+            parts_dir.display(),
             cache_dir.display(),
-            db_dir.join("parts.db").display(),
-            db_dir.join("inventory.db").display(),
+            db_dir.join("installed.db").display(),
+            db_dir.join("archives.db").display(),
             log_dir.display(),
             root.path().join("assemblies").display(),
             build_dir.display(),

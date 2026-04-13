@@ -320,14 +320,14 @@ def import_database(source: Path, dest: Path, replace: bool, backup: bool) -> No
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Migrate a historical Wright installed-state SQLite database into parts.db."
+        description="Migrate a historical Wright installed-state SQLite database into installed.db."
     )
     parser.add_argument("source", type=Path, help="path to the legacy packages.db or older installed-state DB")
     parser.add_argument(
         "--dest",
         type=Path,
-        default=Path("/var/lib/wright/db/parts.db"),
-        help="destination parts.db path (default: /var/lib/wright/db/parts.db)",
+        default=Path("/var/lib/wright/state/installed.db"),
+        help="destination installed.db path (default: /var/lib/wright/state/installed.db)",
     )
     parser.add_argument(
         "--replace",

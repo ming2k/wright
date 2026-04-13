@@ -85,3 +85,4 @@ wright remove hello
 - [CLI Reference](cli-reference.md)
 - [Configuration](configuration.md)
 - [Writing Plans](writing-plans.md)
+- [Writing Assemblies](writing-assemblies.md)

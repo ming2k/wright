@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn lock_dir_derivation() {
-        let db_path = std::path::Path::new("/var/lib/wright/db/parts.db");
+        let db_path = std::path::Path::new("/var/lib/wright/state/installed.db");
         assert_eq!(
             lock_dir_from_db(db_path),
             std::path::Path::new("/var/lib/wright/lock")
@@ -195,9 +195,9 @@ mod tests {
     #[test]
     fn shared_locks_can_coexist() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("db").join("parts.db");
+        let db_path = dir.path().join("state").join("installed.db");
 
-        let identity = LockIdentity::Database("parts.db");
+        let identity = LockIdentity::Database("installed.db");
         let _lock1 = acquire_lock_with_timeout(
             &db_path,
             identity.clone(),
@@ -217,9 +217,9 @@ mod tests {
     #[test]
     fn exclusive_lock_blocks_shared_locks() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("db").join("parts.db");
+        let db_path = dir.path().join("state").join("installed.db");
 
-        let identity = LockIdentity::Database("parts.db");
+        let identity = LockIdentity::Database("installed.db");
         let _lock = acquire_lock_with_timeout(
             &db_path,
             identity.clone(),

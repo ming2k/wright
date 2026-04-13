@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.1.7] - 2026-04-13
+
+### Changed
+- **State-path rename**: renamed the default installed-state and archive-inventory databases to `/var/lib/wright/state/installed.db` and `/var/lib/wright/state/archives.db`, keeping lock files under `/var/lib/wright/lock/`.
+- **Part-store naming cleanup**: renamed the user-facing `components_dir` configuration to `parts_dir` and updated command code, examples, and documentation accordingly.
+- **Docs refresh**: added assembly-writing links to the main docs entry points and refreshed related architecture, usage, logging, and troubleshooting references.
+
 ## [2.1.6] - 2026-04-13
 
 ### Changed
@@ -305,7 +312,7 @@
   - `wbuild` — package constructor (plan.toml → .wright.tar.zst)
   - `wrepo` — repository manager (indexing, searching, source configuration)
   - `wright` — system administrator (install, remove, upgrade, query)
-- **`wrepo sync` defaults to `components_dir`**: no directory argument needed for the common case (`wrepo sync` indexes `/var/lib/wright/components` by default)
+- **`wrepo sync` defaults to `parts_dir`**: no directory argument needed for the common case (`wrepo sync` indexes `/var/lib/wright/parts` by default)
 
 ### Documentation
 - Rewrite usage.md with tool-by-tool structure, coordination workflows, and boundary summary table

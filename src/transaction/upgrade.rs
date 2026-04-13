@@ -349,7 +349,12 @@ pub fn upgrade_part(
             } else {
                 None
             };
-            let _ = db.record_shadowed_file(&path, owner_pkg.id, updated_pkg.id, diverted_to.as_deref());
+            let _ = db.record_shadowed_file(
+                &path,
+                owner_pkg.id,
+                updated_pkg.id,
+                diverted_to.as_deref(),
+            );
         }
     }
 

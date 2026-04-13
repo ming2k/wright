@@ -384,10 +384,10 @@ fn build_one(
             .context("failed to clean workspace")?;
     }
 
-    let output_dir = if config.general.components_dir.exists()
-        || std::fs::create_dir_all(&config.general.components_dir).is_ok()
+    let output_dir = if config.general.parts_dir.exists()
+        || std::fs::create_dir_all(&config.general.parts_dir).is_ok()
     {
-        config.general.components_dir.clone()
+        config.general.parts_dir.clone()
     } else {
         std::env::current_dir()?
     };

@@ -133,7 +133,7 @@ pub fn remove_part_with_ignored_dependents(
     let diversions = db.get_all_diverted_files(pkg.id).unwrap_or_default();
 
     db.remove_part(name)?;
-    
+
     // Restore diverted files
     for (original_path, diverted_path) in diversions {
         let full_original = root_dir.join(original_path.trim_start_matches('/'));

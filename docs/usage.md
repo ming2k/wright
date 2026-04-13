@@ -32,7 +32,7 @@ wright build zlib --checksum
 
 ### Part Inventory
 
-Successful builds are written to `components_dir` and registered in
+Successful builds are written to `parts_dir` and registered in
 `inventory_db_path`.
 
 To clean old or stray parts:

@@ -12,7 +12,7 @@ Wright is a single CLI binary backed by one core library.
 ## Data Flow
 
 ```text
-plan.toml -> wright build -> .wright.tar.zst -> inventory.db -> wright install/upgrade/apply
+plan.toml -> wright build -> .wright.tar.zst -> archives.db -> wright install/upgrade/apply
 ```
 
 ## Entry Points and Layers
@@ -53,12 +53,12 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 - expand dependency and rebuild scope
 - execute sandboxed stages
 - create `.wright.tar.zst` archives
-- register build outputs in `inventory.db`
+- register build outputs in `archives.db`
 - prune stale archives
 
 ### `wright`
 
-- resolve local part names from `inventory.db`
+- resolve local part names from `archives.db`
 - install and upgrade archives transactionally
 - remove parts and cascade orphan cleanup
 - verify and inspect the live system
@@ -71,5 +71,5 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 |----------|-----------|---------|
 | `plan.toml` | user | `wright build`, `wright resolve`, `wright apply` |
 | `.wright.tar.zst` | `wright build` | `wright` |
-| `parts.db` | `wright` | `wright`, `wright resolve` |
-| `inventory.db` | `wright build` | `wright build`, `wright`, `wright apply` |
+| `installed.db` | `wright` | `wright`, `wright resolve` |
+| `archives.db` | `wright build` | `wright build`, `wright`, `wright apply` |

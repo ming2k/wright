@@ -23,8 +23,8 @@ pub struct GeneralConfig {
     /// Relative paths are resolved against the working directory at runtime.
     #[serde(default)]
     pub extra_plans_dirs: Vec<PathBuf>,
-    #[serde(default = "default_components_dir")]
-    pub components_dir: PathBuf,
+    #[serde(default = "default_parts_dir", alias = "components_dir")]
+    pub parts_dir: PathBuf,
     #[serde(default = "default_cache_dir")]
     pub cache_dir: PathBuf,
     #[serde(default = "default_db_path")]
@@ -104,7 +104,7 @@ fn default_general() -> GeneralConfig {
         arch: default_arch(),
         plans_dir: default_plans_dir(),
         extra_plans_dirs: Vec::new(),
-        components_dir: default_components_dir(),
+        parts_dir: default_parts_dir(),
         cache_dir: if use_xdg {
             get_xdg_cache().unwrap_or_else(default_cache_dir)
         } else {
@@ -173,14 +173,14 @@ fn default_arch() -> String {
 fn default_plans_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/plans")
 }
-fn default_components_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/components")
+fn default_parts_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/parts")
 }
 fn default_cache_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/cache")
 }
 fn default_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/db/parts.db")
+    PathBuf::from("/var/lib/wright/state/installed.db")
 }
 fn default_log_dir() -> PathBuf {
     PathBuf::from("/var/log/wright")
@@ -192,7 +192,7 @@ fn default_assemblies_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/assemblies")
 }
 fn default_inventory_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/db/inventory.db")
+    PathBuf::from("/var/lib/wright/state/archives.db")
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright-build")
@@ -355,5 +355,24 @@ impl GlobalConfig {
                 Ok(GlobalConfig::deserialize(val)?)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{default_db_path, default_inventory_db_path};
+
+    #[test]
+    fn new_default_db_path_names_are_installed_and_archives() {
+        assert_eq!(
+            default_db_path(),
+            PathBuf::from("/var/lib/wright/state/installed.db")
+        );
+        assert_eq!(
+            default_inventory_db_path(),
+            PathBuf::from("/var/lib/wright/state/archives.db")
+        );
     }
 }

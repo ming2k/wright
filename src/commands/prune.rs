@@ -22,7 +22,7 @@ fn prune_parts(
 
     let inventory = InventoryDb::open(&config.general.inventory_db_path)
         .context("failed to open local inventory database")?;
-    let parts_dir = &config.general.components_dir;
+    let parts_dir = &config.general.parts_dir;
     std::fs::create_dir_all(parts_dir)
         .with_context(|| format!("failed to create {}", parts_dir.display()))?;
 
