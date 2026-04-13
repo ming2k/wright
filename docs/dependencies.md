@@ -87,9 +87,10 @@ Wright exposes separate build and install flows:
 - `wright install` installs archives onto the live system.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
-assemblies, checks the local archive inventory, automatically adds missing
-upstream dependency plans, builds what is needed, and then installs the
-requested outputs.
+assemblies, checks the local archive inventory, automatically adds missing or
+outdated upstream dependency plans, builds what is needed, and then installs or
+upgrades the requested outputs. In other words, `apply` is the natural
+plan-driven install/upgrade/dependency combo command.
 
 **Common Examples**
 Example: Build only the listed target.
@@ -98,7 +99,8 @@ Example: Build only the listed target.
 wright build curl
 ```
 
-Example: Build and install from plans while automatically materializing missing upstream dependencies.
+Example: Build and install from plans while automatically materializing missing
+or outdated upstream dependencies.
 
 ```bash
 wright apply curl

@@ -66,8 +66,9 @@ Part names are resolved from the local part inventory.
 
 ### Apply Assemblies
 
-`wright apply` is the preferred maintenance command when plans are the source of
-truth:
+`wright apply` is the preferred plan-driven combo command when plans are the
+source of truth. Use it as the natural default for first install,
+incremental upgrade, and dependency handling from plans:
 
 ```bash
 wright apply @base
@@ -79,16 +80,19 @@ wright apply @base --dry-run
 `wright apply`:
 
 1. resolves the requested plans or assemblies
-2. automatically adds missing upstream dependency plans to the build graph
+2. automatically adds missing or outdated upstream dependency plans to the build graph
 3. computes dependency waves for the required build graph
 4. for each wave, builds what is needed there
-5. installs that wave before continuing, so later waves see the updated system state
+5. installs or upgrades that wave before continuing, so later waves see the updated system state
+
+If the requested targets already match the current plan state under the
+selected policy, `wright apply` becomes a no-op instead of failing.
 
 Useful knobs:
 
 - `--dry-run` previews what would be built and installed without mutating the system
 - `--force`, `-f` forces a clean rebuild and re-installation even if matching parts already exist in the inventory; source downloads are still reused from cache
-- `--match` overrides the default `missing` policy when you want a different install-state filter
+- `--match` overrides the default `outdated` policy when you want a different install-state filter
 
 For the design rationale behind this command's defaults and wave model, see
 [Apply Design](apply-design.md).

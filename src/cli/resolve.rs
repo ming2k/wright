@@ -74,7 +74,7 @@ pub struct ResolveArgs {
 
     /// Match policy for filtering based on installation state.
     /// Can be specified multiple times.
-    #[arg(long, value_enum, default_values = &["all"])]
+    #[arg(long = "match", alias = "match-policies", value_enum, default_values = &["all"])]
     pub match_policies: Vec<MatchPolicyArg>,
 
     /// Maximum expansion depth. `0` means unlimited.

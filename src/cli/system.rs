@@ -22,7 +22,8 @@ Examples:
   wright apply @base
   wright apply @base @devel
   wright apply ./plans/bash
-  wright apply gcc";
+  wright apply gcc
+  wright apply gcc --match=all";
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
   wright upgrade zlib
@@ -155,9 +156,9 @@ pub enum Commands {
         #[arg(long)]
         nodeps: bool,
     },
-    /// Build missing/outdated parts for plans or assemblies, then install the resulting parts
+    /// Build and apply plan-driven installs/upgrades for plans or assemblies
     #[command(
-        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright checks the local archive inventory first, automatically adds missing upstream dependency plans, builds what is needed from plans, and then installs the requested outputs onto the live system.",
+        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright is the high-level source-first combo command: it resolves requested targets, automatically pulls in upstream plans that are missing or outdated under the selected match policy, builds what is needed in dependency waves, and installs each completed wave onto the live system. Use it for natural plan-driven install and upgrade workflows.",
         after_help = WRIGHT_APPLY_AFTER_HELP
     )]
     Apply {
@@ -195,8 +196,9 @@ pub enum Commands {
 
         /// Match policy for filtering based on installation state.
         /// Can be specified multiple times. If omitted, `apply` defaults to
-        /// `missing` so missing upstream dependencies are added automatically.
-        #[arg(long, value_enum)]
+        /// `outdated`, so missing and changed upstream plans are added
+        /// automatically while already-converged ones are skipped.
+        #[arg(long = "match", alias = "match-policies", value_enum)]
         match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,
 
         /// Maximum expansion depth. `0` means unlimited.

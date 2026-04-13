@@ -16,7 +16,7 @@ build-side and system-side workflows.
 - `wright install <PART...>`
  installs part paths or locally registered part names
 - `wright apply <TARGET...>`
- resolves plans or assemblies, executes wave-by-wave build/install orchestration, and converges the live system to those targets
+ resolves plans or assemblies, executes wave-by-wave build/install orchestration, and converges the live system to those targets with plan-driven install/upgrade handling
 - `wright upgrade <PART...>`
  upgrades installed parts by local part name or part path
 - `wright sysupgrade`

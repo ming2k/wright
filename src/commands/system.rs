@@ -169,7 +169,7 @@ fn resolve_options_for_apply(
         .unwrap_or(crate::builder::orchestrator::DependentsMode::All);
     let rdeps = rdeps.map(map_resolve_domain);
     let match_policies = if match_policies.is_empty() {
-        vec![crate::builder::orchestrator::MatchPolicy::Missing]
+        vec![crate::builder::orchestrator::MatchPolicy::Outdated]
     } else {
         match_policies.into_iter().map(map_match_policy).collect()
     };
@@ -179,8 +179,8 @@ fn resolve_options_for_apply(
         rdeps,
         match_policies,
         // `apply` is a smart convergence command: when the user does not bound
-        // traversal depth, follow the full upstream chain so missing
-        // dependencies can be materialized end-to-end.
+        // traversal depth, follow the full upstream chain so missing or
+        // outdated dependencies can be materialized end-to-end.
         depth: Some(depth.unwrap_or(0)),
         include_targets: true,
         // `apply --force` must still rebuild the user's requested targets even
@@ -209,6 +209,19 @@ fn apply_targets(
 
     let build_set =
         crate::builder::orchestrator::resolve_build_set(ctx.config, targets, resolve_opts)?;
+
+    if build_set.is_empty() {
+        if ctx.dry_run {
+            println!(
+                "Apply plan (dry-run): nothing to do; requested targets already match the current plan state under the selected apply policy."
+            );
+        } else if !ctx.quiet {
+            tracing::info!(
+                "Apply is already converged; nothing to build or install for the requested targets under the selected apply policy."
+            );
+        }
+        return Ok(());
+    }
 
     let build_opts = build_options_for_apply(&ctx);
     let plan =
@@ -1105,11 +1118,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_defaults_to_missing_upstream_dependency_expansion() {
+    fn apply_defaults_to_outdated_upstream_dependency_expansion() {
         let opts = resolve_options_for_apply(None, None, Vec::new(), None, false);
         assert_eq!(opts.deps, Some(DependentsMode::All));
         assert_eq!(opts.rdeps, None);
-        assert_eq!(opts.match_policies, vec![MatchPolicy::Missing]);
+        assert_eq!(opts.match_policies, vec![MatchPolicy::Outdated]);
         assert_eq!(opts.depth, Some(0));
         assert!(opts.include_targets);
         assert!(!opts.preserve_targets);

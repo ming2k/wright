@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- **`apply` default convergence policy**: `wright apply` now defaults to `--match=outdated`, so plan-driven runs naturally cover first installs, upgrades, and missing/outdated upstream dependencies in one command.
+- **`apply` no-op behavior**: when requested targets already match the current plan state under the selected policy, `wright apply` now exits successfully instead of surfacing a confusing empty-build error.
+- **CLI/docs alignment**: `--match` is now the primary flag name for resolve/apply match policies, with documentation updated to present `apply` as Wright's natural plan-driven install/upgrade/dependency combo workflow.
+
 ## [2.1.9] - 2026-04-13
 
 ### Fixed

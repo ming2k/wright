@@ -311,8 +311,8 @@ plans are deduplicated.
 ```bash
 wright build @base         # build all plans in the "base" assembly
 wright build @base @devel mypackage # combine assemblies and individual plans
-wright apply @base         # add missing upstream plans, build what is needed, then install the assembly
-wright resolve @base --deps --match=outdated | wright build # also rebuild outdated upstream deps
+wright apply @base         # plan-driven install/upgrade combo: add missing or outdated upstream plans, build what is needed, then install the assembly
+wright resolve @base --deps --match=all | wright build # override the default policy for a broader rebuild set
 ```
 
 ---

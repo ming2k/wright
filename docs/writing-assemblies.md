@@ -78,7 +78,7 @@ wright apply @base
 ```
 
 This will:
-1. Resolve the requested plans and add missing upstream dependency plans.
+1. Resolve the requested plans and add missing or outdated upstream dependency plans.
 2. Build what is needed in dependency order.
 3. Install/upgrade parts to match the assembly targets.
 
