@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.1.9] - 2026-04-13
+
+### Fixed
+- **`apply --force` target preservation**: `wright apply --force` now keeps explicitly requested installed targets in the apply build set, so force-rebuild runs no longer collapse into `No targets specified to build.` under the default `missing` match policy.
+
 ## [2.1.8] - 2026-04-13
 
 ### Changed

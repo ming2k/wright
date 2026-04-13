@@ -162,6 +162,7 @@ fn resolve_options_for_apply(
     rdeps: Option<crate::cli::resolve::DomainArg>,
     match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,
     depth: Option<usize>,
+    force: bool,
 ) -> crate::builder::orchestrator::ResolveOptions {
     let deps = deps
         .map(map_resolve_domain)
@@ -182,6 +183,10 @@ fn resolve_options_for_apply(
         // dependencies can be materialized end-to-end.
         depth: Some(depth.unwrap_or(0)),
         include_targets: true,
+        // `apply --force` must still rebuild the user's requested targets even
+        // when the default `missing` policy would otherwise filter them out as
+        // already installed.
+        preserve_targets: force,
     }
 }
 
@@ -352,7 +357,7 @@ pub fn execute(
             anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
         }
 
-        let resolve_opts = resolve_options_for_apply(deps, rdeps, match_policies, depth);
+        let resolve_opts = resolve_options_for_apply(deps, rdeps, match_policies, depth, force);
 
         match apply_targets(
             ApplyContext {
@@ -1101,12 +1106,13 @@ mod tests {
 
     #[test]
     fn apply_defaults_to_missing_upstream_dependency_expansion() {
-        let opts = resolve_options_for_apply(None, None, Vec::new(), None);
+        let opts = resolve_options_for_apply(None, None, Vec::new(), None, false);
         assert_eq!(opts.deps, Some(DependentsMode::All));
         assert_eq!(opts.rdeps, None);
         assert_eq!(opts.match_policies, vec![MatchPolicy::Missing]);
         assert_eq!(opts.depth, Some(0));
         assert!(opts.include_targets);
+        assert!(!opts.preserve_targets);
     }
 
     #[test]
@@ -1116,6 +1122,7 @@ mod tests {
             Some(DomainArg::Build),
             vec![MatchPolicyArg::Outdated, MatchPolicyArg::Installed],
             Some(2),
+            true,
         );
         assert_eq!(opts.deps, Some(DependentsMode::Link));
         assert_eq!(opts.rdeps, Some(DependentsMode::Build));
@@ -1125,5 +1132,6 @@ mod tests {
         );
         assert_eq!(opts.depth, Some(2));
         assert!(opts.include_targets);
+        assert!(opts.preserve_targets);
     }
 }

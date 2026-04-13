@@ -73,6 +73,7 @@ pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
                 match_policies,
                 depth: effective_depth,
                 include_targets: !args.exclude_targets,
+                preserve_targets: false,
             },
         )?;
 

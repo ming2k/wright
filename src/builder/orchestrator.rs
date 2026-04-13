@@ -75,6 +75,9 @@ pub struct ResolveOptions {
     pub depth: Option<usize>,
     /// Include the listed targets themselves in the output.
     pub include_targets: bool,
+    /// Preserve the originally requested targets even when install-state
+    /// filtering would normally drop them.
+    pub preserve_targets: bool,
 }
 
 /// Options for a build run.
@@ -182,6 +185,9 @@ pub fn resolve_build_set(
         // 2. Filter the targets and expanded upstream deps
         if !opts.match_policies.contains(&MatchPolicy::All) {
             plans_to_build.retain(|path| {
+                if opts.preserve_targets && original_plans.contains(path) {
+                    return true;
+                }
                 if let Ok(m) = PlanManifest::from_file(path) {
                     crate::builder::orchestrator::planning::dependency_matches_policy(
                         &m.plan.name,
@@ -521,9 +527,10 @@ mod tests {
     use super::{
         construction_plan_batches, construction_plan_label, construction_plan_order,
         describe_build_resources, describe_task_action, expand_missing_dependencies,
-        installed_matches_manifest, BuildOptions, BuildResourceSummary, DependentsMode,
-        MatchPolicy, RebuildReason,
+        installed_matches_manifest, resolve_build_set, BuildOptions, BuildResourceSummary,
+        DependentsMode, MatchPolicy, RebuildReason, ResolveOptions,
     };
+    use crate::config::GlobalConfig;
     use crate::database::{Database, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
     use std::collections::{HashMap, HashSet};
@@ -813,5 +820,55 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             }),
             "Build capacity: 14 parallel tasks on 14 CPU cores."
         );
+    }
+
+    #[test]
+    fn resolve_build_set_can_preserve_explicit_targets_through_missing_filter() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("state").join("installed.db");
+        let db = Database::open(&db_path).unwrap();
+        db.insert_part(NewPart {
+            name: "a",
+            version: "1.0.0",
+            release: 1,
+            epoch: 0,
+            description: "a",
+            arch: "x86_64",
+            license: "MIT",
+            url: None,
+            install_size: 1,
+            pkg_hash: None,
+            install_scripts: None,
+            origin: crate::database::Origin::Manual,
+        })
+        .unwrap();
+        drop(db);
+
+        let plans_root = temp.path().join("plans");
+        write_plan(&plans_root, "a", "1.0.0", &["b"]);
+        write_plan(&plans_root, "b", "1.0.0", &[]);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_root;
+        config.general.db_path = db_path;
+        config.general.inventory_db_path = temp.path().join("state").join("archives.db");
+        config.general.assemblies_dir = temp.path().join("assemblies");
+
+        let resolved = resolve_build_set(
+            &config,
+            vec!["a".to_string()],
+            ResolveOptions {
+                deps: Some(DependentsMode::All),
+                rdeps: None,
+                match_policies: vec![MatchPolicy::Missing],
+                depth: Some(0),
+                include_targets: true,
+                preserve_targets: true,
+            },
+        )
+        .unwrap();
+
+        assert!(resolved.iter().any(|name| name == "a"));
+        assert!(resolved.iter().any(|name| name == "b"));
     }
 }
