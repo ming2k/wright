@@ -19,7 +19,7 @@ There is no required indexing or publish stage in the default workflow.
 ```bash
 wright build hello
 wright build @base
-wright resolve @base --deps=sync | wright build
+wright resolve @base --deps --match=outdated | wright build
 wright build hello --lint
 wright build zlib --checksum
 ```
@@ -28,7 +28,7 @@ wright build zlib --checksum
 
 - `wright build` builds exactly what it receives.
 - `wright resolve` expands upstream dependencies and downstream rebuilds before the build starts.
-- `--deps=sync` is the usual maintenance mode: it rebuilds dependencies whose installed versions no longer match the current plans.
+- `wright resolve --deps --match=outdated` is the usual maintenance mode when you want outdated upstream dependencies rebuilt before the target.
 
 ### Part Inventory
 
@@ -79,14 +79,16 @@ wright apply @base --dry-run
 `wright apply`:
 
 1. resolves the requested plans or assemblies
-2. computes dependency waves for the required build graph
-3. for each wave, builds any missing or outdated parts needed there
-4. installs that wave before continuing, so later waves see the updated system state
+2. automatically adds missing upstream dependency plans to the build graph
+3. computes dependency waves for the required build graph
+4. for each wave, builds what is needed there
+5. installs that wave before continuing, so later waves see the updated system state
 
 Useful knobs:
 
 - `--dry-run` previews what would be built and installed without mutating the system
 - `--force`, `-f` forces a clean rebuild and re-installation even if matching parts already exist in the inventory; source downloads are still reused from cache
+- `--match` overrides the default `missing` policy when you want a different install-state filter
 
 For the design rationale behind this command's defaults and wave model, see
 [Apply Design](apply-design.md).

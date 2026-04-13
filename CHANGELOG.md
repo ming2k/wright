@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-04-13
+
+### Changed
+- **`apply` smart defaults restored**: `wright apply` now expands missing upstream dependency plans by default, so source-first maintenance runs can converge without an extra manual resolve step.
+- **Apply docs refresh**: updated the apply design notes, usage guide, assemblies docs, and related references to match the current default dependency-expansion behavior.
+- **CLI/docs cleanup**: removed stale references to legacy `--deps=sync`/`--print-archives` syntax and aligned command examples with the current `--match` and `--print-parts` interfaces.
+
 ## [2.1.7] - 2026-04-13
 
 ### Changed

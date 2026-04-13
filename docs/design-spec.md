@@ -30,7 +30,7 @@ wright install curl
 
 wright apply @base
 
-wright resolve openssl --rdeps=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve openssl --rdeps=all --depth=0 | wright build --force --print-parts | wright install
 ```
 
 ## Intended Workflow

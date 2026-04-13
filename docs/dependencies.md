@@ -34,8 +34,9 @@ By default, `wright build` builds only the listed targets. Add `--deps` to
 `wright resolve` when you want Wright to expand upstream dependencies from the
 hold tree before building.
 
-- With `wright resolve --deps` (or `--deps=missing`), missing `build` and `link` dependencies are added to the output target set.
-- With `--deps=sync`, missing dependencies and installed dependencies whose epoch/version/release differs from `plan.toml` are added.
+- With `wright resolve --deps`, dependencies in the selected domain are added to the output target set.
+- With `wright resolve --deps --match=missing`, only dependencies that are not currently installed are added.
+- With `wright resolve --deps --match=outdated`, dependencies whose installed epoch/version/release differs from `plan.toml` are added, and missing ones are also included.
 - If the dependency is missing and no plan exists, the build fails with a clear error.
 
 With `--deps=all`, Wright expands more aggressively:
@@ -86,8 +87,9 @@ Wright exposes separate build and install flows:
 - `wright install` installs archives onto the live system.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
-assemblies, checks the local archive inventory, builds anything missing or
-outdated, and then installs the requested outputs.
+assemblies, checks the local archive inventory, automatically adds missing
+upstream dependency plans, builds what is needed, and then installs the
+requested outputs.
 
 **Common Examples**
 Example: Build only the listed target.
@@ -96,13 +98,13 @@ Example: Build only the listed target.
 wright build curl
 ```
 
-Example: Build and install from plans while syncing missing/outdated upstream dependencies.
+Example: Build and install from plans while automatically materializing missing upstream dependencies.
 
 ```bash
 wright apply curl
 ```
 
-Example: Force a deep rebuild of dependencies.
+Example: Force a deep rebuild of upstream dependencies.
 
 ```bash
 wright resolve openssl --deps=all | wright build --force
@@ -112,7 +114,7 @@ Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wright resolve zlib --rdeps=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve zlib --rdeps=all --depth=0 | wright build --force --print-parts | wright install
 ```
 
 **Install Origin Tracking**

@@ -22,7 +22,8 @@ install -m755 target/release/wright /usr/local/bin/
 - `wright build` registers those archives in a local inventory DB.
 - `wright` installs and upgrades the live system from those local archives.
 - `wright apply` is the high-level source-first workflow: resolve the build graph,
- build missing or outdated waves, and install each wave before continuing.
+ add missing upstream dependency plans, build each wave, and install each wave
+ before continuing.
 
 ## First Part
 

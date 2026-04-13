@@ -246,19 +246,19 @@ A library's ABI changed. Rebuild everything that links against it:
 
 ```bash
 # Update the library, then cascade to all installed link dependents
-wright resolve libfoo --rdeps | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps | wright build --force --print-parts | wright install
 ```
 
 The scheduler labels affected parts as `relink` in the scheduling log. To also catch runtime and build dependents (full reverse cascade):
 
 ```bash
-wright resolve libfoo --rdeps=all --depth=0 | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps=all --depth=0 | wright build --force --print-parts | wright install
 ```
 
 To limit how deep the cascade goes:
 
 ```bash
-wright resolve libfoo --rdeps --depth=2 | wright build --force --print-archives | wright install
+wright resolve libfoo --rdeps --depth=2 | wright build --force --print-parts | wright install
 ```
 
 ---
@@ -285,7 +285,7 @@ If you need to install the rebuilt outputs afterward, print the archive paths
 and feed them to `wright install`:
 
 ```bash
-wright resolve pcre2 --rdeps --depth=0 | wright build --resume --print-archives | wright install
+wright resolve pcre2 --rdeps --depth=0 | wright build --resume --print-parts | wright install
 ```
 
 The session hash is deterministic — running the same `wright resolve | wright build`
@@ -311,8 +311,8 @@ plans are deduplicated.
 ```bash
 wright build @base         # build all plans in the "base" assembly
 wright build @base @devel mypackage # combine assemblies and individual plans
-wright apply @base         # build missing/outdated archives, then install the assembly
-wright resolve @base --deps=sync | wright build # also sync missing/outdated upstream deps
+wright apply @base         # add missing upstream plans, build what is needed, then install the assembly
+wright resolve @base --deps --match=outdated | wright build # also rebuild outdated upstream deps
 ```
 
 ---

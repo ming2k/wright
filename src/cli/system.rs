@@ -157,7 +157,7 @@ pub enum Commands {
     },
     /// Build missing/outdated parts for plans or assemblies, then install the resulting parts
     #[command(
-        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright checks the local archive inventory first, builds any missing or outdated parts from plans, and then installs the requested outputs onto the live system.",
+        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright checks the local archive inventory first, automatically adds missing upstream dependency plans, builds what is needed from plans, and then installs the requested outputs onto the live system.",
         after_help = WRIGHT_APPLY_AFTER_HELP
     )]
     Apply {
@@ -194,8 +194,9 @@ pub enum Commands {
         rdeps: Option<crate::cli::resolve::DomainArg>,
 
         /// Match policy for filtering based on installation state.
-        /// Can be specified multiple times.
-        #[arg(long, value_enum, default_values = &["all"])]
+        /// Can be specified multiple times. If omitted, `apply` defaults to
+        /// `missing` so missing upstream dependencies are added automatically.
+        #[arg(long, value_enum)]
         match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,
 
         /// Maximum expansion depth. `0` means unlimited.

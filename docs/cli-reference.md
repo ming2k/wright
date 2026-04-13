@@ -60,14 +60,19 @@ Useful `wright build` flags:
 
 Useful `wright resolve` flags:
 
-- ``
-- `--deps [none|missing|sync|all]`
-- `--rdeps [link|all]`
+- `--exclude-targets`
+- `--deps [link|runtime|build|all]`
+- `--rdeps [link|runtime|build|all]`
+- `--match [missing|outdated|installed|all]`
 - `--depth <N>`
 - `--tree`
 
 Useful `wright apply` flags:
 
+- `--deps [link|runtime|build|all]`
+- `--rdeps [link|runtime|build|all]`
+- `--match [missing|outdated|installed|all]`
+- `--depth <N>`
 - `-f`, `--force`
 - `--dry-run`
 

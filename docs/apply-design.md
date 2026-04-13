@@ -18,7 +18,7 @@ level policy:
 
 - start from plans, not from archive filenames
 - reuse local archives when they are already valid
-- rebuild what is missing or out of sync upstream
+- add missing upstream plans when they are required
 - install in dependency waves so later work sees the updated system
 
 That policy is opinionated by design. The command is meant to feel "smart"
@@ -46,30 +46,33 @@ not for a precomputed archive list.
 
 ## Smart Defaults
 
-The current implementation encodes a default policy rather than asking the user
-to assemble one manually on every run.
+The current implementation encodes a small default policy rather than asking
+the user to assemble dependency expansion by hand on every run.
 
 ### Default Resolution Policy
 
-`wright apply` currently resolves its build set as if it had called:
+When the user does not pass explicit dependency flags, `wright apply`
+currently resolves its build set as if it had called:
 
 ```bash
-wright resolve <targets> --deps=sync
+wright resolve <targets> --deps --match=missing
 ```
 
 More precisely:
 
 - explicit targets are always included
-- upstream dependencies are expanded in `sync` mode
+- upstream dependencies are expanded across build, link, and runtime edges
+- only missing upstream dependencies are auto-added by default
 - reverse dependent expansion is disabled by default
-- depth is unlimited for the upstream sync traversal
+- depth is unlimited for the default upstream traversal
 
 This default is deliberate.
 
-`sync` is the maintenance-oriented mode: it adds upstream dependencies that are
-missing, and also dependencies whose installed epoch/version/release no longer
-match the current plans. That makes `apply` conservative enough to repair a
-stale dependency chain, but less destructive than a blanket rebuild.
+Adding missing upstream plans is the minimum useful "smart" behavior for a
+source-first convergence command. If the user asks Wright to apply a target and
+some prerequisites are absent from the local system, Wright should pull those
+plans into the build graph automatically instead of requiring a separate manual
+resolve step.
 
 At the same time, `apply` does **not** default to reverse rebuild cascades.
 Rebuilding downstream dependents is a heavier policy decision and remains an
@@ -80,7 +83,7 @@ explicit low-level workflow through `wright resolve --rdeps`.
 `wright apply` does not blindly rebuild everything.
 
 - If the local inventory already contains matching build outputs, they can be reused.
-- If an upstream part is missing or out of sync with the plans, Wright builds it.
+- If an upstream part is missing and a plan exists for it, Wright builds it.
 - The install step still resolves archive dependencies from the local inventory.
 
 This makes `apply` neither purely build-first nor purely install-first. It is a
@@ -115,13 +118,14 @@ That distinction is preserved even when one plan produces multiple output parts.
 
 `apply` computes a build set with:
 
-- `DependencyMode::Sync`
+- `deps = all`
+- `match = missing`
 - `DependentsMode::None`
 - `include_targets = true`
 
 This is the core "smart default" layer: enough expansion to keep requested
-targets buildable and current, without silently turning every maintenance run
-into a system-wide rebuild.
+targets buildable when prerequisite plans are absent, without silently turning
+every maintenance run into a blanket rebuild policy.
 
 ### 3. Create a Wave Plan
 
@@ -236,7 +240,7 @@ Use this rule of thumb:
 - use `wright resolve` when you want to shape rebuild scope
 - use `wright install` when you already know which archives to apply
 - use `wright apply` when you want the live system to converge toward the
- current plans with Wright's default maintenance policy
+ current plans with Wright's default missing-dependency expansion policy
 
 That last item is the key design point. `apply` is not merely a convenience
 command. It is the policy-bearing command in Wright's source-first workflow.

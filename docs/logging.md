@@ -86,7 +86,7 @@ wright build -v <target>
 ```
 
 Verbose subprocess output is mirrored to stderr, not stdout. This keeps
-`wright build --print-archives` safe to pipe into `wright install` while still
+`wright build --print-parts` safe to pipe into `wright install` while still
 showing live build logs.
 
 When Wright runs multiple build tasks in parallel, `-v` still keeps subprocess

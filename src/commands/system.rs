@@ -125,6 +125,66 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
     }
 }
 
+fn map_resolve_domain(
+    domain: crate::cli::resolve::DomainArg,
+) -> crate::builder::orchestrator::DependentsMode {
+    match domain {
+        crate::cli::resolve::DomainArg::Link => crate::builder::orchestrator::DependentsMode::Link,
+        crate::cli::resolve::DomainArg::Runtime => {
+            crate::builder::orchestrator::DependentsMode::Runtime
+        }
+        crate::cli::resolve::DomainArg::Build => {
+            crate::builder::orchestrator::DependentsMode::Build
+        }
+        crate::cli::resolve::DomainArg::All => crate::builder::orchestrator::DependentsMode::All,
+    }
+}
+
+fn map_match_policy(
+    policy: crate::cli::resolve::MatchPolicyArg,
+) -> crate::builder::orchestrator::MatchPolicy {
+    match policy {
+        crate::cli::resolve::MatchPolicyArg::All => crate::builder::orchestrator::MatchPolicy::All,
+        crate::cli::resolve::MatchPolicyArg::Missing => {
+            crate::builder::orchestrator::MatchPolicy::Missing
+        }
+        crate::cli::resolve::MatchPolicyArg::Outdated => {
+            crate::builder::orchestrator::MatchPolicy::Outdated
+        }
+        crate::cli::resolve::MatchPolicyArg::Installed => {
+            crate::builder::orchestrator::MatchPolicy::Installed
+        }
+    }
+}
+
+fn resolve_options_for_apply(
+    deps: Option<crate::cli::resolve::DomainArg>,
+    rdeps: Option<crate::cli::resolve::DomainArg>,
+    match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,
+    depth: Option<usize>,
+) -> crate::builder::orchestrator::ResolveOptions {
+    let deps = deps
+        .map(map_resolve_domain)
+        .unwrap_or(crate::builder::orchestrator::DependentsMode::All);
+    let rdeps = rdeps.map(map_resolve_domain);
+    let match_policies = if match_policies.is_empty() {
+        vec![crate::builder::orchestrator::MatchPolicy::Missing]
+    } else {
+        match_policies.into_iter().map(map_match_policy).collect()
+    };
+
+    crate::builder::orchestrator::ResolveOptions {
+        deps: Some(deps),
+        rdeps,
+        match_policies,
+        // `apply` is a smart convergence command: when the user does not bound
+        // traversal depth, follow the full upstream chain so missing
+        // dependencies can be materialized end-to-end.
+        depth: Some(depth.unwrap_or(0)),
+        include_targets: true,
+    }
+}
+
 fn apply_targets(
     ctx: ApplyContext,
     targets: Vec<String>,
@@ -282,9 +342,6 @@ pub fn execute(
         dry_run,
     } = command
     {
-        use crate::builder::orchestrator::{DependentsMode, MatchPolicy, ResolveOptions};
-        use crate::cli::resolve::{DomainArg, MatchPolicyArg};
-
         use std::io::IsTerminal;
         let targets = collect_install_args(targets)?;
 
@@ -295,37 +352,7 @@ pub fn execute(
             anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
         }
 
-        let deps_domain = deps.map(|d| match d {
-            DomainArg::Link => DependentsMode::Link,
-            DomainArg::Runtime => DependentsMode::Runtime,
-            DomainArg::Build => DependentsMode::Build,
-            DomainArg::All => DependentsMode::All,
-        });
-
-        let rdeps_domain = rdeps.map(|d| match d {
-            DomainArg::Link => DependentsMode::Link,
-            DomainArg::Runtime => DependentsMode::Runtime,
-            DomainArg::Build => DependentsMode::Build,
-            DomainArg::All => DependentsMode::All,
-        });
-
-        let policies = match_policies
-            .into_iter()
-            .map(|p| match p {
-                MatchPolicyArg::All => MatchPolicy::All,
-                MatchPolicyArg::Missing => MatchPolicy::Missing,
-                MatchPolicyArg::Outdated => MatchPolicy::Outdated,
-                MatchPolicyArg::Installed => MatchPolicy::Installed,
-            })
-            .collect();
-
-        let resolve_opts = ResolveOptions {
-            deps: deps_domain,
-            rdeps: rdeps_domain,
-            match_policies: policies,
-            depth,
-            include_targets: true,
-        };
+        let resolve_opts = resolve_options_for_apply(deps, rdeps, match_policies, depth);
 
         match apply_targets(
             ApplyContext {
@@ -1030,7 +1057,9 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_options_for_apply, ApplyContext};
+    use super::{build_options_for_apply, resolve_options_for_apply, ApplyContext};
+    use crate::builder::orchestrator::{DependentsMode, MatchPolicy};
+    use crate::cli::resolve::{DomainArg, MatchPolicyArg};
     use crate::config::GlobalConfig;
     use crate::inventory::resolver::LocalResolver;
     use std::path::Path;
@@ -1068,5 +1097,33 @@ mod tests {
         let opts = build_options_for_apply(&apply_ctx(&config, &resolver, false));
         assert!(!opts.force);
         assert!(!opts.clean);
+    }
+
+    #[test]
+    fn apply_defaults_to_missing_upstream_dependency_expansion() {
+        let opts = resolve_options_for_apply(None, None, Vec::new(), None);
+        assert_eq!(opts.deps, Some(DependentsMode::All));
+        assert_eq!(opts.rdeps, None);
+        assert_eq!(opts.match_policies, vec![MatchPolicy::Missing]);
+        assert_eq!(opts.depth, Some(0));
+        assert!(opts.include_targets);
+    }
+
+    #[test]
+    fn apply_explicit_resolution_flags_override_defaults() {
+        let opts = resolve_options_for_apply(
+            Some(DomainArg::Link),
+            Some(DomainArg::Build),
+            vec![MatchPolicyArg::Outdated, MatchPolicyArg::Installed],
+            Some(2),
+        );
+        assert_eq!(opts.deps, Some(DependentsMode::Link));
+        assert_eq!(opts.rdeps, Some(DependentsMode::Build));
+        assert_eq!(
+            opts.match_policies,
+            vec![MatchPolicy::Outdated, MatchPolicy::Installed]
+        );
+        assert_eq!(opts.depth, Some(2));
+        assert!(opts.include_targets);
     }
 }
