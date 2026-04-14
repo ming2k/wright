@@ -184,7 +184,7 @@ The downloaded file does not match the hash in `plan.toml`.
 
 ```bash
 # Delete the bad cached file and let Wright re-download
-rm <cache_dir>/sources/<pkg>-<filename>
+rm <source_dir>/<pkg>-<filename>
 
 # Re-run to download fresh and re-verify
 wright build <pkg>
@@ -214,34 +214,8 @@ bumped.
 # Force rebuild regardless of existing archives
 wright build <pkg> --force
 
-# Or bump the top-level release in plan.toml to invalidate both the archive
-# skip check and the build cache
-```
-
----
-
-## Stale Build Cache
-
-**Symptom:** A change to a build script has no effect — the old binary is
-installed. The build log shows a cache hit:
-
-```
-DEBUG Cache hit for zlib: using pre-built artifacts
-```
-
-The build cache key covers lifecycle scripts, so any script change *should*
-invalidate the cache. If it doesn't, the most likely cause is that the change
-was made to a field not covered by the key (e.g. a comment, or a field that
-the key does not hash).
-
-**Fix:**
-
-```bash
-# Clear the build cache and force a full recompile
-wright build <pkg> --clean
-
-# Also overwrite the existing output archive
-wright build <pkg> --clean --force
+# Or bump the top-level release in plan.toml to invalidate the archive
+# skip check
 ```
 
 ---

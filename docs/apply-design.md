@@ -93,7 +93,7 @@ coordinated plan-to-system command.
 
 `wright apply` uses a unified force mechanism:
 
-- `-f`, `--force` forces a clean rebuild (clears the per-plan build workspace and build cache, but keeps downloaded source cache) and a re-installation of the resulting parts.
+- `-f`, `--force` forces a clean rebuild (clears the per-plan build workspace, but keeps downloaded source cache) and a re-installation of the resulting parts.
 
 This consolidates the previous separate flags into a single control for situations where you want to ensure the system is completely refreshed from the plan state.
 

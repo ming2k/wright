@@ -25,8 +25,8 @@ pub struct GeneralConfig {
     pub extra_plans_dirs: Vec<PathBuf>,
     #[serde(default = "default_parts_dir", alias = "components_dir")]
     pub parts_dir: PathBuf,
-    #[serde(default = "default_cache_dir")]
-    pub cache_dir: PathBuf,
+    #[serde(default = "default_source_dir")]
+    pub source_dir: PathBuf,
     #[serde(default = "default_db_path")]
     pub db_path: PathBuf,
     #[serde(default = "default_log_dir")]
@@ -105,10 +105,10 @@ fn default_general() -> GeneralConfig {
         plans_dir: default_plans_dir(),
         extra_plans_dirs: Vec::new(),
         parts_dir: default_parts_dir(),
-        cache_dir: if use_xdg {
-            get_xdg_cache().unwrap_or_else(default_cache_dir)
+        source_dir: if use_xdg {
+            get_xdg_cache().unwrap_or_else(default_source_dir)
         } else {
-            default_cache_dir()
+            default_source_dir()
         },
         // Use the system-installed part database for both root and non-root
         // by default so `wright resolve ... | sudo wright build ...` consult the
@@ -135,7 +135,7 @@ fn get_xdg_cache() -> Option<PathBuf> {
                 .map(|h| PathBuf::from(h).join(".cache"))
                 .ok()
         })
-        .map(|p| p.join("wright"))
+        .map(|p| p.join("wright/sources"))
 }
 
 fn get_xdg_state() -> Option<PathBuf> {
@@ -176,8 +176,8 @@ fn default_plans_dir() -> PathBuf {
 fn default_parts_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/parts")
 }
-fn default_cache_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/cache")
+fn default_source_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/sources")
 }
 fn default_db_path() -> PathBuf {
     PathBuf::from("/var/lib/wright/state/installed.db")

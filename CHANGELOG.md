@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-04-15
+
+### Changed
+- **Removed build-result cache**: eliminated `cache_dir/builds/` — the compressed per-part artifact cache that stored `pkg/` and `log/` snapshots keyed by build hash. Parts are already persisted as `.wright.tar.zst` files and installed into the database; the intermediate cache served no additional purpose.
+- **`source_dir` replaces `cache_dir`**: the `cache_dir` config field is renamed to `source_dir` (default `/var/lib/wright/sources`), removing the now-redundant `cache/sources/` nesting.
+- **Dedicated staging directory**: install and upgrade transactions now use `/var/lib/wright/staging/` for temporary extraction, replacing the previous behaviour of deriving the staging path from the part file location (which polluted `/var/lib/wright/` with `wright-stage-*` directories on crash).
+
 ## [2.2.0] - 2026-04-14
 
 ### Changed

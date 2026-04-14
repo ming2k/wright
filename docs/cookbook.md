@@ -326,8 +326,7 @@ assembly:
 wright build @base --force
 ```
 
-`--force` bypasses both the archive skip check and the build cache for every
-part in the set.
+`--force` bypasses the archive skip check for every part in the set.
 
 ---
 

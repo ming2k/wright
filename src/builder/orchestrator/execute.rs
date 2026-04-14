@@ -453,7 +453,6 @@ fn build_one(
         opts.skip_check,
         &extra_env,
         opts.verbose,
-        opts.force,
         opts.nproc_per_dockyard,
         Some(compile_lock),
         progress,

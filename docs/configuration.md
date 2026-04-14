@@ -36,7 +36,7 @@ Assemblies are convenience sets, not dependency graphs.
 arch = "x86_64"
 plans_dir = "/var/lib/wright/plans"
 parts_dir = "/var/lib/wright/parts"
-cache_dir = "/var/lib/wright/cache"
+source_dir = "/var/lib/wright/sources"
 db_path = "/var/lib/wright/state/installed.db"
 inventory_db_path = "/var/lib/wright/state/archives.db"
 log_dir = "/var/log/wright"

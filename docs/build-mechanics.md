@@ -1,41 +1,28 @@
 # Build Mechanics
 
 This page explains what happens on disk when `wright build` executes: the build
-directory layout, log files, source cache, build cache, and output parts.
+directory layout, log files, source cache, and output parts.
 Understanding these layers makes it easier to debug failures and reason about
 when work is skipped or repeated.
 
-## Three On-Disk Layers
+## Two On-Disk Layers
 
-`wright build` uses three different storage layers that are easy to confuse:
+`wright build` uses two different storage layers:
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
 | `build_dir` (default `/var/tmp/wright-build`) | Live working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
-| `<cache_dir>/sources/` | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
-| `<cache_dir>/builds/` | Reusable build-result cache | `<name>-<build_key>.tar.zst` snapshots containing built output and logs | Persistent cache across builds |
+| `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
 
-The key distinction is that `build_dir` is an unpacked workspace, while
-`cache_dir/builds` is a formal cache entry. A cache hit can restore `pkg/` and
-`log/` even if the previous working directory under `build_dir` was deleted.
+### How the two layers relate
 
-### How the three layers relate
-
-Quick rule:
-
-- `build cache` decides whether Wright can skip the build entirely.
 - `build_dir/src/` decides whether Wright can reuse the previous unpacked source tree.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check `build cache`
-2. If missed, check whether `build_dir/src/` is reusable
-3. If not reusable, fetch/extract from `source cache`
-
-`build cache` and `build_dir/src/` share the same build key, but store different
-state: `build_dir/src/` is mutable workspace state; `build cache` is a compact
-result snapshot and does **not** include `src/`.
+1. Check whether `build_dir/src/` is reusable (build key match)
+2. If not reusable, fetch/extract from `source cache`
 
 ## Build Directory Layout
 
@@ -121,11 +108,11 @@ source tree.
 
 ## Source Cache
 
-Downloaded sources are stored permanently in `<cache_dir>/sources/` and reused
+Downloaded sources are stored permanently in `source_dir` and reused
 across builds:
 
 ```
-<cache_dir>/sources/
+<source_dir>/
 ├── zlib-zlib-1.3.1.tar.gz     # <pkg_name>-<upstream_basename>
 ├── gcc-gcc-14.2.0.tar.xz
 └── git/
@@ -142,76 +129,7 @@ re-downloaded. Local path sources use `"SKIP"` as their checksum and bypass
 verification.
 
 The source cache is only consulted when Wright needs to materialize `src/`
-again. If `src/` is reusable, or if a build-cache hit skips the pipeline, it is
-not used in that run.
-
-## Build Cache
-
-After a successful full build, Wright saves a build cache so the part can
-be skipped on future runs without re-compiling:
-
-```
-<cache_dir>/builds/
-└── zlib-<build_key>.tar.zst
-```
-
-The build key is a SHA-256 hash of:
-
-- Part name, version, and release number
-- All source URIs and their expected checksums
-- All lifecycle stage scripts and executor names
-
-If any of these change, the key changes and the cache is a miss — the part
-rebuilds from scratch.
-
-### What the build cache stores
-
-The cache part contains `pkg/` and `log/` directories.
-`src/` is **not** cached to keep the part compact. On a cache hit, Wright
-restores these directories and skips the entire build pipeline.
-
-For multi-part plans, `pkg-*` sub-part directories are also included in the
-cache entry.
-
-### Why this exists when `build_dir` already exists
-
-`build_dir` is primarily for live build state and debugging. It keeps the
-extracted source tree and the logs from the last run, but it is not the build
-cache interface. Wright still writes `cache_dir/builds/<name>-<build_key>.tar.zst`
-because:
-
-- the working directory may be removed manually or by `--clean`
-- `src/` is intentionally excluded from the build cache to keep cache entries smaller
-- the cache key provides a precise "can this build be reused?" decision
-- restoring a compact part is more predictable than relying on an old working tree
-
-If you want to inspect source trees or rerun a stage manually, look in
-`build_dir`. If you want to understand why a later build skipped recompilation,
-look in `cache_dir/builds`.
-
-### Build Cache vs Output Part
-
-| Item | Build cache | `.wright.tar.zst` |
-|------|-------------|-------------------|
-| Purpose | Internal reuse | Distribution / install |
-| Produced when | After lifecycle succeeds | After FHS validation and part creation |
-| Contains | `pkg/`, `log/`, `pkg-*` | Packaged payload plus `.PARTINFO`, `.FILELIST`, optional `.HOOKS` |
-| Includes `src/` | No | No |
-| Stable public format | No | Yes |
-
-### When the cache is bypassed or cleared
-
-| Situation | Cache entry | Cache read | Cache write |
-|-----------|:-----------:|:----------:|:-----------:|
-| Normal build | kept | ✓ | ✓ |
-| `--force` | kept | ✗ | ✓ |
-| `--clean` | **deleted** | ✗ | ✓ |
-| `--clean --force` | **deleted** | ✗ | ✓ |
-| `--stage=<s>` | kept | ✗ | ✗ |
-| Bootstrap (MVP first pass) | kept | ✗ | ✗ |
-
-Bootstrap passes are intentionally incomplete builds — caching them would
-produce a broken part that a later full pass would have to overwrite anyway.
+again. If `src/` is reusable, it is not used in that run.
 
 ## FHS Validation
 
@@ -255,8 +173,8 @@ part filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
 ### Skip condition
 
 If the part (and all sub-part parts) already exist in `parts_dir`,
-the build is skipped entirely — the source cache and build cache are not even
-consulted. Use `--force` to override this and rebuild regardless.
+the build is skipped entirely — the source cache is not even consulted.
+Use `--force` to override this and rebuild regardless.
 
 ### What the part contains
 
@@ -267,18 +185,18 @@ part produced by their `script`.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Build cache | Output part | `src/` | `pkg/` / `log/` |
-|------|:---:|:---:|:---:|:---:|:---:|
-| (default) | reuse | reuse | skip if exists | reuse if key matches | recreated |
-| `--force` | reuse | bypass read, overwrite | overwrite | reuse if key matches | recreated |
-| `--clean` | reuse | **delete + rebuild** | skip if exists | **deleted** | recreated |
-| `--clean --force` | reuse | **delete + rebuild** | overwrite | **deleted** | recreated |
-| `--stage=<s>` | reuse | bypass | skip | preserved | recreated |
+| Flag | Source cache | Output part | `src/` | `pkg/` / `log/` |
+|------|:---:|:---:|:---:|:---:|
+| (default) | reuse | skip if exists | reuse if key matches | recreated |
+| `--force` | reuse | overwrite | reuse if key matches | recreated |
+| `--clean` | reuse | skip if exists | **deleted** | recreated |
+| `--clean --force` | reuse | overwrite | **deleted** | recreated |
+| `--stage=<s>` | reuse | skip | preserved | recreated |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — invalidate the build cache **and** force a clean `src/` re-extraction
+- `--clean` — force a clean `src/` re-extraction
 - `--force` — bypass the output part skip check (always produce a new part)
-- `--clean --force` — "start completely from scratch": clear cache, re-extract sources, and always write a new part
+- `--clean --force` — "start completely from scratch": re-extract sources and always write a new part
 
 ### Incremental builds
 

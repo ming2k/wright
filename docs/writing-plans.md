@@ -559,8 +559,7 @@ INFO Build batch 2/2: full rebuild freetype.
 ```
 
 The `bootstrap` action is the first pass (incomplete). `full rebuild` is the
-second pass (complete, automatically force-rebuilt). MVP builds are never
-written to the build cache.
+second pass (complete, automatically force-rebuilt). MVP builds produce an incomplete part that is force-rebuilt in the second pass.
 
 When `--mvp` is used explicitly, all targets show `bootstrap` in the batch
 summary and no `full rebuild` pass follows:

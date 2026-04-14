@@ -220,15 +220,9 @@ pub fn install_part_with_origin(
 ) -> Result<()> {
     let overall_start = Instant::now();
 
-    // Prefer a staging dir on the same filesystem as root so that rename(2)
-    // can be used instead of read+write copy during installation.
-    let staging_base = part_path
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or_else(|| std::path::Path::new("/var/lib/wright"));
-    let temp_dir = tempfile::Builder::new()
-        .prefix("wright-stage-")
-        .tempdir_in(staging_base)
+    let staging_dir = std::path::Path::new("/var/lib/wright/staging");
+    let _ = std::fs::create_dir_all(staging_dir);
+    let temp_dir = tempfile::tempdir_in(staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 

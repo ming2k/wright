@@ -199,7 +199,6 @@ impl Builder {
         skip_check: bool,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
-        force: bool,
         // Per-dockyard NPROC hint from the scheduler. Applied only when both the
         // plan and global config leave jobs at 0 (auto-detect), preventing
         // CPU oversubscription when multiple dockyards run simultaneously.
@@ -217,52 +216,7 @@ impl Builder {
         let log_dir = build_root.join("log");
 
         let partial = !stages.is_empty() || fetch_only;
-        let is_bootstrap = extra_env
-            .get("WRIGHT_BUILD_PHASE")
-            .is_some_and(|phase| phase == "mvp");
-
-        // --- Caching Logic (Step 1: Check) ---
-        // Bootstrap builds are intentionally incomplete; never use or save cache.
         let build_key = self.compute_build_key(manifest)?;
-        let cache_dir = self.config.general.cache_dir.join("builds");
-        let cache_file = cache_dir.join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
-
-        if !force && !is_bootstrap && !partial && cache_file.exists() {
-            debug!(
-                "Cache hit for {}: using pre-built artifacts",
-                manifest.plan.name
-            );
-
-            // Recreate directories
-            for dir in [&src_dir, &pkg_dir, &log_dir] {
-                ensure_clean_dir(dir)?;
-            }
-
-            // Extract cache into build_root
-            compress::extract_part(&cache_file, &build_root)?;
-
-            // Re-detect sub-part directories from the cached build_root
-            let mut split_pkg_dirs = std::collections::HashMap::new();
-            if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
-                for sub_name in pkgs.keys() {
-                    if sub_name == &manifest.plan.name {
-                        continue;
-                    }
-                    let sub_dir = build_root.join(format!("pkg-{}", sub_name));
-                    if sub_dir.exists() {
-                        split_pkg_dirs.insert(sub_name.clone(), sub_dir);
-                    }
-                }
-            }
-
-            return Ok(BuildResult {
-                pkg_dir,
-                src_dir,
-                log_dir,
-                build_dir: build_root,
-                split_pkg_dirs,
-            });
-        }
 
         if !stages.is_empty() {
             // When running specific stages, validate that a previous build exists
@@ -508,58 +462,6 @@ impl Builder {
             }
         }
 
-        // --- Caching Logic (Step 2: Save) ---
-        // Bootstrap builds are incomplete by design; skip saving to cache.
-        if !is_bootstrap && !partial {
-            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                warn!(
-                    "Failed to create build cache directory {}: {}",
-                    cache_dir.display(),
-                    e
-                );
-            }
-            // For the cache, we only store pkg/, log/ and pkg-* directories.
-            // We exclude src/ to keep the cache compact.
-            // A dedicated "cache builder" temporary directory to collect these
-            let tmp_cache_dir = tempfile::tempdir().map_err(WrightError::IoError)?;
-            for entry in std::fs::read_dir(&build_root).map_err(WrightError::IoError)? {
-                let entry = entry.map_err(WrightError::IoError)?;
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str == "pkg" || name_str == "log" || name_str.starts_with("pkg-") {
-                    let dest = tmp_cache_dir.path().join(&name);
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        // Use shell CP for speed and robustness with symlinks
-                        if let Err(e) = std::process::Command::new("cp")
-                            .arg("-a")
-                            .arg(entry.path())
-                            .arg(&dest)
-                            .status()
-                        {
-                            warn!(
-                                "Failed to copy {} to build cache: {}",
-                                entry.path().display(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-
-            if let Err(e) = compress::create_tar_zst(tmp_cache_dir.path(), &cache_file) {
-                warn!(
-                    "Failed to create build cache for {}: {}",
-                    manifest.plan.name, e
-                );
-            } else {
-                debug!(
-                    "Saved build cache for {} at {}",
-                    manifest.plan.name,
-                    cache_file.display()
-                );
-            }
-        }
-
         // Persist the build key so future runs can detect whether
         // the source tree is still valid for an incremental build.
         if !partial {
@@ -578,19 +480,11 @@ impl Builder {
         })
     }
 
-    /// Clean the working directory and build cache entry for a part.
+    /// Clean the working directory for a part.
     ///
-    /// Working directory (`build_dir/<name>-<version>/`) is removed so the
-    /// next build re-extracts sources from scratch.
-    ///
-    /// Build cache entry (`cache_dir/builds/<name>-<key>.tar.zst`) is also
-    /// removed so the next build cannot hit the cache and must compile fully.
-    /// This is the primary reason to use `--clean`: the working directory is
-    /// recreated at the start of every build anyway, but the build cache
-    /// persists across runs and can only be invalidated by a key change or
-    /// this explicit clean.
+    /// Removes `build_dir/<name>-<version>/` so the next build re-extracts
+    /// sources from scratch.
     pub fn clean(&self, manifest: &PlanManifest) -> Result<()> {
-        // 1. Remove working directory.
         let build_root = self.build_root(manifest)?;
         if build_root.exists() {
             std::fs::remove_dir_all(&build_root).map_err(|e| {
@@ -602,32 +496,13 @@ impl Builder {
             })?;
             tracing::debug!("Removed build directory: {}", build_root.display());
         }
-
-        // 2. Remove build cache entry.
-        let build_key = self.compute_build_key(manifest)?;
-        let cache_file = self
-            .config
-            .general
-            .cache_dir
-            .join("builds")
-            .join(format!("{}-{}.tar.zst", manifest.plan.name, build_key));
-        if cache_file.exists() {
-            std::fs::remove_file(&cache_file).map_err(|e| {
-                WrightError::BuildError(format!(
-                    "failed to remove build cache for {}: {}",
-                    manifest.plan.name, e
-                ))
-            })?;
-            tracing::info!("Cleared build cache for {}", manifest.plan.name);
-        }
-
         Ok(())
     }
 
     /// Verify integrity of downloaded sources.
     /// Only verifies remote URIs (local paths use "SKIP").
     pub fn verify(&self, manifest: &PlanManifest) -> Result<()> {
-        let cache_dir = &self.config.general.cache_dir.join("sources");
+        let cache_dir = &self.config.general.source_dir;
 
         for (i, source) in manifest.sources.entries.iter().enumerate() {
             if source.sha256 == "SKIP" {
@@ -667,7 +542,7 @@ impl Builder {
         dest_dir: &Path,
         files_dir: &Path,
     ) -> Result<PathBuf> {
-        let cache_dir = &self.config.general.cache_dir.join("sources");
+        let cache_dir = &self.config.general.source_dir;
 
         for source in &manifest.sources.entries {
             let processed_uri = self.process_uri(&source.uri, manifest);
@@ -798,7 +673,7 @@ impl Builder {
     pub fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
 
-        let cache_dir = self.config.general.cache_dir.join("sources");
+        let cache_dir = &self.config.general.source_dir;
         if !cache_dir.exists() {
             std::fs::create_dir_all(&cache_dir).map_err(WrightError::IoError)?;
         }
@@ -986,7 +861,7 @@ impl Builder {
     /// Fetch sources for a plan to the cache directory.
     /// Remote URIs are downloaded; local URIs are validated and copied to cache.
     pub fn fetch(&self, manifest: &PlanManifest, plan_dir: &Path) -> Result<()> {
-        let cache_dir = &self.config.general.cache_dir.join("sources");
+        let cache_dir = &self.config.general.source_dir;
         if !cache_dir.exists() {
             std::fs::create_dir_all(cache_dir).map_err(WrightError::IoError)?;
         }
