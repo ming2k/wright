@@ -10,26 +10,41 @@ pub fn substitute(script: &str, vars: &HashMap<String, String>) -> String {
     result
 }
 
+/// Insert standard metadata variables.
+pub fn insert_metadata_variables(
+    vars: &mut HashMap<String, String>,
+    name: &str,
+    version: &str,
+    release: u32,
+    arch: &str,
+) {
+    vars.insert("NAME".to_string(), name.to_string());
+    vars.insert("VERSION".to_string(), version.to_string());
+    vars.insert("RELEASE".to_string(), release.to_string());
+    vars.insert("ARCH".to_string(), arch.to_string());
+}
+
 /// Context for building standard variables.
 pub struct VariableContext<'a> {
-    pub part_name: &'a str,
-    pub part_version: &'a str,
-    pub part_release: u32,
-    pub part_arch: &'a str,
+    pub name: &'a str,
+    pub version: &'a str,
+    pub release: u32,
+    pub arch: &'a str,
     pub src_dir: &'a str,
     pub part_dir: &'a str,
+    pub main_part_name: &'a str,
+    pub main_part_dir: &'a str,
     pub files_dir: &'a str,
 }
 
 /// Build the standard variable map for a build context.
 pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     let mut vars = HashMap::new();
-    vars.insert("PART_NAME".to_string(), ctx.part_name.to_string());
-    vars.insert("PART_VERSION".to_string(), ctx.part_version.to_string());
-    vars.insert("PART_RELEASE".to_string(), ctx.part_release.to_string());
-    vars.insert("PART_ARCH".to_string(), ctx.part_arch.to_string());
+    insert_metadata_variables(&mut vars, ctx.name, ctx.version, ctx.release, ctx.arch);
     vars.insert("SRC_DIR".to_string(), ctx.src_dir.to_string());
     vars.insert("PART_DIR".to_string(), ctx.part_dir.to_string());
+    vars.insert("MAIN_PART_NAME".to_string(), ctx.main_part_name.to_string());
+    vars.insert("MAIN_PART_DIR".to_string(), ctx.main_part_dir.to_string());
     vars.insert("FILES_DIR".to_string(), ctx.files_dir.to_string());
     vars
 }
@@ -41,10 +56,9 @@ mod tests {
     #[test]
     fn test_substitute_basic() {
         let mut vars = HashMap::new();
-        vars.insert("PART_NAME".to_string(), "hello".to_string());
-        vars.insert("PART_VERSION".to_string(), "1.0.0".to_string());
+        insert_metadata_variables(&mut vars, "hello", "1.0.0", 1, "x86_64");
 
-        let script = "echo ${PART_NAME}-${PART_VERSION}";
+        let script = "echo ${NAME}-${VERSION}";
         assert_eq!(substitute(script, &vars), "echo hello-1.0.0");
     }
 
@@ -71,18 +85,23 @@ mod tests {
     #[test]
     fn test_standard_variables() {
         let ctx = VariableContext {
-            part_name: "hello",
-            part_version: "1.0.0",
-            part_release: 1,
-            part_arch: "x86_64",
+            name: "hello",
+            version: "1.0.0",
+            release: 1,
+            arch: "x86_64",
             src_dir: "/tmp/src",
             part_dir: "/tmp/pkg",
+            main_part_name: "hello",
+            main_part_dir: "/tmp/pkg",
             files_dir: "/tmp/patches",
         };
         let vars = standard_variables(ctx);
-        assert_eq!(vars["PART_NAME"], "hello");
-        assert_eq!(vars["PART_VERSION"], "1.0.0");
-        assert_eq!(vars["PART_RELEASE"], "1");
+        assert_eq!(vars["NAME"], "hello");
+        assert_eq!(vars["VERSION"], "1.0.0");
+        assert_eq!(vars["RELEASE"], "1");
+        assert_eq!(vars["ARCH"], "x86_64");
+        assert_eq!(vars["MAIN_PART_NAME"], "hello");
+        assert_eq!(vars["MAIN_PART_DIR"], "/tmp/pkg");
         assert!(!vars.contains_key("NPROC"));
         assert!(!vars.contains_key("version"));
         assert!(!vars.contains_key("CFLAGS"));

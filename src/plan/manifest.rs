@@ -537,7 +537,7 @@ ccache = true
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PART_VERSION}
+cd ${BUILD_DIR}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
 """
 
@@ -546,7 +546,7 @@ executor = "shell"
 dockyard = "strict"
 env = { CFLAGS = "-O2 -pipe" }
 script = """
-cd nginx-${PART_VERSION}
+cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
@@ -554,7 +554,7 @@ cd nginx-${PART_VERSION}
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PART_VERSION}
+cd ${BUILD_DIR}
 make
 """
 
@@ -563,7 +563,7 @@ executor = "shell"
 dockyard = "strict"
 optional = true
 script = """
-cd nginx-${PART_VERSION}
+cd ${BUILD_DIR}
 make test
 """
 
@@ -571,7 +571,7 @@ make test
 executor = "shell"
 dockyard = "strict"
 script = """
-cd nginx-${PART_VERSION}
+cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 

@@ -162,6 +162,68 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
 }
 
 #[test]
+fn test_canonical_and_split_build_variables_are_available() {
+    let manifest = PlanManifest::parse(
+        r#"
+name = "split-vars"
+version = "1.0.0"
+release = 1
+description = "test canonical plan variables"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+runtime = []
+build = []
+
+[lifecycle.staging]
+executor = "shell"
+dockyard = "none"
+script = """
+install -Dm755 /bin/sh ${PART_DIR}/usr/bin/${NAME}-${VERSION}
+"""
+
+[output."split-vars-doc"]
+description = "doc output"
+dockyard = "none"
+script = """
+test -f ${MAIN_PART_DIR}/usr/bin/${MAIN_PART_NAME}-${VERSION}
+install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
+"""
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.build_dir = build_tmp.path().to_path_buf();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let builder = Builder::new(config);
+    let result = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[],
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            false,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    assert!(result.pkg_dir.join("usr/bin/split-vars-1.0.0").exists());
+    assert!(result.split_pkg_dirs["split-vars-doc"]
+        .join("usr/share/doc/split-vars-doc")
+        .exists());
+}
+
+#[test]
 fn test_lint_hello_fixture() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();

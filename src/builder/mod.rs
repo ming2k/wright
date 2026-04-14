@@ -157,16 +157,16 @@ impl Builder {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// Process a URI by substituting variables like ${PART_VERSION}, ${PART_NAME}, etc.
+    /// Process a URI by substituting variables like ${VERSION}, ${NAME}, etc.
     fn process_uri(&self, uri: &str, manifest: &PlanManifest) -> String {
         let mut vars = std::collections::HashMap::new();
-        vars.insert("PART_NAME".to_string(), manifest.plan.name.clone());
-        vars.insert("PART_VERSION".to_string(), manifest.plan.version.clone());
-        vars.insert(
-            "PART_RELEASE".to_string(),
-            manifest.plan.release.to_string(),
+        variables::insert_metadata_variables(
+            &mut vars,
+            &manifest.plan.name,
+            &manifest.plan.version,
+            manifest.plan.release,
+            &manifest.plan.arch,
         );
-        vars.insert("PART_ARCH".to_string(), manifest.plan.arch.clone());
         variables::substitute(uri, &vars)
     }
 
@@ -363,12 +363,14 @@ impl Builder {
             .unwrap_or(total_cpus);
 
         let vars = variables::standard_variables(variables::VariableContext {
-            part_name: &manifest.plan.name,
-            part_version: &manifest.plan.version,
-            part_release: manifest.plan.release,
-            part_arch: &manifest.plan.arch,
+            name: &manifest.plan.name,
+            version: &manifest.plan.version,
+            release: manifest.plan.release,
+            arch: &manifest.plan.arch,
             src_dir: &src_dir.to_string_lossy(),
             part_dir: &pkg_dir.to_string_lossy(),
+            main_part_name: &manifest.plan.name,
+            main_part_dir: &pkg_dir.to_string_lossy(),
             files_dir: &files_dir_str,
         });
         let mut vars = vars;
@@ -442,7 +444,7 @@ impl Builder {
                     "PART_DIR".to_string(),
                     sub_pkg_dir.to_string_lossy().to_string(),
                 );
-                sub_vars.insert("PART_NAME".to_string(), sub_name.clone());
+                sub_vars.insert("NAME".to_string(), sub_name.clone());
                 sub_vars.insert(
                     "MAIN_PART_DIR".to_string(),
                     pkg_dir.to_string_lossy().to_string(),

@@ -58,6 +58,9 @@ dockyard = "none"
 script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 ```
 
+Use `${BUILD_DIR}` when an upstream archive extracts into a top-level source
+directory, and use `${NAME}` / `${VERSION}` for plan metadata.
+
 Build and install it:
 
 ```bash

@@ -150,11 +150,16 @@ pub fn execute_script(
         }
         v.insert("SRC_DIR".to_string(), "/build".to_string());
         v.insert("PART_DIR".to_string(), "/output".to_string());
+        v.insert(
+            "MAIN_PART_DIR".to_string(),
+            if options.main_part_dir.is_some() {
+                "/main-pkg".to_string()
+            } else {
+                "/output".to_string()
+            },
+        );
         if options.files_dir.is_some() {
             v.insert("FILES_DIR".to_string(), "/files".to_string());
-        }
-        if options.main_part_dir.is_some() {
-            v.insert("MAIN_PART_DIR".to_string(), "/main-pkg".to_string());
         }
         v
     } else {
@@ -172,7 +177,7 @@ pub fn execute_script(
     // Create sandbox config
     let task_id = format!(
         "{}-{}",
-        vars.get("PART_NAME")
+        vars.get("NAME")
             .cloned()
             .unwrap_or_else(|| "unknown".to_string()),
         std::time::SystemTime::now()

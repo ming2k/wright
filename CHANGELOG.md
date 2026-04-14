@@ -2,10 +2,18 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-04-14
+
 ### Changed
 - **`apply` default convergence policy**: `wright apply` now defaults to `--match=outdated`, so plan-driven runs naturally cover first installs, upgrades, and missing/outdated upstream dependencies in one command.
 - **`apply` no-op behavior**: when requested targets already match the current plan state under the selected policy, `wright apply` now exits successfully instead of surfacing a confusing empty-build error.
 - **CLI/docs alignment**: `--match` is now the primary flag name for resolve/apply match policies, with documentation updated to present `apply` as Wright's natural plan-driven install/upgrade/dependency combo workflow.
+- **Plan metadata variable cleanup**: removed the legacy `${PART_NAME}` / `${PART_VERSION}` / `${PART_RELEASE}` / `${PART_ARCH}` aliases in favor of `${NAME}` / `${VERSION}` / `${RELEASE}` / `${ARCH}`.
+- **Plan authoring docs refresh**: updated plan-writing docs, examples, and fixtures to prefer `${BUILD_DIR}` plus the shorter metadata variable names.
+- **System plan tree migration**: migrated the maintained `/var/lib/wright/plans` tree away from the old `PART_*` metadata variables.
+
+### Fixed
+- **Split-output variable context**: `${MAIN_PART_NAME}` and `${MAIN_PART_DIR}` are now documented and consistently available for split-output fabricate scripts.
 
 ## [2.1.9] - 2026-04-13
 

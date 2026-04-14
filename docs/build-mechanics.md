@@ -45,7 +45,7 @@ Each part gets its own working directory under `build_dir`
 ```
 <build_dir>/<name>-<version>/
 ├── src/      # Extracted source tree (BUILD_DIR points here or a subdir)
-├── pkg/      # Main part staging root ($PART_DIR)
+├── pkg/      # Main output staging root ($PART_DIR / $MAIN_PART_DIR)
 ├── log/      # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```

@@ -112,7 +112,7 @@ URIs support variable substitution (see [Variable Substitution](#variable-substi
 
 ```toml
 [[sources]]
-uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
+uri = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
@@ -149,7 +149,7 @@ Patches are **not** auto-applied. Include them as `[[sources]]` entries and appl
 
 ```toml
 [[sources]]
-uri = "https://example.com/foo-${PART_VERSION}.tar.gz"
+uri = "https://example.com/foo-${VERSION}.tar.gz"
 sha256 = "abc123..."
 
 [[sources]]
@@ -586,13 +586,15 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 
 | Variable    | Description                |
 |-----------------|--------------------------------------------|
-| `${PART_NAME}`  | Package name from `name`        |
-| `${PART_VERSION}`| Package version from `version`     |
-| `${PART_RELEASE}`| Release number as a string         |
-| `${PART_ARCH}`  | Target architecture            |
+| `${NAME}`  | Current output name from `name` / `[output.<name>]` |
+| `${VERSION}`| Version from `version`     |
+| `${RELEASE}`| Release number as a string         |
+| `${ARCH}`  | Target architecture            |
 | `${SRC_DIR}`  | Extraction root directory         |
 | `${BUILD_DIR}` | Top-level source directory (use this in scripts) |
-| `${PART_DIR}`  | Part output directory (install files here) |
+| `${PART_DIR}`  | Current output staging directory |
+| `${MAIN_PART_NAME}` | Primary output name from the top-level `name` field |
+| `${MAIN_PART_DIR}` | Primary output staging directory (`${PART_DIR}` outside split outputs) |
 | `${FILES_DIR}` | Directory containing non-archive files (patches, configs, etc.) |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
@@ -604,6 +606,7 @@ When running inside a dockyard, path variables are remapped to dockyard mount po
 | `${SRC_DIR}`  | actual host path    | `/build`        |
 | `${BUILD_DIR}` | actual host path    | `/build/<source-dir>` |
 | `${PART_DIR}`  | actual host path    | `/output`       |
+| `${MAIN_PART_DIR}` | actual host path | `/output` or `/main-pkg` in split-output scripts |
 | `${FILES_DIR}` | actual host path    | `/files`        |
 
 `${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
@@ -768,7 +771,7 @@ build = ["perl", "gcc", "make"]
 optional = ["geoip"]
 
 [[sources]]
-uri = "https://nginx.org/download/nginx-${PART_VERSION}.tar.gz"
+uri = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
