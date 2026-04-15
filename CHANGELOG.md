@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-04-15
+
+### Changed
+- **Terminology & Naming**: Renamed the `inventory` concept and directory to `archive` (e.g., `inventory_db_path` config was renamed to `archive_db_path`, and `InventoryDb` to `ArchiveDb`).
+- **Database Optimization**: Cleaned up the `ArchiveDb` schema by removing unused `INSERT` statements for `provides`, `conflicts`, and `replaces` to improve execution performance. The tables remain in the schema for backward compatibility and future expansion.
+- **Documentation**: Added comprehensive `docs/database.md` to explain the dual-database architecture (`installed.db` vs `archives.db`).
+- **Chores**: Resolved minor Clippy warnings (`module_inception` and `needless_borrows_for_generic_args`).
+
 ## [2.3.0] - 2026-04-15
 
 ### Changed
