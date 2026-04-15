@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::database::{Database, DepType, Dependency, FileType, NewPart, Origin};
+use crate::archive::resolver::{LocalResolver, ResolvedPart};
+use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart, Origin};
 use crate::error::{Result, WrightError};
-use crate::inventory::resolver::{LocalResolver, ResolvedPart};
 use crate::part::part;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
@@ -17,7 +17,7 @@ use crate::transaction::rollback::RollbackState;
 use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
 
 pub fn install_parts(
-    db: &Database,
+    db: &InstalledDb,
     parts: &[PathBuf],
     root_dir: &Path,
     resolver: &LocalResolver,
@@ -43,7 +43,7 @@ pub fn install_parts(
 }
 
 pub fn install_parts_with_explicit_targets(
-    db: &Database,
+    db: &InstalledDb,
     parts: &[PathBuf],
     explicit_targets: &HashSet<String>,
     root_dir: &Path,
@@ -206,12 +206,17 @@ fn visit_resolved(
     Ok(())
 }
 
-pub fn install_part(db: &Database, part_path: &Path, root_dir: &Path, force: bool) -> Result<()> {
+pub fn install_part(
+    db: &InstalledDb,
+    part_path: &Path,
+    root_dir: &Path,
+    force: bool,
+) -> Result<()> {
     install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true)
 }
 
 pub fn install_part_with_origin(
-    db: &Database,
+    db: &InstalledDb,
     part_path: &Path,
     root_dir: &Path,
     force: bool,
@@ -457,6 +462,9 @@ pub fn install_part_with_origin(
     }
     if !pkginfo.conflicts.is_empty() {
         db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    }
+    if !pkginfo.replaces.is_empty() {
+        db.insert_replaces(pkg_id, &pkginfo.replaces)?;
     }
 
     db.update_transaction_status(tx_id, "completed")?;

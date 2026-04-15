@@ -9,7 +9,7 @@ use crate::builder::logging;
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
-use crate::database::Database;
+use crate::database::InstalledDb;
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::part::fhs;
 use crate::part::part;
@@ -270,7 +270,7 @@ fn complete_build_task(
     quiet: bool,
 ) {
     if let Some(hash) = session_hash {
-        if let Ok(db) = Database::open(&config.general.db_path) {
+        if let Ok(db) = InstalledDb::open(&config.general.installed_db_path) {
             let _ = db.mark_session_completed(hash, name);
         }
     }
@@ -476,7 +476,7 @@ fn build_one(
         if opts.print_parts {
             println!("{}", part_path.display());
         }
-        register_in_inventory(&config.general.inventory_db_path, &part_path);
+        register_in_archive_db(&config.general.archive_db_path, &part_path);
 
         if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
             for (sub_name, sub_pkg) in pkgs {
@@ -495,7 +495,7 @@ fn build_one(
                 if opts.print_parts {
                     println!("{}", sub_part.display());
                 }
-                register_in_inventory(&config.general.inventory_db_path, &sub_part);
+                register_in_archive_db(&config.general.archive_db_path, &sub_part);
             }
         }
     }
@@ -503,16 +503,16 @@ fn build_one(
     Ok(())
 }
 
-fn register_in_inventory(inventory_db_path: &Path, part_path: &Path) {
+fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
     let do_register = || -> Result<()> {
-        let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
+        let archive_db = crate::archive::db::ArchiveDb::open(archive_db_path)?;
         let partinfo = part::read_partinfo(part_path)?;
         let sha256 = crate::util::checksum::sha256_file(part_path)?;
         let filename = part_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        inventory_db.register_part(&partinfo, filename, &sha256)?;
+        archive_db.register_part(&partinfo, filename, &sha256)?;
         Ok(())
     };
     if let Err(e) = do_register() {
-        warn!("Failed to register in local inventory DB: {}", e);
+        warn!("Failed to register in local archive DB: {}", e);
     }
 }

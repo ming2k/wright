@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
-use wright::database::Database;
+use wright::database::InstalledDb;
 use wright::part::part;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
@@ -36,7 +36,6 @@ fn build_hello_archive() -> PathBuf {
             false,
             &std::collections::HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -60,7 +59,7 @@ fn build_hello_archive() -> PathBuf {
 
 #[test]
 fn test_end_to_end_install_query_remove() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
@@ -110,7 +109,7 @@ fn test_end_to_end_install_query_remove() {
 
 #[test]
 fn test_file_conflict_detection() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
@@ -126,7 +125,7 @@ fn test_file_conflict_detection() {
 
 #[test]
 fn test_verify_detects_modification() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
@@ -144,7 +143,7 @@ fn test_verify_detects_modification() {
 
 #[test]
 fn test_verify_detects_missing_file() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 
@@ -162,7 +161,7 @@ fn test_verify_detects_missing_file() {
 
 #[test]
 fn test_search_installed_parts() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive();
 

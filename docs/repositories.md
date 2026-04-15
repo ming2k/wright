@@ -6,8 +6,8 @@ has a separate publish/index layer.
 ## Current Model
 
 - `wright build` builds `.wright.tar.zst` parts into `parts_dir`
-- `wright build` registers each successful build in `inventory_db_path`
-- `wright` resolves part names from that local inventory
+- `wright build` registers each successful build in `archive_db_path`
+- `wright` resolves part names from that local archive catalogue
 
 There is no separate indexing tool, no source list, and no sync step.
 

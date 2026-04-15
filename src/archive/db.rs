@@ -67,7 +67,7 @@ const INDEX_SCHEMA: &str = "
 ";
 
 #[derive(Debug, Clone)]
-pub struct InventoryPart {
+pub struct ArchivePart {
     pub id: i64,
     pub name: String,
     pub version: String,
@@ -81,7 +81,7 @@ pub struct InventoryPart {
     pub runtime_deps: Vec<String>,
 }
 
-pub struct InventoryDb {
+pub struct ArchiveDb {
     conn: Connection,
     _lock: Option<ProcessLock>,
 }
@@ -99,25 +99,25 @@ fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
-fn inventory_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
+fn archive_db_schema_error(db_path: &Path, err: rusqlite::Error) -> String {
     format!(
-        "failed to open inventory database {} with the current schema: {}",
+        "failed to open archive database {} with the current schema: {}",
         db_path.display(),
         err
     )
 }
 
-impl InventoryDb {
+impl ArchiveDb {
     pub fn open(db_path: &Path) -> Result<Self> {
         let parent = db_path.parent().ok_or_else(|| {
             WrightError::DatabaseError(format!(
-                "inventory database path has no parent directory: {}",
+                "archive database path has no parent directory: {}",
                 db_path.display()
             ))
         })?;
         std::fs::create_dir_all(parent).map_err(|e| {
             WrightError::DatabaseError(format!(
-                "failed to create inventory database directory {}: {}",
+                "failed to create archive database directory {}: {}",
                 parent.display(),
                 e
             ))
@@ -130,9 +130,9 @@ impl InventoryDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to enable WAL: {}", e)))?;
 
         conn.execute_batch(BASE_SCHEMA)
-            .map_err(|e| WrightError::DatabaseError(inventory_schema_error(db_path, e)))?;
+            .map_err(|e| WrightError::DatabaseError(archive_db_schema_error(db_path, e)))?;
         conn.execute_batch(INDEX_SCHEMA)
-            .map_err(|e| WrightError::DatabaseError(inventory_schema_error(db_path, e)))?;
+            .map_err(|e| WrightError::DatabaseError(archive_db_schema_error(db_path, e)))?;
 
         Ok(Self {
             conn,
@@ -217,7 +217,7 @@ impl InventoryDb {
         Ok(pkg_id)
     }
 
-    pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<InventoryPart>> {
+    pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<ArchivePart>> {
         let mut parts = if let Some(name) = name {
             let mut stmt = self
                 .conn
@@ -228,7 +228,7 @@ impl InventoryDb {
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map(params![name], row_to_inventory_part)
+                .query_map(params![name], row_to_archive_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
@@ -242,7 +242,7 @@ impl InventoryDb {
                 )
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             let rows = stmt
-                .query_map([], row_to_inventory_part)
+                .query_map([], row_to_archive_part)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
@@ -256,7 +256,7 @@ impl InventoryDb {
         Ok(parts)
     }
 
-    pub fn find_part(&self, name: &str) -> Result<Option<InventoryPart>> {
+    pub fn find_part(&self, name: &str) -> Result<Option<ArchivePart>> {
         let mut stmt = self
             .conn
             .prepare(
@@ -268,7 +268,7 @@ impl InventoryDb {
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
         let mut pkg = stmt
-            .query_map(params![name], row_to_inventory_part)
+            .query_map(params![name], row_to_archive_part)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .next();
@@ -280,7 +280,7 @@ impl InventoryDb {
         Ok(pkg)
     }
 
-    pub fn find_all_versions(&self, name: &str) -> Result<Vec<InventoryPart>> {
+    pub fn find_all_versions(&self, name: &str) -> Result<Vec<ArchivePart>> {
         self.list_parts(Some(name))
     }
 
@@ -372,8 +372,8 @@ impl InventoryDb {
     }
 }
 
-fn row_to_inventory_part(row: &rusqlite::Row) -> rusqlite::Result<InventoryPart> {
-    Ok(InventoryPart {
+fn row_to_archive_part(row: &rusqlite::Row) -> rusqlite::Result<ArchivePart> {
+    Ok(ArchivePart {
         id: row.get(0)?,
         name: row.get(1)?,
         version: row.get(2)?,

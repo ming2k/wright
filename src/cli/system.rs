@@ -4,7 +4,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 const WRIGHT_AFTER_HELP: &str = "\
 Workflows:
-  Install from inventory:   wright install zlib
+  Install from archive catalogue:   wright install zlib
   Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Apply an assembly:        wright apply @base
   Upgrade everything:       wright sysupgrade
@@ -138,7 +138,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Install parts from local parts or the local inventory
+    /// Install parts from local parts or the local archive catalogue
     #[command(
         long_about = "Install parts from archive files or locally registered part names.\n\nParts explicitly named by the user are marked as explicit installs. Dependencies pulled in automatically are marked as dependency installs.",
         after_help = WRIGHT_INSTALL_AFTER_HELP
@@ -215,7 +215,7 @@ pub enum Commands {
     },
     /// Upgrade installed parts by name or from archive files
     #[command(
-        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest locally registered version from the archive inventory. When given an archive path, it upgrades directly from that file.",
+        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest locally registered version from the archive catalogue. When given an archive path, it upgrades directly from that file.",
         after_help = WRIGHT_UPGRADE_AFTER_HELP
     )]
     Upgrade {
@@ -406,7 +406,7 @@ pub enum Commands {
     },
     /// Upgrade all installed parts to latest available versions
     #[command(
-        long_about = "Upgrade all installed parts to the latest versions available in the local archive inventory.\n\nUse `--dry-run` to preview the transaction without making any changes.",
+        long_about = "Upgrade all installed parts to the latest versions available in the local archive catalogue.\n\nUse `--dry-run` to preview the transaction without making any changes.",
         after_help = WRIGHT_SYSUPGRADE_AFTER_HELP
     )]
     Sysupgrade {

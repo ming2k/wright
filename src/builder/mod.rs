@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info, warn};
 
+use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
 use crate::dockyard::ResourceLimits;
 use crate::error::{Result, WrightError};
-use crate::inventory::resolver::sanitize_cache_filename;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::util::{checksum, compress, download, progress};
 
@@ -675,7 +675,7 @@ impl Builder {
 
         let cache_dir = &self.config.general.source_dir;
         if !cache_dir.exists() {
-            std::fs::create_dir_all(&cache_dir).map_err(WrightError::IoError)?;
+            std::fs::create_dir_all(cache_dir).map_err(WrightError::IoError)?;
         }
 
         for source in manifest.sources.entries.iter() {

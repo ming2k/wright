@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
-use wright::database::Database;
+use wright::database::InstalledDb;
 use wright::part::part;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
@@ -50,7 +50,6 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin
             false,
             &HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -71,7 +70,7 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin
 
 #[test]
 fn test_file_diversion_and_restoration() {
-    let db = Database::open_in_memory().unwrap();
+    let db = InstalledDb::open_in_memory().unwrap();
     let root = tempfile::tempdir().unwrap();
 
     let archive_a = create_test_archive("part-a", "content-a");

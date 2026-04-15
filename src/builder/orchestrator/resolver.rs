@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use tracing::warn;
 
+use crate::archive::resolver::LocalResolver;
 use crate::config::{AssembliesConfig, GlobalConfig};
 use crate::error::{Result, WrightError, WrightResultExt};
-use crate::inventory::resolver::LocalResolver;
 use crate::plan::manifest::PlanManifest;
 
 pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
@@ -26,7 +26,7 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
     }
 
     let mut resolver = LocalResolver::new();
-    resolver.set_inventory_db_path(config.general.inventory_db_path.clone());
+    resolver.set_archive_db_path(config.general.archive_db_path.clone());
     resolver.load_assemblies(all_assemblies);
     resolver.add_plans_dir(config.general.plans_dir.clone());
     for extra_dir in &config.general.extra_plans_dirs {

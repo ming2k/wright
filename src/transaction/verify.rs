@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use crate::database::{Database, FileType};
+use crate::database::{FileType, InstalledDb};
 use crate::error::{Result, WrightError};
 use crate::util::checksum;
 
-pub fn verify_part(db: &Database, name: &str, root_dir: &Path) -> Result<Vec<String>> {
+pub fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Result<Vec<String>> {
     let pkg = db
         .get_part(name)?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;

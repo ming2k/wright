@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::error::Result;
 
-use super::{row_to_transaction, Database, TransactionRecord};
+use super::{row_to_transaction, InstalledDb, TransactionRecord};
 
-impl Database {
+impl InstalledDb {
     pub fn connection(&self) -> &Connection {
         &self.conn
     }

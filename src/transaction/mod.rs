@@ -12,7 +12,7 @@ use std::time::Duration;
 use rusqlite::params;
 use tracing::debug;
 
-use crate::database::Database;
+use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use crate::part::part::PartInfo;
 
@@ -41,13 +41,13 @@ pub fn compact_path(path: &str) -> String {
 }
 
 /// Derive journal path from the database path.
-pub(super) fn journal_path_from_db(db: &Database) -> Option<PathBuf> {
+pub(super) fn journal_path_from_db(db: &InstalledDb) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))
 }
 
-/// Replace provides and conflicts rows for a part (used during upgrade).
+/// Replace provides, conflicts, and replaces rows for a part (used during upgrade).
 pub(super) fn self_replace_provides_conflicts(
-    db: &Database,
+    db: &InstalledDb,
     pkg_id: i64,
     pkginfo: &PartInfo,
 ) -> Result<()> {
@@ -59,12 +59,18 @@ pub(super) fn self_replace_provides_conflicts(
         .map_err(|e| {
             WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
         })?;
+    db.connection()
+        .execute("DELETE FROM replaces WHERE part_id = ?1", params![pkg_id])
+        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
 
     if !pkginfo.provides.is_empty() {
         db.insert_provides(pkg_id, &pkginfo.provides)?;
     }
     if !pkginfo.conflicts.is_empty() {
         db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    }
+    if !pkginfo.replaces.is_empty() {
+        db.insert_replaces(pkg_id, &pkginfo.replaces)?;
     }
     Ok(())
 }
@@ -84,7 +90,7 @@ mod tests {
     use super::hooks::parse_hooks_from_db;
     use super::*;
     use crate::database::FileEntry as DbFileEntry;
-    use crate::database::{Database, FileEntry, FileType, NewPart};
+    use crate::database::{FileEntry, FileType, InstalledDb, NewPart};
     use crate::part::version::{Version, VersionConstraint};
     use crate::util::compress;
     use std::path::Path;
@@ -92,8 +98,8 @@ mod tests {
 
     use std::collections::HashSet;
 
-    fn setup_test() -> (Database, TempDir) {
-        let db = Database::open_in_memory().unwrap();
+    fn setup_test() -> (InstalledDb, TempDir) {
+        let db = InstalledDb::open_in_memory().unwrap();
         let root = tempfile::tempdir().unwrap();
         (db, root)
     }
@@ -127,7 +133,6 @@ mod tests {
                 false,
                 false,
                 &extra_env,
-                false,
                 false,
                 None,
                 None,
@@ -337,7 +342,7 @@ build_date = "1970-01-01T00:00:00Z"
 
     #[test]
     fn test_order_removal_batch_removes_dependents_first() {
-        let db = Database::open_in_memory().unwrap();
+        let db = InstalledDb::open_in_memory().unwrap();
 
         db.insert_part(NewPart {
             name: "libfoo",
@@ -428,7 +433,7 @@ build_date = "1970-01-01T00:00:00Z"
 
     #[test]
     fn test_version_constraint_check() {
-        let db = Database::open_in_memory().unwrap();
+        let db = InstalledDb::open_in_memory().unwrap();
         db.insert_part(NewPart {
             name: "libfoo",
             version: "1.0.0",
@@ -720,7 +725,7 @@ build_date = "1970-01-01T00:00:00Z"
             out_dir.path(),
         );
 
-        let mut resolver = crate::inventory::resolver::LocalResolver::new();
+        let mut resolver = crate::archive::resolver::LocalResolver::new();
         resolver.add_search_dir(out_dir.path().to_path_buf());
 
         let explicit_targets = HashSet::from(["app".to_string()]);
@@ -763,7 +768,7 @@ build_date = "1970-01-01T00:00:00Z"
             out_dir.path(),
         );
 
-        let mut resolver = crate::inventory::resolver::LocalResolver::new();
+        let mut resolver = crate::archive::resolver::LocalResolver::new();
         resolver.add_search_dir(out_dir.path().to_path_buf());
 
         let explicit_targets = HashSet::from(["samepkg".to_string()]);

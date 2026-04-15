@@ -33,7 +33,7 @@ wright build zlib --checksum
 ### Part Inventory
 
 Successful builds are written to `parts_dir` and registered in
-`inventory_db_path`.
+`archive_db_path`.
 
 To clean old or stray parts:
 
@@ -44,7 +44,7 @@ wright prune --latest --apply
 
 `--latest` keeps the newest tracked part per part name while preserving any
 currently installed versions. `--untracked` removes part files that exist on
-disk but are not registered in the inventory DB.
+disk but are not registered in the archive DB.
 
 ## Wright
 

@@ -7,21 +7,26 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+use crate::archive::resolver::LocalResolver;
 use crate::cli::Cli;
 use crate::config::GlobalConfig;
-use crate::inventory::resolver::LocalResolver;
 
 /// Dispatch the parsed CLI command to the appropriate handler.
 pub fn dispatch(
     cli: Cli,
     config: &GlobalConfig,
-    db_path: PathBuf,
+    installed_db_path: PathBuf,
     root_dir: PathBuf,
 ) -> Result<()> {
     match cli.command {
-        crate::cli::Commands::System(sys_cmd) => {
-            system::execute(sys_cmd, config, &db_path, &root_dir, cli.verbose, cli.quiet)
-        }
+        crate::cli::Commands::System(sys_cmd) => system::execute(
+            sys_cmd,
+            config,
+            &installed_db_path,
+            &root_dir,
+            cli.verbose,
+            cli.quiet,
+        ),
         crate::cli::Commands::Build(args) => {
             build::execute_build(args, config, cli.verbose, cli.quiet)
         }

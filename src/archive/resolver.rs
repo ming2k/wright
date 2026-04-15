@@ -16,7 +16,7 @@ pub struct LocalResolver {
     pub search_dirs: Vec<PathBuf>,
     pub plans_dirs: Vec<PathBuf>,
     pub assemblies: AssembliesConfig,
-    pub inventory_db_path: Option<PathBuf>,
+    pub archive_db_path: Option<PathBuf>,
 }
 
 pub struct ResolvedPart {
@@ -88,7 +88,7 @@ impl LocalResolver {
             assemblies: AssembliesConfig {
                 assemblies: std::collections::HashMap::new(),
             },
-            inventory_db_path: None,
+            archive_db_path: None,
         }
     }
 
@@ -100,8 +100,8 @@ impl LocalResolver {
         self.plans_dirs.push(path);
     }
 
-    pub fn set_inventory_db_path(&mut self, path: PathBuf) {
-        self.inventory_db_path = Some(path);
+    pub fn set_archive_db_path(&mut self, path: PathBuf) {
+        self.archive_db_path = Some(path);
     }
 
     pub fn load_assemblies(&mut self, config: AssembliesConfig) {
@@ -113,12 +113,12 @@ impl LocalResolver {
     }
 
     fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
-        let inventory_db_path = match &self.inventory_db_path {
+        let archive_db_path = match &self.archive_db_path {
             Some(p) => p,
             None => return Ok(None),
         };
-        let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
-        let entry = match inventory_db.find_part(name)? {
+        let archive_db = crate::archive::db::ArchiveDb::open(archive_db_path)?;
+        let entry = match archive_db.find_part(name)? {
             Some(e) => e,
             None => return Ok(None),
         };
@@ -136,12 +136,12 @@ impl LocalResolver {
     }
 
     pub fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
-        let inventory_db_path = match &self.inventory_db_path {
+        let archive_db_path = match &self.archive_db_path {
             Some(p) => p,
             None => return Ok(Vec::new()),
         };
-        let inventory_db = crate::inventory::db::InventoryDb::open(inventory_db_path)?;
-        let entries = inventory_db.find_all_versions(name)?;
+        let archive_db = crate::archive::db::ArchiveDb::open(archive_db_path)?;
+        let entries = archive_db.find_all_versions(name)?;
 
         let mut results = Vec::new();
         for entry in entries {

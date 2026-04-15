@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::builder::mvp::{collect_phase_deps, PlanGraph};
-use crate::database::{Database, InstalledPart};
+use crate::database::{InstalledDb, InstalledPart};
 use crate::error::Result;
 use crate::part::version;
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
@@ -31,7 +31,7 @@ pub(super) fn compute_session_hash(build_set: &HashSet<String>) -> String {
 pub(super) fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
-    db: &Database,
+    db: &InstalledDb,
     policies: &[MatchPolicy],
     domain: DependentsMode,
     max_depth: usize,
@@ -172,7 +172,7 @@ pub(super) fn expand_missing_dependencies(
 fn dependency_reason_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
-    db: &Database,
+    db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<&'static str> {
     if policies.contains(&MatchPolicy::All) {
@@ -193,7 +193,7 @@ fn dependency_reason_label(
 pub(super) fn dependency_matches_policy(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
-    db: &Database,
+    db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
     let installed = db.get_part(dep_name)?;
@@ -222,7 +222,7 @@ pub(super) fn dependency_matches_policy(
 fn dependency_plan_differs(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
-    db: &Database,
+    db: &InstalledDb,
 ) -> Result<bool> {
     let Some(installed) = db.get_part(dep_name)? else {
         return Ok(true);

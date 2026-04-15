@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 
+use crate::archive::db::ArchiveDb;
+use crate::archive::prune;
 use crate::cli::prune::PruneArgs;
 use crate::config::GlobalConfig;
-use crate::database::Database;
-use crate::inventory::db::InventoryDb;
-use crate::inventory::prune;
+use crate::database::InstalledDb;
 
 pub fn execute_prune(args: PruneArgs, config: &GlobalConfig) -> Result<()> {
     prune_parts(config, args.untracked, args.latest, args.apply)
@@ -20,18 +20,18 @@ fn prune_parts(
         anyhow::bail!("nothing to do: pass --untracked and/or --latest");
     }
 
-    let inventory = InventoryDb::open(&config.general.inventory_db_path)
-        .context("failed to open local inventory database")?;
+    let archive_db = ArchiveDb::open(&config.general.archive_db_path)
+        .context("failed to open local archive database")?;
     let parts_dir = &config.general.parts_dir;
     std::fs::create_dir_all(parts_dir)
         .with_context(|| format!("failed to create {}", parts_dir.display()))?;
 
-    let installed_db = Database::open(&config.general.db_path)
+    let installed_db = InstalledDb::open(&config.general.installed_db_path)
         .context("failed to open installed-part database")?;
 
     let report = if apply {
         prune::apply_prune(
-            &inventory,
+            &archive_db,
             &installed_db,
             parts_dir,
             prune_untracked,
@@ -39,11 +39,11 @@ fn prune_parts(
         )
         .context("prune failed")?
     } else {
-        let stale_db_rows = inventory
+        let stale_db_rows = archive_db
             .remove_missing_files(parts_dir)
             .context("failed to reconcile missing archive files")?;
         let mut report = prune::plan_prune(
-            &inventory,
+            &archive_db,
             &installed_db,
             parts_dir,
             prune_untracked,

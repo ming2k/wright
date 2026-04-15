@@ -3,18 +3,18 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{Database, FileType, InstalledPart};
+use crate::database::{FileType, InstalledDb, InstalledPart};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
 use crate::transaction::hooks::{log_running_hook, run_install_script};
 
-pub fn remove_part(db: &Database, name: &str, root_dir: &Path, force: bool) -> Result<()> {
+pub fn remove_part(db: &InstalledDb, name: &str, root_dir: &Path, force: bool) -> Result<()> {
     remove_part_with_ignored_dependents(db, name, root_dir, force, &HashSet::new())
 }
 
 pub fn remove_part_with_ignored_dependents(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     root_dir: &Path,
     force: bool,
@@ -155,7 +155,7 @@ pub fn remove_part_with_ignored_dependents(
 }
 
 fn collect_removal_dependents(
-    db: &Database,
+    db: &InstalledDb,
     pkg: &InstalledPart,
     name: &str,
     ignored_dependents: &HashSet<String>,
@@ -184,7 +184,7 @@ fn collect_removal_dependents(
     Ok(dependents)
 }
 
-pub fn order_removal_batch(db: &Database, targets: &[String]) -> Result<Vec<String>> {
+pub fn order_removal_batch(db: &InstalledDb, targets: &[String]) -> Result<Vec<String>> {
     let target_set: HashSet<String> = targets.iter().cloned().collect();
     let mut ordered = Vec::new();
     let mut visiting = HashSet::new();
@@ -205,7 +205,7 @@ pub fn order_removal_batch(db: &Database, targets: &[String]) -> Result<Vec<Stri
 }
 
 fn visit_removal_target(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     target_set: &HashSet<String>,
     visiting: &mut HashSet<String>,
@@ -246,7 +246,7 @@ fn visit_removal_target(
     Ok(())
 }
 
-pub fn cascade_remove_list(db: &Database, name: &str) -> Result<Vec<String>> {
+pub fn cascade_remove_list(db: &InstalledDb, name: &str) -> Result<Vec<String>> {
     let mut result = Vec::new();
     let mut visited = HashSet::new();
     visited.insert(name.to_string());
@@ -255,7 +255,7 @@ pub fn cascade_remove_list(db: &Database, name: &str) -> Result<Vec<String>> {
 }
 
 fn cascade_collect(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     visited: &mut HashSet<String>,
     result: &mut Vec<String>,

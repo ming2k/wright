@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::database::Database;
+use crate::archive::db::ArchiveDb;
+use crate::archive::resolver::ResolvedPartVersioned;
+use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::inventory::db::InventoryDb;
-use crate::inventory::resolver::ResolvedPartVersioned;
 
 pub struct PruneReport {
-    /// Archives that exist on disk but are not in the inventory DB.
+    /// Archives that exist on disk but are not in the archive DB.
     pub untracked: Vec<std::path::PathBuf>,
     /// Archives that are tracked but are not the latest version (and not currently installed).
     pub stale_tracked: Vec<StaleArchive>,
@@ -24,19 +24,19 @@ pub struct StaleArchive {
 
 /// Compute what would be pruned without making any changes.
 pub fn plan_prune(
-    inventory: &InventoryDb,
-    installed_db: &Database,
+    archive_db: &ArchiveDb,
+    installed_db: &InstalledDb,
     parts_dir: &Path,
     prune_untracked: bool,
     keep_latest: bool,
 ) -> Result<PruneReport> {
-    let tracked = inventory.list_parts(None)?;
+    let tracked = archive_db.list_parts(None)?;
     let tracked_filenames: HashSet<String> = tracked.iter().map(|p| p.filename.clone()).collect();
 
     let mut untracked = Vec::new();
     let mut stale_tracked = Vec::new();
 
-    // Collect parts not registered in the inventory DB.
+    // Collect parts not registered in the archive DB.
     if prune_untracked {
         let entries = std::fs::read_dir(parts_dir).map_err(WrightError::IoError)?;
         for entry in entries {
@@ -60,8 +60,7 @@ pub fn plan_prune(
         let mut keep_filenames: HashSet<String> = HashSet::new();
 
         // Keep the latest version of each part name.
-        let mut latest_by_name: HashMap<&str, &crate::inventory::db::InventoryPart> =
-            HashMap::new();
+        let mut latest_by_name: HashMap<&str, &crate::archive::db::ArchivePart> = HashMap::new();
         for part in &tracked {
             let keep = match latest_by_name.get(part.name.as_str()) {
                 Some(current) => {
@@ -125,20 +124,20 @@ pub fn plan_prune(
     })
 }
 
-/// Remove stale inventory DB rows for files that no longer exist, then apply
+/// Remove stale archive DB rows for files that no longer exist, then apply
 /// the prune plan (delete files and deregister tracked entries).
 pub fn apply_prune(
-    inventory: &InventoryDb,
-    installed_db: &Database,
+    archive_db: &ArchiveDb,
+    installed_db: &InstalledDb,
     parts_dir: &Path,
     prune_untracked: bool,
     keep_latest: bool,
 ) -> Result<PruneReport> {
     // Remove DB rows whose files are gone.
-    let stale_db_rows = inventory.remove_missing_files(parts_dir)?;
+    let stale_db_rows = archive_db.remove_missing_files(parts_dir)?;
 
     let mut report = plan_prune(
-        inventory,
+        archive_db,
         installed_db,
         parts_dir,
         prune_untracked,
@@ -156,7 +155,7 @@ pub fn apply_prune(
         if stale.path.exists() {
             std::fs::remove_file(&stale.path).map_err(WrightError::IoError)?;
         }
-        inventory.remove_part(&stale.name, &stale.version, Some(stale.release))?;
+        archive_db.remove_part(&stale.name, &stale.version, Some(stale.release))?;
     }
 
     Ok(report)

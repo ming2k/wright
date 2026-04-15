@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use crate::error::Result;
 
-use super::Database;
+use super::InstalledDb;
 
-impl Database {
+impl InstalledDb {
     pub fn create_session(&self, session_hash: &str, packages: &[String]) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "INSERT OR IGNORE INTO build_sessions (session_hash, package_name, status) VALUES (?1, ?2, 'pending')",

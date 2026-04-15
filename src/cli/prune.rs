@@ -2,7 +2,7 @@ use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 pub struct PruneArgs {
-    /// Delete parts that are present on disk but not registered in the inventory DB
+    /// Delete parts that are present on disk but not registered in the archive DB
     #[arg(long)]
     pub untracked: bool,
 

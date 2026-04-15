@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use crate::builder::orchestrator::{self, BuildOptions};
 use crate::cli::build::BuildArgs;
 use crate::config::GlobalConfig;
-use crate::database::Database;
+use crate::database::InstalledDb;
 
 pub fn execute_build(
     args: BuildArgs,
@@ -14,14 +14,15 @@ pub fn execute_build(
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(&config.general.db_path),
+        &crate::util::lock::lock_dir_from_db(&config.general.installed_db_path),
         crate::util::lock::LockIdentity::Command("build"),
         crate::util::lock::LockMode::Exclusive,
     )
     .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
-        let db = Database::open(&config.general.db_path).context("failed to open database")?;
+        let db = InstalledDb::open(&config.general.installed_db_path)
+            .context("failed to open database")?;
         let count = db.clear_all_sessions()?;
         tracing::info!("Cleared {} build session(s)", count);
         return Ok(());

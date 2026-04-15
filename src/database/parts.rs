@@ -1,8 +1,8 @@
 use crate::error::{Result, WrightError};
 
-use super::{row_to_installed_part, Database, InstalledPart, NewPart, Origin, PART_COLUMNS};
+use super::{row_to_installed_part, InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS};
 
-impl Database {
+impl InstalledDb {
     pub fn insert_part(&self, part: NewPart) -> Result<i64> {
         let was_assumed: bool = self
             .conn

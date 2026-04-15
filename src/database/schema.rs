@@ -121,6 +121,16 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_conflicts_name ON conflicts(name);
         CREATE INDEX IF NOT EXISTS idx_conflicts_package ON conflicts(part_id);
+
+        -- Parts this package replaces (supersedes) at install time
+        CREATE TABLE IF NOT EXISTS replaces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            part_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_replaces_name ON replaces(name);
+        CREATE INDEX IF NOT EXISTS idx_replaces_package ON replaces(part_id);
         ",
     )
     .map_err(|e| WrightError::DatabaseError(format!("failed to initialize database: {}", e)))?;

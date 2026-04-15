@@ -5,7 +5,7 @@ use std::time::Instant;
 use rayon::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::database::{Database, DepType, Dependency, FileType, NewPart};
+use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart};
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::{self, Version};
@@ -16,7 +16,7 @@ use crate::transaction::rollback::RollbackState;
 use super::{journal_path_from_db, log_debug_timing, self_replace_provides_conflicts};
 
 pub fn upgrade_part(
-    db: &Database,
+    db: &InstalledDb,
     part_path: &Path,
     root_dir: &Path,
     force: bool,

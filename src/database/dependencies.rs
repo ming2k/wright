@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use crate::error::{Result, WrightError};
 
-use super::{Database, DepType, Dependency};
+use super::{DepType, Dependency, InstalledDb};
 
-impl Database {
+impl InstalledDb {
     pub fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "INSERT INTO dependencies (part_id, depends_on, version_constraint, dep_type)
@@ -279,6 +279,39 @@ impl Database {
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to find conflicting parts: {}", e))
             })?;
+        Ok(rows)
+    }
+
+    pub fn insert_replaces(&self, part_id: i64, names: &[String]) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("INSERT INTO replaces (part_id, name) VALUES (?1, ?2)")?;
+        for name in names {
+            stmt.execute(rusqlite::params![part_id, name])?;
+        }
+        Ok(())
+    }
+
+    pub fn replace_replaces(&self, part_id: i64, names: &[String]) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM replaces WHERE part_id = ?1",
+                rusqlite::params![part_id],
+            )
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old replaces: {}", e))
+            })?;
+        self.insert_replaces(part_id, names)
+    }
+
+    pub fn get_replaces(&self, part_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM replaces WHERE part_id = ?1 ORDER BY name")?;
+        let rows = stmt
+            .query_map(rusqlite::params![part_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get replaces: {}", e)))?;
         Ok(rows)
     }
 }

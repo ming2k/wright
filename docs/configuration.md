@@ -37,8 +37,8 @@ arch = "x86_64"
 plans_dir = "/var/lib/wright/plans"
 parts_dir = "/var/lib/wright/parts"
 source_dir = "/var/lib/wright/sources"
-db_path = "/var/lib/wright/state/installed.db"
-inventory_db_path = "/var/lib/wright/state/archives.db"
+installed_db_path = "/var/lib/wright/state/installed.db"
+archive_db_path = "/var/lib/wright/state/archives.db"
 log_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "/var/lib/wright/assemblies"
@@ -59,8 +59,8 @@ retry_count = 3
 |------|---------|---------|
 | `plans_dir` | `/var/lib/wright/plans` | plan tree root |
 | `parts_dir` | `/var/lib/wright/parts` | local archive store |
-| `db_path` | `/var/lib/wright/state/installed.db` | installed-system DB |
-| `inventory_db_path` | `/var/lib/wright/state/archives.db` | local built-archive inventory |
+| `installed_db_path` | `/var/lib/wright/state/installed.db` | installed-system DB |
+| `archive_db_path` | `/var/lib/wright/state/archives.db` | local built-archive catalogue |
 | `assemblies_dir` | `/var/lib/wright/assemblies` | assembly definition files |
 | `build_dir` | `/var/tmp/wright-build` | build work directory |
 
@@ -68,6 +68,8 @@ retry_count = 3
 
 - `plans_dir` does not automatically move to a user path; override it explicitly for non-root setups.
 - `parts_dir` is just the local stock of built archives.
-- `inventory_db_path` tracks local build outputs only. The legacy config key
- `repo_db_path` is still accepted as an alias for migration.
-- Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
+- `archive_db_path` tracks local build outputs only. Legacy keys `inventory_db_path` and
+  `repo_db_path` are still accepted as aliases for migration.
+- `installed_db_path` is a snapshot of what is currently installed on the system. Archives may be
+  pruned after installation; the installed DB remains the authoritative source of installed state.
+- Lock files live under the Wright lock directory derived from `installed_db_path`, typically `/var/lib/wright/lock/`.

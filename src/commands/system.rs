@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
+use crate::archive::resolver::{pick_latest, pick_version, LocalResolver};
 use crate::cli::system::{Commands as SystemCommands, PrefixModeArg};
 use crate::config::GlobalConfig;
-use crate::database::Database;
-use crate::inventory::resolver::{pick_latest, pick_version, LocalResolver};
+use crate::database::InstalledDb;
 use crate::query;
 use crate::query::PrefixMode;
 use crate::transaction;
@@ -70,7 +70,7 @@ fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Ve
         match resolver.resolve(arg)? {
             Some(resolved) => pkg_paths.push(resolved.path),
             None => anyhow::bail!(
-                "'{}' is not a file and could not be resolved from the local part inventory",
+                "'{}' is not a file and could not be resolved from the local archive catalogue",
                 arg
             ),
         }
@@ -101,7 +101,7 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
 
 struct ApplyContext<'a> {
     config: &'a GlobalConfig,
-    db_path: &'a Path,
+    installed_db_path: &'a Path,
     resolver: &'a LocalResolver,
     root_dir: &'a Path,
     force: bool,
@@ -303,7 +303,8 @@ fn apply_targets(
             }
         }
 
-        let db = Database::open(ctx.db_path).context("failed to open database for install")?;
+        let db = InstalledDb::open(ctx.installed_db_path)
+            .context("failed to open database for install")?;
 
         transaction::install_parts_with_explicit_targets(
             &db,
@@ -335,13 +336,13 @@ fn emit_partial_apply_note(applied_parts: &[String]) {
 pub fn execute(
     command: SystemCommands,
     config: &GlobalConfig,
-    db_path: &Path,
+    installed_db_path: &Path,
     root_dir: &Path,
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(db_path),
+        &crate::util::lock::lock_dir_from_db(installed_db_path),
         crate::util::lock::LockIdentity::Command("wright"),
         crate::util::lock::LockMode::Exclusive,
     )
@@ -375,7 +376,7 @@ pub fn execute(
         match apply_targets(
             ApplyContext {
                 config,
-                db_path,
+                installed_db_path,
                 resolver: &resolver,
                 root_dir,
                 force,
@@ -399,7 +400,7 @@ pub fn execute(
         return Ok(());
     }
 
-    let db = Database::open(db_path).context("failed to open database")?;
+    let db = InstalledDb::open(installed_db_path).context("failed to open database")?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
@@ -1076,10 +1077,10 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::{build_options_for_apply, resolve_options_for_apply, ApplyContext};
+    use crate::archive::resolver::LocalResolver;
     use crate::builder::orchestrator::{DependentsMode, MatchPolicy};
     use crate::cli::resolve::{DomainArg, MatchPolicyArg};
     use crate::config::GlobalConfig;
-    use crate::inventory::resolver::LocalResolver;
     use std::path::Path;
 
     fn apply_ctx<'a>(
@@ -1089,7 +1090,7 @@ mod tests {
     ) -> ApplyContext<'a> {
         ApplyContext {
             config,
-            db_path: Path::new("/tmp/wright-test.db"),
+            installed_db_path: Path::new("/tmp/wright-test.db"),
             resolver,
             root_dir: Path::new("/"),
             force,

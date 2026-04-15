@@ -7,7 +7,7 @@ pub mod schema;
 mod sessions;
 mod types;
 
-pub use core::Database;
+pub use core::InstalledDb;
 use core::{row_to_installed_part, row_to_transaction, PART_COLUMNS};
 pub use types::{
     DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, Origin, TransactionRecord,
@@ -17,8 +17,8 @@ pub use types::{
 mod tests {
     use super::*;
 
-    fn test_db() -> Database {
-        Database::open_in_memory().unwrap()
+    fn test_db() -> InstalledDb {
+        InstalledDb::open_in_memory().unwrap()
     }
 
     #[test]
@@ -496,8 +496,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        let _db1 = Database::open(&db_path).unwrap();
-        let result = Database::open(&db_path);
+        let _db1 = InstalledDb::open(&db_path).unwrap();
+        let result = InstalledDb::open(&db_path);
         match result {
             Err(ref e) => {
                 let err_msg = format!("{}", e);

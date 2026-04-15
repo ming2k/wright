@@ -40,7 +40,6 @@ fn test_build_hello_fixture() {
             false,
             &std::collections::HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -69,7 +68,6 @@ fn test_build_and_archive_hello() {
             false,
             false,
             &std::collections::HashMap::new(),
-            false,
             false,
             None,
             None,
@@ -141,7 +139,6 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
             false,
             &std::collections::HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -210,7 +207,6 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
             false,
             &std::collections::HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -271,7 +267,6 @@ fn test_build_single_stage() {
             false,
             &std::collections::HashMap::new(),
             false,
-            false,
             None,
             None,
             None,
@@ -288,7 +283,6 @@ fn test_build_single_stage() {
             false,
             false,
             &std::collections::HashMap::new(),
-            false,
             false,
             None,
             None,
@@ -355,7 +349,7 @@ plans_dir = "{}"
 parts_dir = "{}"
 cache_dir = "{}"
 db_path = "{}"
-inventory_db_path = "{}"
+archive_db_path = "{}"
 log_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"

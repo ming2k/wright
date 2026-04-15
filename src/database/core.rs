@@ -7,7 +7,7 @@ use crate::util::lock::ProcessLock;
 
 use super::{schema, InstalledPart, Origin, TransactionRecord};
 
-pub struct Database {
+pub struct InstalledDb {
     pub(super) conn: Connection,
     pub(super) _lock: Option<ProcessLock>,
     pub(super) db_path: Option<PathBuf>,
@@ -63,7 +63,7 @@ fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
-impl Database {
+impl InstalledDb {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -83,7 +83,7 @@ impl Database {
 
         schema::init_db(&conn)?;
 
-        Ok(Database {
+        Ok(InstalledDb {
             conn,
             _lock: Some(lock_file),
             db_path: Some(path.to_path_buf()),
@@ -93,7 +93,7 @@ impl Database {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         schema::init_db(&conn)?;
-        Ok(Database {
+        Ok(InstalledDb {
             conn,
             _lock: None,
             db_path: None,

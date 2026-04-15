@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod builder;
 pub mod cli;
 pub mod commands;
@@ -5,7 +6,6 @@ pub mod config;
 pub mod database;
 pub mod dockyard;
 pub mod error;
-pub mod inventory;
 pub mod part;
 pub mod plan;
 pub mod query;

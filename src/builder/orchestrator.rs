@@ -10,7 +10,7 @@ use crate::error::{Result, WrightError, WrightResultExt};
 use tracing::{info, warn};
 
 use crate::config::GlobalConfig;
-use crate::database::Database;
+use crate::database::InstalledDb;
 use crate::plan::manifest::PlanManifest;
 
 mod execute;
@@ -30,7 +30,7 @@ use resolver::resolve_targets;
 
 pub use resolver::setup_resolver;
 
-use crate::inventory::resolver::LocalResolver;
+use crate::archive::resolver::LocalResolver;
 
 #[derive(Debug, Clone)]
 pub struct BuildExecutionPlan {
@@ -166,8 +166,8 @@ pub fn resolve_build_set(
     let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
     {
-        let db_path = config.general.db_path.clone();
-        let db = Database::open(&db_path)
+        let db_path = config.general.installed_db_path.clone();
+        let db = InstalledDb::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
         // 1. Traverse upstream
@@ -404,7 +404,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
             if hash.is_empty() {
                 (false, HashSet::new())
             } else {
-                let db = Database::open(&config.general.db_path)
+                let db = InstalledDb::open(&config.general.installed_db_path)
                     .context("failed to open database for resume")?;
                 if db.session_exists(&hash)? {
                     let completed = db.get_session_completed(&hash)?;
@@ -468,7 +468,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
     // Create/update session in DB for build operations.
     let active_session_hash = if let Some(ref hash) = session_hash {
         if opts.is_build_op() {
-            if let Ok(db) = Database::open(&config.general.db_path) {
+            if let Ok(db) = InstalledDb::open(&config.general.installed_db_path) {
                 let packages: Vec<String> = plan.name_to_path.keys().cloned().collect();
                 let _ = db.create_session(hash, &packages);
             }
@@ -496,7 +496,7 @@ pub fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions
         Ok(()) => {
             // All done — clean up session
             if let Some(ref hash) = active_session_hash {
-                if let Ok(db) = Database::open(&config.general.db_path) {
+                if let Ok(db) = InstalledDb::open(&config.general.installed_db_path) {
                     let _ = db.clear_session(hash);
                 }
             }
@@ -531,7 +531,7 @@ mod tests {
         DependentsMode, MatchPolicy, RebuildReason, ResolveOptions,
     };
     use crate::config::GlobalConfig;
-    use crate::database::{Database, InstalledPart, NewPart};
+    use crate::database::{InstalledDb, InstalledPart, NewPart};
     use crate::plan::manifest::PlanManifest;
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -637,7 +637,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
     fn sync_traversal_reaches_outdated_descendant_through_up_to_date_parent() {
         let temp = tempfile::tempdir().unwrap();
         let db_path = temp.path().join("installed.db");
-        let db = Database::open(&db_path).unwrap();
+        let db = InstalledDb::open(&db_path).unwrap();
         db.insert_part(NewPart {
             name: "b",
             version: "1.0.0",
@@ -826,7 +826,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
     fn resolve_build_set_can_preserve_explicit_targets_through_missing_filter() {
         let temp = tempfile::tempdir().unwrap();
         let db_path = temp.path().join("state").join("installed.db");
-        let db = Database::open(&db_path).unwrap();
+        let db = InstalledDb::open(&db_path).unwrap();
         db.insert_part(NewPart {
             name: "a",
             version: "1.0.0",
@@ -850,8 +850,8 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
 
         let mut config = GlobalConfig::default();
         config.general.plans_dir = plans_root;
-        config.general.db_path = db_path;
-        config.general.inventory_db_path = temp.path().join("state").join("archives.db");
+        config.general.installed_db_path = db_path;
+        config.general.archive_db_path = temp.path().join("state").join("archives.db");
         config.general.assemblies_dir = temp.path().join("assemblies");
 
         let resolved = resolve_build_set(

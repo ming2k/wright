@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::error::{Result, WrightError};
 
-use super::{Database, FileEntry, FileType};
+use super::{FileEntry, FileType, InstalledDb};
 
-impl Database {
+impl InstalledDb {
     pub fn record_shadowed_file(
         &self,
         path: &str,

@@ -57,6 +57,6 @@ pub enum Commands {
     #[command(after_help = RESOLVE_AFTER_HELP)]
     Resolve(resolve::ResolveArgs),
 
-    /// Prune local archive inventory and stale parts
+    /// Prune local archive catalogue and stale parts
     Prune(prune::PruneArgs),
 }

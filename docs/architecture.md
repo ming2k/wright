@@ -20,19 +20,18 @@ plan.toml -> wright build -> .wright.tar.zst -> archives.db -> wright install/up
 ```text
 src/
 ├── bin/
-│  └── wright.rs
-├── cli/     # clap schemas grouped by subcommand (build/resolve/prune/system)
-├── commands/   # command handlers grouped by subcommand
+├── archive/   # local archive catalogue DB + resolver
 ├── builder/   # build orchestration and lifecycle execution
-├── config.rs   # global config and assembly definitions
-├── database/   # installed-system DB
-├── dockyard/   # sandbox isolation
-├── inventory/  # local archive inventory DB + resolver
-├── part/     # archive format, versions, FHS validation
-├── plan/     # plan parsing and validation
-├── query/    # system analysis
+├── cli/       # clap schemas grouped by subcommand
+├── commands/  # command handlers grouped by subcommand
+├── config.rs  # global config and assembly definitions
+├── database/  # installed-system DB
+├── dockyard/  # sandbox isolation
+├── part/      # archive format, versions, FHS validation
+├── plan/      # plan parsing and validation
+├── query/     # system analysis
 ├── transaction/ # install / upgrade / remove / verify
-└── util/     # helpers
+└── util/      # helpers
 ```
 
 The execution path is intentionally thin at the top:
@@ -43,7 +42,7 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 
 - `src/bin/wright.rs` parses args, initializes logging, loads config, and dispatches.
 - `src/cli/` owns clap-facing argument and help-text definitions only.
-- `src/commands/` turns parsed args into calls into `builder`, `inventory`, `transaction`, and `query`.
+- `src/commands/` turns parsed args into calls into `builder`, `archive`, `transaction`, and `query`.
 
 ## Responsibilities
 
@@ -67,9 +66,12 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 
 ## Shared State
 
+Detailed database schemas and their roles are documented in [Database Design](database.md).
+
 | Artifact | Written by | Read by |
 |----------|-----------|---------|
 | `plan.toml` | user | `wright build`, `wright resolve`, `wright apply` |
 | `.wright.tar.zst` | `wright build` | `wright` |
 | `installed.db` | `wright` | `wright`, `wright resolve` |
 | `archives.db` | `wright build` | `wright build`, `wright`, `wright apply` |
+

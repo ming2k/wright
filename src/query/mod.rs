@@ -3,7 +3,7 @@
 use crate::error::{Result, WrightError};
 use rusqlite::params;
 
-use crate::database::{Database, DepType};
+use crate::database::{DepType, InstalledDb};
 
 use owo_colors::OwoColorize;
 
@@ -120,7 +120,7 @@ fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Resul
 
 /// Render the forward dependency tree for a part into a writer.
 pub fn write_dep_tree(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     opts: &TreeOptions,
     out: &mut dyn std::io::Write,
@@ -149,7 +149,7 @@ pub fn write_dep_tree(
 
 #[allow(clippy::too_many_arguments)]
 fn write_dep_tree_inner(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
@@ -323,7 +323,7 @@ fn write_line_prefix(
 
 /// Render the reverse dependency tree for a part into a writer.
 pub fn write_reverse_dep_tree(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     opts: &TreeOptions,
     out: &mut dyn std::io::Write,
@@ -352,7 +352,7 @@ pub fn write_reverse_dep_tree(
 
 #[allow(clippy::too_many_arguments)]
 fn write_reverse_dep_tree_inner(
-    db: &Database,
+    db: &InstalledDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
@@ -463,7 +463,7 @@ fn write_reverse_dep_tree_inner(
 
 /// Render the full system dependency tree into a writer.
 pub fn write_system_tree(
-    db: &Database,
+    db: &InstalledDb,
     opts: &TreeOptions,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
@@ -520,7 +520,7 @@ pub fn write_system_tree(
 // ─── health-check functions (unchanged) ──────────────────────────────────────
 
 /// Check all installed parts for broken dependencies.
-pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
+pub fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
     let all_parts = db.list_parts()?;
     let mut broken = Vec::new();
 
@@ -544,7 +544,7 @@ pub fn check_dependencies(db: &Database) -> Result<Vec<String>> {
 }
 
 /// Check for circular dependencies in the installed database.
-pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
+pub fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
     let all_parts = db.list_parts()?;
     let mut issues = Vec::new();
 
@@ -563,7 +563,7 @@ pub fn check_circular_dependencies(db: &Database) -> Result<Vec<String>> {
 }
 
 /// Check if multiple parts claim ownership of the same file.
-pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
+pub fn check_file_ownership_conflicts(db: &InstalledDb) -> Result<Vec<String>> {
     let mut stmt = db.connection().prepare(
         "SELECT path, COUNT(part_id) as count FROM files
          WHERE file_type != 'dir'
@@ -598,6 +598,6 @@ pub fn check_file_ownership_conflicts(db: &Database) -> Result<Vec<String>> {
 }
 
 /// Get recorded shadowed file information.
-pub fn check_shadowed_files(db: &Database) -> Result<Vec<String>> {
+pub fn check_shadowed_files(db: &InstalledDb) -> Result<Vec<String>> {
     db.get_shadowed_conflicts()
 }

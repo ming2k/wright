@@ -27,16 +27,20 @@ pub struct GeneralConfig {
     pub parts_dir: PathBuf,
     #[serde(default = "default_source_dir")]
     pub source_dir: PathBuf,
-    #[serde(default = "default_db_path")]
-    pub db_path: PathBuf,
+    #[serde(default = "default_installed_db_path", alias = "db_path")]
+    pub installed_db_path: PathBuf,
     #[serde(default = "default_log_dir")]
     pub log_dir: PathBuf,
     #[serde(default = "default_executors_dir")]
     pub executors_dir: PathBuf,
     #[serde(default = "default_assemblies_dir")]
     pub assemblies_dir: PathBuf,
-    #[serde(default = "default_inventory_db_path", alias = "repo_db_path")]
-    pub inventory_db_path: PathBuf,
+    #[serde(
+        default = "default_archive_db_path",
+        alias = "archive_db_path",
+        alias = "repo_db_path"
+    )]
+    pub archive_db_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -114,7 +118,7 @@ fn default_general() -> GeneralConfig {
         // by default so `wright resolve ... | sudo wright build ...` consult the
         // same installation state. Per-user overrides can still point db_path
         // elsewhere explicitly.
-        db_path: default_db_path(),
+        installed_db_path: default_installed_db_path(),
         log_dir: if use_xdg {
             get_xdg_state().unwrap_or_else(default_log_dir)
         } else {
@@ -122,7 +126,7 @@ fn default_general() -> GeneralConfig {
         },
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
-        inventory_db_path: default_inventory_db_path(),
+        archive_db_path: default_archive_db_path(),
     }
 }
 
@@ -179,7 +183,7 @@ fn default_parts_dir() -> PathBuf {
 fn default_source_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/sources")
 }
-fn default_db_path() -> PathBuf {
+fn default_installed_db_path() -> PathBuf {
     PathBuf::from("/var/lib/wright/state/installed.db")
 }
 fn default_log_dir() -> PathBuf {
@@ -191,7 +195,7 @@ fn default_executors_dir() -> PathBuf {
 fn default_assemblies_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/assemblies")
 }
-fn default_inventory_db_path() -> PathBuf {
+fn default_archive_db_path() -> PathBuf {
     PathBuf::from("/var/lib/wright/state/archives.db")
 }
 fn default_build_dir() -> PathBuf {
@@ -362,16 +366,16 @@ impl GlobalConfig {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{default_db_path, default_inventory_db_path};
+    use super::{default_archive_db_path, default_installed_db_path};
 
     #[test]
     fn new_default_db_path_names_are_installed_and_archives() {
         assert_eq!(
-            default_db_path(),
+            default_installed_db_path(),
             PathBuf::from("/var/lib/wright/state/installed.db")
         );
         assert_eq!(
-            default_inventory_db_path(),
+            default_archive_db_path(),
             PathBuf::from("/var/lib/wright/state/archives.db")
         );
     }
