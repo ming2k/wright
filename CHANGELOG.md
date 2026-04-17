@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-04-17
+
+### Fixed
+- **Local Dependency Resolution**: Fixed an issue where `wright apply` failed to resolve dependencies that were located in the current working directory. The local resolver now consistently includes the current directory in its search paths for both plans and parts.
+
 ## [2.3.2] - 2026-04-17
 
 ### Fixed
