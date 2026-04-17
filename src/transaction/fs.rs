@@ -97,6 +97,13 @@ fn move_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
     match std::fs::rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            // If the destination exists, we MUST remove it first because
+            // if it's a busy executable, std::fs::copy (which opens for writing)
+            // will fail with ETXTBSY. Unlinking it removes the name from
+            // the directory, allowing a new file to be created at that name.
+            if dst.exists() || dst.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(dst);
+            }
             std::fs::copy(src, dst)?;
             let _ = std::fs::remove_file(src);
             Ok(())

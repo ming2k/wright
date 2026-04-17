@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-04-17
+
+### Fixed
+- **ETXTBSY on cross-device installs**: Added an explicit `unlink` before `copy` when falling back to cross-device file installation. This prevents "Text file busy" errors when updating a running executable (like `bash`) where the staging and target directories are on different filesystems.
+
 ## [2.3.1] - 2026-04-15
 
 ### Changed
