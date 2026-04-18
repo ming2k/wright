@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use tracing::warn;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 /// Track files that have been copied during installation for rollback.
 pub struct RollbackState {
@@ -18,11 +19,13 @@ pub struct RollbackState {
     journal_path: Option<PathBuf>,
 }
 
-// Journal line format uses tab as delimiter (tabs cannot appear in Unix paths).
-// FILE_CREATED\t<path>
-// DIR_CREATED\t<path>
-// BACKUP\t<original>\t<backup>
-const DELIM: char = '\t';
+#[derive(Serialize, Deserialize)]
+enum JournalEntry {
+    FileCreated { path: PathBuf },
+    DirCreated { path: PathBuf },
+    Backup { original: PathBuf, backup: PathBuf },
+    SymlinkBackup { original: PathBuf, target: String },
+}
 
 impl Default for RollbackState {
     fn default() -> Self {
@@ -61,42 +64,14 @@ impl RollbackState {
         }
     }
 
-    fn escape_field(value: &str) -> String {
-        value
-            .replace('\\', "\\\\")
-            .replace('\t', "\\t")
-            .replace('\n', "\\n")
-    }
-
-    fn unescape_field(value: &str) -> String {
-        let mut out = String::new();
-        let mut chars = value.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('t') => out.push('\t'),
-                    Some('n') => out.push('\n'),
-                    Some('\\') => out.push('\\'),
-                    Some(other) => {
-                        out.push('\\');
-                        out.push(other);
-                    }
-                    None => out.push('\\'),
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
-
-    fn append_journal(&self, line: &str) {
+    fn append_journal(&self, entry: &JournalEntry) {
         if let Some(ref path) = self.journal_path {
             let result = (|| -> std::io::Result<()> {
                 let mut f = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(path)?;
+                let line = serde_json::to_string(entry)?;
                 writeln!(f, "{}", line)?;
                 f.sync_data()?;
                 Ok(())
@@ -108,42 +83,28 @@ impl RollbackState {
     }
 
     pub fn record_file_created(&mut self, path: PathBuf) {
-        self.append_journal(&format!(
-            "FILE_CREATED{}{}",
-            DELIM,
-            Self::escape_field(&path.to_string_lossy())
-        ));
+        self.append_journal(&JournalEntry::FileCreated { path: path.clone() });
         self.created_files.push(path);
     }
 
     pub fn record_dir_created(&mut self, path: PathBuf) {
-        self.append_journal(&format!(
-            "DIR_CREATED{}{}",
-            DELIM,
-            Self::escape_field(&path.to_string_lossy())
-        ));
+        self.append_journal(&JournalEntry::DirCreated { path: path.clone() });
         self.created_dirs.push(path);
     }
 
     pub fn record_backup(&mut self, original: PathBuf, backup: PathBuf) {
-        self.append_journal(&format!(
-            "BACKUP{}{}{}{}",
-            DELIM,
-            Self::escape_field(&original.to_string_lossy()),
-            DELIM,
-            Self::escape_field(&backup.to_string_lossy())
-        ));
+        self.append_journal(&JournalEntry::Backup {
+            original: original.clone(),
+            backup: backup.clone(),
+        });
         self.backups.insert(original, backup);
     }
 
     pub fn record_symlink_backup(&mut self, original: PathBuf, target: String) {
-        self.append_journal(&format!(
-            "SYMLINK_BACKUP{}{}{}{}",
-            DELIM,
-            Self::escape_field(&original.to_string_lossy()),
-            DELIM,
-            Self::escape_field(&target)
-        ));
+        self.append_journal(&JournalEntry::SymlinkBackup {
+            original: original.clone(),
+            target: target.clone(),
+        });
         self.symlink_backups.insert(original, target);
     }
 
@@ -200,7 +161,6 @@ impl RollbackState {
 
         // Remove created directories (reverse order so children are removed first)
         for path in self.created_dirs.iter().rev() {
-            // remove_dir only removes empty dirs, so failure is expected if dir has other contents
             let _ = std::fs::remove_dir(path);
         }
     }
@@ -215,56 +175,48 @@ impl RollbackState {
             }
         };
 
-        let lines: Vec<&str> = content.lines().collect();
-
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         let mut restore_failures: usize = 0;
 
         // Process in reverse order
         for line in lines.iter().rev() {
-            let parts: Vec<&str> = line.splitn(3, DELIM).collect();
-            match parts.first().copied() {
-                Some("FILE_CREATED") if parts.len() == 2 => {
-                    let path = Self::unescape_field(parts[1]);
+            match serde_json::from_str::<JournalEntry>(line) {
+                Ok(JournalEntry::FileCreated { path }) => {
                     if let Err(e) = std::fs::remove_file(&path) {
-                        warn!("Journal replay: failed to remove file {}: {}", parts[1], e);
+                        warn!("Journal replay: failed to remove file {}: {}", path.display(), e);
                     }
                 }
-                Some("DIR_CREATED") if parts.len() == 2 => {
-                    let path = Self::unescape_field(parts[1]);
+                Ok(JournalEntry::DirCreated { path }) => {
                     let _ = std::fs::remove_dir(&path);
                 }
-                Some("BACKUP") if parts.len() == 3 => {
-                    let original = Self::unescape_field(parts[1]);
-                    let backup = Self::unescape_field(parts[2]);
+                Ok(JournalEntry::Backup { original, backup }) => {
                     let _ = std::fs::remove_file(&original);
                     match std::fs::copy(&backup, &original) {
                         Ok(_) => {
                             let _ = std::fs::remove_file(&backup);
                         }
                         Err(e) => {
-                            tracing::debug!(
+                            debug!(
                                 "Journal replay: Failed to restore {} from {}: {}",
-                                original,
-                                backup,
+                                original.display(),
+                                backup.display(),
                                 e
                             );
                             restore_failures += 1;
                         }
                     }
                 }
-                Some("SYMLINK_BACKUP") if parts.len() == 3 => {
-                    let original = Self::unescape_field(parts[1]);
-                    let target = Self::unescape_field(parts[2]);
+                Ok(JournalEntry::SymlinkBackup { original, target }) => {
                     let _ = std::fs::remove_file(&original);
                     if let Err(e) = std::os::unix::fs::symlink(&target, &original) {
                         warn!(
                             "Journal replay: failed to restore symlink {} -> {}: {}",
-                            original, target, e
+                            original.display(), target, e
                         );
                     }
                 }
-                _ => {
-                    warn!("Journal replay: unrecognized line: {}", line);
+                Err(e) => {
+                    warn!("Journal replay: failed to parse line: {} - {}", line, e);
                 }
             }
         }
@@ -278,8 +230,9 @@ impl RollbackState {
 
         if let Err(e) = std::fs::remove_file(path) {
             warn!("Failed to remove replayed journal: {}", e);
+        } else {
+            warn!("Rollback journal replayed and removed");
         }
-        warn!("Rollback journal replayed and removed");
     }
 }
 
@@ -294,7 +247,6 @@ mod tests {
         let root = dir.path().join("root");
         std::fs::create_dir_all(&root).unwrap();
 
-        // Create a file with a colon in the name
         let colon_file = root.join("my:file.txt");
         std::fs::write(&colon_file, b"hello").unwrap();
 
@@ -303,12 +255,10 @@ mod tests {
             state.record_file_created(colon_file.clone());
         }
 
-        // Journal should exist and be parseable
         assert!(journal.exists());
         let content = std::fs::read_to_string(&journal).unwrap();
-        assert!(content.contains("FILE_CREATED\t"));
+        assert!(content.contains("FileCreated"));
 
-        // Replay should remove the file
         RollbackState::replay_journal(&journal);
         assert!(!colon_file.exists());
         assert!(!journal.exists());
@@ -324,7 +274,6 @@ mod tests {
         std::fs::write(&original, b"original").unwrap();
         std::fs::write(&backup, b"backup-content").unwrap();
 
-        // Tamper original to simulate upgrade
         std::fs::write(&original, b"tampered").unwrap();
 
         {
@@ -332,7 +281,6 @@ mod tests {
             state.record_backup(original.clone(), backup.clone());
         }
 
-        // Replay should restore original from backup
         RollbackState::replay_journal(&journal);
         assert_eq!(
             std::fs::read_to_string(&original).unwrap(),

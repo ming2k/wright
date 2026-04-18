@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-04-19
+
+### Changed
+- **Architecture**: Split the monolithic `system.rs` command handler into a modular `system/` directory with dedicated submodules (`apply`, `install`, `list`, `doctor`).
+- **Configuration**: Migrated to `figment` for configuration parsing, enabling robust multi-layer TOML merging and support for environment variable overrides (`WRIGHT_*`).
+- **Transactions**: Redesigned the rollback journal format to use robust JSON Lines (`serde_json`), eliminating fragile manual escaping logic and improving resilience against special characters in filenames.
+- **Transactions**: Extracted DAG (Directed Acyclic Graph) dependency sorting into an isolated `transaction::dag` module.
+- **Testing**: Introduced the `TestPartBuilder` builder pattern for generating unit test fixtures, significantly improving test readability and maintainability.
+
+
 ## [2.3.3] - 2026-04-17
 
 ### Fixed

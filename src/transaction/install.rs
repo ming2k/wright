@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::archive::resolver::{LocalResolver, ResolvedPart};
+use crate::archive::resolver::LocalResolver;
 use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart, Origin};
 use crate::error::{Result, WrightError};
 use crate::part::part;
@@ -115,19 +115,7 @@ pub fn install_parts_with_explicit_targets(
         }
     }
 
-    let mut sorted_names = Vec::new();
-    let mut visited = HashSet::new();
-    let mut visiting = HashSet::new();
-
-    for name in resolved_map.keys() {
-        visit_resolved(
-            name,
-            &resolved_map,
-            &mut visited,
-            &mut visiting,
-            &mut sorted_names,
-        )?;
-    }
+    let sorted_names = crate::transaction::dag::sort_dependencies(&resolved_map)?;
 
     let mut archive_hashes: HashMap<String, String> = HashMap::new();
 
@@ -166,42 +154,6 @@ pub fn install_parts_with_explicit_targets(
         info!("Installing part {} (origin: {})", name, origin);
         install_part_with_origin(db, &pkg.path, root_dir, force, origin, true)?;
     }
-
-    Ok(())
-}
-
-fn visit_resolved(
-    name: &str,
-    map: &HashMap<String, ResolvedPart>,
-    visited: &mut HashSet<String>,
-    visiting: &mut HashSet<String>,
-    sorted: &mut Vec<String>,
-) -> Result<()> {
-    if visited.contains(name) {
-        return Ok(());
-    }
-    if visiting.contains(name) {
-        return Err(WrightError::DependencyError(format!(
-            "circular dependency: {}",
-            name
-        )));
-    }
-
-    visiting.insert(name.to_string());
-
-    if let Some(pkg) = map.get(name) {
-        for dep in &pkg.dependencies {
-            let (dep_name, _) =
-                version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
-            if map.contains_key(&dep_name) {
-                visit_resolved(&dep_name, map, visited, visiting, sorted)?;
-            }
-        }
-    }
-
-    visiting.remove(name);
-    visited.insert(name.to_string());
-    sorted.push(name.to_string());
 
     Ok(())
 }

@@ -1,9 +1,10 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use figment::{Figment, providers::{Format, Toml, Env}};
 
 use crate::error::{Result, WrightError};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GlobalConfig {
     #[serde(default = "default_general")]
     pub general: GeneralConfig,
@@ -13,7 +14,7 @@ pub struct GlobalConfig {
     pub network: NetworkConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GeneralConfig {
     #[serde(default = "default_arch")]
     pub arch: String,
@@ -43,7 +44,7 @@ pub struct GeneralConfig {
     pub archive_db_path: PathBuf,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     #[serde(default = "default_build_dir")]
@@ -70,7 +71,7 @@ pub struct BuildConfig {
     pub max_cpus: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NetworkConfig {
     #[serde(default = "default_timeout")]
     pub download_timeout: u64,
@@ -271,35 +272,6 @@ impl AssembliesConfig {
     }
 }
 
-/// Recursively merge two TOML values. For tables, overlay keys win;
-/// missing keys are inherited from base. All other types (scalars, arrays)
-/// are replaced wholesale by the overlay value.
-fn merge_toml(base: toml::Value, overlay: toml::Value) -> toml::Value {
-    use toml::Value;
-    match (base, overlay) {
-        (Value::Table(mut base_map), Value::Table(overlay_map)) => {
-            for (k, v) in overlay_map {
-                let merged = if let Some(base_v) = base_map.remove(&k) {
-                    merge_toml(base_v, v)
-                } else {
-                    v
-                };
-                base_map.insert(k, merged);
-            }
-            Value::Table(base_map)
-        }
-        // Scalars and arrays: overlay wins unconditionally
-        (_, overlay) => overlay,
-    }
-}
-
-fn load_toml_file(path: &Path) -> Result<toml::Value> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
-    })?;
-    Ok(toml::from_str(&content)?)
-}
-
 impl GlobalConfig {
     /// Load configuration with layered merging.
     ///
@@ -313,52 +285,29 @@ impl GlobalConfig {
     ///   1. `/etc/wright/wright.toml`          (system-wide, lowest priority)
     ///   2. `$XDG_CONFIG_HOME/wright/wright.toml` (per-user, non-root only)
     ///   3. `./wright.toml`                    (project-local, highest priority)
-    ///
-    /// Any layer that does not exist is silently skipped. If no file is found
-    /// at any location, built-in defaults are used.
+    ///   4. WRIGHT_* env vars
     pub fn load(path: Option<&Path>) -> Result<Self> {
-        // Explicit path: single-file load, no layering.
+        use figment::providers::Serialized;
+        let mut figment = Figment::from(Serialized::defaults(GlobalConfig::default()));
+
         if let Some(p) = path {
-            let config_path = PathBuf::from(p);
-            if !config_path.exists() {
-                return Ok(Self::default());
+            figment = figment.merge(Toml::file(p));
+        } else {
+            figment = figment.merge(Toml::file("/etc/wright/wright.toml"));
+            
+            if let Some(xdg) = get_xdg_config() {
+                figment = figment.merge(Toml::file(xdg));
             }
-            return Ok(toml::from_str(
-                &std::fs::read_to_string(&config_path).map_err(|e| {
-                    WrightError::ConfigError(format!(
-                        "failed to read {}: {}",
-                        config_path.display(),
-                        e
-                    ))
-                })?,
-            )?);
+            
+            figment = figment.merge(Toml::file("./wright.toml"));
         }
+        
+        // Allow env var overrides, e.g., WRIGHT_BUILD_DIR
+        figment = figment.merge(Env::prefixed("WRIGHT_").split("_"));
 
-        // Layered load: accumulate from lowest to highest priority.
-        let mut layers: Vec<PathBuf> = vec![PathBuf::from("/etc/wright/wright.toml")];
-        if let Some(xdg) = get_xdg_config() {
-            layers.push(xdg);
-        }
-        layers.push(PathBuf::from("./wright.toml"));
-
-        let mut merged: Option<toml::Value> = None;
-        for layer_path in &layers {
-            if layer_path.exists() {
-                let val = load_toml_file(layer_path)?;
-                merged = Some(match merged {
-                    Some(base) => merge_toml(base, val),
-                    None => val,
-                });
-            }
-        }
-
-        match merged {
-            None => Ok(Self::default()),
-            Some(val) => {
-                use serde::Deserialize;
-                Ok(GlobalConfig::deserialize(val)?)
-            }
-        }
+        figment.extract().map_err(|e| {
+            WrightError::ConfigError(format!("Failed to load config: {}", e))
+        })
     }
 }
 

@@ -98,6 +98,105 @@ mod tests {
 
     use std::collections::HashSet;
 
+    
+    pub struct TestPartBuilder {
+        name: String,
+        version: String,
+        release: u32,
+        files: Vec<(String, Vec<u8>)>,
+        runtime_deps: Vec<String>,
+        backup_files: Vec<String>,
+    }
+
+    impl TestPartBuilder {
+        pub fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                version: "1.0.0".to_string(),
+                release: 1,
+                files: Vec::new(),
+                runtime_deps: Vec::new(),
+                backup_files: Vec::new(),
+            }
+        }
+
+        pub fn version(mut self, version: &str) -> Self {
+            self.version = version.to_string();
+            self
+        }
+
+        pub fn release(mut self, release: u32) -> Self {
+            self.release = release;
+            self
+        }
+
+        pub fn file(mut self, path: &str, content: &[u8]) -> Self {
+            self.files.push((path.to_string(), content.to_vec()));
+            self
+        }
+
+        pub fn dep(mut self, dep: &str) -> Self {
+            self.runtime_deps.push(dep.to_string());
+            self
+        }
+
+        pub fn backup(mut self, file: &str) -> Self {
+            self.backup_files.push(file.to_string());
+            self
+        }
+
+        pub fn build(self, out_dir: &Path) -> PathBuf {
+            let pkg_dir = tempfile::tempdir().unwrap();
+            for (rel, data) in &self.files {
+                let path = pkg_dir.path().join(rel);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                std::fs::write(&path, data).unwrap();
+            }
+
+            let deps_section = if self.runtime_deps.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n[dependencies]\nruntime = [{}]\n",
+                    self.runtime_deps
+                        .iter()
+                        .map(|dep| format!("\"{}\"", dep))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+
+            let backup_section = if self.backup_files.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n[backup]\nfiles = [{}]\n",
+                    self.backup_files
+                        .iter()
+                        .map(|file| format!("\"{}\"", file))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+
+            let pkginfo = format!(
+                "[part]\nname = \"{name}\"\nversion = \"{version}\"\nrelease = {release}\n                 description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n                 install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{deps}{backup}",
+                name = self.name,
+                version = self.version,
+                release = self.release,
+                deps = deps_section,
+                backup = backup_section,
+            );
+            std::fs::write(pkg_dir.path().join(".PARTINFO"), pkginfo).unwrap();
+
+            let part_path = out_dir.join(format!("{}-{}-{}.wright.tar.zst", self.name, self.version, self.release));
+            compress::create_tar_zst(pkg_dir.path(), &part_path).unwrap();
+            part_path
+        }
+    }
+
     fn setup_test() -> (InstalledDb, TempDir) {
         let db = InstalledDb::open_in_memory().unwrap();
         let root = tempfile::tempdir().unwrap();
@@ -599,12 +698,7 @@ build_date = "1970-01-01T00:00:00Z"
         .unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
-        let part = build_minimal_part(
-            "pkgA",
-            "2.0.0",
-            1,
-            &[("usr/bin/newtool", b"new")],
-            out_dir.path(),
+        let part = TestPartBuilder::new("pkgA").version("2.0.0").release(1).file("usr/bin/newtool", b"new").build(out_dir.path(),
         );
 
         upgrade_part(&db, &part, root.path(), false, true).unwrap();
@@ -626,12 +720,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::write(&bad_parent, b"not a dir").unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
-        let part = build_minimal_part(
-            "broken",
-            "1.0.0",
-            1,
-            &[("usr/bin/ok", b"new"), ("usr/share/conf", b"oops")],
-            out_dir.path(),
+        let part = TestPartBuilder::new("broken").version("1.0.0").release(1).file("usr/bin/ok", b"new").file("usr/share/conf", b"oops").build(out_dir.path(),
         );
 
         let result = install_part(&db, &part, root.path(), false);
@@ -678,12 +767,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::write(&bad_parent, b"not a dir").unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
-        let part = build_minimal_part(
-            "linkpkg",
-            "2.0.0",
-            1,
-            &[("usr/bin/a_link", b""), ("usr/z/conf", b"oops")],
-            out_dir.path(),
+        let part = TestPartBuilder::new("linkpkg").version("2.0.0").release(1).file("usr/bin/a_link", b"").file("usr/z/conf", b"oops").build(out_dir.path(),
         );
 
         let temp_unpack = tempfile::tempdir().unwrap();
@@ -708,21 +792,9 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let out_dir = tempfile::tempdir().unwrap();
 
-        let lib_part = build_part_with_runtime_deps(
-            "libfoo",
-            "1.0.0",
-            1,
-            &[],
-            &[("usr/lib/libfoo.so", b"libfoo")],
-            out_dir.path(),
+        let lib_part = TestPartBuilder::new("libfoo").version("1.0.0").release(1).file("usr/lib/libfoo.so", b"libfoo").build(out_dir.path(),
         );
-        let app_part = build_part_with_runtime_deps(
-            "app",
-            "1.0.0",
-            1,
-            &["libfoo"],
-            &[("usr/bin/app", b"app")],
-            out_dir.path(),
+        let app_part = TestPartBuilder::new("app").version("1.0.0").release(1).dep("libfoo").file("usr/bin/app", b"app").build(out_dir.path(),
         );
 
         let mut resolver = crate::archive::resolver::LocalResolver::new();
@@ -751,21 +823,11 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let out_dir = tempfile::tempdir().unwrap();
 
-        let first = build_minimal_part(
-            "samepkg",
-            "1.0.0",
-            1,
-            &[("usr/bin/samepkg", b"old")],
-            out_dir.path(),
+        let first = TestPartBuilder::new("samepkg").version("1.0.0").release(1).file("usr/bin/samepkg", b"old").build(out_dir.path(),
         );
         install_part(&db, &first, root.path(), false).unwrap();
 
-        let second = build_minimal_part(
-            "samepkg",
-            "1.0.0",
-            1,
-            &[("usr/bin/samepkg", b"new")],
-            out_dir.path(),
+        let second = TestPartBuilder::new("samepkg").version("1.0.0").release(1).file("usr/bin/samepkg", b"new").build(out_dir.path(),
         );
 
         let mut resolver = crate::archive::resolver::LocalResolver::new();
@@ -1000,3 +1062,4 @@ build_date = "1970-01-01T00:00:00Z"
         );
     }
 }
+pub mod dag;
