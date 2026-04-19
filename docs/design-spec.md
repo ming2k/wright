@@ -69,4 +69,39 @@ available for reuse or installation.
 - assemblies are the only built-in grouping abstraction
 - published binary distribution is out of scope for the default architecture
 
+## No Magic Behavior
+
+Wright does not perform implicit actions on behalf of the plan author. If the
+tool does something, it must be because the plan explicitly asked for it.
+
+Wright targets LFS-based distributions where the user base consists of power
+users who understand what they are doing and expect predictable, auditable
+behavior. Implicit automation that is convenient for casual users is a poor
+trade-off here: it hides intent, makes plans harder to read, and introduces
+edge cases that require even more implicit rules to handle.
+
+**Concrete example — patch application.** A plan that needs to apply patches
+declares them as `[[sources]]` entries (so they are fetched and verified like
+any other source) and applies them explicitly in the `prepare` script:
+
+```toml
+[[sources]]
+uri = "patches/fix-headers.patch"
+sha256 = "SKIP"
+```
+
+```sh
+# prepare
+patch -p1 < "${WRIGHT_SRC_DIR}/fix-headers.patch"
+```
+
+Wright will never auto-detect `.patch` files and apply them silently. That
+would hide the strip level, application order, and any conditional logic from
+the reader. Two lines of shell are clearer and more flexible than any implicit
+convention.
+
+When evaluating a feature request, ask: does this save meaningful work, or
+does it only save the user from writing something explicit and readable? If the
+latter, prefer keeping behavior explicit.
+
 For command details and current examples, use the rest of `docs/`.
