@@ -17,11 +17,13 @@ use super::{
 use crate::error::{Result, WrightError};
 
 /// Create a stream reader that captures output to a temp file, optionally
-/// echoing to the terminal. Returns a [`CapturedOutput`] with the tail in
-/// memory and the full content on disk.
+/// echoing to the terminal and/or teeing to a log file in real time.
+/// Returns a [`CapturedOutput`] with the tail in memory and the full content
+/// on disk.
 fn make_stream_capture<R: std::io::Read + Send + 'static>(
     source: R,
     verbose: bool,
+    log_sink: Option<std::fs::File>,
 ) -> std::thread::JoinHandle<CapturedOutput> {
     let dest = tempfile::tempfile().expect("failed to create capture temp file");
     let echo: Option<Box<dyn std::io::Write + Send>> = if verbose {
@@ -29,7 +31,9 @@ fn make_stream_capture<R: std::io::Read + Send + 'static>(
     } else {
         None
     };
-    spawn_stream_reader(source, echo, dest)
+    let log_to: Option<Box<dyn std::io::Write + Send>> =
+        log_sink.map(|f| Box::new(f) as Box<dyn std::io::Write + Send>);
+    spawn_stream_reader(source, echo, log_to, dest)
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -153,7 +157,7 @@ fn cleanup_dockyard_dirs(config: &DockyardConfig) {
 /// Mount setup and pivot_root are done in the grandchild so that /proc
 /// can be mounted before pivot_root changes the filesystem root.
 pub fn run_in_dockyard(
-    config: &DockyardConfig,
+    config: &mut DockyardConfig,
     command: &str,
     args: &[String],
 ) -> Result<DockyardOutput> {
@@ -194,8 +198,10 @@ pub fn run_in_dockyard(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose);
-        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose);
+        let stdout_handle =
+            make_stream_capture(child.stdout.take().unwrap(), config.verbose, config.log_stdout.take());
+        let stderr_handle =
+            make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
         let status = child
             .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
@@ -281,8 +287,10 @@ pub fn run_in_dockyard(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle = make_stream_capture(child.stdout.take().unwrap(), config.verbose);
-        let stderr_handle = make_stream_capture(child.stderr.take().unwrap(), config.verbose);
+        let stdout_handle =
+            make_stream_capture(child.stdout.take().unwrap(), config.verbose, config.log_stdout.take());
+        let stderr_handle =
+            make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
         let status = child
             .wait()
             .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
@@ -814,8 +822,8 @@ pub fn run_in_dockyard(
                 .timeout_secs
                 .map(|t| spawn_timeout_watchdog(child.as_raw() as u32, t, false));
 
-            let stdout_handle = make_stream_capture(out_file, config.verbose);
-            let stderr_handle = make_stream_capture(err_file, config.verbose);
+            let stdout_handle = make_stream_capture(out_file, config.verbose, config.log_stdout.take());
+            let stderr_handle = make_stream_capture(err_file, config.verbose, config.log_stderr.take());
 
             let status = wait_for_child(child)?;
             if let Some(done) = watchdog {

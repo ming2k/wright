@@ -406,7 +406,7 @@ impl Builder {
 
                 debug!("Running fabricate stage for sub-part: {}", sub_name);
 
-                let sub_options = executor::ExecutorOptions {
+                let mut sub_options = executor::ExecutorOptions {
                     level: sub_pkg.dockyard.parse().unwrap(),
                     base_root: base_root.to_path_buf(),
                     src_dir: src_dir.clone(),
@@ -420,6 +420,7 @@ impl Builder {
                     main_part_dir: Some(pkg_dir.clone()),
                     verbose,
                     cpu_count: Some(cpu_count),
+                    log_stdout: None,
                 };
 
                 let sub_executor = self.executors.get(&sub_pkg.executor).ok_or_else(|| {
@@ -432,7 +433,7 @@ impl Builder {
                     &src_dir,
                     &sub_pkg.env,
                     &sub_vars,
-                    &sub_options,
+                    &mut sub_options,
                 )?;
 
                 // Write log — stream from captured temp files

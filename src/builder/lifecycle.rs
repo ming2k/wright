@@ -245,7 +245,25 @@ impl<'a> LifecyclePipeline<'a> {
             WrightError::BuildError(format!("executor not found: {}", stage.executor))
         })?;
 
-        let options = ExecutorOptions {
+        let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
+        let log_path = self.log_dir.join(format!("{}.log", stage_name));
+
+        // Open the log file before execution and write the header so that
+        // stdout content is streamed into it in real time (tail -f ready).
+        let stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
+            use std::io::Write;
+            let ok = write!(
+                f,
+                "=== Stage: {} ===\n=== Working dir: {} ===\n\n--- script ---\n{}\n\n--- stdout ---\n",
+                stage_name,
+                self.working_dir.display(),
+                expanded_script.trim()
+            )
+            .is_ok();
+            if ok { Some(f) } else { None }
+        });
+
+        let mut options = ExecutorOptions {
             level: dockyard_level,
             base_root: self.base_root.clone(),
             src_dir: self.src_dir.clone(),
@@ -255,6 +273,7 @@ impl<'a> LifecyclePipeline<'a> {
             main_part_dir: None,
             verbose: self.verbose,
             cpu_count: self.cpu_count.get(),
+            log_stdout: stdout_log_file,
         };
 
         let t0 = std::time::Instant::now();
@@ -268,27 +287,21 @@ impl<'a> LifecyclePipeline<'a> {
             self.working_dir,
             &stage.env,
             &self.vars,
-            &options,
+            &mut options,
         )?;
         let elapsed = t0.elapsed().as_secs_f64();
 
-        // Write logs — stream from captured temp files to avoid holding
-        // full output in memory.
-        let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
-        let log_path = self.log_dir.join(format!("{}.log", stage_name));
-        if let Ok(mut log_file) = std::fs::File::create(&log_path) {
+        // Append stderr section and footer. Stdout was already streamed into
+        // the log file in real time; we just need to add what's missing.
+        if let Ok(mut log_file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
             use std::io::Write;
-            let _ = write!(
-                log_file,
-                "=== Stage: {} ===\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n=== Working dir: {} ===\n\n--- script ---\n{}\n",
-                stage_name, result.exit_code, elapsed, self.working_dir.display(),
-                expanded_script.trim()
-            );
-            let _ = log_file.write_all(b"--- stdout ---\n");
-            let _ = std::io::copy(&mut result.stdout.file, &mut log_file);
             let _ = log_file.write_all(b"\n--- stderr ---\n");
             let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
-            let _ = log_file.write_all(b"\n");
+            let _ = write!(
+                log_file,
+                "\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n",
+                result.exit_code, elapsed
+            );
         }
 
         if result.exit_code != 0 {

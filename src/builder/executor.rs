@@ -104,7 +104,7 @@ struct ExecutorWrapper {
     executor: ExecutorConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ExecutorOptions {
     pub level: DockyardLevel,
     pub base_root: PathBuf,
@@ -118,6 +118,8 @@ pub struct ExecutorOptions {
     /// Number of CPUs to pin the sandboxed process to via sched_setaffinity.
     /// `nproc` inside the sandbox then returns this count naturally.
     pub cpu_count: Option<u32>,
+    /// When set, subprocess stdout is tee'd to this file in real time.
+    pub log_stdout: Option<std::fs::File>,
 }
 
 pub struct ExecutionResult {
@@ -133,7 +135,7 @@ pub fn execute_script(
     working_dir: &Path,
     env_vars: &HashMap<String, String>,
     vars: &HashMap<String, String>,
-    options: &ExecutorOptions,
+    options: &mut ExecutorOptions,
 ) -> Result<ExecutionResult> {
     // When running in a sandbox, remap path variables to sandbox mount points
     let effective_vars = if options.level != DockyardLevel::None {
@@ -196,6 +198,7 @@ pub fn execute_script(
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
     config.cpu_count = options.cpu_count;
+    config.log_stdout = options.log_stdout.take();
 
     // Mount main part dir for split part stages
     if let Some(ref main_part) = options.main_part_dir {
@@ -265,7 +268,7 @@ pub fn execute_script(
     }
 
     // Execute in dockyard
-    let output = run_in_dockyard(&config, &executor.command, &args)?;
+    let output = run_in_dockyard(&mut config, &executor.command, &args)?;
 
     let exit_code = output.status.code().unwrap_or(-1);
 

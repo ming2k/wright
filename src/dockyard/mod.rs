@@ -25,12 +25,14 @@ pub struct DockyardOutput {
 const TAIL_BYTES: u64 = 16384;
 
 /// Spawn a thread that reads from `source` in 8 KB chunks, streams to
-/// `dest` file, optionally echoes to the terminal, and keeps the last
-/// [`TAIL_BYTES`] for error display.  Returns a [`CapturedOutput`] with the
-/// file seeked to the beginning ready for the caller to read.
+/// `dest` file, optionally echoes to the terminal and/or a log sink, and
+/// keeps the last [`TAIL_BYTES`] for error display.  Returns a
+/// [`CapturedOutput`] with the file seeked to the beginning ready for the
+/// caller to read.
 pub fn spawn_stream_reader<R: Read + Send + 'static>(
     source: R,
     mut echo_to: Option<Box<dyn Write + Send>>,
+    mut log_to: Option<Box<dyn Write + Send>>,
     mut dest: std::fs::File,
 ) -> std::thread::JoinHandle<CapturedOutput> {
     std::thread::spawn(move || {
@@ -43,6 +45,10 @@ pub fn spawn_stream_reader<R: Read + Send + 'static>(
                 Ok(n) => {
                     let _ = dest.write_all(&buf[..n]);
                     if let Some(ref mut w) = echo_to {
+                        let _ = w.write_all(&buf[..n]);
+                        let _ = w.flush();
+                    }
+                    if let Some(ref mut w) = log_to {
                         let _ = w.write_all(&buf[..n]);
                         let _ = w.flush();
                     }
@@ -118,6 +124,10 @@ pub struct DockyardConfig {
     /// Tools like `nproc` will then return this count naturally without any
     /// env var injection. None means inherit the host's full CPU set.
     pub cpu_count: Option<u32>,
+    /// When set, subprocess stdout is tee'd to this file in real time.
+    pub log_stdout: Option<std::fs::File>,
+    /// When set, subprocess stderr is tee'd to this file in real time.
+    pub log_stderr: Option<std::fs::File>,
 }
 
 impl DockyardConfig {
@@ -134,13 +144,15 @@ impl DockyardConfig {
             rlimits: ResourceLimits::default(),
             verbose: false,
             cpu_count: None,
+            log_stdout: None,
+            log_stderr: None,
         }
     }
 }
 
 /// Run a command inside a dockyard using the native Linux namespace implementation.
 pub fn run_in_dockyard(
-    config: &DockyardConfig,
+    config: &mut DockyardConfig,
     command: &str,
     args: &[String],
 ) -> Result<DockyardOutput> {

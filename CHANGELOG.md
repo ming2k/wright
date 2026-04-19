@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-04-20
+
+### Changed
+- **Build logging**: Stage log files (e.g. `compile.log`) are now written in real time during execution. The log file is created before the stage starts and subprocess stdout is streamed into it immediately, making `tail -f <build_dir>/<name>-<version>/log/compile.log` usable while a build is in progress. Stderr and the exit code/duration footer are appended after the stage completes.
+
 ## [2.3.4] - 2026-04-19
 
 ### Changed
