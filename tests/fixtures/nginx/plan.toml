@@ -17,16 +17,17 @@ build = ["perl", "gcc", "make"]
 optional = ["geoip"]
 
 [[sources]]
-uri = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
+type = "http"
+url = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/fix-headers.patch"
 
 [[sources]]
-uri = "patches/add-feature.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/add-feature.patch"
 
 [options]
 static = false

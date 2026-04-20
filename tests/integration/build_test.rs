@@ -214,7 +214,7 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
         .unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
-    assert!(result.split_output_dirs["split-vars-doc"]
+    assert!(result.split_pkg_dirs["split-vars-doc"]
         .join("usr/share/doc/split-vars-doc")
         .exists());
 }
@@ -348,7 +348,7 @@ arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
 cache_dir = "{}"
-db_path = "{}"
+installed_db_path = "{}"
 archive_db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"

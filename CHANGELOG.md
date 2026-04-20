@@ -1,6 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [2.7.0] - 2026-04-20
+
+### Added
+- **Strongly-Typed Source Protocol**: Replaced untyped `[[sources]]` URIs with a structured, protocol-based format.
+    - New `type = "http"`, `type = "git"`, and `type = "local"` variants provide per-protocol parameter validation.
+    - Explicit `url`, `path`, `ref`, and `depth` fields replace the previous `git+https://...#ref` string parsing.
+    - Automated migration script provided in `tools/migrate_sources.py`.
+
+
+## [2.6.1] - 2026-04-20
+
+### Added
+- **Shallow Git Support**: Added `depth` field to `[[sources]]` for Git URIs, enabling faster downloads for large repositories.
+
+### Changed
+- **Git Performance Optimization**: 
+    - Switched local repository clones to use **hardlinks** (shared object databases). This reduces extraction time and disk usage for large Git sources (like LLVM) by several gigabytes and minutes.
+    - Improved fetch feedback with a dedicated \"indexing\" status to prevent appearing stuck during long post-download processing.
 
 ## [2.6.0] - 2026-04-20
 

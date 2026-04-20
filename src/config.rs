@@ -38,8 +38,8 @@ pub struct GeneralConfig {
     pub assemblies_dir: PathBuf,
     #[serde(
         default = "default_archive_db_path",
-        alias = "archive_db_path",
-        alias = "repo_db_path"
+        alias = "repo_db_path",
+        alias = "inventory_db_path"
     )]
     pub archive_db_path: PathBuf,
 }

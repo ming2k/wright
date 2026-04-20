@@ -241,7 +241,7 @@ mod tests {
 
         let output_dir = tempfile::tempdir().unwrap();
         let part =
-            crate::part::part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+            crate::part::part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
 
         let persistent = std::env::temp_dir().join(format!(
             "hello-test-{}-{}.wright.tar.zst",

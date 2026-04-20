@@ -14,7 +14,7 @@ use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
 use crate::isolation::ResourceLimits;
 use crate::error::{Result, WrightError};
-use crate::plan::manifest::{FabricateConfig, PlanManifest};
+use crate::plan::manifest::{FabricateConfig, PlanManifest, Source};
 use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {
@@ -29,16 +29,6 @@ pub struct Builder {
     executors: executor::ExecutorRegistry,
 }
 
-/// Check whether a URI is remote (http/https).
-fn is_remote_uri(uri: &str) -> bool {
-    uri.starts_with("http://") || uri.starts_with("https://") || uri.starts_with("git+")
-}
-
-/// Check whether a URI is a Git repository.
-fn is_git_uri(uri: &str) -> bool {
-    uri.starts_with("git+")
-}
-
 /// Compute the cache filename for a remote source URI.
 /// Prefixes with the part name to prevent collisions between plans/parts
 /// that use similarly-named upstream tarballs (e.g. GitHub archive v*.tar.gz).
@@ -47,16 +37,14 @@ fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
     sanitize_cache_filename(&format!("{}-{}", pkg_name, basename))
 }
 
-/// Compute a stable, collision-free cache directory name for a git URI.
+/// Compute a stable, collision-free cache directory name for a git URL.
 ///
 /// Uses `<stem>-<8-char hash>` where the hash is a short SHA256 of the
-/// bare URL (prefix and ref fragment stripped). Two repos that share the
-/// same last path segment but come from different remotes (e.g.
-/// `org-a/mylib.git` vs `org-b/mylib.git`) will therefore never collide.
-fn git_cache_dir_name(uri: &str) -> String {
+/// bare URL. Two repos that share the same last path segment but come
+/// from different remotes (e.g. `org-a/mylib.git` vs `org-b/mylib.git`)
+/// will therefore never collide.
+fn git_cache_dir_name(url: &str) -> String {
     use sha2::{Digest, Sha256};
-    let url = uri.strip_prefix("git+").unwrap_or(uri);
-    let url = url.split('#').next().unwrap_or(url);
     let last_segment = url.split('/').next_back().unwrap_or("repo");
     let stem = sanitize_cache_filename(last_segment.strip_suffix(".git").unwrap_or(last_segment));
     let mut h = Sha256::new();
@@ -136,10 +124,41 @@ impl Builder {
         hasher.update(manifest.plan.version.as_bytes());
         hasher.update(manifest.plan.release.to_string().as_bytes());
 
-        // 2. Hash source URIs and their expected hashes
+        // 2. Hash source configurations
         for source in &manifest.sources.entries {
-            hasher.update(source.uri.as_bytes());
-            hasher.update(source.sha256.as_bytes());
+            match source {
+                Source::Http(http) => {
+                    hasher.update(b"http");
+                    hasher.update(http.url.as_bytes());
+                    hasher.update(http.sha256.as_bytes());
+                    if let Some(ref r#as) = http.r#as {
+                        hasher.update(r#as.as_bytes());
+                    }
+                    if let Some(ref ext) = http.extract_to {
+                        hasher.update(ext.as_bytes());
+                    }
+                }
+                Source::Git(git) => {
+                    hasher.update(b"git");
+                    hasher.update(git.url.as_bytes());
+                    if let Some(ref r#ref) = git.r#ref {
+                        hasher.update(r#ref.as_bytes());
+                    }
+                    if let Some(depth) = git.depth {
+                        hasher.update(&depth.to_le_bytes());
+                    }
+                    if let Some(ref ext) = git.extract_to {
+                        hasher.update(ext.as_bytes());
+                    }
+                }
+                Source::Local(local) => {
+                    hasher.update(b"local");
+                    hasher.update(local.path.as_bytes());
+                    if let Some(ref ext) = local.extract_to {
+                        hasher.update(ext.as_bytes());
+                    }
+                }
+            }
         }
 
         // 3. Hash build instructions (lifecycle scripts)
@@ -475,19 +494,27 @@ impl Builder {
     }
 
     /// Verify integrity of downloaded sources.
-    /// Only verifies remote URIs (local paths use "SKIP").
+    /// Only verifies `http` sources; `git` and `local` are skipped.
     pub fn verify(&self, manifest: &PlanManifest) -> Result<()> {
         let cache_dir = &self.config.general.source_dir;
 
         for (i, source) in manifest.sources.entries.iter().enumerate() {
-            if source.sha256 == "SKIP" {
-                debug!("Skipping verification for source {}", i);
+            let http = match source {
+                Source::Http(h) => h,
+                _ => {
+                    debug!("Skipping verification for non-HTTP source {}", i);
+                    continue;
+                }
+            };
+
+            if http.sha256 == "SKIP" {
+                debug!("Skipping verification for HTTP source {} (SKIP)", i);
                 continue;
             }
 
-            let processed_uri = self.process_uri(&source.uri, manifest);
-            let filename = source.r#as.clone().unwrap_or_else(|| {
-                source_cache_filename(&manifest.plan.name, &processed_uri)
+            let processed_url = self.process_uri(&http.url, manifest);
+            let filename = http.r#as.clone().unwrap_or_else(|| {
+                source_cache_filename(&manifest.plan.name, &processed_url)
             });
             let path = cache_dir.join(&filename);
 
@@ -499,10 +526,10 @@ impl Builder {
             }
 
             let actual_hash = checksum::sha256_file(&path)?;
-            if actual_hash != source.sha256 {
+            if actual_hash != http.sha256 {
                 return Err(WrightError::ValidationError(format!(
                     "SHA256 mismatch for {}:\n  expected: {}\n  actual:   {}",
-                    filename, source.sha256, actual_hash
+                    filename, http.sha256, actual_hash
                 )));
             }
             debug!("Verified source: {}", filename);
@@ -517,132 +544,131 @@ impl Builder {
         let cache_dir = &self.config.general.source_dir;
 
         for source in &manifest.sources.entries {
-            let processed_uri = self.process_uri(&source.uri, manifest);
-            let final_dest = if let Some(ref sub) = source.extract_to {
-                let p = dest_dir.join(sub);
-                std::fs::create_dir_all(&p).map_err(WrightError::IoError)?;
-                p
-            } else {
-                dest_dir.to_path_buf()
-            };
+            match source {
+                Source::Git(git) => {
+                    let processed_url = self.process_uri(&git.url, manifest);
+                    let git_dir_name = git_cache_dir_name(&processed_url);
+                    let cache_path = cache_dir.join("git").join(&git_dir_name);
 
-            if is_git_uri(&processed_uri) {
-                let git_dir_name = git_cache_dir_name(&processed_uri);
-                let cache_path = cache_dir.join("git").join(&git_dir_name);
+                    let git_ref = git.r#ref.as_deref().unwrap_or("HEAD");
 
-                // Parse the ref
-                let git_ref = if let Some(pos) = processed_uri.find('#') {
-                    let r = processed_uri[pos + 1..].to_string();
-                    let parts: Vec<&str> = r.split('=').collect();
-                    if parts.len() == 2 {
-                        parts[1].to_string()
+                    let final_dest = if let Some(ref sub) = git.extract_to {
+                        let p = dest_dir.join(sub);
+                        std::fs::create_dir_all(&p).map_err(WrightError::IoError)?;
+                        p
                     } else {
-                        r
-                    }
-                } else {
-                    "HEAD".to_string()
-                };
+                        dest_dir.join(&git_dir_name)
+                    };
 
-                let target_dir = if source.extract_to.is_some() {
-                    final_dest.clone()
-                } else {
-                    dest_dir.join(&git_dir_name)
-                };
+                    debug!(
+                        "Extracting Git repo to {} (ref: {})...",
+                        final_dest.display(),
+                        git_ref
+                    );
 
-                debug!(
-                    "Extracting Git repo to {} (ref: {})...",
-                    target_dir.display(),
-                    git_ref
-                );
-
-                // Open the cached bare repo and clone it locally to the target_dir
-                let cache_str = cache_path.to_str().ok_or_else(|| {
-                    WrightError::BuildError(format!(
-                        "git cache path contains non-UTF-8 characters: {}",
-                        cache_path.display()
-                    ))
-                })?;
-                let repo = git2::Repository::clone(cache_str, &target_dir).map_err(|e| {
-                    WrightError::BuildError(format!("local git clone failed: {}", e))
-                })?;
-
-                // Resolve and checkout the specific ref
-                let (object, reference) = repo
-                    .revparse_ext(&git_ref)
-                    .or_else(|_| repo.revparse_ext(&format!("origin/{}", git_ref)))
-                    .map_err(|e| {
-                        WrightError::BuildError(format!("failed to resolve ref {}: {}", git_ref, e))
+                    let cache_str = cache_path.to_str().ok_or_else(|| {
+                        WrightError::BuildError(format!(
+                            "git cache path contains non-UTF-8 characters: {}",
+                            cache_path.display()
+                        ))
                     })?;
 
-                repo.checkout_tree(&object, None)
-                    .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
+                    let repo = git2::Repository::clone(cache_str, &final_dest).map_err(|e| {
+                        WrightError::BuildError(format!("local git clone failed: {}", e))
+                    })?;
 
-                match reference {
-                    Some(gref) => {
-                        let ref_name = gref.name().ok_or_else(|| {
-                            WrightError::BuildError("git reference name is non-UTF-8".to_string())
+                    // Resolve and checkout the specific ref
+                    let (object, reference) = repo
+                        .revparse_ext(git_ref)
+                        .or_else(|_| repo.revparse_ext(&format!("origin/{}", git_ref)))
+                        .map_err(|e| {
+                            WrightError::BuildError(format!("failed to resolve ref {}: {}", git_ref, e))
                         })?;
-                        repo.set_head(ref_name)
-                    }
-                    None => repo.set_head_detached(object.id()),
-                }
-                .map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
 
-                continue;
-            }
+                    repo.checkout_tree(&object, None)
+                        .map_err(|e| WrightError::BuildError(format!("git checkout failed: {}", e)))?;
 
-            let cache_filename = source.r#as.clone().unwrap_or_else(|| {
-                source_cache_filename(&manifest.plan.name, &processed_uri)
-            });
-            let path = cache_dir.join(&cache_filename);
-
-            if is_part_file(&cache_filename) {
-                debug!("Extracting {} to {}...", cache_filename, final_dest.display());
-                compress::extract_part(&path, &final_dest)?;
-
-                // Autoflatten: if the archive extracted into a single subdirectory,
-                // move its contents up to final_dest to maintain a predictable layout.
-                if source.extract_to.is_some() {
-                    if let Ok(entries) = std::fs::read_dir(&final_dest) {
-                        let valid_entries: Vec<_> = entries
-                            .filter_map(|e| e.ok())
-                            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-                            .collect();
-
-                        if valid_entries.len() == 1 && valid_entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                            let sub_dir = valid_entries[0].path();
-                            debug!("Autoflattening {} -> {}", sub_dir.display(), final_dest.display());
-                            
-                            if let Ok(sub_entries) = std::fs::read_dir(&sub_dir) {
-                                for entry in sub_entries.filter_map(|e| e.ok()) {
-                                    let target = final_dest.join(entry.file_name());
-                                    let _ = std::fs::rename(entry.path(), target);
-                                }
-                                let _ = std::fs::remove_dir(sub_dir);
-                            }
+                    match reference {
+                        Some(gref) => {
+                            let ref_name = gref.name().ok_or_else(|| {
+                                WrightError::BuildError("git reference name is non-UTF-8".to_string())
+                            })?;
+                            repo.set_head(ref_name)
                         }
+                        None => repo.set_head_detached(object.id()),
+                    }
+                    .map_err(|e| WrightError::BuildError(format!("failed to update HEAD: {}", e)))?;
+                }
+                Source::Http(http) => {
+                    let processed_url = self.process_uri(&http.url, manifest);
+                    let filename = http.r#as.clone().unwrap_or_else(|| {
+                        source_cache_filename(&manifest.plan.name, &processed_url)
+                    });
+                    let cache_path = cache_dir.join(&filename);
+
+                    let final_dest = if let Some(ref sub) = http.extract_to {
+                        let p = dest_dir.join(sub);
+                        std::fs::create_dir_all(&p).map_err(WrightError::IoError)?;
+                        p
+                    } else {
+                        dest_dir.to_path_buf()
+                    };
+
+                    if is_part_file(&filename) {
+                        let label = progress::source_label(&processed_url);
+                        let pb = progress::new_source_spinner(&label, "extracting");
+                        compress::extract_part(&cache_path, &final_dest).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to extract source {}: {}",
+                                filename, e
+                            ))
+                        })?;
+                        progress::finish_source(&pb, &manifest.plan.name, &cache_path);
+                    } else {
+                        // Single file download: copy to final_dest
+                        let dest = final_dest.join(&filename);
+                        std::fs::copy(&cache_path, &dest).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to copy non-archive source {} to work directory: {}",
+                                filename, e
+                            ))
+                        })?;
                     }
                 }
-            } else {
-                // Non-archive file: copy to final_dest using the original basename
-                // so build scripts can reference it by its natural name (e.g. $WORKDIR/config).
-                let dest_name = processed_uri
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(&processed_uri);
-                let dest = final_dest.join(dest_name);
-                std::fs::copy(&path, &dest).map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to copy {} to {}: {}",
-                        path.display(),
-                        dest.display(),
-                        e
-                    ))
-                })?;
-                debug!(
-                    "Copied {} to work directory as {}",
-                    cache_filename, dest.display()
-                );
+                Source::Local(local) => {
+                    let processed_path = self.process_uri(&local.path, manifest);
+                    let filename = source_cache_filename(&manifest.plan.name, &processed_path);
+                    let cache_path = cache_dir.join(&filename);
+
+                    let final_dest = if let Some(ref sub) = local.extract_to {
+                        let p = dest_dir.join(sub);
+                        std::fs::create_dir_all(&p).map_err(WrightError::IoError)?;
+                        p
+                    } else {
+                        dest_dir.to_path_buf()
+                    };
+
+                    if is_part_file(&filename) {
+                        let label = progress::source_label(&processed_path);
+                        let pb = progress::new_source_spinner(&label, "extracting");
+                        compress::extract_part(&cache_path, &final_dest).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to extract local source {}: {}",
+                                filename, e
+                            ))
+                        })?;
+                        progress::finish_source(&pb, &manifest.plan.name, &cache_path);
+                    } else {
+                        // Single local file: copy to final_dest
+                        let dest = final_dest.join(&filename);
+                        std::fs::copy(&cache_path, &dest).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to copy local source {} to work directory: {}",
+                                filename, e
+                            ))
+                        })?;
+                    }
+                }
             }
         }
 
@@ -650,7 +676,7 @@ impl Builder {
     }
 
     /// Update sha256 checksums in plan.toml.
-    /// Only computes hashes for remote URIs; local paths get "SKIP".
+    /// Only computes hashes for HTTP sources; Git and local paths get "SKIP".
     pub fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
 
@@ -660,43 +686,37 @@ impl Builder {
         }
 
         for source in manifest.sources.entries.iter() {
-            let processed_uri = self.process_uri(&source.uri, manifest);
+            match source {
+                Source::Http(http) => {
+                    let processed_url = self.process_uri(&http.url, manifest);
+                    let cache_filename = http.r#as.clone().unwrap_or_else(|| {
+                        source_cache_filename(&manifest.plan.name, &processed_url)
+                    });
+                    let cache_path = cache_dir.join(&cache_filename);
 
-            if !is_remote_uri(&processed_uri) {
-                // Local path — use SKIP
-                new_hashes.push("SKIP".to_string());
-                continue;
+                    if cache_path.exists() {
+                        debug!("Using cached source: {}", cache_filename);
+                    } else {
+                        info!("Downloading {}...", processed_url);
+                        download::download_file(
+                            &processed_url,
+                            &cache_path,
+                            self.config.network.download_timeout,
+                            &manifest.plan.name,
+                        )
+                        .map_err(|e| {
+                            WrightError::BuildError(format!("Failed to download {}: {}", processed_url, e))
+                        })?;
+                    }
+
+                    let hash = checksum::sha256_file(&cache_path)?;
+                    debug!("Computed hash: {}", hash);
+                    new_hashes.push(hash);
+                }
+                Source::Git(_) | Source::Local(_) => {
+                    new_hashes.push("SKIP".to_string());
+                }
             }
-
-            if is_git_uri(&processed_uri) {
-                // Git sources have no downloadable file to hash — use SKIP
-                new_hashes.push("SKIP".to_string());
-                continue;
-            }
-
-            let cache_filename = source.r#as.clone().unwrap_or_else(|| {
-                source_cache_filename(&manifest.plan.name, &processed_uri)
-            });
-            let cache_path = cache_dir.join(&cache_filename);
-
-            if cache_path.exists() {
-                debug!("Using cached source: {}", cache_filename);
-            } else {
-                info!("Downloading {}...", processed_uri);
-                download::download_file(
-                    &processed_uri,
-                    &cache_path,
-                    self.config.network.download_timeout,
-                    &manifest.plan.name,
-                )
-                .map_err(|e| {
-                    WrightError::BuildError(format!("Failed to download {}: {}", processed_uri, e))
-                })?;
-            }
-
-            let hash = checksum::sha256_file(&cache_path)?;
-            debug!("Computed hash: {}", hash);
-            new_hashes.push(hash);
         }
 
         if new_hashes.is_empty() {
@@ -768,24 +788,16 @@ impl Builder {
     }
 
     /// Fetch a Git repository into the cache using native git2 library.
-    fn fetch_git_repo(&self, uri: &str, dest: &Path, scope: &str) -> Result<String> {
-        let uri_body = uri
-            .strip_prefix("git+")
-            .ok_or_else(|| WrightError::BuildError(format!("invalid git URI: {}", uri)))?;
-        let (git_url, git_ref) = if let Some(pos) = uri_body.find('#') {
-            (uri_body[..pos].to_string(), uri_body[pos + 1..].to_string())
-        } else {
-            (uri_body.to_string(), "HEAD".to_string())
-        };
+    fn fetch_git_repo(
+        &self,
+        git_url: &str,
+        git_ref: Option<&str>,
+        dest: &Path,
+        scope: &str,
+    ) -> Result<String> {
+        let actual_ref = git_ref.unwrap_or("HEAD");
 
-        let ref_parts: Vec<&str> = git_ref.split('=').collect();
-        let actual_ref = if ref_parts.len() == 2 {
-            ref_parts[1]
-        } else {
-            &git_ref
-        };
-
-        let label = progress::source_label(&git_url);
+        let label = progress::source_label(git_url);
 
         let repo = if !dest.exists() {
             info!("[{}] Cloning Git repository: {}", scope, git_url);
@@ -797,7 +809,7 @@ impl Builder {
         };
 
         let mut remote = repo
-            .remote_anonymous(&git_url)
+            .remote_anonymous(git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
 
         let pb = progress::new_source_transfer_bar(&label, 0);
@@ -828,9 +840,18 @@ impl Builder {
                 &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
                 Some(&mut fetch_opts),
                 None,
-            )
-            .map_err(|e| WrightError::BuildError(format!("git fetch failed: {}", e)));
-        fetch_result?;
+            );
+
+        if fetch_result.is_err() {
+            return Err(WrightError::BuildError(format!(
+                "git fetch failed: {}",
+                fetch_result.unwrap_err()
+            )));
+        }
+
+        // The bar reaches 100% after download, but indexing can take a long time for large repos.
+        pb.set_message("indexing");
+        
         progress::finish_source(&pb, scope, dest);
 
         // Resolve the ref to a commit
@@ -842,7 +863,6 @@ impl Builder {
     }
 
     /// Fetch sources for a plan to the cache directory.
-    /// Remote URIs are downloaded; local URIs are validated and copied to cache.
     pub fn fetch(&self, manifest: &PlanManifest, plan_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.source_dir;
         if !cache_dir.exists() {
@@ -850,41 +870,36 @@ impl Builder {
         }
 
         for source in &manifest.sources.entries {
-            let processed_uri = self.process_uri(&source.uri, manifest);
+            match source {
+                Source::Git(git) => {
+                    let processed_url = self.process_uri(&git.url, manifest);
+                    let git_dir_name = git_cache_dir_name(&processed_url);
+                    let git_cache_dir = cache_dir.join("git");
+                    if !git_cache_dir.exists() {
+                        std::fs::create_dir_all(&git_cache_dir).ok();
+                    }
+                    let dest = git_cache_dir.join(&git_dir_name);
 
-            if is_git_uri(&processed_uri) {
-                // Git repository handling
-                let git_dir_name = git_cache_dir_name(&processed_uri);
-                let git_cache_dir = cache_dir.join("git");
-                if !git_cache_dir.exists() {
-                    std::fs::create_dir_all(&git_cache_dir).ok();
+                    let commit_id =
+                        self.fetch_git_repo(&processed_url, git.r#ref.as_deref(), &dest, &manifest.plan.name)?;
+                    debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
                 }
-                let dest = git_cache_dir.join(&git_dir_name);
+                Source::Http(http) => {
+                    let processed_url = self.process_uri(&http.url, manifest);
+                    let filename = http.r#as.clone().unwrap_or_else(|| {
+                        source_cache_filename(&manifest.plan.name, &processed_url)
+                    });
+                    let dest = cache_dir.join(&filename);
 
-                let commit_id = self.fetch_git_repo(&processed_uri, &dest, &manifest.plan.name)?;
-                debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
-                continue;
-            }
+                    let skip_verify = http.sha256 == "SKIP";
+                    let mut needs_download = true;
 
-            if is_remote_uri(&processed_uri) {
-                // Remote URI: download to cache
-                let filename = source.r#as.clone().unwrap_or_else(|| {
-                    source_cache_filename(&manifest.plan.name, &processed_uri)
-                });
-                let dest = cache_dir.join(&filename);
-
-                let expected_hash = Some(source.sha256.as_str());
-                let skip_verify = source.sha256 == "SKIP";
-
-                let mut needs_download = true;
-
-                if dest.exists() {
-                    if skip_verify {
-                        debug!("Source {} already cached (SKIP verification)", filename);
-                        needs_download = false;
-                    } else if let Some(hash) = expected_hash {
-                        if let Ok(actual_hash) = checksum::sha256_file(&dest) {
-                            if actual_hash == hash {
+                    if dest.exists() {
+                        if skip_verify {
+                            debug!("Source {} already cached (SKIP verification)", filename);
+                            needs_download = false;
+                        } else if let Ok(actual_hash) = checksum::sha256_file(&dest) {
+                            if actual_hash == http.sha256 {
                                 debug!("Source {} already cached and verified", filename);
                                 needs_download = false;
                             } else {
@@ -895,52 +910,44 @@ impl Builder {
                                 let _ = std::fs::remove_file(&dest);
                             }
                         }
-                    } else {
-                        debug!("Source {} already cached (no hash to verify)", filename);
-                        needs_download = false;
                     }
-                }
 
-                if needs_download {
-                    download::download_file(
-                        &processed_uri,
-                        &dest,
-                        self.config.network.download_timeout,
-                        &manifest.plan.name,
-                    )?;
+                    if needs_download {
+                        download::download_file(
+                            &processed_url,
+                            &dest,
+                            self.config.network.download_timeout,
+                            &manifest.plan.name,
+                        )?;
 
-                    // Verify immediately after download
-                    if !skip_verify {
-                        if let Some(hash) = expected_hash {
+                        if !skip_verify {
                             let actual_hash = checksum::sha256_file(&dest)?;
-                            if actual_hash != hash {
+                            if actual_hash != http.sha256 {
                                 return Err(WrightError::ValidationError(format!(
                                     "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
-                                    filename, hash, actual_hash
+                                    filename, http.sha256, actual_hash
                                 )));
                             }
                         }
                     }
                 }
-            } else {
-                // Local URI: validate path is within plan dir and copy to cache
-                let local_path = validate_local_path(plan_dir, &processed_uri)?;
-                let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
-                let dest = cache_dir.join(&filename);
+                Source::Local(local) => {
+                    let processed_path = self.process_uri(&local.path, manifest);
+                    let local_path = validate_local_path(plan_dir, &processed_path)?;
+                    let filename = source_cache_filename(&manifest.plan.name, &processed_path);
+                    let dest = cache_dir.join(&filename);
 
-                // Always re-copy local files: unlike remote downloads they
-                // have no network cost and may have changed since the last
-                // fetch (e.g. a patch was updated or added).
-                let label = progress::source_label(&processed_uri);
-                let pb = progress::new_source_spinner(&label, "copying");
-                std::fs::copy(&local_path, &dest).map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to copy local file {} to cache: {}",
-                        local_path.display(),
-                        e
-                    ))
-                })?;
-                progress::finish_source(&pb, &manifest.plan.name, &dest);
+                    let label = progress::source_label(&processed_path);
+                    let pb = progress::new_source_spinner(&label, "copying");
+                    std::fs::copy(&local_path, &dest).map_err(|e| {
+                        WrightError::BuildError(format!(
+                            "failed to copy local file {} to cache: {}",
+                            local_path.display(),
+                            e
+                        ))
+                    })?;
+                    progress::finish_source(&pb, &manifest.plan.name, &dest);
+                }
             }
         }
 

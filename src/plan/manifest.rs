@@ -127,12 +127,38 @@ pub struct Relations {
 
 /// A single source entry in the `[[sources]]` array-of-tables format.
 #[derive(Debug, Deserialize, Clone)]
-pub struct Source {
-    pub uri: String,
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    Http(HttpSource),
+    Git(GitSource),
+    Local(LocalSource),
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct HttpSource {
+    pub url: String,
     #[serde(default = "default_skip")]
     pub sha256: String,
     /// Optional local filename to use for the downloaded source.
     pub r#as: Option<String>,
+    /// Optional subdirectory under WORKDIR to extract/copy this source into.
+    pub extract_to: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GitSource {
+    pub url: String,
+    pub r#ref: Option<String>,
+    /// Optional Git fetch depth (defaults to full clone).
+    pub depth: Option<u32>,
+    /// Optional subdirectory under WORKDIR to extract/copy this source into.
+    pub extract_to: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LocalSource {
+    pub path: String,
     /// Optional subdirectory under WORKDIR to extract/copy this source into.
     pub extract_to: Option<String>,
 }
@@ -199,13 +225,6 @@ pub struct Sources {
 }
 
 impl Sources {
-    pub fn uris(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|e| e.uri.as_str())
-    }
-
-    pub fn sha256s(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|e| e.sha256.as_str())
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -543,12 +562,13 @@ build = ["perl", "gcc", "make"]
 optional = ["geoip"]
 
 [[sources]]
-uri = "https://nginx.org/download/nginx-1.25.3.tar.gz"
+type = "http"
+url = "https://nginx.org/download/nginx-1.25.3.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/fix-headers.patch"
 
 [options]
 static = false
@@ -1109,32 +1129,41 @@ license = "MIT"
 arch = "x86_64"
 
 [[sources]]
-uri = "https://example.com/foo.tar.gz"
+type = "http"
+url = "https://example.com/foo.tar.gz"
 sha256 = "abc123"
 
 [[sources]]
-uri = "patches/fix.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/fix.patch"
 
 [[sources]]
-uri = "git+https://github.com/foo/bar.git#v1.0"
+type = "git"
+url = "https://github.com/foo/bar.git"
+ref = "v1.0"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.sources.entries.len(), 3);
-        assert_eq!(
-            manifest.sources.entries[0].uri,
-            "https://example.com/foo.tar.gz"
-        );
-        assert_eq!(manifest.sources.entries[0].sha256, "abc123");
-        assert_eq!(manifest.sources.entries[1].sha256, "SKIP");
-        // Git source without sha256 defaults to SKIP
-        assert_eq!(manifest.sources.entries[2].sha256, "SKIP");
+        
+        if let Source::Http(http) = &manifest.sources.entries[0] {
+            assert_eq!(http.url, "https://example.com/foo.tar.gz");
+            assert_eq!(http.sha256, "abc123");
+        } else {
+            panic!("Expected Http source");
+        }
 
-        // Test accessor methods
-        let uris: Vec<&str> = manifest.sources.uris().collect();
-        assert_eq!(uris.len(), 3);
-        let sha256s: Vec<&str> = manifest.sources.sha256s().collect();
-        assert_eq!(sha256s[0], "abc123");
+        if let Source::Local(local) = &manifest.sources.entries[1] {
+            assert_eq!(local.path, "patches/fix.patch");
+        } else {
+            panic!("Expected Local source");
+        }
+
+        if let Source::Git(git) = &manifest.sources.entries[2] {
+            assert_eq!(git.url, "https://github.com/foo/bar.git");
+            assert_eq!(git.r#ref, Some("v1.0".to_string()));
+        } else {
+            panic!("Expected Git source");
+        }
     }
 
     #[test]

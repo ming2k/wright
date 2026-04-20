@@ -101,64 +101,84 @@ optional = ["geoip", "nghttp2"]
 
 ### `[[sources]]`
 
-Sources use TOML's array-of-tables syntax. Each `[[sources]]` entry declares a single source with its URI and checksum:
+Sources use TOML's array-of-tables syntax with a mandatory `type` field to define the protocol. Wright supports three source types: `http`, `git`, and `local`.
 
-| Field   | Type  | Default | Description               |
-|-----------|--------|----------|------------------------------------------|
-| `uri`   | string | required | Source URI — remote URL (`http://`/`https://`/`git+https://`) or local path relative to the plan directory |
-| `sha256` | string | `"SKIP"` | SHA-256 checksum. Use `"SKIP"` for local files or git sources. |
+All URLs and paths support variable substitution (see [Variable Substitution](#variable-substitution)).
 
-URIs support variable substitution (see [Variable Substitution](#variable-substitution)):
+#### `type = "http"`
+
+Used for downloading remote tarballs or single files.
+
+| Field   | Type   | Default  | Description                                                                 |
+|-----------|--------|----------|-----------------------------------------------------------------------------|
+| `url`     | string | required | Remote URL (`http://` or `https://`)                                      |
+| `sha256`  | string | required | SHA-256 checksum. Use `"SKIP"` only during development or for untrusted sources. |
+| `as`      | string | optional | Rename the downloaded file in the cache.                                    |
+| `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to extract/copy the file into.          |
 
 ```toml
 [[sources]]
-uri = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
+type = "http"
+url = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
-
-[[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
 ```
 
-#### URI classification
+#### `type = "git"`
 
-- **Remote URIs** (starting with `http://` or `https://`) are downloaded to the source cache.
-- **Git URIs** (starting with `git+https://`) clone a git repository. Use a fragment to specify a branch or tag: `git+https://github.com/foo/bar.git#v1.0`. Always use `sha256 = "SKIP"` for git sources.
-- **Local URIs** (everything else) are resolved relative to the plan directory. They must not escape the plan directory (path traversal is blocked).
+Used for cloning Git repositories. Git sources are automatically extracted (checked out) to the build directory.
 
-#### Archive vs non-archive URIs
-
-- URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are extracted to the source directory during the `extract` stage.
-- Non-archive URIs (patches, config files, scripts, etc.) are copied to `${WORKDIR}` where lifecycle scripts can access them.
-
-#### Git sources
-
-Clone a specific tag or branch from a git repository:
+| Field   | Type   | Default  | Description                                                                 |
+|-----------|--------|----------|-----------------------------------------------------------------------------|
+| `url`     | string | required | Git repository URL                                                         |
+| `ref`     | string | `"HEAD"` | Branch, tag, or commit hash to check out.                                   |
+| `depth`   | integer| optional | Shallow clone depth.                                                        |
+| `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to check out the repository into.         |
 
 ```toml
 [[sources]]
-uri = "git+https://github.com/example/repo.git#v1.2.3"
-sha256 = "SKIP"
+type = "git"
+url = "https://github.com/example/repo.git"
+ref = "v1.2.3"
+depth = 1
 ```
 
-The fragment after `#` specifies the branch, tag, or commit to check out. Git sources are always cloned fresh and extracted like archives.
+#### `type = "local"`
+
+Used for including files located within the plan directory (e.g., patches, custom configs).
+
+| Field   | Type   | Default  | Description                                                                 |
+|-----------|--------|----------|-----------------------------------------------------------------------------|
+| `path`    | string | required | Path relative to the plan directory. Must not escape the plan directory.    |
+| `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to copy the file into.                  |
+
+```toml
+[[sources]]
+type = "local"
+path = "patches/fix-headers.patch"
+```
+
+#### Archive Handling
+
+- **Archives**: Files with supported extensions (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are automatically extracted during the `extract` stage.
+- **Single Files**: Non-archive files are copied directly to `${WORKDIR}` (or the subdirectory specified by `extract_to`), preserving their natural filename.
 
 #### Applying patches
 
-Patches are **not** auto-applied. Include them as `[[sources]]` entries and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
+Patches are **not** auto-applied. Include them as `type = "local"` entries and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
 
 ```toml
 [[sources]]
-uri = "https://example.com/foo-${VERSION}.tar.gz"
+type = "http"
+url = "https://example.com/foo-${VERSION}.tar.gz"
 sha256 = "abc123..."
 
 [[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/fix-headers.patch"
 
 [[sources]]
-uri = "patches/add-feature.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/add-feature.patch"
 
 [lifecycle.prepare]
 script = """
@@ -593,29 +613,6 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
-### `[[sources]]`
-
-The `sources` array defines the input files required for the build.
-
-| Field        | Type   | Default  | Description                                                                 |
-|--------------|--------|----------|-----------------------------------------------------------------------------|
-| `uri`        | string | required | Source URI (HTTP, HTTPS, Git, or local file)                                |
-| `sha256`     | string | `"SKIP"` | Expected SHA-256 hash of the downloaded file                                |
-| `as`         | string | optional | Rename the downloaded file in the local cache                               |
-| `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to extract or copy this source into         |
-
-Example:
-```toml
-[[sources]]
-uri = "https://example.com/project-latest.tar.gz"
-as = "project-1.0.0.tar.gz"  # Ensures consistent cache filename
-extract_to = "src"           # Forces extraction to ${WORKDIR}/src
-
-[[sources]]
-uri = "extra-config.toml"
-extract_to = "config"        # Copies file to ${WORKDIR}/config/extra-config.toml
-```
-
 ## Path Variables
 
 Wright uses standard variables to refer to build directories. When running inside an isolation, these paths are remapped to dedicated mount points:
@@ -637,7 +634,9 @@ If your source archive extracts into a subdirectory, you must explicitly change 
 
 ```toml
 [[sources]]
-uri = "https://example.com/nginx-1.25.3.tar.gz"
+type = "http"
+url = "https://example.com/nginx-1.25.3.tar.gz"
+sha256 = "..."
 
 [lifecycle.configure]
 script = """
@@ -650,7 +649,9 @@ For absolute deterministic behavior across versions, use `extract_to`:
 
 ```toml
 [[sources]]
-uri = "https://.../nginx-1.25.3.tar.gz"
+type = "http"
+url = "https://.../nginx-1.25.3.tar.gz"
+sha256 = "..."
 extract_to = "src"
 
 [lifecycle.configure]
@@ -821,12 +822,13 @@ build = ["perl", "gcc", "make"]
 optional = ["geoip"]
 
 [[sources]]
-uri = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
+type = "http"
+url = "https://nginx.org/download/nginx-${VERSION}.tar.gz"
 sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 
 [[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
+type = "local"
+path = "patches/fix-headers.patch"
 
 [options]
 static = false
@@ -980,7 +982,9 @@ For plans with one primary source code archive, always extract it to a directory
 
 ```toml
 [[sources]]
-uri = "https://example.com/myapp-v${VERSION}.tar.gz"
+type = "http"
+url = "https://example.com/myapp-v${VERSION}.tar.gz"
+sha256 = "..."
 extract_to = "source"
 
 [lifecycle.compile]
@@ -994,7 +998,8 @@ Do **not** use `extract_to` for individual files like patches or configuration t
 
 ```toml
 [[sources]]
-uri = "fix-build.patch"
+type = "local"
+path = "fix-build.patch"
 
 [lifecycle.compile]
 script = "cd source && patch -p1 < ${WORKDIR}/fix-build.patch"
@@ -1006,11 +1011,15 @@ For complex builds involving multiple archives, give each one a unique, descript
 
 ```toml
 [[sources]]
-uri = "core.tar.gz"
+type = "http"
+url = "https://example.com/core.tar.gz"
+sha256 = "..."
 extract_to = "core"
 
 [[sources]]
-uri = "extra-plugin.tar.gz"
+type = "http"
+url = "https://example.com/extra-plugin.tar.gz"
+sha256 = "..."
 extract_to = "plugins/extra"
 ```
 
