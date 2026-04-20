@@ -8,8 +8,8 @@ use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::builder::logging;
-use crate::dockyard::DockyardLevel;
-use crate::dockyard::ResourceLimits;
+use crate::isolation::IsolationLevel;
+use crate::isolation::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{LifecycleStage, PlanManifest};
 
@@ -45,18 +45,18 @@ pub struct LifecyclePipeline<'a> {
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
-    /// CPU count for non-compile stages (partitioned across active dockyards).
+    /// CPU count for non-compile stages (partitioned across active isolations).
     /// Uses `Cell` so the compile stage can temporarily override it while
     /// holding the compile lock.
     cpu_count: Cell<Option<u32>>,
     /// CPU count used during the compile stage (= total_cpus, respecting
     /// max_cpus). `None` means inherit the partitioned cpu_count as-is.
     compile_cpu_count: Option<u32>,
-    /// When set, the compile stage acquires this lock so only one dockyard
+    /// When set, the compile stage acquires this lock so only one isolation
     /// compiles at a time, giving the active compile access to all capped
     /// CPU cores.
     compile_lock: Option<Arc<Mutex<()>>>,
-    /// Optional spinner for live stage progress (used in multi-dockyard builds).
+    /// Optional spinner for live stage progress (used in multi-isolation builds).
     progress: Option<ProgressBar>,
 }
 
@@ -80,10 +80,10 @@ pub struct LifecycleContext<'a> {
     /// CPU count for the compile stage (= total_cpus, respecting max_cpus).
     /// When `None`, the compile stage inherits the partitioned `cpu_count`.
     pub compile_cpu_count: Option<u32>,
-    /// Compile-stage semaphore: serializes compile stages across dockyards
+    /// Compile-stage semaphore: serializes compile stages across isolations
     /// so the active compile gets exclusive access to all capped CPU cores.
     pub compile_lock: Option<Arc<Mutex<()>>>,
-    /// Optional spinner for live stage progress (used in multi-dockyard builds).
+    /// Optional spinner for live stage progress (used in multi-isolation builds).
     pub progress: Option<ProgressBar>,
 }
 
@@ -150,7 +150,7 @@ impl<'a> LifecyclePipeline<'a> {
             }
 
             // Compile stages are serialized behind a semaphore so only one
-            // dockyard compiles at a time, getting access to all capped CPU
+            // isolation compiles at a time, getting access to all capped CPU
             // cores (total_cpus, respecting max_cpus).
             if stage_name == "compile" {
                 let _guard = self.compile_lock.as_ref().map(|l| l.lock().unwrap());
@@ -239,7 +239,7 @@ impl<'a> LifecyclePipeline<'a> {
             return Ok(());
         }
 
-        let dockyard_level: DockyardLevel = stage.dockyard.parse().unwrap();
+        let isolation_level: IsolationLevel = stage.isolation.parse()?;
 
         let executor = self.executors.get(&stage.executor).ok_or_else(|| {
             WrightError::BuildError(format!("executor not found: {}", stage.executor))
@@ -264,7 +264,7 @@ impl<'a> LifecyclePipeline<'a> {
         });
 
         let mut options = ExecutorOptions {
-            level: dockyard_level,
+            level: isolation_level,
             base_root: self.base_root.clone(),
             src_dir: self.src_dir.clone(),
             part_dir: self.part_dir.clone(),
@@ -279,7 +279,7 @@ impl<'a> LifecyclePipeline<'a> {
         let t0 = std::time::Instant::now();
         info!(
             "{}",
-            logging::stage_started(&self.manifest.plan.name, stage_name, dockyard_level)
+            logging::stage_started(&self.manifest.plan.name, stage_name, isolation_level)
         );
         let mut result = executor::execute_script(
             executor,

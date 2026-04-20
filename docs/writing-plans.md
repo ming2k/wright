@@ -194,7 +194,7 @@ patch -Np1 < ${FILES_DIR}/normal-fix.patch
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
-**CPU parallelism:** Wright pins each dockyard process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the dockyard already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific part, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
+**CPU parallelism:** Wright pins each isolation process to its computed CPU share via `sched_setaffinity`, so `nproc` inside the isolation already returns the correct count. Scripts should call `make -j$(nproc)` directly. To override parallelism for a specific part, set `MAKEFLAGS` (or the relevant tool variable) in `[options.env]`. See [resource-allocation.md](resource-allocation.md) for details.
 
 **Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
@@ -205,7 +205,7 @@ Each lifecycle stage is a TOML table under `lifecycle`:
 ```toml
 [lifecycle.compile]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 make -j$(nproc)
@@ -215,7 +215,7 @@ make -j$(nproc)
 | Field   | Type       | Default  | Description              |
 |------------|-------------------|------------|----------------------------------------|
 | `executor` | string      | `"shell"` | Executor to run the script with    |
-| `dockyard` | string      | `"strict"` | Dockyard isolation level        |
+| `isolation` | string      | `"strict"` | Security isolation level        |
 | `env`   | map of strings  | `{}`    | Extra environment variables      |
 | `script`  | string      | `""`    | The script to execute         |
 
@@ -309,7 +309,7 @@ find ${PART_DIR}/usr/share/doc -type f -name '*.la' -delete
 ### `[hooks]` — Install / Upgrade / Remove Hooks
 
 `[hooks]` contains transaction-time scripts that run on the live system, not in
-the dockyarded build lifecycle.
+the isolated build lifecycle.
 
 ```toml
 [hooks]
@@ -452,7 +452,7 @@ echo "Compilation complete."
 """
 ```
 
-Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `dockyard`, `env`, `script`).
+Execution order for each stage: `pre_<stage>` → `<stage>` → `post_<stage>`. Hooks are only run if defined. They support the same fields as any lifecycle stage (`executor`, `isolation`, `env`, `script`).
 
 ## Phase-Based Cycles (MVP → Full)
 
@@ -598,9 +598,9 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
-When running inside a dockyard, path variables are remapped to dockyard mount points:
+When running inside an isolation, path variables are remapped to isolation mount points:
 
-| Variable    | Host value       | Dockyard value     |
+| Variable    | Host value       | Isolation value     |
 |-----------------|------------------------|------------------------|
 | `${SRC_DIR}`  | actual host path    | `/build`        |
 | `${BUILD_DIR}` | actual host path    | `/build/<source-dir>` |
@@ -612,13 +612,13 @@ When running inside a dockyard, path variables are remapped to dockyard mount po
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
-## Dockyard Levels
+## Isolation Levels
 
-The `dockyard` field on each lifecycle stage controls process isolation:
+The `isolation` field on each lifecycle stage controls process isolation:
 
 ### `none`
 
-No isolation. The script runs directly on the host. Use this only when dockyard support is unavailable or for stages that need full host access.
+No isolation. The script runs directly on the host. Use this only when isolation support is unavailable or for stages that need full host access.
 
 ### `relaxed`
 
@@ -635,7 +635,7 @@ Full isolation. Includes everything in `relaxed` plus:
 - Network namespace (no network access)
 - IPC namespace (isolated System V IPC and POSIX message queues)
 
-In both `relaxed` and `strict` modes, the dockyard:
+In both `relaxed` and `strict` modes, the isolation:
 - Pivots to a minimal root filesystem
 - Bind-mounts `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64` read-only
 - Bind-mounts essential `/etc` files (`resolv.conf`, `hosts`, `passwd`, `group`, `ld.so.conf`, `ld.so.cache`) read-only
@@ -644,9 +644,9 @@ In both `relaxed` and `strict` modes, the dockyard:
 - Mounts the files directory at `/files` (read-only, if present)
 - Provides `/dev` with basic devices (`null`, `zero`, `urandom`, `random`, `full`)
 - Mounts a fresh `/proc` and `/tmp`
-- Sets hostname to `wright-dockyard`
+- Sets hostname to `wright-isolation`
 
-If the kernel does not support the required namespaces (e.g. inside a container), the dockyard falls back to direct execution with a warning.
+If the kernel does not support the required namespaces (e.g. inside a container), the isolation falls back to direct execution with a warning.
 
 ### Choosing a level
 
@@ -693,7 +693,7 @@ args = []
 delivery = "tempfile"
 tempfile_extension = ".py"
 required_paths = ["/usr/lib/python3"]
-default_dockyard = "strict"
+default_isolation = "strict"
 ```
 
 | Field       | Type      | Default   | Description             |
@@ -704,8 +704,8 @@ default_dockyard = "strict"
 | `args`       | list of strings | `[]`     | Arguments before the script path   |
 | `delivery`     | string     | `"tempfile"` | How the script is passed to the command |
 | `tempfile_extension`| string     | `".sh"`   | File extension for the temp script  |
-| `required_paths`  | list of strings | `[]`     | Extra paths to bind-mount in the dockyard |
-| `default_dockyard` | string     | `""`     | Default dockyard isolation level for this executor |
+| `required_paths`  | list of strings | `[]`     | Extra paths to bind-mount in the isolation |
+| `default_isolation` | string     | `""`     | Default isolation isolation level for this executor |
 
 Reference a custom executor by name:
 

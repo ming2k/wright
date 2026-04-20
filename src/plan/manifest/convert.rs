@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::{
-    default_dockyard_level, default_executor, BackupConfig, BuildOptions, Dependencies,
+    default_isolation_level, default_executor, BackupConfig, BuildOptions, Dependencies,
     FabricateHooks, InstallScripts, PlanManifest, PlanMetadata, Relations, Sources,
     SubFabricateOutput,
 };
@@ -100,7 +100,7 @@ pub(super) fn empty_sub_fabricate_output(
         provides,
         script: String::new(),
         executor: default_executor(),
-        dockyard: default_dockyard_level(),
+        isolation: default_isolation_level(),
         env: HashMap::new(),
         hooks,
         backup,

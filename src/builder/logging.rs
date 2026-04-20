@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::dockyard::DockyardLevel;
+use crate::isolation::IsolationLevel;
 
 fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 {
@@ -28,15 +28,15 @@ pub fn plan_scope(plan_name: &str) -> String {
     format!("[{}]", plan_name)
 }
 
-pub fn stage_started(plan_name: &str, stage_name: &str, dockyard_level: DockyardLevel) -> String {
+pub fn stage_started(plan_name: &str, stage_name: &str, isolation_level: IsolationLevel) -> String {
     format!(
         "{} {} started ({})",
         plan_scope(plan_name),
         stage_name,
-        match dockyard_level {
-            DockyardLevel::None => "no isolation",
-            DockyardLevel::Relaxed => "relaxed isolation",
-            DockyardLevel::Strict => "strict isolation",
+        match isolation_level {
+            IsolationLevel::None => "no isolation",
+            IsolationLevel::Relaxed => "relaxed isolation",
+            IsolationLevel::Strict => "strict isolation",
         }
     )
 }
@@ -75,7 +75,7 @@ mod tests {
         build_finished, build_started, describe_batch, describe_build_capacity, plan_packed,
         plan_scope, plan_skipped_existing, stage_finished, stage_started,
     };
-    use crate::dockyard::DockyardLevel;
+    use crate::isolation::IsolationLevel;
     use std::path::Path;
 
     #[test]
@@ -96,11 +96,11 @@ mod tests {
         assert_eq!(build_started("linux"), "[linux] build started");
         assert_eq!(build_finished("linux"), "[linux] build done");
         assert_eq!(
-            stage_started("linux", "prepare", DockyardLevel::Strict),
+            stage_started("linux", "prepare", IsolationLevel::Strict),
             "[linux] prepare started (strict isolation)"
         );
         assert_eq!(
-            stage_started("linux", "compile", DockyardLevel::None),
+            stage_started("linux", "compile", IsolationLevel::None),
             "[linux] compile started (no isolation)"
         );
         assert_eq!(

@@ -38,15 +38,15 @@ target or narrow the build set.
 
 ---
 
-## Dockyard Setup Failed
+## Isolation Setup Failed
 
 **Symptom:**
 
 ```
-ERROR dockyard setup failed: unshare: Operation not permitted
+ERROR isolation setup failed: unshare: Operation not permitted
 ```
 
-Wright requires Linux user namespaces to run the strict dockyard. This can fail
+Wright requires Linux user namespaces to run the strict isolation. This can fail
 inside containers or on kernels with namespace restrictions.
 
 **Cause 1: unprivileged namespaces disabled**
@@ -60,13 +60,13 @@ sysctl -w kernel.unprivileged_userns_clone=1
 
 **Cause 2: running inside Docker/Podman without `--privileged`**
 
-Re-run with `--privileged`, or use the `relaxed` or `none` dockyard level in
+Re-run with `--privileged`, or use the `relaxed` or `none` isolation level in
 your plan while developing:
 
 ```toml
-# plan.toml — per-stage dockyard override for local dev
+# plan.toml — per-stage isolation override for local dev
 [lifecycle.compile]
-dockyard = "none"
+isolation = "none"
 script = "make"
 ```
 

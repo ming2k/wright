@@ -32,7 +32,7 @@ license = "MIT"
 arch = "x86_64"
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p ${PART_DIR}/usr/lib"
 "#).unwrap();
 
@@ -50,7 +50,7 @@ arch = "x86_64"
 runtime = ["wayland"]
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p ${PART_DIR}/usr/bin"
 "#).unwrap();
 

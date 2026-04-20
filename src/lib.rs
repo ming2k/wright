@@ -4,7 +4,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod database;
-pub mod dockyard;
+pub mod isolation;
 pub mod error;
 pub mod part;
 pub mod plan;

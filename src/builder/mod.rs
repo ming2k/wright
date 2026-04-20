@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
-use crate::dockyard::ResourceLimits;
+use crate::isolation::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::util::{checksum, compress, download, progress};
@@ -199,14 +199,14 @@ impl Builder {
         skip_check: bool,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
-        // Per-dockyard NPROC hint from the scheduler. Applied only when both the
+        // Per-isolation NPROC hint from the scheduler. Applied only when both the
         // plan and global config leave jobs at 0 (auto-detect), preventing
-        // CPU oversubscription when multiple dockyards run simultaneously.
-        nproc_per_dockyard: Option<u32>,
+        // CPU oversubscription when multiple isolations run simultaneously.
+        nproc_per_isolation: Option<u32>,
         // Compile-stage semaphore: when set, compile stages acquire this lock
-        // so only one dockyard compiles at a time with full CPU access.
+        // so only one isolation compiles at a time with full CPU access.
         compile_lock: Option<Arc<Mutex<()>>>,
-        // Optional spinner for live stage progress (multi-dockyard builds).
+        // Optional spinner for live stage progress (multi-isolation builds).
         progress: Option<indicatif::ProgressBar>,
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
@@ -301,9 +301,9 @@ impl Builder {
             timeout_secs: manifest.options.timeout.or(self.config.build.timeout),
         };
 
-        // Compute scheduler's CPU share for this dockyard and apply it as CPU
-        // affinity on the dockyard process. Tools like `nproc` inside the
-        // dockyard then return the correct count without any env var injection.
+        // Compute scheduler's CPU share for this isolation and apply it as CPU
+        // affinity on the isolation process. Tools like `nproc` inside the
+        // isolation then return the correct count without any env var injection.
         let available = std::thread::available_parallelism()
             .map(|n| n.get() as u32)
             .unwrap_or(1);
@@ -312,8 +312,8 @@ impl Builder {
         } else {
             available
         };
-        let cpu_count = nproc_per_dockyard
-            .or(self.config.build.nproc_per_dockyard)
+        let cpu_count = nproc_per_isolation
+            .or(self.config.build.nproc_per_isolation)
             .unwrap_or(total_cpus);
 
         let vars = variables::standard_variables(variables::VariableContext {
@@ -407,7 +407,7 @@ impl Builder {
                 debug!("Running fabricate stage for sub-part: {}", sub_name);
 
                 let mut sub_options = executor::ExecutorOptions {
-                    level: sub_pkg.dockyard.parse().unwrap(),
+                    level: sub_pkg.isolation.parse()?,
                     base_root: base_root.to_path_buf(),
                     src_dir: src_dir.clone(),
                     part_dir: sub_pkg_dir.clone(),

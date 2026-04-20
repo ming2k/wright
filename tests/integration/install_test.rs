@@ -17,7 +17,7 @@ fn build_hello_archive() -> PathBuf {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
     for stage in manifest.lifecycle.values_mut() {
-        stage.dockyard = "none".to_string();
+        stage.isolation = "none".to_string();
     }
     let plan_dir = manifest_path.parent().unwrap();
 

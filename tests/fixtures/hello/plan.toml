@@ -11,7 +11,7 @@ build = ["gcc"]
 
 [lifecycle.prepare]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -21,14 +21,14 @@ EOF
 
 [lifecycle.compile]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 gcc -o hello hello.c
 """
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 install -Dm755 hello ${PART_DIR}/usr/bin/hello
 """

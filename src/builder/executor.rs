@@ -5,7 +5,7 @@ use serde::Deserialize;
 use tracing::debug;
 
 use crate::builder::variables;
-use crate::dockyard::{run_in_dockyard, DockyardConfig, DockyardLevel, ResourceLimits};
+use crate::isolation::{run_in_isolation, IsolationConfig, IsolationLevel, ResourceLimits};
 use crate::error::{Result, WrightError};
 
 #[derive(Debug, Deserialize, Clone)]
@@ -23,7 +23,7 @@ pub struct ExecutorConfig {
     #[serde(default)]
     pub required_paths: Vec<String>,
     #[serde(default)]
-    pub default_dockyard: String,
+    pub default_isolation: String,
 }
 
 fn default_delivery() -> String {
@@ -44,7 +44,7 @@ impl Default for ExecutorConfig {
             delivery: "tempfile".to_string(),
             tempfile_extension: ".sh".to_string(),
             required_paths: vec![],
-            default_dockyard: "strict".to_string(),
+            default_isolation: "strict".to_string(),
         }
     }
 }
@@ -106,7 +106,7 @@ struct ExecutorWrapper {
 
 #[derive(Debug)]
 pub struct ExecutorOptions {
-    pub level: DockyardLevel,
+    pub level: IsolationLevel,
     pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub part_dir: PathBuf,
@@ -123,8 +123,8 @@ pub struct ExecutorOptions {
 }
 
 pub struct ExecutionResult {
-    pub stdout: crate::dockyard::CapturedOutput,
-    pub stderr: crate::dockyard::CapturedOutput,
+    pub stdout: crate::isolation::CapturedOutput,
+    pub stderr: crate::isolation::CapturedOutput,
     pub exit_code: i32,
 }
 
@@ -138,7 +138,7 @@ pub fn execute_script(
     options: &mut ExecutorOptions,
 ) -> Result<ExecutionResult> {
     // When running in a sandbox, remap path variables to sandbox mount points
-    let effective_vars = if options.level != DockyardLevel::None {
+    let effective_vars = if options.level != IsolationLevel::None {
         let mut v = vars.clone();
         // Remap BUILD_DIR: replace the host SRC_DIR prefix with /build
         if let (Some(host_build_dir), Some(host_src_dir)) =
@@ -187,7 +187,7 @@ pub fn execute_script(
             .unwrap()
             .as_nanos()
     );
-    let mut config = DockyardConfig::new(
+    let mut config = IsolationConfig::new(
         options.level,
         options.src_dir.clone(),
         options.part_dir.clone(),
@@ -258,7 +258,7 @@ pub fn execute_script(
     // Build arguments for the command
     let mut args = executor.args.clone();
     if executor.delivery == "tempfile" {
-        if options.level == DockyardLevel::None {
+        if options.level == IsolationLevel::None {
             // Running directly on the host: use the real path
             args.push(script_path.to_string_lossy().to_string());
         } else {
@@ -267,8 +267,8 @@ pub fn execute_script(
         }
     }
 
-    // Execute in dockyard
-    let output = run_in_dockyard(&mut config, &executor.command, &args)?;
+    // Execute in isolation
+    let output = run_in_isolation(&mut config, &executor.command, &args)?;
 
     let exit_code = output.status.code().unwrap_or(-1);
 

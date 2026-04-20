@@ -37,7 +37,7 @@ Each part gets its own working directory under `build_dir`
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
 
-`src/` is the dockyard's `/build` mount. `pkg/` is `/output`. By default,
+`src/` is the isolation's `/build` mount. `pkg/` is `/output`. By default,
 `pkg/` and `log/` are recreated clean at the start of every build. `src/` is
 **reused** when the build key has not changed (same version, sources, and
 lifecycle scripts), enabling incremental builds — the fetch/verify/extract

@@ -35,7 +35,7 @@ ccache = true
 
 [lifecycle.prepare]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
@@ -44,7 +44,7 @@ patch -Np1 < ${FILES_DIR}/add-feature.patch
 
 [lifecycle.configure]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
 cd ${BUILD_DIR}
@@ -58,7 +58,7 @@ cd ${BUILD_DIR}
 
 [lifecycle.compile]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
 cd ${BUILD_DIR}
@@ -67,7 +67,7 @@ make
 
 [lifecycle.check]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 make test
@@ -75,7 +75,7 @@ make test
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install

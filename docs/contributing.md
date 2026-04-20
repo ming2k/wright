@@ -23,7 +23,7 @@ src/
 ├── database/    # SQLite layer
 ├── inventory/   # Local part inventory and resolver
 ├── transaction/  # Install/remove with rollback
-├── dockyard/    # Dockyard isolation
+├── isolation/    # Isolation isolation
 ├── query/     # Read-only system inspection
 └── util/      # Download, checksum, compression
 tests/

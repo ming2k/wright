@@ -86,7 +86,7 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
         verbose: ctx.verbose,
         quiet: ctx.quiet,
         print_parts: false,
-        nproc_per_dockyard: ctx.config.build.nproc_per_dockyard,
+        nproc_per_isolation: ctx.config.build.nproc_per_isolation,
         ..Default::default()
     }
 }

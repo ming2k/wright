@@ -11,7 +11,7 @@ use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid}
 use tracing::debug;
 
 use super::{
-    spawn_stream_reader, CapturedOutput, DockyardConfig, DockyardLevel, DockyardOutput,
+    spawn_stream_reader, CapturedOutput, IsolationConfig, IsolationLevel, IsolationOutput,
     ResourceLimits,
 };
 use crate::error::{Result, WrightError};
@@ -47,7 +47,7 @@ use std::time::Duration;
 /// group leader (via `setpgid(0,0)` in pre_exec) — otherwise `make`/`gcc`
 /// children survive the kill and become orphans.
 ///
-/// For the fork-based dockyard path, use `kill_pgroup = false` because the
+/// For the fork-based isolation path, use `kill_pgroup = false` because the
 /// PID namespace already ensures all descendants are killed when the
 /// intermediate child exits.
 ///
@@ -78,7 +78,7 @@ fn spawn_timeout_watchdog(pid: u32, timeout: u64, kill_pgroup: bool) -> Arc<Atom
 
 /// Pin the calling process to the first `n` CPUs via `sched_setaffinity`.
 ///
-/// Called in `pre_exec` (for direct-execution paths) and inside the dockyard
+/// Called in `pre_exec` (for direct-execution paths) and inside the isolation
 /// grandchild (for the sandboxed path) so that `nproc` — which reads
 /// `sched_getaffinity` on Linux — returns the scheduler's computed share
 /// rather than the full host count.  Errors are silently ignored: affinity is
@@ -111,24 +111,24 @@ fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Derive the scratch directory for dockyard setup from the active build root.
+/// Derive the scratch directory for isolation setup from the active build root.
 ///
 /// `src_dir` is `<build_root>/src` for normal builds, so placing scratch
 /// directories under its parent keeps temporary overlay state on the same
 /// filesystem as the rest of the build instead of hardcoding `/tmp`.
-fn dockyard_scratch_base(config: &DockyardConfig) -> PathBuf {
+fn isolation_scratch_base(config: &IsolationConfig) -> PathBuf {
     let build_root = config.src_dir.parent().unwrap_or(config.src_dir.as_path());
-    build_root.join(".wright-dockyard").join(&config.task_id)
+    build_root.join(".wright-isolation").join(&config.task_id)
 }
 
-/// Remove the temporary overlay and dockyard-root directories for a given task.
+/// Remove the temporary overlay and isolation-root directories for a given task.
 ///
 /// These directories are created inside the forked child's mount namespace.
 /// The mounts are automatically cleaned up when the namespace is destroyed,
 /// but the empty directory trees can persist on the host filesystem after
 /// crashes or forced termination.
-fn cleanup_dockyard_dirs(config: &DockyardConfig) {
-    let scratch = dockyard_scratch_base(config);
+fn cleanup_isolation_dirs(config: &IsolationConfig) {
+    let scratch = isolation_scratch_base(config);
     if scratch.exists() {
         if let Err(e) = std::fs::remove_dir_all(&scratch) {
             debug!("Failed to clean up {}: {}", scratch.display(), e);
@@ -136,7 +136,7 @@ fn cleanup_dockyard_dirs(config: &DockyardConfig) {
     }
 }
 
-/// Run a command inside a native Linux namespace dockyard.
+/// Run a command inside a native Linux namespace isolation.
 ///
 /// Architecture (double-fork for PID namespace):
 ///
@@ -156,19 +156,19 @@ fn cleanup_dockyard_dirs(config: &DockyardConfig) {
 /// places *children* of the calling process into the new PID namespace.
 /// Mount setup and pivot_root are done in the grandchild so that /proc
 /// can be mounted before pivot_root changes the filesystem root.
-pub fn run_in_dockyard(
-    config: &mut DockyardConfig,
+pub fn run_in_isolation(
+    config: &mut IsolationConfig,
     command: &str,
     args: &[String],
-) -> Result<DockyardOutput> {
-    if config.level == DockyardLevel::None {
+) -> Result<IsolationOutput> {
+    if config.level == IsolationLevel::None {
         if config.base_root != Path::new("/") {
-            return Err(WrightError::DockyardError(format!(
-                "dockyard level none cannot run against base root {}",
+            return Err(WrightError::IsolationError(format!(
+                "isolation level none cannot run against base root {}",
                 config.base_root.display()
             )));
         }
-        debug!("Dockyard isolation disabled for this stage");
+        debug!("Isolation isolation disabled for this stage");
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
@@ -193,7 +193,7 @@ pub fn run_in_dockyard(
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
+            .map_err(|e| WrightError::IsolationError(format!("failed to execute command: {e}")))?;
         let watchdog = config
             .rlimits
             .timeout_secs
@@ -204,7 +204,7 @@ pub fn run_in_dockyard(
             make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
         let status = child
             .wait()
-            .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
+            .map_err(|e| WrightError::IsolationError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog {
             done.store(true, Ordering::Release);
         }
@@ -214,7 +214,7 @@ pub fn run_in_dockyard(
         };
         let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
         let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
-        return Ok(DockyardOutput {
+        return Ok(IsolationOutput {
             status,
             stdout,
             stderr,
@@ -232,17 +232,17 @@ pub fn run_in_dockyard(
     let need_userns = !is_root;
 
     let mut clone_flags = match config.level {
-        DockyardLevel::Strict => {
+        IsolationLevel::Strict => {
             CloneFlags::CLONE_NEWNS
                 | CloneFlags::CLONE_NEWPID
                 | CloneFlags::CLONE_NEWUTS
                 | CloneFlags::CLONE_NEWIPC
                 | CloneFlags::CLONE_NEWNET
         }
-        DockyardLevel::Relaxed => {
+        IsolationLevel::Relaxed => {
             CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWUTS
         }
-        DockyardLevel::None => unreachable!(),
+        IsolationLevel::None => unreachable!(),
     };
 
     if need_userns {
@@ -252,7 +252,7 @@ pub fn run_in_dockyard(
     // Probe whether the required namespaces are available.
     if !can_unshare(clone_flags) {
         if config.base_root != Path::new("/") {
-            return Err(WrightError::DockyardError(format!(
+            return Err(WrightError::IsolationError(format!(
                 "namespace isolation unavailable, cannot run against base root {}",
                 config.base_root.display()
             )));
@@ -282,7 +282,7 @@ pub fn run_in_dockyard(
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| WrightError::DockyardError(format!("failed to execute command: {e}")))?;
+            .map_err(|e| WrightError::IsolationError(format!("failed to execute command: {e}")))?;
         let watchdog = config
             .rlimits
             .timeout_secs
@@ -293,7 +293,7 @@ pub fn run_in_dockyard(
             make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
         let status = child
             .wait()
-            .map_err(|e| WrightError::DockyardError(format!("failed to wait for command: {e}")))?;
+            .map_err(|e| WrightError::IsolationError(format!("failed to wait for command: {e}")))?;
         if let Some(done) = watchdog {
             done.store(true, Ordering::Release);
         }
@@ -303,7 +303,7 @@ pub fn run_in_dockyard(
         };
         let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
         let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
-        return Ok(DockyardOutput {
+        return Ok(IsolationOutput {
             status,
             stdout,
             stderr,
@@ -312,15 +312,15 @@ pub fn run_in_dockyard(
 
     // Error pipe: child/grandchild write error messages, parent reads.
     let (err_read, err_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::IsolationError(format!("pipe: {e}")))?;
     let err_write_fd = err_write.as_raw_fd();
 
     // Stdout/stderr pipes: grandchild writes, parent reads + tees.
     let (out_read, out_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::IsolationError(format!("pipe: {e}")))?;
     let out_write_fd = out_write.as_raw_fd();
     let (eout_read, eout_write) =
-        nix::unistd::pipe().map_err(|e| WrightError::DockyardError(format!("pipe: {e}")))?;
+        nix::unistd::pipe().map_err(|e| WrightError::IsolationError(format!("pipe: {e}")))?;
     let eout_write_fd = eout_write.as_raw_fd();
 
     match unsafe { fork() } {
@@ -398,7 +398,7 @@ pub fn run_in_dockyard(
 
                     // --- Set up new root filesystem ---
 
-                    let scratch_base = dockyard_scratch_base(config);
+                    let scratch_base = isolation_scratch_base(config);
                     let newroot = scratch_base.join("root");
                     if let Err(e) = std::fs::create_dir_all(&newroot) {
                         die(format!("mkdir newroot: {e}"));
@@ -432,7 +432,7 @@ pub fn run_in_dockyard(
                         .is_ok()
                         {
                             overlay_success = true;
-                            debug!("Using OverlayFS for dockyard root: {}", newroot.display());
+                            debug!("Using OverlayFS for isolation root: {}", newroot.display());
                         }
                     }
 
@@ -704,7 +704,7 @@ pub fn run_in_dockyard(
                     let _ = std::fs::remove_dir("/.old_root");
 
                     // --- Hostname ---
-                    let _ = sethostname("wright-dockyard");
+                    let _ = sethostname("wright-isolation");
 
                     // --- Environment ---
                     for (key, _) in std::env::vars_os() {
@@ -759,7 +759,7 @@ pub fn run_in_dockyard(
                     }
 
                     // Pin this process to N CPUs so that `nproc` inside the
-                    // dockyard returns the scheduler's computed share rather than
+                    // isolation returns the scheduler's computed share rather than
                     // the full host count.
                     if let Some(n) = config.cpu_count {
                         apply_cpu_affinity(n);
@@ -805,9 +805,9 @@ pub fn run_in_dockyard(
             if n > 0 {
                 let msg = String::from_utf8_lossy(&err_buf[..n]).to_string();
                 let _ = waitpid(child, None);
-                cleanup_dockyard_dirs(config);
-                return Err(WrightError::DockyardError(format!(
-                    "dockyard setup failed: {msg}"
+                cleanup_isolation_dirs(config);
+                return Err(WrightError::IsolationError(format!(
+                    "isolation setup failed: {msg}"
                 )));
             }
 
@@ -837,16 +837,16 @@ pub fn run_in_dockyard(
             let stdout = stdout_handle.join().unwrap_or_else(|_| empty());
             let stderr = stderr_handle.join().unwrap_or_else(|_| empty());
 
-            cleanup_dockyard_dirs(config);
+            cleanup_isolation_dirs(config);
 
-            debug!("Dockyard child exited with: {:?}", status);
-            Ok(DockyardOutput {
+            debug!("Isolation child exited with: {:?}", status);
+            Ok(IsolationOutput {
                 status,
                 stdout,
                 stderr,
             })
         }
-        Err(e) => Err(WrightError::DockyardError(format!("fork: {e}"))),
+        Err(e) => Err(WrightError::IsolationError(format!("fork: {e}"))),
     }
 }
 
@@ -882,7 +882,7 @@ fn wait_for_child(pid: Pid) -> Result<ExitStatus> {
             Ok(_) => continue,
             Err(nix::errno::Errno::EINTR) => continue,
             Err(e) => {
-                return Err(WrightError::DockyardError(format!("waitpid: {e}")));
+                return Err(WrightError::IsolationError(format!("waitpid: {e}")));
             }
         }
     }

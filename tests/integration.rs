@@ -2,6 +2,6 @@ mod integration {
     mod apply_test;
     mod build_test;
     mod diversion_test;
-    mod dockyard_test;
+    mod isolation_test;
     mod install_test;
 }

@@ -212,14 +212,14 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello/plan.toml");
         let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
         for stage in manifest.lifecycle.values_mut() {
-            stage.dockyard = "none".to_string();
+            stage.isolation = "none".to_string();
         }
         let plan_dir = manifest_path.parent().unwrap();
 
         let mut config = GlobalConfig::default();
         let build_tmp = tempfile::tempdir().unwrap();
         config.build.build_dir = build_tmp.path().to_path_buf();
-        config.build.default_dockyard = "none".to_string();
+        config.build.default_isolation = "none".to_string();
 
         let builder = Builder::new(config);
         let extra_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();

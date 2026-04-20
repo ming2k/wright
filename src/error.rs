@@ -53,8 +53,8 @@ pub enum WrightError {
     #[error("validation error: {0}")]
     ValidationError(String),
 
-    #[error("dockyard error: {0}")]
-    DockyardError(String),
+    #[error("isolation error: {0}")]
+    IsolationError(String),
 
     #[error("network error: {0}")]
     NetworkError(String),

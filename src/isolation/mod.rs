@@ -15,8 +15,8 @@ pub struct CapturedOutput {
     pub tail: String,
 }
 
-/// Captured output from a dockyard command execution.
-pub struct DockyardOutput {
+/// Captured output from a isolation command execution.
+pub struct IsolationOutput {
     pub status: ExitStatus,
     pub stdout: CapturedOutput,
     pub stderr: CapturedOutput,
@@ -91,26 +91,30 @@ pub struct ResourceLimits {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockyardLevel {
+pub enum IsolationLevel {
     None,
     Relaxed,
     Strict,
 }
 
-impl std::str::FromStr for DockyardLevel {
-    type Err = std::convert::Infallible;
+impl std::str::FromStr for IsolationLevel {
+    type Err = crate::error::WrightError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
-            "none" => Self::None,
-            "relaxed" => Self::Relaxed,
-            _ => Self::Strict,
-        })
+        match s.to_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "relaxed" => Ok(Self::Relaxed),
+            "strict" => Ok(Self::Strict),
+            _ => Err(crate::error::WrightError::IsolationError(format!(
+                "unknown isolation level: '{}' (valid: none, relaxed, strict)",
+                s
+            ))),
+        }
     }
 }
 
-pub struct DockyardConfig {
-    pub level: DockyardLevel,
+pub struct IsolationConfig {
+    pub level: IsolationLevel,
     pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub pkg_dir: PathBuf,
@@ -120,7 +124,7 @@ pub struct DockyardConfig {
     pub env: Vec<(String, String)>,
     pub rlimits: ResourceLimits,
     pub verbose: bool, // Whether to echo subprocess output to the terminal
-    /// Pin the dockyard process to this many CPUs via sched_setaffinity.
+    /// Pin the isolation process to this many CPUs via sched_setaffinity.
     /// Tools like `nproc` will then return this count naturally without any
     /// env var injection. None means inherit the host's full CPU set.
     pub cpu_count: Option<u32>,
@@ -130,8 +134,8 @@ pub struct DockyardConfig {
     pub log_stderr: Option<std::fs::File>,
 }
 
-impl DockyardConfig {
-    pub fn new(level: DockyardLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
+impl IsolationConfig {
+    pub fn new(level: IsolationLevel, src_dir: PathBuf, pkg_dir: PathBuf, task_id: String) -> Self {
         Self {
             level,
             base_root: PathBuf::from("/"),
@@ -150,11 +154,11 @@ impl DockyardConfig {
     }
 }
 
-/// Run a command inside a dockyard using the native Linux namespace implementation.
-pub fn run_in_dockyard(
-    config: &mut DockyardConfig,
+/// Run a command inside a isolation using the native Linux namespace implementation.
+pub fn run_in_isolation(
+    config: &mut IsolationConfig,
     command: &str,
     args: &[String],
-) -> Result<DockyardOutput> {
-    native::run_in_dockyard(config, command, args)
+) -> Result<IsolationOutput> {
+    native::run_in_isolation(config, command, args)
 }

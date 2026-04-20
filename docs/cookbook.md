@@ -389,10 +389,10 @@ See [configuration.md](configuration.md) for the executor format.
 
 ---
 
-## Rust / Cargo Package (Vendored - strict dockyard)
+## Rust / Cargo Package (Vendored - strict isolation)
 
 The preferred approach: vendor crates in the source tree so the build is fully
-offline and runs under the default `strict` dockyard.
+offline and runs under the default `strict` isolation.
 
 ```toml
 name  = "ripgrep"
@@ -408,7 +408,7 @@ uri = "https://example.org/ripgrep-14.1.1-vendored.tar.gz"
 sha256 = "<sha256>"
 
 [lifecycle.compile]
-# dockyard defaults to "strict" — no network access needed thanks to vendoring
+# isolation defaults to "strict" — no network access needed thanks to vendoring
 script = """
 export CARGO_HOME=${SRC_DIR}/.cargo-home
 cat > ${SRC_DIR}/.cargo/config.toml <<'EOF'
@@ -437,15 +437,15 @@ tar czf ripgrep-14.1.1-vendored.tar.gz ripgrep-14.1.1/
 
 ---
 
-## Rust / Cargo Package (Network - relaxed dockyard)
+## Rust / Cargo Package (Network - relaxed isolation)
 
 When vendoring is impractical (e.g. bootstrapping), allow network access by
-setting `dockyard = "relaxed"` on the compile stage. The build gets a private
+setting `isolation = "relaxed"` on the compile stage. The build gets a private
 mount and PID namespace but retains host network access.
 
 ```toml
 [lifecycle.compile]
-dockyard = "relaxed"
+isolation = "relaxed"
 script = """
 export CARGO_HOME=${SRC_DIR}/.cargo-home
 cargo build --release
@@ -459,7 +459,7 @@ install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 
 ---
 
-## Go Package (Vendored - strict dockyard)
+## Go Package (Vendored - strict isolation)
 
 Run `go mod vendor` before packaging the source tarball so the build is
 offline under `strict`.
@@ -478,7 +478,7 @@ uri = "https://example.org/hugo-0.136.0-vendored.tar.gz"
 sha256 = "<sha256>"
 
 [lifecycle.compile]
-# strict dockyard — no network; -mod=vendor forces Go to use vendor/
+# strict isolation — no network; -mod=vendor forces Go to use vendor/
 script = """
 cd ${BUILD_DIR}
 go build -mod=vendor -o hugo .
@@ -492,14 +492,14 @@ install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo
 
 ---
 
-## Go Package (Network - relaxed dockyard)
+## Go Package (Network - relaxed isolation)
 
 Without a vendor directory, Go downloads modules from proxy.golang.org at build
 time. Use `relaxed` so the network namespace is shared with the host.
 
 ```toml
 [lifecycle.compile]
-dockyard = "relaxed"
+isolation = "relaxed"
 script = """
 cd ${BUILD_DIR}
 export GOPATH=${SRC_DIR}/.gopath

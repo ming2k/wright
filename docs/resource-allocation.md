@@ -4,7 +4,7 @@ This page explains how `wright build` allocates CPU time across builds.
 
 ## Automatic Parallelism
 
-Wright no longer exposes a user-facing `dockyards` concurrency setting. Build
+Wright no longer exposes a user-facing `isolations` concurrency setting. Build
 task parallelism is chosen automatically from the usable CPU budget, and the
 scheduler still respects dependency ordering.
 
@@ -31,7 +31,7 @@ max_cpus = 16  # use exactly 16 cores; 0 or unset = available - 4
 The scheduler launches a build task only when **all of its dependencies in the
 current build set have finished**. Dependency ordering is enforced
 automatically. The concurrency limit is internal and derived from the usable
-CPU budget, not from a user-configured `dockyards` value.
+CPU budget, not from a user-configured `isolations` value.
 
 ```
 dependency graph:
@@ -61,16 +61,16 @@ cpu_share = total_cpus / active_tasks
 launches. When the graph fans out, each part gets a smaller share; when it
 collapses to a single runnable part, that part gets the full CPU budget.
 
-**CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another dockyard finishes mid-flight.
+**CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another isolation finishes mid-flight.
 
 ### Static override
 
 If you want a fixed per-task CPU count instead of the dynamic share, set
-`nproc_per_dockyard` in `wright.toml`:
+`nproc_per_isolation` in `wright.toml`:
 
 ```toml
 [build]
-nproc_per_dockyard = 4  # each build task always gets exactly 4 CPUs
+nproc_per_isolation = 4  # each build task always gets exactly 4 CPUs
 ```
 
 ### Per-plan control
@@ -100,7 +100,7 @@ env = { GOFLAGS = "-p=$(nproc)", GOMAXPROCS = "$(nproc)" }
 
 ## Example: 16-core machine (12 usable, OS reserve = 4)
 
-| `max_cpus` | `nproc_per_dockyard` | Active build tasks | CPUs per task |
+| `max_cpus` | `nproc_per_isolation` | Active build tasks | CPUs per task |
 |------------|----------------------|--------------------|---------------|
 | unset      | unset                | 1                  | 12            |
 | unset      | unset                | 4                  | 3             |

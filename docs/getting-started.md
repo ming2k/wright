@@ -41,7 +41,7 @@ arch = "x86_64"
 build = ["gcc"]
 
 [lifecycle.prepare]
-dockyard = "none"
+isolation = "none"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -50,11 +50,11 @@ EOF
 """
 
 [lifecycle.compile]
-dockyard = "none"
+isolation = "none"
 script = "gcc -o hello hello.c"
 
 [lifecycle.staging]
-dockyard = "none"
+isolation = "none"
 script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
 ```
 

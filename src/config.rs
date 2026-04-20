@@ -49,8 +49,8 @@ pub struct GeneralConfig {
 pub struct BuildConfig {
     #[serde(default = "default_build_dir")]
     pub build_dir: PathBuf,
-    #[serde(default = "default_dockyard")]
-    pub default_dockyard: String,
+    #[serde(default = "default_isolation")]
+    pub default_isolation: String,
     #[serde(default)]
     pub ccache: bool,
     #[serde(default)]
@@ -59,13 +59,13 @@ pub struct BuildConfig {
     pub cpu_time_limit: Option<u64>,
     #[serde(default)]
     pub timeout: Option<u64>,
-    /// Static per-dockyard compiler thread budget. When set, overrides the
-    /// dynamic `total_cpus / active_dockyards` calculation in the scheduler.
-    /// When unset, the scheduler divides CPUs evenly across active dockyards.
+    /// Static per-isolation compiler thread budget. When set, overrides the
+    /// dynamic `total_cpus / active_isolations` calculation in the scheduler.
+    /// When unset, the scheduler divides CPUs evenly across active isolations.
     #[serde(default)]
-    pub nproc_per_dockyard: Option<u32>,
+    pub nproc_per_isolation: Option<u32>,
     /// Hard cap on the number of CPU cores wright will use in total.
-    /// Limits both the parallel dockyard count and the dynamic NPROC budget.
+    /// Limits both the parallel isolation count and the dynamic NPROC budget.
     /// Unset = use all available CPUs.
     #[serde(default)]
     pub max_cpus: Option<usize>,
@@ -202,7 +202,7 @@ fn default_archive_db_path() -> PathBuf {
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright-build")
 }
-fn default_dockyard() -> String {
+fn default_isolation() -> String {
     "strict".to_string()
 }
 fn default_timeout() -> u64 {
@@ -226,12 +226,12 @@ impl Default for BuildConfig {
     fn default() -> Self {
         Self {
             build_dir: default_build_dir(),
-            default_dockyard: default_dockyard(),
+            default_isolation: default_isolation(),
             ccache: false,
             memory_limit: None,
             cpu_time_limit: None,
             timeout: None,
-            nproc_per_dockyard: None,
+            nproc_per_isolation: None,
             max_cpus: None,
         }
     }

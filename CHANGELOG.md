@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-04-20
+
+### Changed
+- **Terminology**: Renamed the namespace-based execution environment from `dockyard` to `isolation` throughout the codebase, documentation, and configuration.
+- **Configuration**: Updated the `plan.toml` schema to use `isolation = "..."` instead of `dockyard`.
+- **Validation**: Hardened isolation level parsing. Invalid values for the `isolation` field (e.g. `relax` instead of `relaxed`) now cause an immediate build error instead of silently falling back to `strict`.
+
 ## [2.3.5] - 2026-04-20
 
 ### Changed
@@ -90,7 +97,7 @@
 ## [2.1.4] - 2026-04-12
 
 ### Changed
-- **Removed user-configurable build concurrency**: Wright no longer supports `[build].dockyards` or `wright build --dockyards`; build task parallelism is now selected automatically from the usable CPU budget.
+- **Removed user-configurable build concurrency**: Wright no longer supports `[build].isolations` or `wright build --isolations`; build task parallelism is now selected automatically from the usable CPU budget.
 - **Removed global compiler-flag config**: Wright no longer supports `[build].cflags` or `[build].cxxflags`; compiler flags should now be set per plan, per stage, or via the invoking environment.
 
 ## [2.1.3] - 2026-04-12
@@ -205,20 +212,20 @@
 ## [1.11.7] - 2026-04-07
 
 ### Fixed
-- **Dockyard DNS resolution**: Fix dangling `/etc/resolv.conf` symlink issue in dockyard by ensuring essential `/etc` files are properly bind-mounted after `/run` is mounted, supporting systems using `systemd-resolved` with `xray-tproxy`.
+- **Isolation DNS resolution**: Fix dangling `/etc/resolv.conf` symlink issue in isolation by ensuring essential `/etc` files are properly bind-mounted after `/run` is mounted, supporting systems using `systemd-resolved` with `xray-tproxy`.
 
 ## [1.11.6] - 2026-04-07
 
 ### Changes
-- **Simplified `-i` install flow**: `wbuild run -i` now installs completed packages directly to host `/` between build waves, matching the behavior of `wright install`. Removes the session-local overlay sysroot and staged package database introduced in 1.11.4–1.11.5. This eliminates the `dockyard = "none"` incompatibility and makes `-i` work consistently across all dockyard levels.
+- **Simplified `-i` install flow**: `wbuild run -i` now installs completed packages directly to host `/` between build waves, matching the behavior of `wright install`. Removes the session-local overlay sysroot and staged package database introduced in 1.11.4–1.11.5. This eliminates the `isolation = "none"` incompatibility and makes `-i` work consistently across all isolation levels.
 
 ## [1.11.5] - 2026-04-04
 
 ### Changes
-- **Session-root native install stabilization**: `wbuild run -i` now stages native dockyard builds against the session root and commits them to the host only after the build graph succeeds, avoiding live-root mutation during parallel construction.
+- **Session-root native install stabilization**: `wbuild run -i` now stages native isolation builds against the session root and commits them to the host only after the build graph succeeds, avoiding live-root mutation during parallel construction.
 - **Install hook timing cleanup**: package install and upgrade hooks are deferred until the final host-root commit instead of running inside the staging sysroot.
 - **Scheduling summary clarity**: `wbuild run` now reports dependency-wave batches (`Scheduling batch N ...`) rather than misleading topological depth values.
-- **Regression coverage and docs sync**: add dockyard shebang execution regression tests and update the architecture, CLI, cookbook, usage, plan-writing, and design docs to match the current session-root behavior.
+- **Regression coverage and docs sync**: add isolation shebang execution regression tests and update the architecture, CLI, cookbook, usage, plan-writing, and design docs to match the current session-root behavior.
 
 ## [1.11.4] - 2026-04-03
 
@@ -251,7 +258,7 @@
 ### Changes
 - **`wbuild resolve` pipeline**: dependency expansion (`--deps`, `--deps=sync`, `--deps=all`) is now performed by `wbuild resolve` and piped into `wbuild run`, replacing the previous `wbuild run --deps` interface. This enables `wbuild resolve ... | sudo wbuild run ...` workflows where resolution runs unprivileged.
 - **Unified database path**: non-root users now default to the system database (`/var/lib/wright/db/parts.db`) so that resolve and build pipelines across privilege boundaries consult the same installation state. Per-user overrides via config are still supported.
-- **Multi-dockyard progress spinners**: parallel builds now display per-dockyard progress spinners showing the current lifecycle stage, replacing interleaved log lines.
+- **Multi-isolation progress spinners**: parallel builds now display per-isolation progress spinners showing the current lifecycle stage, replacing interleaved log lines.
 - **Wave-based transitive rebuild expansion**: fix `expand_rebuild_deps` to collect each depth level into a separate wave, preventing packages added at the current depth from triggering further expansion within the same iteration.
 
 ## [1.10.1] - 2026-03-21
@@ -432,7 +439,7 @@
 - **Incremental builds**: the source tree (`src/`) is now preserved across builds when the build key is unchanged, skipping fetch/verify/extract. Plans that support incremental compilation (e.g. `make` without `make clean`) benefit from significantly faster rebuilds. Use `--clean` to force a full re-extraction.
 
 ### Changes
-- Clarify the `compile: serialized` log message to `compile: one-at-a-time across dockyards` to avoid implying single-threaded compilation.
+- Clarify the `compile: serialized` log message to `compile: one-at-a-time across isolations` to avoid implying single-threaded compilation.
 
 ## [1.5.1] - 2026-03-08
 
@@ -440,10 +447,10 @@
 - **Rename "container" to "kit"**: package groupings for `wright install @name` are now called "kits" to avoid confusion with Docker/OCI containers. Config field `containers_dir` → `kits_dir`, TOML syntax `[[container]]` → `[[kit]]`, default path `/var/lib/wright/containers/` → `/var/lib/wright/kits/`.
 - **Rename `hold_dir` to `plan_dir`** in builder internals for clarity.
 - **Rename the plan output schema to fabricate**: plans now use `[lifecycle.fabricate]` and `[lifecycle.fabricate.<name>]` for final output metadata and split outputs, with `fabricate` also serving as the final lifecycle phase.
-- **Builds no longer default to `/tmp`**: the default `build_dir` is now `/var/tmp/wright-build`, and dockyard overlay/root scratch directories live under the active build root instead of hardcoded `/tmp`.
+- **Builds no longer default to `/tmp`**: the default `build_dir` is now `/var/tmp/wright-build`, and isolation overlay/root scratch directories live under the active build root instead of hardcoded `/tmp`.
 
 ### Fixes
-- Dockyard temporary directories are cleaned up from the build root after each build, preventing stale accumulation in global `/tmp`.
+- Isolation temporary directories are cleaned up from the build root after each build, preventing stale accumulation in global `/tmp`.
 
 ## [1.4.1] - 2026-03-07
 
@@ -509,11 +516,11 @@
 - Add `wright assume <name> <version>` to register externally-provided packages so dependency checks treat them as satisfied. Intended for bootstrapping scenarios where core packages (glibc, gcc, etc.) already exist but were not installed through wright. Assumed packages display with an `[external]` tag in `wright list` and are automatically replaced when a real package is installed via `wright install`.
 - Add `wright unassume <name>` to remove an assumed package record.
 - Add `wright list --assumed` (`-a`) to filter the package list to assumed packages only.
-- Compile-stage serialization: when multiple dockyards run in parallel, compile stages are now serialized behind a semaphore so only one dockyard compiles at a time with access to all CPU cores. Non-compile stages (configure, package, etc.) remain fully parallel. This eliminates the "long-tail effect" where light packages finish quickly and leave cores idle while heavy compiles continue with a fraction of available cores.
+- Compile-stage serialization: when multiple isolations run in parallel, compile stages are now serialized behind a semaphore so only one isolation compiles at a time with access to all CPU cores. Non-compile stages (configure, package, etc.) remain fully parallel. This eliminates the "long-tail effect" where light packages finish quickly and leave cores idle while heavy compiles continue with a fraction of available cores.
 
 ### Fixes
-- Dockyard `pivot_root` now falls back to `chroot` when running inside a chroot environment (e.g. LFS-style builds) where `pivot_root(2)` returns `EINVAL` due to the current root not being a real mount point.
-- Lifecycle stage log messages now include the package name (e.g. `python: running stage: compile`) so concurrent dockyard output can be attributed to the correct package.
+- Isolation `pivot_root` now falls back to `chroot` when running inside a chroot environment (e.g. LFS-style builds) where `pivot_root(2)` returns `EINVAL` due to the current root not being a real mount point.
+- Lifecycle stage log messages now include the package name (e.g. `python: running stage: compile`) so concurrent isolation output can be attributed to the correct package.
 - Remove dead code: unused `compress_zstd`, `decompress_zstd`, and `sha256_bytes` functions.
 
 ## [1.2.6] - 2026-02-22
@@ -523,12 +530,12 @@
 
 ### Fixes
 - Config files declared in `[backup]` now create `<path>.wnew` only when the live file already exists during upgrade. If the config path does not exist yet, the new file is installed directly to `<path>`.
-- Dockyard CPU budgets are now partitioned fairly across each launch wave, avoiding misleading same-wave allocations like `16`, `8`, `5` that summed above the host CPU count.
+- Isolation CPU budgets are now partitioned fairly across each launch wave, avoiding misleading same-wave allocations like `16`, `8`, `5` that summed above the host CPU count.
 
 ## [1.2.5] - 2026-02-22
 
 ### Changes
-- CPU scheduling default now uses all available CPUs when `[build].max_cpus` is unset (instead of implicitly reserving 4 cores for the OS). The dockyard status line no longer prints the "reserved 4 for OS" note.
+- CPU scheduling default now uses all available CPUs when `[build].max_cpus` is unset (instead of implicitly reserving 4 cores for the OS). The isolation status line no longer prints the "reserved 4 for OS" note.
 
 ### Features
 - Add git fetch progress logging for `git+` sources: long fetches now emit transfer milestones (10% increments) so builds do not appear stalled during remote object downloads.
@@ -562,10 +569,10 @@
 ## [1.2.0] - 2026-02-21
 
 ### Features
-- Rename "sandbox" isolation environment to "dockyard" throughout codebase, config, TOML fields, and docs
-- Rename "worker" concurrency concept to "dockyard" for consistency (`workers` → `dockyards`, `nproc_per_worker` → `nproc_per_dockyard`)
+- Rename "sandbox" isolation environment to "isolation" throughout codebase, config, TOML fields, and docs
+- Rename "worker" concurrency concept to "isolation" for consistency (`workers` → `isolations`, `nproc_per_worker` → `nproc_per_isolation`)
 - Add `max_cpus` config field to hard-cap total CPU cores used; defaults to `available_cpus - 4` (minimum 1) to reserve headroom for the OS
-- Print resource info at build start: active dockyard count, total/available CPUs, and per-dockyard CPU share
+- Print resource info at build start: active isolation count, total/available CPUs, and per-isolation CPU share
 - Update all documentation for new terminology and CPU allocation model
 
 ## [1.1.2] - 2026-02-21

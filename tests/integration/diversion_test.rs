@@ -22,11 +22,11 @@ description = "test part"
 license = "MIT"
 
 [lifecycle.prepare]
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p usr/bin"
 
 [lifecycle.compile]
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin/shared"
 "#,
         name, shared_file_content

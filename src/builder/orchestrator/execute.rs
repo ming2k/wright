@@ -43,7 +43,7 @@ pub(super) fn execute_builds(
 
     let resources = super::summarize_build_resources(config);
     let total_cpus = resources.total_cpus;
-    let actual_dockyards = resources.concurrent_tasks;
+    let actual_isolations = resources.concurrent_tasks;
 
     loop {
         let mut ready_to_launch = Vec::new();
@@ -70,7 +70,7 @@ pub(super) fn execute_builds(
         }
 
         let base_active = in_progress.lock().unwrap().len();
-        let free_slots = actual_dockyards.saturating_sub(base_active);
+        let free_slots = actual_isolations.saturating_sub(base_active);
         let launch_batch: Vec<_> = ready_to_launch.into_iter().take(free_slots).collect();
         let planned_active = base_active + launch_batch.len();
 
@@ -80,7 +80,7 @@ pub(super) fn execute_builds(
                 in_progress_guard.insert(name.clone());
             }
 
-            let dynamic_nproc_cap = if let Some(n) = opts.nproc_per_dockyard {
+            let dynamic_nproc_cap = if let Some(n) = opts.nproc_per_isolation {
                 Some(n)
             } else {
                 let base_share = (total_cpus / planned_active.max(1)).max(1);
@@ -115,14 +115,14 @@ pub(super) fn execute_builds(
             if is_post_bootstrap {
                 effective_opts.force = true;
             }
-            if actual_dockyards == 1 && !opts.quiet {
+            if actual_isolations == 1 && !opts.quiet {
                 effective_opts.verbose = true;
-            } else if actual_dockyards > 1 && !opts.verbose {
+            } else if actual_isolations > 1 && !opts.verbose {
                 effective_opts.verbose = false;
             }
-            effective_opts.nproc_per_dockyard = dynamic_nproc_cap;
+            effective_opts.nproc_per_isolation = dynamic_nproc_cap;
 
-            let spinner = if actual_dockyards > 1 && build_set.len() > 1 && !opts.quiet {
+            let spinner = if actual_isolations > 1 && build_set.len() > 1 && !opts.quiet {
                 let pb = crate::util::progress::MULTI.add(indicatif::ProgressBar::new_spinner());
                 pb.set_style(
                     indicatif::ProgressStyle::default_spinner()
@@ -212,7 +212,7 @@ pub(super) fn execute_builds(
         match rx.recv() {
             Err(_) => {
                 return Err(WrightError::BuildError(
-                    "dockyard thread disconnected unexpectedly".to_string(),
+                    "isolation thread disconnected unexpectedly".to_string(),
                 ));
             }
             Ok(Ok(name)) => {
@@ -453,7 +453,7 @@ fn build_one(
         opts.skip_check,
         &extra_env,
         opts.verbose,
-        opts.nproc_per_dockyard,
+        opts.nproc_per_isolation,
         Some(compile_lock),
         progress,
     )?;

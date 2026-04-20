@@ -12,18 +12,18 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn load_manifest_without_dockyard(name: &str) -> (PlanManifest, PathBuf) {
+fn load_manifest_without_isolation(name: &str) -> (PlanManifest, PathBuf) {
     let manifest_path = fixture_path(name).join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
     for stage in manifest.lifecycle.values_mut() {
-        stage.dockyard = "none".to_string();
+        stage.isolation = "none".to_string();
     }
     (manifest, manifest_path.parent().unwrap().to_path_buf())
 }
 
 #[test]
 fn test_build_hello_fixture() {
-    let (manifest, plan_dir) = load_manifest_without_dockyard("hello");
+    let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
@@ -52,7 +52,7 @@ fn test_build_hello_fixture() {
 
 #[test]
 fn test_build_and_archive_hello() {
-    let (manifest, plan_dir) = load_manifest_without_dockyard("hello");
+    let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
@@ -115,7 +115,7 @@ link = ["zlib", "libffi"]
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
 """
@@ -175,14 +175,14 @@ build = []
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 install -Dm755 /bin/sh ${PART_DIR}/usr/bin/${NAME}-${VERSION}
 """
 
 [output."split-vars-doc"]
 description = "doc output"
-dockyard = "none"
+isolation = "none"
 script = """
 test -f ${MAIN_PART_DIR}/usr/bin/${MAIN_PART_NAME}-${VERSION}
 install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
@@ -248,7 +248,7 @@ fn test_lint_nginx_fixture() {
 
 #[test]
 fn test_build_single_stage() {
-    let (manifest, plan_dir) = load_manifest_without_dockyard("hello");
+    let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
@@ -330,7 +330,7 @@ build = []
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 echo LIVE-BUILD-OUTPUT
 install -Dm755 /bin/sh ${PART_DIR}/usr/bin/verbose-pipe-test
@@ -356,7 +356,7 @@ assemblies_dir = "{}"
 
 [build]
 build_dir = "{}"
-default_dockyard = "none"
+default_isolation = "none"
 ccache = false
 
 [network]

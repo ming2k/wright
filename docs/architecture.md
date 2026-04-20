@@ -26,7 +26,7 @@ src/
 ├── commands/  # command handlers grouped by subcommand
 ├── config.rs  # global config and assembly definitions
 ├── database/  # installed-system DB
-├── dockyard/  # sandbox isolation
+├── isolation/  # sandbox isolation
 ├── part/      # archive format, versions, FHS validation
 ├── plan/      # plan parsing and validation
 ├── query/     # system analysis

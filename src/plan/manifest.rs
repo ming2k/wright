@@ -60,8 +60,8 @@ pub struct SubFabricateOutput {
     pub script: String,
     #[serde(default = "default_executor")]
     pub executor: String,
-    #[serde(default = "default_dockyard_level")]
-    pub dockyard: String,
+    #[serde(default = "default_isolation_level")]
+    pub isolation: String,
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
@@ -255,8 +255,8 @@ fn default_true() -> bool {
 pub struct LifecycleStage {
     #[serde(default = "default_executor")]
     pub executor: String,
-    #[serde(default = "default_dockyard_level")]
-    pub dockyard: String,
+    #[serde(default = "default_isolation_level")]
+    pub isolation: String,
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
@@ -267,7 +267,7 @@ fn default_executor() -> String {
     "shell".to_string()
 }
 
-fn default_dockyard_level() -> String {
+fn default_isolation_level() -> String {
     "strict".to_string()
 }
 
@@ -469,7 +469,7 @@ build = ["gcc"]
 
 [lifecycle.prepare]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -479,14 +479,14 @@ EOF
 
 [lifecycle.compile]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 gcc -o hello hello.c
 """
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = """
 install -Dm755 hello ${PART_DIR}/usr/bin/hello
 """
@@ -535,7 +535,7 @@ ccache = true
 
 [lifecycle.prepare]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 patch -Np1 < ${FILES_DIR}/fix-headers.patch
@@ -543,7 +543,7 @@ patch -Np1 < ${FILES_DIR}/fix-headers.patch
 
 [lifecycle.configure]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 env = { CFLAGS = "-O2 -pipe" }
 script = """
 cd ${BUILD_DIR}
@@ -552,7 +552,7 @@ cd ${BUILD_DIR}
 
 [lifecycle.compile]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 make
@@ -560,7 +560,7 @@ make
 
 [lifecycle.check]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 optional = true
 script = """
 cd ${BUILD_DIR}
@@ -569,7 +569,7 @@ make test
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "strict"
+isolation = "strict"
 script = """
 cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install

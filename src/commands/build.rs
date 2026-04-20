@@ -58,7 +58,7 @@ pub fn execute_build(
             quiet,
             mvp: args.mvp,
             print_parts: args.print_parts,
-            nproc_per_dockyard: config.build.nproc_per_dockyard,
+            nproc_per_isolation: config.build.nproc_per_isolation,
         },
     )?;
     Ok(())

@@ -104,12 +104,12 @@ pub struct BuildOptions {
     pub mvp: bool,
     /// Print produced part paths to stdout.
     pub print_parts: bool,
-    /// Per-dockyard NPROC hint: how many compiler threads each dockyard should use.
+    /// Per-isolation NPROC hint: how many compiler threads each isolation should use.
     /// The scheduler computes this per launched task from the currently active
-    /// dockyard count (`total_cpus / active_dockyards`) so resource share adapts as
+    /// isolation count (`total_cpus / active_isolations`) so resource share adapts as
     /// dependency levels fan out or collapse. None means let the builder fall
     /// back to its own logic.
-    pub nproc_per_dockyard: Option<u32>,
+    pub nproc_per_isolation: Option<u32>,
 }
 
 impl BuildOptions {
@@ -566,7 +566,7 @@ license = "MIT"
 arch = "x86_64"{build}
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p ${{PART_DIR}}/usr/bin"
 "#
         );
@@ -609,7 +609,7 @@ arch = "x86_64"
 
 [lifecycle.staging]
 executor = "shell"
-dockyard = "none"
+isolation = "none"
 script = "mkdir -p ${PART_DIR}/usr/lib"
 "#,
         )
