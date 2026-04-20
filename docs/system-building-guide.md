@@ -77,7 +77,7 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 | Configuration | `/etc/` | System-level configuration |
 | runit service | `/etc/sv/{service}/` | Service definition |
 | Runtime data | `/var/lib/{pkgname}/` | Databases, state files, etc. |
-| Logs | `/var/log/{pkgname}/` | Log directory |
+| Logs | `/var/logs/{pkgname}/` | Log directory |
 
 ---
 
@@ -322,7 +322,7 @@ Parts providing daemons must include a runit service directory:
 ```
 /etc/sv/{service}/run     # Required, service start script
 /etc/sv/{service}/finish    # Optional, cleanup script
-/etc/sv/{service}/log/run   # Recommended, logging script
+/etc/sv/{service}/logs/run   # Recommended, logging script
 ```
 
 Services are **NOT enabled by default**. Users enable services via symlinks:

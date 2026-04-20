@@ -18,9 +18,9 @@ use crate::plan::manifest::{FabricateConfig, PlanManifest};
 use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {
-    pub pkg_dir: PathBuf,
-    pub src_dir: PathBuf,
-    pub log_dir: PathBuf,
+    pub output_dir: PathBuf,
+    pub work_dir: PathBuf,
+    pub logs_dir: PathBuf,
     pub split_pkg_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
@@ -210,41 +210,41 @@ impl Builder {
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
 
-        let src_dir = build_root.join("src");
-        let pkg_dir = build_root.join("pkg");
-        let log_dir = build_root.join("log");
+        let work_dir = build_root.join("work");
+        let output_dir = build_root.join("output");
+        let logs_dir = build_root.join("logs");
 
         let partial = !stages.is_empty() || fetch_only;
         let build_key = self.compute_build_key(manifest)?;
 
         if !stages.is_empty() {
             // When running specific stages, validate that a previous build exists
-            if !src_dir.exists() {
+            if !work_dir.exists() {
                 return Err(WrightError::BuildError(
-                    "cannot use --stage: no previous build found (src/ does not exist). Run a full build first.".to_string()
+                    "cannot use --stage: no previous build found (work/ does not exist). Run a full build first.".to_string()
                 ));
             }
-            // Only recreate pkg_dir and log_dir for fresh output
-            for dir in [&pkg_dir, &log_dir] {
+            // Only recreate output_dir and logs_dir for fresh output
+            for dir in [&output_dir, &logs_dir] {
                 ensure_clean_dir(dir)?;
             }
         } else {
-            // Check if src/ can be reused: if the build key matches the
+            // Check if work/ can be reused: if the build key matches the
             // previous build, skip re-extraction for an incremental build.
             let key_file = build_root.join(".build_key");
-            let src_reusable = src_dir.exists()
+            let work_reusable = work_dir.exists()
                 && key_file.exists()
                 && std::fs::read_to_string(&key_file)
                     .map(|stored| stored.trim() == build_key)
                     .unwrap_or(false);
 
-            if src_reusable {
-                debug!("Source tree unchanged (build key match) — reusing src/");
-                for dir in [&pkg_dir, &log_dir] {
+            if work_reusable {
+                debug!("Source tree unchanged (build key match) — reusing work/");
+                for dir in [&output_dir, &logs_dir] {
                     ensure_clean_dir(dir)?;
                 }
             } else {
-                for dir in [&src_dir, &pkg_dir, &log_dir] {
+                for dir in [&work_dir, &output_dir, &logs_dir] {
                     ensure_clean_dir(dir)?;
                 }
             }
@@ -253,18 +253,18 @@ impl Builder {
         debug!("Build directory: {}", build_root.display());
 
         if stages.is_empty() {
-            if !src_dir.join(".extracted").exists() {
+            if !work_dir.join(".extracted").exists() {
                 // Fetch sources (remote downloads + local file copies to cache)
                 self.fetch(manifest, plan_dir)?;
 
                 // Verify sources
                 self.verify(manifest)?;
 
-                // Extract parts and copy non-archive files to src_dir
-                self.extract(manifest, &src_dir)?;
+                // Extract parts and copy non-archive files to work_dir
+                self.extract(manifest, &work_dir)?;
 
                 // Mark extraction complete so incremental builds can skip it
-                let _ = std::fs::write(src_dir.join(".extracted"), "");
+                let _ = std::fs::write(work_dir.join(".extracted"), "");
             } else {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
             }
@@ -272,9 +272,9 @@ impl Builder {
 
         if fetch_only {
             return Ok(BuildResult {
-                pkg_dir,
-                src_dir,
-                log_dir,
+                output_dir,
+                work_dir,
+                logs_dir,
                 split_pkg_dirs: std::collections::HashMap::new(),
             });
         }
@@ -312,10 +312,10 @@ impl Builder {
             version: &manifest.plan.version,
             release: manifest.plan.release,
             arch: &manifest.plan.arch,
-            workdir: &src_dir.to_string_lossy(),
-            part_dir: &pkg_dir.to_string_lossy(),
+            workdir: &work_dir.to_string_lossy(),
+            part_dir: &output_dir.to_string_lossy(),
             main_part_name: &manifest.plan.name,
-            main_part_dir: &pkg_dir.to_string_lossy(),
+            main_part_dir: &output_dir.to_string_lossy(),
         });
 
         // Package-level env from [options.env]: injected into all stages.
@@ -333,11 +333,11 @@ impl Builder {
         let pipeline = lifecycle::LifecyclePipeline::new(lifecycle::LifecycleContext {
             manifest,
             vars,
-            working_dir: &src_dir,
-            log_dir: &log_dir,
+            working_dir: &work_dir,
+            logs_dir: &logs_dir,
             base_root: base_root.to_path_buf(),
-            src_dir: src_dir.clone(),
-            part_dir: pkg_dir.clone(),
+            work_dir: work_dir.clone(),
+            output_dir: output_dir.clone(),
             stages: stages.to_vec(),
             skip_check,
             executors: &self.executors,
@@ -364,11 +364,11 @@ impl Builder {
                     continue;
                 }
 
-                let sub_pkg_dir = build_root.join(format!("pkg-{}", sub_name));
-                std::fs::create_dir_all(&sub_pkg_dir).map_err(|e| {
+                let sub_output_dir = build_root.join(format!("output-{}", sub_name));
+                std::fs::create_dir_all(&sub_output_dir).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to create sub-part directory {}: {}",
-                        sub_pkg_dir.display(),
+                        sub_output_dir.display(),
                         e
                     ))
                 })?;
@@ -376,12 +376,12 @@ impl Builder {
                 let mut sub_vars = vars_for_splits.clone();
                 sub_vars.insert(
                     "PART_DIR".to_string(),
-                    sub_pkg_dir.to_string_lossy().to_string(),
+                    sub_output_dir.to_string_lossy().to_string(),
                 );
                 sub_vars.insert("NAME".to_string(), sub_name.clone());
                 sub_vars.insert(
                     "MAIN_PART_DIR".to_string(),
-                    pkg_dir.to_string_lossy().to_string(),
+                    output_dir.to_string_lossy().to_string(),
                 );
 
                 debug!("Running fabricate stage for sub-part: {}", sub_name);
@@ -389,10 +389,10 @@ impl Builder {
                 let mut sub_options = executor::ExecutorOptions {
                     level: sub_pkg.isolation.parse()?,
                     base_root: base_root.to_path_buf(),
-                    src_dir: src_dir.clone(),
-                    part_dir: sub_pkg_dir.clone(),
+                    work_dir: work_dir.clone(),
+                    output_dir: sub_output_dir.clone(),
                     rlimits: rlimits.clone(),
-                    main_part_dir: Some(pkg_dir.clone()),
+                    main_part_dir: Some(output_dir.clone()),
                     verbose,
                     cpu_count: Some(cpu_count),
                     log_stdout: None,
@@ -405,14 +405,14 @@ impl Builder {
                 let mut result = executor::execute_script(
                     sub_executor,
                     &sub_pkg.script,
-                    &src_dir,
+                    &work_dir,
                     &sub_pkg.env,
                     &sub_vars,
                     &mut sub_options,
                 )?;
 
                 // Write log — stream from captured temp files
-                let log_path = log_dir.join(format!("part-{}.log", sub_name));
+                let log_path = logs_dir.join(format!("part-{}.log", sub_name));
                 if let Ok(mut log_file) = std::fs::File::create(&log_path) {
                     use std::io::Write;
                     let _ = write!(
@@ -434,7 +434,7 @@ impl Builder {
                     )));
                 }
 
-                split_pkg_dirs.insert(sub_name.clone(), sub_pkg_dir);
+                split_pkg_dirs.insert(sub_name.clone(), sub_output_dir);
             }
         }
 
@@ -448,9 +448,9 @@ impl Builder {
         }
 
         Ok(BuildResult {
-            pkg_dir,
-            src_dir,
-            log_dir,
+            output_dir,
+            work_dir,
+            logs_dir,
             split_pkg_dirs,
         })
     }
@@ -599,6 +599,30 @@ impl Builder {
             if is_part_file(&cache_filename) {
                 debug!("Extracting {} to {}...", cache_filename, final_dest.display());
                 compress::extract_part(&path, &final_dest)?;
+
+                // Autoflatten: if the archive extracted into a single subdirectory,
+                // move its contents up to final_dest to maintain a predictable layout.
+                if source.extract_to.is_some() {
+                    if let Ok(entries) = std::fs::read_dir(&final_dest) {
+                        let valid_entries: Vec<_> = entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                            .collect();
+
+                        if valid_entries.len() == 1 && valid_entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            let sub_dir = valid_entries[0].path();
+                            debug!("Autoflattening {} -> {}", sub_dir.display(), final_dest.display());
+                            
+                            if let Ok(sub_entries) = std::fs::read_dir(&sub_dir) {
+                                for entry in sub_entries.filter_map(|e| e.ok()) {
+                                    let target = final_dest.join(entry.file_name());
+                                    let _ = std::fs::rename(entry.path(), target);
+                                }
+                                let _ = std::fs::remove_dir(sub_dir);
+                            }
+                        }
+                    }
+                }
             } else {
                 // Non-archive file: copy to final_dest using the original basename
                 // so build scripts can reference it by its natural name (e.g. $WORKDIR/config).

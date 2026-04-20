@@ -469,9 +469,9 @@ fn build_one(
     let produces_output = opts.stages.is_empty() || (has_fabricate_stage && explicit_output_stage);
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
-            fhs::validate(&result.pkg_dir, &manifest.plan.name)?;
+            fhs::validate(&result.output_dir, &manifest.plan.name)?;
         }
-        let part_path = part::create_part(&result.pkg_dir, manifest, &output_dir)?;
+        let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
         info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
         if opts.print_parts {
             println!("{}", part_path.display());

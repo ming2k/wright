@@ -30,8 +30,8 @@ pub struct GeneralConfig {
     pub source_dir: PathBuf,
     #[serde(default = "default_installed_db_path", alias = "db_path")]
     pub installed_db_path: PathBuf,
-    #[serde(default = "default_log_dir")]
-    pub log_dir: PathBuf,
+    #[serde(default = "default_logs_dir")]
+    pub logs_dir: PathBuf,
     #[serde(default = "default_executors_dir")]
     pub executors_dir: PathBuf,
     #[serde(default = "default_assemblies_dir")]
@@ -115,15 +115,14 @@ fn default_general() -> GeneralConfig {
         } else {
             default_source_dir()
         },
-        // Use the system-installed part database for both root and non-root
         // by default so `wright resolve ... | sudo wright build ...` consult the
         // same installation state. Per-user overrides can still point db_path
         // elsewhere explicitly.
         installed_db_path: default_installed_db_path(),
-        log_dir: if use_xdg {
-            get_xdg_state().unwrap_or_else(default_log_dir)
+        logs_dir: if use_xdg {
+            get_xdg_state().unwrap_or_else(default_logs_dir)
         } else {
-            default_log_dir()
+            default_logs_dir()
         },
         executors_dir: default_executors_dir(),
         assemblies_dir: default_assemblies_dir(),
@@ -187,7 +186,7 @@ fn default_source_dir() -> PathBuf {
 fn default_installed_db_path() -> PathBuf {
     PathBuf::from("/var/lib/wright/state/installed.db")
 }
-fn default_log_dir() -> PathBuf {
+fn default_logs_dir() -> PathBuf {
     PathBuf::from("/var/log/wright")
 }
 fn default_executors_dir() -> PathBuf {
@@ -200,7 +199,7 @@ fn default_archive_db_path() -> PathBuf {
     PathBuf::from("/var/lib/wright/state/archives.db")
 }
 fn default_build_dir() -> PathBuf {
-    PathBuf::from("/var/tmp/wright-build")
+    PathBuf::from("/var/tmp/wright/workshop")
 }
 fn default_isolation() -> String {
     "strict".to_string()

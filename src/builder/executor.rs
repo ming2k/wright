@@ -108,10 +108,10 @@ struct ExecutorWrapper {
 pub struct ExecutorOptions {
     pub level: IsolationLevel,
     pub base_root: PathBuf,
-    pub src_dir: PathBuf,
-    pub part_dir: PathBuf,
+    pub work_dir: PathBuf,
+    pub output_dir: PathBuf,
     pub rlimits: ResourceLimits,
-    /// Main part's part_dir, mounted at /main-pkg for split part stages.
+    /// Main part's output_dir, mounted at /main-pkg for split part stages.
     pub main_part_dir: Option<PathBuf>,
     pub verbose: bool,
     /// Number of CPUs to pin the sandboxed process to via sched_setaffinity.
@@ -175,8 +175,8 @@ pub fn execute_script(
     );
     let mut config = IsolationConfig::new(
         options.level,
-        options.src_dir.clone(),
-        options.part_dir.clone(),
+        options.work_dir.clone(),
+        options.output_dir.clone(),
         task_id,
     );
     config.base_root = options.base_root.clone();

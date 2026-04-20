@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "wright"
-version = "2.5.0"
+version = "2.5.1"
 dependencies = [
  "anyhow",
  "bzip2",

@@ -57,7 +57,7 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive = part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let archive = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
 
     let persistent = std::env::temp_dir().join(format!(
         "test-diversion-{}-{}.wright.tar.zst",

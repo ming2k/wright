@@ -122,7 +122,7 @@ To iterate on a subset of stages and inspect the result:
 
 ```bash
 wright build mypkg --stage=configure
-# Inspect $WORKDIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
+# Inspect $WORKDIR (e.g. /var/tmp/wright/workshop/mypkg-1.0/work/) manually
 wright build mypkg --stage=compile
 wright build mypkg --stage=staging --stage=fabricate
 
@@ -496,7 +496,7 @@ time. Use `relaxed` so the network namespace is shared with the host.
 isolation = "relaxed"
 script = """
 export GOPATH=${WORKDIR}/.gopath
-export GOMODCACHE=${WORKDIR}/.gopath/pkg/mod
+export GOMODCACHE=${WORKDIR}/.gopath/output/mod
 go build -o hugo .
 """
 

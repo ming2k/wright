@@ -11,23 +11,23 @@ when work is skipped or repeated.
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
-| `build_dir` (default `/var/tmp/wright-build`) | Live working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
+| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
 | `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
 
 ### How the two layers relate
 
-- `build_dir/src/` decides whether Wright can reuse the previous unpacked source tree.
+- `build_dir/work/` decides whether Wright can reuse the previous unpacked source tree.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check whether `build_dir/src/` is reusable (build key match)
+1. Check whether `build_dir/work/` is reusable (build key match)
 2. If not reusable, fetch/extract from `source cache`
 
 ## Build Directory Layout
 
 Each part gets its own working directory under `build_dir`
-(default `/var/tmp/wright-build`):
+(default `/var/tmp/wright/workshop`):
 
 ```
 <build_dir>/<name>-<version>/
@@ -52,7 +52,7 @@ set to that subdirectory (the common case for tarballs that unpack into
 Every lifecycle stage writes a log file under `log/`:
 
 ```
-<build_dir>/<name>-<version>/log/
+<build_dir>/<name>-<version>/logs/
 ├── configure.log
 ├── compile.log
 ├── staging.log
@@ -65,7 +65,7 @@ Each file contains:
 === Stage: compile ===
 === Exit code: 0 ===
 === Duration: 42.3s ===
-=== Working dir: /var/tmp/wright-build/zlib-1.3.1/src/zlib-1.3.1 ===
+=== Working dir: /var/tmp/wright/workshop/zlib-1.3.1/work/zlib-1.3.1 ===
 
 --- script ---
 make

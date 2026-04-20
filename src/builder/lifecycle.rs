@@ -33,10 +33,10 @@ pub struct LifecyclePipeline<'a> {
     manifest: &'a PlanManifest,
     vars: HashMap<String, String>,
     working_dir: &'a Path,
-    log_dir: &'a Path,
+    logs_dir: &'a Path,
     base_root: PathBuf,
-    src_dir: PathBuf,
-    part_dir: PathBuf,
+    work_dir: PathBuf,
+    output_dir: PathBuf,
     /// Stages to run; empty = run all non-builtin stages in order.
     stages: Vec<String>,
     /// Skip the `check` stage when running the default full pipeline.
@@ -63,10 +63,10 @@ pub struct LifecycleContext<'a> {
     pub manifest: &'a PlanManifest,
     pub vars: HashMap<String, String>,
     pub working_dir: &'a Path,
-    pub log_dir: &'a Path,
+    pub logs_dir: &'a Path,
     pub base_root: PathBuf,
-    pub src_dir: PathBuf,
-    pub part_dir: PathBuf,
+    pub work_dir: PathBuf,
+    pub output_dir: PathBuf,
     /// Stages to run; empty = run all non-builtin stages in order.
     pub stages: Vec<String>,
     /// Skip the `check` stage when running the default full pipeline.
@@ -91,10 +91,10 @@ impl<'a> LifecyclePipeline<'a> {
             manifest: ctx.manifest,
             vars: ctx.vars,
             working_dir: ctx.working_dir,
-            log_dir: ctx.log_dir,
+            logs_dir: ctx.logs_dir,
             base_root: ctx.base_root,
-            src_dir: ctx.src_dir,
-            part_dir: ctx.part_dir,
+            work_dir: ctx.work_dir,
+            output_dir: ctx.output_dir,
             stages: ctx.stages,
             skip_check: ctx.skip_check,
             executors: ctx.executors,
@@ -243,7 +243,7 @@ impl<'a> LifecyclePipeline<'a> {
         })?;
 
         let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
-        let log_path = self.log_dir.join(format!("{}.log", stage_name));
+        let log_path = self.logs_dir.join(format!("{}.log", stage_name));
 
         // Open the log file before execution and write the header so that
         // stdout content is streamed into it in real time (tail -f ready).
@@ -263,8 +263,8 @@ impl<'a> LifecyclePipeline<'a> {
         let mut options = ExecutorOptions {
             level: isolation_level,
             base_root: self.base_root.clone(),
-            src_dir: self.src_dir.clone(),
-            part_dir: self.part_dir.clone(),
+            work_dir: self.work_dir.clone(),
+            output_dir: self.output_dir.clone(),
             rlimits: self.rlimits.clone(),
             main_part_dir: None,
             verbose: self.verbose,

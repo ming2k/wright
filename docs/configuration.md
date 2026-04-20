@@ -39,12 +39,12 @@ parts_dir = "/var/lib/wright/parts"
 source_dir = "/var/lib/wright/sources"
 installed_db_path = "/var/lib/wright/state/installed.db"
 archive_db_path = "/var/lib/wright/state/archives.db"
-log_dir = "/var/log/wright"
+log_dir = "/var/logs/wright"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "/var/lib/wright/assemblies"
 
 [build]
-build_dir = "/var/tmp/wright-build"
+build_dir = "/var/tmp/wright/workshop"
 default_isolation = "strict"
 ccache = false
 
@@ -62,7 +62,7 @@ retry_count = 3
 | `installed_db_path` | `/var/lib/wright/state/installed.db` | installed-system DB |
 | `archive_db_path` | `/var/lib/wright/state/archives.db` | local built-archive catalogue |
 | `assemblies_dir` | `/var/lib/wright/assemblies` | assembly definition files |
-| `build_dir` | `/var/tmp/wright-build` | build work directory |
+| `build_dir` | `/var/tmp/wright/workshop` | build work directory |
 
 ## Notes
 

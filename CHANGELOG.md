@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-04-20
+
+### Changed
+- **Physical Workspace Refactoring**: Renamed the default build root from `/var/tmp/wright-build` to **`/var/tmp/wright/workshop`** for a more thematic "craftsman" feel.
+- **Directory Semantics**: Internal build directories have been renamed for better clarity:
+    - `src/` $\rightarrow$ **`work/`** (host-side storage for `${WORKDIR}`)
+    - `pkg/` $\rightarrow$ **`output/`** (host-side storage for `${PART_DIR}`)
+    - `log/` $\rightarrow$ **`logs/`** (standardized plural naming)
+- **Architecture**: Internal Rust structs (e.g. `BuildResult`) have been updated to align with the new naming scheme.
+
+### Added
+- **Source Autoflattening**: Enhanced `extract_to` with an automatic "flattening" logic. If an archive contains only a single top-level directory (like most GitHub tarballs), its contents are automatically moved up to the root of the specified `extract_to` directory. This ensures that `cd source` (or similar) is always deterministic regardless of the archive's internal folder name.
+
 ## [2.5.1] - 2026-04-20
 
 ### Changed

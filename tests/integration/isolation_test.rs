@@ -58,7 +58,7 @@ fn isolation_executes_shebang_script_from_var_tmp_build_mount() {
         Ok(dir) => dir,
         Err(_) => return,
     };
-    let src = root.path().join("src");
+    let src = root.path().join("work");
     std::fs::create_dir_all(&src).unwrap();
     let (stdout, stderr) = match run_shebang_script_from_src(&src) {
         Ok(output) => output,

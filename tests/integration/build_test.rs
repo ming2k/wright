@@ -47,7 +47,7 @@ fn test_build_hello_fixture() {
         .unwrap();
 
     // Verify the binary was built
-    assert!(result.pkg_dir.join("usr/bin/hello").exists());
+    assert!(result.output_dir.join("usr/bin/hello").exists());
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_build_and_archive_hello() {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
@@ -146,7 +146,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.pkg_dir, &manifest, output_dir.path()).unwrap();
+    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
     let pkginfo = part::read_partinfo(&archive_path).unwrap();
 
     assert_eq!(pkginfo.runtime_deps, vec!["openssl", "zlib"]);
@@ -213,8 +213,8 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
         )
         .unwrap();
 
-    assert!(result.pkg_dir.join("usr/bin/split-vars-1.0.0").exists());
-    assert!(result.split_pkg_dirs["split-vars-doc"]
+    assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
+    assert!(result.split_output_dirs["split-vars-doc"]
         .join("usr/share/doc/split-vars-doc")
         .exists());
 }
@@ -291,9 +291,9 @@ fn test_build_single_stage() {
         .unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not
-    // (pkg_dir is recreated fresh for single-stage runs)
-    assert!(result.src_dir.join("hello.c").exists());
-    assert!(!result.pkg_dir.join("usr/bin/hello").exists());
+    // (output_dir is recreated fresh for single-stage runs)
+    assert!(result.work_dir.join("hello.c").exists());
+    assert!(!result.output_dir.join("usr/bin/hello").exists());
 }
 
 #[test]
@@ -303,13 +303,13 @@ fn test_print_parts_keeps_verbose_build_output_off_stdout() {
     let parts_dir = root.path().join("components");
     let cache_dir = root.path().join("cache");
     let db_dir = root.path().join("state");
-    let log_dir = root.path().join("log");
+    let logs_dir = root.path().join("logs");
     let build_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
     std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::create_dir_all(&db_dir).unwrap();
-    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::create_dir_all(&logs_dir).unwrap();
     std::fs::create_dir_all(&build_dir).unwrap();
 
     let plan_dir = plans_dir.join("verbose-pipe-test");
@@ -350,7 +350,7 @@ parts_dir = "{}"
 cache_dir = "{}"
 db_path = "{}"
 archive_db_path = "{}"
-log_dir = "{}"
+logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
 
@@ -368,7 +368,7 @@ retry_count = 3
             cache_dir.display(),
             db_dir.join("installed.db").display(),
             db_dir.join("archives.db").display(),
-            log_dir.display(),
+            logs_dir.display(),
             root.path().join("assemblies").display(),
             build_dir.display(),
         ),

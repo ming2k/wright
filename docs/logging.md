@@ -71,7 +71,7 @@ installs of very large small-file packages.
 ## Build Logs (per-stage files)
 
 `wright build` captures build tool output (make, cmake, etc.) to per-stage files
-under `<build_dir>/<name>-<version>/log/`. Every run recreates this directory
+under `<build_dir>/<name>-<version>/logs/`. Every run recreates this directory
 so logs are always fresh.
 
 For the full layout, log format, and recreation rules per operation, see
@@ -101,7 +101,7 @@ Build logs follow the build directory. Configure it in `wright.toml`:
 
 ```toml
 [build]
-build_dir = "/var/tmp/wright-build" # build logs end up under <build_dir>/<name>-<version>/log
+build_dir = "/var/tmp/wright/workshop" # build logs end up under <build_dir>/<name>-<version>/log
 ```
 
 If you want persistent logs, choose a non-temporary path.
@@ -109,5 +109,5 @@ If you want persistent logs, choose a non-temporary path.
 ### `log_dir` (Operation Logs)
 
 `[general].log_dir` is reserved for system/operation logs and defaults to
-`/var/log/wright` (root) or `~/.local/state/wright` (non-root). It is not wired
+`/var/logs/wright` (root) or `~/.local/state/wright` (non-root). It is not wired
 to build logs, which always live under `build_dir` today.

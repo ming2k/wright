@@ -622,8 +622,8 @@ Wright uses standard variables to refer to build directories. When running insid
 
 | Variable    | Host value (Default) | Isolation value | Description |
 |-------------|----------------------|-----------------|-------------|
-| `${WORKDIR}` | `/var/tmp/wright-build/<name>-<version>/src` | `/build` | The root container for all sources. |
-| `${PART_DIR}` | `/var/tmp/wright-build/<name>-<version>/pkg` | `/output` | The installation target directory (DESTDIR). |
+| `${WORKDIR}` | `/var/tmp/wright/workshop/<name>-<version>/work` | `/build` | The root container for all sources. |
+| `${PART_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output` | `/output` | The installation target directory (DESTDIR). |
 
 ### Path Mapping Note
 Inside the **isolation environment**, the filesystem is restricted:
@@ -966,3 +966,56 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 | **sha256** | Each `[[sources]]` entry has its own `sha256` (use `"SKIP"` for local paths and git sources) |
 
 The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`. When `epoch` > 0, the filename includes it: `{name}-{epoch}:{version}-{release}-{arch}.wright.tar.zst`.
+
+## Best Practices & Conventions
+
+To keep your plans clean and robust across version updates, follow these organizational patterns.
+
+### Source Organization Style
+
+#### 1. Single Main Archive (Recommended)
+For plans with one primary source code archive, always extract it to a directory named `source`.
+- **Convention**: Use `extract_to = "source"`.
+- **Benefit**: You can hardcode `cd source` in your scripts. It works regardless of whether the upstream folder is named `app-1.0` or `app-v2.0-final`.
+
+```toml
+[[sources]]
+uri = "https://example.com/myapp-v${VERSION}.tar.gz"
+extract_to = "source"
+
+[lifecycle.compile]
+script = "cd source && make"
+```
+
+#### 2. Patches and Single Files
+Do **not** use `extract_to` for individual files like patches or configuration templates.
+- **Convention**: Leave `extract_to` unset.
+- **Benefit**: Files are placed directly in `${WORKDIR}`, making them easy to reference (e.g., `${WORKDIR}/fix.patch`).
+
+```toml
+[[sources]]
+uri = "fix-build.patch"
+
+[lifecycle.compile]
+script = "cd source && patch -p1 < ${WORKDIR}/fix-build.patch"
+```
+
+#### 3. Multi-Component Builds
+For complex builds involving multiple archives, give each one a unique, descriptive directory name.
+- **Convention**: Use specific names like `app`, `modules`, or `data`.
+
+```toml
+[[sources]]
+uri = "core.tar.gz"
+extract_to = "core"
+
+[[sources]]
+uri = "extra-plugin.tar.gz"
+extract_to = "plugins/extra"
+```
+
+### Scripting Robustness
+- **Explicit Navigation**: Now that automatic directory detection is removed, always start your scripts with an explicit `cd` if your work is in a subdirectory.
+- **Variable Usage**: Prefer `${WORKDIR}/filename` over relative paths for clarity.
+- **Cleanup**: Don't worry about cleaning up `${WORKDIR}` or `${PART_DIR}`; Wright handles this automatically before each build.
+
