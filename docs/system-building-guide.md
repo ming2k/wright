@@ -125,7 +125,6 @@ gcc (source)
 # gcc/plan.toml multi-part example
 [output."libstdc++"]
 description = "GNU C++ standard library runtime"
-script = "install -Dm755 ${BUILD_DIR}/libstdc++.so* ${PART_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 
 [output."libstdc++".dependencies]
@@ -133,18 +132,15 @@ runtime = ["libgcc"]
 
 [output.libgcc]
 description = "GCC low-level runtime library"
-script = "install -Dm755 ${BUILD_DIR}/libgcc_s.so* ${PART_DIR}/usr/lib/"
 
 [output.libgomp]
 description = "GNU OpenMP runtime"
-script = "install -Dm755 ${BUILD_DIR}/libgomp.so* ${PART_DIR}/usr/lib/"
 
 [output.libgomp.dependencies]
 runtime = ["libgcc"]
 
 [output.libatomic]
 description = "GNU atomic operations library"
-script = "install -Dm755 ${BUILD_DIR}/libatomic.so* ${PART_DIR}/usr/lib/"
 
 [output.libatomic.dependencies]
 runtime = ["libgcc"]
@@ -152,7 +148,6 @@ runtime = ["libgcc"]
 [output.doc]
 description = "GCC documentation"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/gcc/
 """
 ```
 
@@ -182,19 +177,13 @@ linux-firmware (source, ~800MB+)
 # linux-firmware/plan.toml multi-part example
 [output.amdgpu]
 description = "AMD GPU firmware"
-script = "install -Dm644 ${BUILD_DIR}/amdgpu/* ${PART_DIR}/usr/lib/firmware/amdgpu/"
 
 [output.iwlwifi]
 description = "Intel wireless firmware"
-script = "install -Dm644 ${BUILD_DIR}/iwlwifi-* ${PART_DIR}/usr/lib/firmware/"
 
 [output.realtek]
 description = "Realtek firmware"
 script = """
-install -Dm644 ${BUILD_DIR}/rtl_nic/* ${PART_DIR}/usr/lib/firmware/rtl_nic/
-install -Dm644 ${BUILD_DIR}/rtlwifi/* ${PART_DIR}/usr/lib/firmware/rtlwifi/
-install -Dm644 ${BUILD_DIR}/rtw88/* ${PART_DIR}/usr/lib/firmware/rtw88/
-install -Dm644 ${BUILD_DIR}/rtw89/* ${PART_DIR}/usr/lib/firmware/rtw89/
 """
 ```
 
@@ -245,13 +234,11 @@ Use `[lifecycle.fabricate.<name>]` sub-tables in `plan.toml` to define sub-parts
 [lifecycle.fabricate.doc]
 description = "GCC documentation"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/gcc/
 """
 
 # Example: Library and daemon split
 [lifecycle.fabricate.libs]
 description = "D-Bus shared libraries"
-script = "install -Dm755 ${BUILD_DIR}/libdbus-1.so* ${PART_DIR}/usr/lib/"
 hooks.post_install = "ldconfig"
 ```
 

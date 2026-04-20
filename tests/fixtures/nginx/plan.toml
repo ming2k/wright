@@ -37,7 +37,7 @@ ccache = true
 executor = "shell"
 isolation = "strict"
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
 """
@@ -47,7 +47,7 @@ executor = "shell"
 isolation = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 ./configure \
     --prefix=/usr \
     --sysconfdir=/etc/nginx \
@@ -61,7 +61,7 @@ executor = "shell"
 isolation = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 make
 """
 
@@ -69,7 +69,7 @@ make
 executor = "shell"
 isolation = "strict"
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 make test
 """
 
@@ -77,7 +77,7 @@ make test
 executor = "shell"
 isolation = "strict"
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
@@ -107,7 +107,7 @@ backup = [
 [output.nginx-doc]
 description = "Nginx documentation files"
 script = """
-cd ${BUILD_DIR}
+cd ${WORKDIR}
 install -d ${PART_DIR}/usr/share/doc/nginx
 install -Dm644 README ${PART_DIR}/usr/share/doc/nginx/README
 install -Dm644 LICENSE ${PART_DIR}/usr/share/doc/nginx/LICENSE

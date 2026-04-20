@@ -302,7 +302,7 @@ impl GlobalConfig {
             figment = figment.merge(Toml::file("./wright.toml"));
         }
         
-        // Allow env var overrides, e.g., WRIGHT_BUILD_DIR
+        // Allow env var overrides, e.g., WRIGHT_WORKDIR
         figment = figment.merge(Env::prefixed("WRIGHT_").split("_"));
 
         figment.extract().map_err(|e| {

@@ -31,7 +31,6 @@ Each part gets its own working directory under `build_dir`
 
 ```
 <build_dir>/<name>-<version>/
-├── src/      # Extracted source tree (BUILD_DIR points here or a subdir)
 ├── pkg/      # Main output staging root ($PART_DIR / $MAIN_PART_DIR)
 ├── log/      # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
@@ -45,11 +44,8 @@ steps are skipped entirely. When the build key changes (e.g. a version bump),
 `src/` is cleaned and sources are re-extracted automatically. `--clean`
 always removes the entire working directory including `src/`.
 
-### BUILD_DIR auto-detection
 
-If after extraction `src/` contains exactly one subdirectory, `$BUILD_DIR` is
 set to that subdirectory (the common case for tarballs that unpack into
-`<name>-<version>/`). Otherwise `$BUILD_DIR` equals `$WORKDIR`.
 
 ## Log Files
 

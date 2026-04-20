@@ -131,6 +131,10 @@ pub struct Source {
     pub uri: String,
     #[serde(default = "default_skip")]
     pub sha256: String,
+    /// Optional local filename to use for the downloaded source.
+    pub r#as: Option<String>,
+    /// Optional subdirectory under WORKDIR to extract/copy this source into.
+    pub extract_to: Option<String>,
 }
 
 fn default_skip() -> String {

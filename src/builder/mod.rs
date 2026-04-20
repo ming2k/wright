@@ -21,7 +21,6 @@ pub struct BuildResult {
     pub pkg_dir: PathBuf,
     pub src_dir: PathBuf,
     pub log_dir: PathBuf,
-    pub build_dir: PathBuf,
     pub split_pkg_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
@@ -276,13 +275,9 @@ impl Builder {
                 pkg_dir,
                 src_dir,
                 log_dir,
-                build_dir: build_root,
                 split_pkg_dirs: std::collections::HashMap::new(),
             });
         }
-
-        // Detect BUILD_DIR from extracted sources
-        let build_src_dir = Self::detect_build_dir(&src_dir)?;
 
         // Resolve resource limits: per-plan overrides global config
         let rlimits = ResourceLimits {
@@ -312,7 +307,7 @@ impl Builder {
             .or(self.config.build.nproc_per_isolation)
             .unwrap_or(total_cpus);
 
-        let vars = variables::standard_variables(variables::VariableContext {
+        let mut vars = variables::standard_variables(variables::VariableContext {
             name: &manifest.plan.name,
             version: &manifest.plan.version,
             release: manifest.plan.release,
@@ -322,11 +317,6 @@ impl Builder {
             main_part_name: &manifest.plan.name,
             main_part_dir: &pkg_dir.to_string_lossy(),
         });
-        let mut vars = vars;
-        vars.insert(
-            "BUILD_DIR".to_string(),
-            build_src_dir.to_string_lossy().to_string(),
-        );
 
         // Package-level env from [options.env]: injected into all stages.
         // Per-stage env takes precedence (it goes in env_vars, which the
@@ -461,7 +451,6 @@ impl Builder {
             pkg_dir,
             src_dir,
             log_dir,
-            build_dir: build_root,
             split_pkg_dirs,
         })
     }
@@ -497,7 +486,9 @@ impl Builder {
             }
 
             let processed_uri = self.process_uri(&source.uri, manifest);
-            let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
+            let filename = source.r#as.clone().unwrap_or_else(|| {
+                source_cache_filename(&manifest.plan.name, &processed_uri)
+            });
             let path = cache_dir.join(&filename);
 
             if !path.exists() {
@@ -520,13 +511,20 @@ impl Builder {
         Ok(())
     }
 
-    /// Extract parts to the build directory and copy non-archive files to dest_dir.
-    /// Returns the path to the top-level source directory (for BUILD_DIR).
+    /// Extract parts to the work directory.
+    /// Returns the path to the root work directory.
     pub fn extract(&self, manifest: &PlanManifest, dest_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.source_dir;
 
         for source in &manifest.sources.entries {
             let processed_uri = self.process_uri(&source.uri, manifest);
+            let final_dest = if let Some(ref sub) = source.extract_to {
+                let p = dest_dir.join(sub);
+                std::fs::create_dir_all(&p).map_err(WrightError::IoError)?;
+                p
+            } else {
+                dest_dir.to_path_buf()
+            };
 
             if is_git_uri(&processed_uri) {
                 let git_dir_name = git_cache_dir_name(&processed_uri);
@@ -545,7 +543,12 @@ impl Builder {
                     "HEAD".to_string()
                 };
 
-                let target_dir = dest_dir.join(&git_dir_name);
+                let target_dir = if source.extract_to.is_some() {
+                    final_dest.clone()
+                } else {
+                    dest_dir.join(&git_dir_name)
+                };
+
                 debug!(
                     "Extracting Git repo to {} (ref: {})...",
                     target_dir.display(),
@@ -588,20 +591,22 @@ impl Builder {
                 continue;
             }
 
-            let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
+            let cache_filename = source.r#as.clone().unwrap_or_else(|| {
+                source_cache_filename(&manifest.plan.name, &processed_uri)
+            });
             let path = cache_dir.join(&cache_filename);
 
             if is_part_file(&cache_filename) {
-                debug!("Extracting {}...", cache_filename);
-                compress::extract_part(&path, dest_dir)?;
+                debug!("Extracting {} to {}...", cache_filename, final_dest.display());
+                compress::extract_part(&path, &final_dest)?;
             } else {
-                // Non-archive file: copy to dest_dir using the original basename
+                // Non-archive file: copy to final_dest using the original basename
                 // so build scripts can reference it by its natural name (e.g. $WORKDIR/config).
                 let dest_name = processed_uri
                     .split('/')
                     .next_back()
                     .unwrap_or(&processed_uri);
-                let dest = dest_dir.join(dest_name);
+                let dest = final_dest.join(dest_name);
                 std::fs::copy(&path, &dest).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to copy {} to {}: {}",
@@ -612,34 +617,12 @@ impl Builder {
                 })?;
                 debug!(
                     "Copied {} to work directory as {}",
-                    cache_filename, dest_name
+                    cache_filename, dest.display()
                 );
             }
         }
 
-        Self::detect_build_dir(dest_dir)
-    }
-
-    /// Detect the top-level source directory for BUILD_DIR.
-    /// If the directory contains a single subdirectory, point BUILD_DIR there.
-    /// Otherwise, BUILD_DIR is the directory itself.
-    fn detect_build_dir(src_dir: &Path) -> Result<PathBuf> {
-        let entries: Vec<_> = std::fs::read_dir(src_dir)
-            .map_err(WrightError::IoError)?
-            .filter_map(|e| e.ok())
-            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-            .collect();
-
-        let build_dir =
-            if entries.len() == 1 && entries[0].file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                let dir = entries[0].path();
-                debug!("Source directory: {}", dir.display());
-                dir
-            } else {
-                src_dir.to_path_buf()
-            };
-
-        Ok(build_dir)
+        Ok(dest_dir.to_path_buf())
     }
 
     /// Update sha256 checksums in plan.toml.
@@ -667,7 +650,9 @@ impl Builder {
                 continue;
             }
 
-            let cache_filename = source_cache_filename(&manifest.plan.name, &processed_uri);
+            let cache_filename = source.r#as.clone().unwrap_or_else(|| {
+                source_cache_filename(&manifest.plan.name, &processed_uri)
+            });
             let cache_path = cache_dir.join(&cache_filename);
 
             if cache_path.exists() {
@@ -859,7 +844,9 @@ impl Builder {
 
             if is_remote_uri(&processed_uri) {
                 // Remote URI: download to cache
-                let filename = source_cache_filename(&manifest.plan.name, &processed_uri);
+                let filename = source.r#as.clone().unwrap_or_else(|| {
+                    source_cache_filename(&manifest.plan.name, &processed_uri)
+                });
                 let dest = cache_dir.join(&filename);
 
                 let expected_hash = Some(source.sha256.as_str());

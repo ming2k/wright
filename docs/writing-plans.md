@@ -162,7 +162,6 @@ sha256 = "SKIP"
 
 [lifecycle.prepare]
 script = """
-cd ${BUILD_DIR}
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
 """
@@ -173,7 +172,6 @@ For patches that need a different strip level:
 ```toml
 [lifecycle.prepare]
 script = """
-cd ${BUILD_DIR}
 patch -Np0 < ${WORKDIR}/special-fix.patch
 patch -Np1 < ${WORKDIR}/normal-fix.patch
 """
@@ -207,7 +205,6 @@ Each lifecycle stage is a TOML table under `lifecycle`:
 executor = "shell"
 isolation = "strict"
 script = """
-cd ${BUILD_DIR}
 make -j$(nproc)
 """
 ```
@@ -590,67 +587,79 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${RELEASE}`| Release number as a string         |
 | `${ARCH}`  | Target architecture            |
 | `${WORKDIR}`  | Extraction root directory         |
-| `${BUILD_DIR}` | Top-level source directory (use this in scripts) |
 | `${PART_DIR}`  | Current output staging directory |
 | `${MAIN_PART_NAME}` | Primary output name from the top-level `name` field |
 | `${MAIN_PART_DIR}` | Primary output staging directory (`${PART_DIR}` outside split outputs) |
-| `${WORKDIR}` | Directory containing non-archive files (patches, configs, etc.) |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
-When running inside an isolation, path variables are remapped to isolation mount points:
+### `[[sources]]`
 
-| Variable    | Host value       | Isolation value     |
-|-----------------|------------------------|------------------------|
-| `${WORKDIR}`  | actual host path    | `/build`        |
-| `${BUILD_DIR}` | actual host path    | `/build/<source-dir>` |
-| `${PART_DIR}`  | actual host path    | `/output`       |
-| `${MAIN_PART_DIR}` | actual host path | `/output` or `/main-pkg` in split-output scripts |
-| `${WORKDIR}` | actual host path | `/files` |
+The `sources` array defines the input files required for the build.
 
-### Scenario-Based Path Guide
+| Field        | Type   | Default  | Description                                                                 |
+|--------------|--------|----------|-----------------------------------------------------------------------------|
+| `uri`        | string | required | Source URI (HTTP, HTTPS, Git, or local file)                                |
+| `sha256`     | string | `"SKIP"` | Expected SHA-256 hash of the downloaded file                                |
+| `as`         | string | optional | Rename the downloaded file in the local cache                               |
+| `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to extract or copy this source into         |
 
-To understand how to navigate your build, consider this scenario:
-- **Plan**: `nginx` (v1.25.3)
-- **Sources**:
-    1. `nginx-1.25.3.tar.gz` (contains `nginx-1.25.3/` folder)
-    2. `fancy-module.zip` (contains `ngx-fancy-v2/` folder)
+Example:
+```toml
+[[sources]]
+uri = "https://example.com/project-latest.tar.gz"
+as = "project-1.0.0.tar.gz"  # Ensures consistent cache filename
+extract_to = "src"           # Forces extraction to ${WORKDIR}/src
 
-#### Resulting Layout in `${WORKDIR}` (/build):
-```text
-/build/
-├── nginx-1.25.3/        <-- Main source
-│   ├── configure
-│   └── src/
-└── ngx-fancy-v2/        <-- Addon / Module
-    └── config
+[[sources]]
+uri = "extra-config.toml"
+extract_to = "config"        # Copies file to ${WORKDIR}/config/extra-config.toml
 ```
 
-#### Variable Resolution in this Scenario:
-- **`${WORKDIR}`**: `/build` (The container for everything).
-- **`${BUILD_DIR}`**: `/build` 
-  - *Note*: Because there are **multiple** top-level directories in `src/`, Wright cannot decide which one is the "main" one. It stays at the root.
-  - *If there was only ONE directory*, `${BUILD_DIR}` would automatically point to `/build/nginx-1.25.3`.
-- **`${PART_DIR}`**: `/output` (Where you install files).
-- **`${WORKDIR}`**: `/files` (Where your local patches/configs from the plan directory are).
+## Path Variables
 
-#### Accessing "Main" and "Addon":
-Since `${BUILD_DIR}` is at the root, your script must explicitly move into the correct directory:
+Wright uses standard variables to refer to build directories. When running inside an isolation, these paths are remapped to dedicated mount points:
+
+| Variable    | Host value (Default) | Isolation value | Description |
+|-------------|----------------------|-----------------|-------------|
+| `${WORKDIR}` | `/var/tmp/wright-build/<name>-<version>/src` | `/build` | The root container for all sources. |
+| `${PART_DIR}` | `/var/tmp/wright-build/<name>-<version>/pkg` | `/output` | The installation target directory (DESTDIR). |
+
+### Path Mapping Note
+Inside the **isolation environment**, the filesystem is restricted:
+- **`/build`** is a read-write mount of the host's build work directory.
+- **`/output`** is a read-write mount where build products should be installed.
+
+### Navigating the Build
+Wright **never** automatically enters subdirectories within `${WORKDIR}`. Scripts are always executed at the root of `${WORKDIR}` (mapped to `/build`). 
+
+If your source archive extracts into a subdirectory, you must explicitly change into it:
 
 ```toml
+[[sources]]
+uri = "https://example.com/nginx-1.25.3.tar.gz"
+
 [lifecycle.configure]
 script = """
-# Move into the main source directory
-cd nginx-${VERSION}
-
-# Reference the addon using a relative path or ${WORKDIR}
-./configure --add-module=../ngx-fancy-v2
+cd nginx-1.25.3
+./configure --prefix=/usr
 """
 ```
 
----
+For absolute deterministic behavior across versions, use `extract_to`:
 
-`${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${WORKDIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${WORKDIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
+```toml
+[[sources]]
+uri = "https://.../nginx-1.25.3.tar.gz"
+extract_to = "src"
+
+[lifecycle.configure]
+script = """
+cd src
+./configure --prefix=/usr
+"""
+```
+
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
@@ -826,7 +835,6 @@ ccache = true
 
 [lifecycle.prepare]
 script = """
-cd ${BUILD_DIR}
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
 """
@@ -834,25 +842,21 @@ patch -Np1 < ${WORKDIR}/add-feature.patch
 [lifecycle.configure]
 env = { CFLAGS = "-O2 -pipe" }
 script = """
-cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
 [lifecycle.compile]
 script = """
-cd ${BUILD_DIR}
 make -j$(nproc)
 """
 
 [lifecycle.check]
 script = """
-cd ${BUILD_DIR}
 make test
 """
 
 [lifecycle.staging]
 script = """
-cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
@@ -888,7 +892,6 @@ script = "make -j$(nproc)"
 
 [lifecycle.staging]
 script = """
-cd ${BUILD_DIR}
 make DESTDIR=${PART_DIR} install
 """
 
@@ -914,13 +917,10 @@ sub-part is installed independently.
 
 ```toml
 [lifecycle.staging]
-script = "cd ${BUILD_DIR} && make DESTDIR=${PART_DIR} install"
 
 [output."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
-install -Dm644 ${BUILD_DIR}/include/* ${PART_DIR}/usr/include/libfoo/
-install -Dm644 ${BUILD_DIR}/libfoo.pc ${PART_DIR}/usr/lib/pkgconfig/libfoo.pc
 """
 ```
 
@@ -947,7 +947,6 @@ For a `-doc` sub-part that overrides the architecture:
 description = "Documentation for mypackage"
 arch = "any"
 script = """
-install -Dm644 ${BUILD_DIR}/docs/* ${PART_DIR}/usr/share/doc/mypackage/
 """
 ```
 

@@ -163,10 +163,6 @@ script = "make DESTDIR=$PART_DIR install"
 [output.zlib-devel]
 description = "Development files for zlib"
 script = """
-install -Dm644 ${BUILD_DIR}/zlib.h ${PART_DIR}/usr/include/zlib.h
-install -Dm644 ${BUILD_DIR}/zconf.h ${PART_DIR}/usr/include/zconf.h
-install -Dm644 ${BUILD_DIR}/libz.a ${PART_DIR}/usr/lib/libz.a
-install -Dm644 ${BUILD_DIR}/zlib.pc ${PART_DIR}/usr/lib/pkgconfig/zlib.pc
 """
 ```
 
@@ -480,13 +476,11 @@ sha256 = "<sha256>"
 [lifecycle.compile]
 # strict isolation — no network; -mod=vendor forces Go to use vendor/
 script = """
-cd ${BUILD_DIR}
 go build -mod=vendor -o hugo .
 """
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo
 """
 ```
 
@@ -501,12 +495,10 @@ time. Use `relaxed` so the network namespace is shared with the host.
 [lifecycle.compile]
 isolation = "relaxed"
 script = """
-cd ${BUILD_DIR}
 export GOPATH=${WORKDIR}/.gopath
 export GOMODCACHE=${WORKDIR}/.gopath/pkg/mod
 go build -o hugo .
 """
 
 [lifecycle.staging]
-script = "install -Dm755 ${BUILD_DIR}/hugo ${PART_DIR}/usr/bin/hugo"
 ```

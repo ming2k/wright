@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-04-20
+
+### Changed
+- **Removed `${BUILD_DIR}` (Breaking)**: The magic `${BUILD_DIR}` variable and its non-deterministic directory detection logic have been completely removed.
+- **Explicit Navigation**: Scripts now always start at the root of `${WORKDIR}`. Developers must explicitly `cd` into subdirectories if needed.
+
+### Added
+- **Deterministic Sources**: Added `as` and `extract_to` fields to `[[sources]]`. 
+    - `as`: Rename the downloaded file in the local cache.
+    - `extract_to`: Force extraction/copying of a source into a specific subdirectory under `${WORKDIR}`, enabling 100% predictable paths in scripts.
+
 ## [2.5.0] - 2026-04-20
 
 ### Changed
@@ -34,7 +45,7 @@
 ## [2.3.5] - 2026-04-20
 
 ### Changed
-- **Build logging**: Stage log files (e.g. `compile.log`) are now written in real time during execution. The log file is created before the stage starts and subprocess stdout is streamed into it immediately, making `tail -f <build_dir>/<name>-<version>/log/compile.log` usable while a build is in progress. Stderr and the exit code/duration footer are appended after the stage completes.
+- **Build logging**: Stage log files (e.g. `compile.log`) are now written in real time during execution. The log file is created before the stage starts and subprocess stdout is streamed into it immediately, making `tail -f <work_dir>/<name>-<version>/log/compile.log` usable while a build is in progress. Stderr and the exit code/duration footer are appended after the stage completes.
 
 ## [2.3.4] - 2026-04-19
 
