@@ -56,7 +56,11 @@ Useful `wright build` flags:
  prints only part paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`
 - `--checksum`
-- `--lint`
+
+Useful `wright lint` flags:
+
+- `-r`, `--recursive`
+  Recurse into subdirectories when scanning for plans.
 
 Useful `wright resolve` flags:
 

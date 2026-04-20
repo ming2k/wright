@@ -21,7 +21,7 @@ fn run_shebang_script_from_src(src: &Path) -> Result<(String, String), WrightErr
     perms.set_mode(0o755);
     std::fs::set_permissions(&script, perms).unwrap();
 
-    let config = IsolationConfig::new(
+    let mut config = IsolationConfig::new(
         IsolationLevel::Strict,
         src.to_path_buf(),
         pkg.path().to_path_buf(),
@@ -29,7 +29,7 @@ fn run_shebang_script_from_src(src: &Path) -> Result<(String, String), WrightErr
     );
 
     let args = vec!["-lc".to_string(), "./hello.sh".to_string()];
-    let output = run_in_isolation(&config, "/bin/bash", &args)?;
+    let output = run_in_isolation(&mut config, "/bin/bash", &args)?;
     let stdout = output.stdout.tail.trim().to_string();
     let stderr = output.stderr.tail.trim().to_string();
     assert!(

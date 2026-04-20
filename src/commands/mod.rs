@@ -1,4 +1,5 @@
 pub mod build;
+pub mod lint;
 pub mod prune;
 pub mod resolve;
 pub mod system;
@@ -31,6 +32,9 @@ pub fn dispatch(
             build::execute_build(args, config, cli.verbose, cli.quiet)
         }
         crate::cli::Commands::Resolve(args) => resolve::execute_resolve(args, config),
+        crate::cli::Commands::Lint { targets, recursive } => {
+            lint::execute_lint(targets, recursive, config).map_err(Into::into)
+        }
         crate::cli::Commands::Prune(args) => prune::execute_prune(args, config),
     }
 }

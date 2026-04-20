@@ -399,11 +399,34 @@ impl PlanManifest {
                                 )));
                             }
                         }
+
+                        // Validate sub-part isolation
+                        if let Err(e) = sub_part.isolation.parse::<crate::isolation::IsolationLevel>() {
+                            return Err(WrightError::ValidationError(format!(
+                                "sub-part '{}': invalid isolation level '{}': {}",
+                                sub_name, sub_part.isolation, e
+                            )));
+                        }
                     }
                 }
-                FabricateConfig::Single(_) => {
-                    // No special validation needed for single mode
+                FabricateConfig::Single(ref output) => {
+                    if let Err(e) = output.isolation.parse::<crate::isolation::IsolationLevel>() {
+                        return Err(WrightError::ValidationError(format!(
+                            "invalid isolation level '{}': {}",
+                            output.isolation, e
+                        )));
+                    }
                 }
+            }
+        }
+
+        // Validate individual lifecycle stage isolation
+        for (name, stage) in &self.lifecycle {
+            if let Err(e) = stage.isolation.parse::<crate::isolation::IsolationLevel>() {
+                return Err(WrightError::ValidationError(format!(
+                    "stage '{}': invalid isolation level '{}': {}",
+                    name, stage.isolation, e
+                )));
             }
         }
 

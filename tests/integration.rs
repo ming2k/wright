@@ -4,4 +4,5 @@ mod integration {
     mod diversion_test;
     mod isolation_test;
     mod install_test;
+    mod force_test;
 }

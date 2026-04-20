@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-04-20
+
+### Added
+- **`wright lint` command**: Introduced a dedicated subcommand for static validation of plan files. It performs deep structural and semantic checks (isolation levels, version formats, etc.) and reports clear errors with file paths.
+
+### Changed
+- **Strengthened Plan Validation**: Integrated mandatory `validate()` into the plan loading pipeline. Parsing errors are now immediately fatal, preventing invalid plans from being silently skipped or causing downstream failures.
+- **Improved Path Robustness**: Resolution now uses path canonicalization to ensure consistent matching when plans are referenced via symlinks or relative paths.
+- **Enhanced Error Messages**: Replaced generic "converged" messages with more actionable feedback when build targets are filtered.
+
 ## [2.4.0] - 2026-04-20
 
 ### Changed

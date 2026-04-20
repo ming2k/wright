@@ -103,7 +103,7 @@ impl std::str::FromStr for IsolationLevel {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "none" => Ok(Self::None),
-            "relaxed" => Ok(Self::Relaxed),
+            "relax" | "relaxed" => Ok(Self::Relaxed),
             "strict" => Ok(Self::Strict),
             _ => Err(crate::error::WrightError::IsolationError(format!(
                 "unknown isolation level: '{}' (valid: none, relaxed, strict)",

@@ -179,11 +179,11 @@ fn apply_targets(
     if build_set.is_empty() {
         if ctx.dry_run {
             println!(
-                "Apply plan (dry-run): nothing to do; requested targets already match the current plan state under the selected apply policy."
+                "Apply plan (dry-run): already converged. All requested targets match the plan state."
             );
         } else if !ctx.quiet {
             tracing::info!(
-                "Apply is already converged; nothing to build or install for the requested targets under the selected apply policy."
+                "Apply is already converged; requested targets and their dependencies are already up-to-date. Use --force to rebuild anyway."
             );
         }
         return Ok(());

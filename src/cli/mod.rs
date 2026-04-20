@@ -57,6 +57,15 @@ pub enum Commands {
     #[command(after_help = RESOLVE_AFTER_HELP)]
     Resolve(resolve::ResolveArgs),
 
+    /// Verify the syntax and logical integrity of plan files
+    Lint {
+        /// Plan names or paths to validate (all plans if omitted)
+        targets: Vec<String>,
+        /// Recurse into subdirectories
+        #[arg(long, short = 'r')]
+        recursive: bool,
+    },
+
     /// Prune local archive catalogue and stale parts
     Prune(prune::PruneArgs),
 }

@@ -150,10 +150,17 @@ pub fn resolve_build_set(
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
-            "No targets specified to resolve.".to_string(),
+            "No targets found matching the requested names.".to_string(),
         ));
     }
 
+    // Canonicalize paths to ensure HashSet matching is robust against different path representations
+    let plans_to_build: HashSet<PathBuf> = plans_to_build
+        .into_iter()
+        .filter_map(|p| p.canonicalize().ok().or(Some(p)))
+        .collect();
+    let original_plans = plans_to_build.clone();
+    let mut plans_to_build = original_plans.clone();
     let actual_max = {
         let max_depth = opts.depth.unwrap_or(1);
         if max_depth == 0 {
@@ -162,8 +169,6 @@ pub fn resolve_build_set(
             max_depth
         }
     };
-
-    let original_plans: HashSet<PathBuf> = plans_to_build.clone();
 
     {
         let db_path = config.general.installed_db_path.clone();
@@ -185,7 +190,8 @@ pub fn resolve_build_set(
         // 2. Filter the targets and expanded upstream deps
         if !opts.match_policies.contains(&MatchPolicy::All) {
             plans_to_build.retain(|path| {
-                if opts.preserve_targets && original_plans.contains(path) {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if opts.preserve_targets && original_plans.contains(&canonical) {
                     return true;
                 }
                 if let Ok(m) = PlanManifest::from_file(path) {
@@ -226,9 +232,12 @@ pub fn resolve_build_set(
 
     let names: Vec<String> = plans_to_build
         .iter()
-        .filter_map(|p| PlanManifest::from_file(p).ok())
-        .map(|m| m.plan.name)
-        .collect();
+        .map(|p| {
+            PlanManifest::from_file(p)
+                .map(|m| m.plan.name)
+                .context(format!("failed to parse plan file: {}", p.display()))
+        })
+        .collect::<Result<Vec<String>>>()?;
 
     Ok(names)
 }
