@@ -559,15 +559,6 @@ pub fn run_in_isolation(
                         die(e);
                     }
 
-                    // Files directory (read-only, optional).
-                    if let Some(ref files) = config.files_dir {
-                        if files.exists() {
-                            if let Err(e) = bind(files, "/files", true) {
-                                die(e);
-                            }
-                        }
-                    }
-
                     // Extra binds.
                     for (host, dest, ro) in &config.extra_binds {
                         if host.exists() {

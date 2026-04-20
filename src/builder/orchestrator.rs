@@ -146,7 +146,7 @@ pub fn resolve_build_set(
 ) -> Result<Vec<String>> {
     let resolver = setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
-    let mut plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
+    let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(

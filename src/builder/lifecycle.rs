@@ -37,7 +37,6 @@ pub struct LifecyclePipeline<'a> {
     base_root: PathBuf,
     src_dir: PathBuf,
     part_dir: PathBuf,
-    files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     stages: Vec<String>,
     /// Skip the `check` stage when running the default full pipeline.
@@ -68,7 +67,6 @@ pub struct LifecycleContext<'a> {
     pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub part_dir: PathBuf,
-    pub files_dir: Option<PathBuf>,
     /// Stages to run; empty = run all non-builtin stages in order.
     pub stages: Vec<String>,
     /// Skip the `check` stage when running the default full pipeline.
@@ -97,7 +95,6 @@ impl<'a> LifecyclePipeline<'a> {
             base_root: ctx.base_root,
             src_dir: ctx.src_dir,
             part_dir: ctx.part_dir,
-            files_dir: ctx.files_dir,
             stages: ctx.stages,
             skip_check: ctx.skip_check,
             executors: ctx.executors,
@@ -268,7 +265,6 @@ impl<'a> LifecyclePipeline<'a> {
             base_root: self.base_root.clone(),
             src_dir: self.src_dir.clone(),
             part_dir: self.part_dir.clone(),
-            files_dir: self.files_dir.clone(),
             rlimits: self.rlimits.clone(),
             main_part_dir: None,
             verbose: self.verbose,

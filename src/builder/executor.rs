@@ -110,7 +110,6 @@ pub struct ExecutorOptions {
     pub base_root: PathBuf,
     pub src_dir: PathBuf,
     pub part_dir: PathBuf,
-    pub files_dir: Option<PathBuf>,
     pub rlimits: ResourceLimits,
     /// Main part's part_dir, mounted at /main-pkg for split part stages.
     pub main_part_dir: Option<PathBuf>,
@@ -140,17 +139,17 @@ pub fn execute_script(
     // When running in a sandbox, remap path variables to sandbox mount points
     let effective_vars = if options.level != IsolationLevel::None {
         let mut v = vars.clone();
-        // Remap BUILD_DIR: replace the host SRC_DIR prefix with /build
-        if let (Some(host_build_dir), Some(host_src_dir)) =
-            (vars.get("BUILD_DIR"), vars.get("SRC_DIR"))
+        // Remap BUILD_DIR: replace the host WORKDIR prefix with /build
+        if let (Some(host_build_dir), Some(host_workdir)) =
+            (vars.get("BUILD_DIR"), vars.get("WORKDIR"))
         {
-            if let Some(suffix) = host_build_dir.strip_prefix(host_src_dir.as_str()) {
+            if let Some(suffix) = host_build_dir.strip_prefix(host_workdir.as_str()) {
                 v.insert("BUILD_DIR".to_string(), format!("/build{}", suffix));
             } else {
                 v.insert("BUILD_DIR".to_string(), "/build".to_string());
             }
         }
-        v.insert("SRC_DIR".to_string(), "/build".to_string());
+        v.insert("WORKDIR".to_string(), "/build".to_string());
         v.insert("PART_DIR".to_string(), "/output".to_string());
         v.insert(
             "MAIN_PART_DIR".to_string(),
@@ -160,9 +159,6 @@ pub fn execute_script(
                 "/output".to_string()
             },
         );
-        if options.files_dir.is_some() {
-            v.insert("FILES_DIR".to_string(), "/files".to_string());
-        }
         v
     } else {
         vars.clone()
@@ -193,7 +189,6 @@ pub fn execute_script(
         options.part_dir.clone(),
         task_id,
     );
-    config.files_dir = options.files_dir.clone();
     config.base_root = options.base_root.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;

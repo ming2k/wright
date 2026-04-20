@@ -253,8 +253,6 @@ impl Builder {
 
         debug!("Build directory: {}", build_root.display());
 
-        let files_dir = build_root.join("files");
-
         if stages.is_empty() {
             if !src_dir.join(".extracted").exists() {
                 // Fetch sources (remote downloads + local file copies to cache)
@@ -263,8 +261,8 @@ impl Builder {
                 // Verify sources
                 self.verify(manifest)?;
 
-                // Extract parts and copy non-archive files to files_dir
-                self.extract(manifest, &src_dir, &files_dir)?;
+                // Extract parts and copy non-archive files to src_dir
+                self.extract(manifest, &src_dir)?;
 
                 // Mark extraction complete so incremental builds can skip it
                 let _ = std::fs::write(src_dir.join(".extracted"), "");
@@ -285,8 +283,6 @@ impl Builder {
 
         // Detect BUILD_DIR from extracted sources
         let build_src_dir = Self::detect_build_dir(&src_dir)?;
-
-        let files_dir_str = files_dir.to_string_lossy().to_string();
 
         // Resolve resource limits: per-plan overrides global config
         let rlimits = ResourceLimits {
@@ -321,11 +317,10 @@ impl Builder {
             version: &manifest.plan.version,
             release: manifest.plan.release,
             arch: &manifest.plan.arch,
-            src_dir: &src_dir.to_string_lossy(),
+            workdir: &src_dir.to_string_lossy(),
             part_dir: &pkg_dir.to_string_lossy(),
             main_part_name: &manifest.plan.name,
             main_part_dir: &pkg_dir.to_string_lossy(),
-            files_dir: &files_dir_str,
         });
         let mut vars = vars;
         vars.insert(
@@ -353,11 +348,6 @@ impl Builder {
             base_root: base_root.to_path_buf(),
             src_dir: src_dir.clone(),
             part_dir: pkg_dir.clone(),
-            files_dir: if files_dir.exists() {
-                Some(files_dir.clone())
-            } else {
-                None
-            },
             stages: stages.to_vec(),
             skip_check,
             executors: &self.executors,
@@ -411,11 +401,6 @@ impl Builder {
                     base_root: base_root.to_path_buf(),
                     src_dir: src_dir.clone(),
                     part_dir: sub_pkg_dir.clone(),
-                    files_dir: if files_dir.exists() {
-                        Some(files_dir.clone())
-                    } else {
-                        None
-                    },
                     rlimits: rlimits.clone(),
                     main_part_dir: Some(pkg_dir.clone()),
                     verbose,
@@ -535,14 +520,9 @@ impl Builder {
         Ok(())
     }
 
-    /// Extract parts to the build directory and copy non-archive files to files_dir.
+    /// Extract parts to the build directory and copy non-archive files to dest_dir.
     /// Returns the path to the top-level source directory (for BUILD_DIR).
-    pub fn extract(
-        &self,
-        manifest: &PlanManifest,
-        dest_dir: &Path,
-        files_dir: &Path,
-    ) -> Result<PathBuf> {
+    pub fn extract(&self, manifest: &PlanManifest, dest_dir: &Path) -> Result<PathBuf> {
         let cache_dir = &self.config.general.source_dir;
 
         for source in &manifest.sources.entries {
@@ -615,20 +595,13 @@ impl Builder {
                 debug!("Extracting {}...", cache_filename);
                 compress::extract_part(&path, dest_dir)?;
             } else {
-                // Non-archive file: copy to files_dir using the original basename
-                // so build scripts can reference it by its natural name (e.g. $FILES_DIR/config).
-                std::fs::create_dir_all(files_dir).map_err(|e| {
-                    WrightError::BuildError(format!(
-                        "failed to create files directory {}: {}",
-                        files_dir.display(),
-                        e
-                    ))
-                })?;
+                // Non-archive file: copy to dest_dir using the original basename
+                // so build scripts can reference it by its natural name (e.g. $WORKDIR/config).
                 let dest_name = processed_uri
                     .split('/')
                     .next_back()
                     .unwrap_or(&processed_uri);
-                let dest = files_dir.join(dest_name);
+                let dest = dest_dir.join(dest_name);
                 std::fs::copy(&path, &dest).map_err(|e| {
                     WrightError::BuildError(format!(
                         "failed to copy {} to {}: {}",
@@ -638,7 +611,7 @@ impl Builder {
                     ))
                 })?;
                 debug!(
-                    "Copied {} to files directory as {}",
+                    "Copied {} to work directory as {}",
                     cache_filename, dest_name
                 );
             }

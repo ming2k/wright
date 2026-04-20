@@ -409,13 +409,8 @@ impl PlanManifest {
                         }
                     }
                 }
-                FabricateConfig::Single(ref output) => {
-                    if let Err(e) = output.isolation.parse::<crate::isolation::IsolationLevel>() {
-                        return Err(WrightError::ValidationError(format!(
-                            "invalid isolation level '{}': {}",
-                            output.isolation, e
-                        )));
-                    }
+                FabricateConfig::Single(_) => {
+                    // Main output uses default isolation from lifecycle stages
                 }
             }
         }
@@ -561,7 +556,7 @@ executor = "shell"
 isolation = "strict"
 script = """
 cd ${BUILD_DIR}
-patch -Np1 < ${FILES_DIR}/fix-headers.patch
+patch -Np1 < ${WORKDIR}/fix-headers.patch
 """
 
 [lifecycle.configure]

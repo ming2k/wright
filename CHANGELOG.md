@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-04-20
+
+### Changed
+- **Path Variable Refactoring (Breaking)**: Renamed `${SRC_DIR}` to **`${WORKDIR}`** throughout the system.
+- **Simplified Directory Structure**: Merged `${FILES_DIR}` into **`${WORKDIR}`**. Non-archive source files are now copied directly into the root of the work directory.
+- **Improved Scripting Experience**: Developers now use `${WORKDIR}` as the primary reference for all input files, reducing cognitive load.
+- **Robust Path Matching**: Introduced path canonicalization in the resolver to ensure reliable target identification when using symlinks or relative paths.
+
+### Fixed
+- **Compilation Error**: Fixed a regression in `PlanManifest::validate` where the `isolation` field was incorrectly accessed on single-output plans.
+- **Linter Accuracy**: Corrected the build set filtering logic to prevent explicit targets from being erroneously skipped during `apply --force`.
+
 ## [2.4.1] - 2026-04-20
 
 ### Added

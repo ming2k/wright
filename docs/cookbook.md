@@ -122,7 +122,7 @@ To iterate on a subset of stages and inspect the result:
 
 ```bash
 wright build mypkg --stage=configure
-# Inspect $SRC_DIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
+# Inspect $WORKDIR (e.g. /var/tmp/wright-build/mypkg-1.0/src/) manually
 wright build mypkg --stage=compile
 wright build mypkg --stage=staging --stage=fabricate
 
@@ -410,8 +410,8 @@ sha256 = "<sha256>"
 [lifecycle.compile]
 # isolation defaults to "strict" — no network access needed thanks to vendoring
 script = """
-export CARGO_HOME=${SRC_DIR}/.cargo-home
-cat > ${SRC_DIR}/.cargo/config.toml <<'EOF'
+export CARGO_HOME=${WORKDIR}/.cargo-home
+cat > ${WORKDIR}/.cargo/config.toml <<'EOF'
 [source.crates-io]
 replace-with = "vendored-sources"
 
@@ -423,7 +423,7 @@ cargo build --release --offline
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
+install -Dm755 ${WORKDIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 """
 ```
 
@@ -447,13 +447,13 @@ mount and PID namespace but retains host network access.
 [lifecycle.compile]
 isolation = "relaxed"
 script = """
-export CARGO_HOME=${SRC_DIR}/.cargo-home
+export CARGO_HOME=${WORKDIR}/.cargo-home
 cargo build --release
 """
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${SRC_DIR}/target/release/rg ${PART_DIR}/usr/bin/rg
+install -Dm755 ${WORKDIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 """
 ```
 
@@ -502,8 +502,8 @@ time. Use `relaxed` so the network namespace is shared with the host.
 isolation = "relaxed"
 script = """
 cd ${BUILD_DIR}
-export GOPATH=${SRC_DIR}/.gopath
-export GOMODCACHE=${SRC_DIR}/.gopath/pkg/mod
+export GOPATH=${WORKDIR}/.gopath
+export GOMODCACHE=${WORKDIR}/.gopath/pkg/mod
 go build -o hugo .
 """
 

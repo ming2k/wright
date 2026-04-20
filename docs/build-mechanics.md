@@ -49,7 +49,7 @@ always removes the entire working directory including `src/`.
 
 If after extraction `src/` contains exactly one subdirectory, `$BUILD_DIR` is
 set to that subdirectory (the common case for tarballs that unpack into
-`<name>-<version>/`). Otherwise `$BUILD_DIR` equals `$SRC_DIR`.
+`<name>-<version>/`). Otherwise `$BUILD_DIR` equals `$WORKDIR`.
 
 ## Log Files
 

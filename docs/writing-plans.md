@@ -129,7 +129,7 @@ sha256 = "SKIP"
 #### Archive vs non-archive URIs
 
 - URIs pointing to archive files (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are extracted to the source directory during the `extract` stage.
-- Non-archive URIs (patches, config files, scripts, etc.) are copied to `${FILES_DIR}` where lifecycle scripts can access them.
+- Non-archive URIs (patches, config files, scripts, etc.) are copied to `${WORKDIR}` where lifecycle scripts can access them.
 
 #### Git sources
 
@@ -163,8 +163,8 @@ sha256 = "SKIP"
 [lifecycle.prepare]
 script = """
 cd ${BUILD_DIR}
-patch -Np1 < ${FILES_DIR}/fix-headers.patch
-patch -Np1 < ${FILES_DIR}/add-feature.patch
+patch -Np1 < ${WORKDIR}/fix-headers.patch
+patch -Np1 < ${WORKDIR}/add-feature.patch
 """
 ```
 
@@ -174,8 +174,8 @@ For patches that need a different strip level:
 [lifecycle.prepare]
 script = """
 cd ${BUILD_DIR}
-patch -Np0 < ${FILES_DIR}/special-fix.patch
-patch -Np1 < ${FILES_DIR}/normal-fix.patch
+patch -Np0 < ${WORKDIR}/special-fix.patch
+patch -Np1 < ${WORKDIR}/normal-fix.patch
 """
 ```
 
@@ -419,7 +419,7 @@ The default pipeline runs these stages in order:
 |----------------|----------|------------------------------------------|
 | `fetch`    | built-in | Download sources and copy local files  |
 | `verify`    | built-in | Verify SHA-256 checksums         |
-| `extract`   | built-in | Extract archives, copy non-archives to `${FILES_DIR}` |
+| `extract`   | built-in | Extract archives, copy non-archives to `${WORKDIR}` |
 | `prepare`   | user   | Pre-build setup (e.g. apply patches)   |
 | `configure`  | user   | Run configure scripts          |
 | `compile`   | user   | Compile the software           |
@@ -589,12 +589,12 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${VERSION}`| Version from `version`     |
 | `${RELEASE}`| Release number as a string         |
 | `${ARCH}`  | Target architecture            |
-| `${SRC_DIR}`  | Extraction root directory         |
+| `${WORKDIR}`  | Extraction root directory         |
 | `${BUILD_DIR}` | Top-level source directory (use this in scripts) |
 | `${PART_DIR}`  | Current output staging directory |
 | `${MAIN_PART_NAME}` | Primary output name from the top-level `name` field |
 | `${MAIN_PART_DIR}` | Primary output staging directory (`${PART_DIR}` outside split outputs) |
-| `${FILES_DIR}` | Directory containing non-archive files (patches, configs, etc.) |
+| `${WORKDIR}` | Directory containing non-archive files (patches, configs, etc.) |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
@@ -602,13 +602,55 @@ When running inside an isolation, path variables are remapped to isolation mount
 
 | Variable    | Host value       | Isolation value     |
 |-----------------|------------------------|------------------------|
-| `${SRC_DIR}`  | actual host path    | `/build`        |
+| `${WORKDIR}`  | actual host path    | `/build`        |
 | `${BUILD_DIR}` | actual host path    | `/build/<source-dir>` |
 | `${PART_DIR}`  | actual host path    | `/output`       |
 | `${MAIN_PART_DIR}` | actual host path | `/output` or `/main-pkg` in split-output scripts |
-| `${FILES_DIR}` | actual host path    | `/files`        |
+| `${WORKDIR}` | actual host path | `/files` |
 
-`${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${SRC_DIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${SRC_DIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
+### Scenario-Based Path Guide
+
+To understand how to navigate your build, consider this scenario:
+- **Plan**: `nginx` (v1.25.3)
+- **Sources**:
+    1. `nginx-1.25.3.tar.gz` (contains `nginx-1.25.3/` folder)
+    2. `fancy-module.zip` (contains `ngx-fancy-v2/` folder)
+
+#### Resulting Layout in `${WORKDIR}` (/build):
+```text
+/build/
+├── nginx-1.25.3/        <-- Main source
+│   ├── configure
+│   └── src/
+└── ngx-fancy-v2/        <-- Addon / Module
+    └── config
+```
+
+#### Variable Resolution in this Scenario:
+- **`${WORKDIR}`**: `/build` (The container for everything).
+- **`${BUILD_DIR}`**: `/build` 
+  - *Note*: Because there are **multiple** top-level directories in `src/`, Wright cannot decide which one is the "main" one. It stays at the root.
+  - *If there was only ONE directory*, `${BUILD_DIR}` would automatically point to `/build/nginx-1.25.3`.
+- **`${PART_DIR}`**: `/output` (Where you install files).
+- **`${WORKDIR}`**: `/files` (Where your local patches/configs from the plan directory are).
+
+#### Accessing "Main" and "Addon":
+Since `${BUILD_DIR}` is at the root, your script must explicitly move into the correct directory:
+
+```toml
+[lifecycle.configure]
+script = """
+# Move into the main source directory
+cd nginx-${VERSION}
+
+# Reference the addon using a relative path or ${WORKDIR}
+./configure --add-module=../ngx-fancy-v2
+"""
+```
+
+---
+
+`${BUILD_DIR}` points to the top-level directory extracted from the source archive. For example, if `nginx-1.25.3.tar.gz` extracts to `nginx-1.25.3/`, then `${BUILD_DIR}` is `${WORKDIR}/nginx-1.25.3`. If the archive extracts files directly without a top-level directory, `${BUILD_DIR}` equals `${WORKDIR}`. Use `${BUILD_DIR}` instead of manually `cd`-ing into the source directory.
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
@@ -641,7 +683,7 @@ In both `relaxed` and `strict` modes, the isolation:
 - Bind-mounts essential `/etc` files (`resolv.conf`, `hosts`, `passwd`, `group`, `ld.so.conf`, `ld.so.cache`) read-only
 - Mounts the source directory at `/build` (read-write)
 - Mounts the part output directory at `/output` (read-write)
-- Mounts the files directory at `/files` (read-only, if present)
+- Mounts the work directory at `/files` (read-only, if present)
 - Provides `/dev` with basic devices (`null`, `zero`, `urandom`, `random`, `full`)
 - Mounts a fresh `/proc` and `/tmp`
 - Sets hostname to `wright-isolation`
@@ -785,8 +827,8 @@ ccache = true
 [lifecycle.prepare]
 script = """
 cd ${BUILD_DIR}
-patch -Np1 < ${FILES_DIR}/fix-headers.patch
-patch -Np1 < ${FILES_DIR}/add-feature.patch
+patch -Np1 < ${WORKDIR}/fix-headers.patch
+patch -Np1 < ${WORKDIR}/add-feature.patch
 """
 
 [lifecycle.configure]
