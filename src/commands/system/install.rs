@@ -25,9 +25,9 @@ pub fn execute_install(
             "no parts specified (pass part names/paths as arguments or via stdin)"
         );
     }
-    let pkg_paths = resolve_install_paths(resolver, &parts)?;
+    let part_paths = resolve_install_paths(resolver, &parts)?;
 
-    match transaction::install_parts(db, &pkg_paths, root_dir, resolver, force, nodeps) {
+    match transaction::install_parts(db, &part_paths, root_dir, resolver, force, nodeps) {
         Ok(()) => println!("installation completed successfully"),
         Err(e) => {
             eprintln!("error: {:#}", e);

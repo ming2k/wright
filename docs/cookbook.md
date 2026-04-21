@@ -111,29 +111,29 @@ When tuning a stage without re-extracting sources every time, use `--stage` to
 run specific stages against the existing build tree:
 
 ```bash
-# Full first build (extracts, configures, compiles, fabricates parts)
-wright build mypkg
+# Full first build (extracts, configures, compiles, packages parts)
+wright build mypart
 
 # Edit lifecycle.staging in plan.toml, then re-run the output phases:
-wright build mypkg --stage=staging --stage=fabricate
+wright build mypart --stage=staging
 ```
 
 To iterate on a subset of stages and inspect the result:
 
 ```bash
-wright build mypkg --stage=configure
-# Inspect $WORKDIR (e.g. /var/tmp/wright/workshop/mypkg-1.0/work/) manually
-wright build mypkg --stage=compile
-wright build mypkg --stage=staging --stage=fabricate
+wright build mypart --stage=configure
+# Inspect $WORKDIR (e.g. /var/tmp/wright/workshop/mypart-1.0/work/) manually
+wright build mypart --stage=compile
+wright build mypart --stage=staging
 
 # Or run compile plus the output phases together in one command:
-wright build mypkg --stage=compile --stage=staging --stage=fabricate
+wright build mypart --stage=compile --stage=staging
 ```
 
 To skip the `check` stage (e.g. tests are slow or broken dependency):
 
 ```bash
-wright build mypkg --stage=prepare --stage=configure --stage=compile --stage=staging --stage=fabricate
+wright build mypart --stage=prepare --stage=configure --stage=compile --stage=staging
 ```
 
 Or more concisely, run the full pipeline but skip `check` by doing a full build
@@ -141,12 +141,12 @@ and using `--stage` to re-run only the stages you need after a prior full
 configure+compile:
 
 ```bash
-wright build mypkg --stage=compile --stage=staging --stage=fabricate
+wright build mypart --stage=compile --stage=staging
 ```
 
 ---
 
-## Multi-Package Output
+## Multi-Output Mode
 
 A common pattern: build produces both runtime files and development headers.
 Separate them so users who only need the library don't pull in headers.
@@ -163,6 +163,7 @@ script = "make DESTDIR=$PART_DIR install"
 [output.zlib-devel]
 description = "Development files for zlib"
 script = """
+mv ${MAIN_PART_DIR}/usr/include ${PART_DIR}/usr/
 """
 ```
 

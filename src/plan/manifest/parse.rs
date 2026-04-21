@@ -7,7 +7,7 @@ use crate::error::{Result, WrightError};
 
 use super::{
     convert::{empty_sub_fabricate_output, fabricate_backup, fabricate_install_scripts},
-    BackupConfig, FabricateConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder,
+    BackupConfig, OutputConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder,
     LifecycleStage, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 use super::{BuildOptions, Dependencies};
@@ -56,7 +56,7 @@ fn extract_output_string_list(table: &mut toml::value::Table, key: &str) -> Resu
 }
 
 struct OutputSection {
-    fabricate: Option<FabricateConfig>,
+    outputs: Option<OutputConfig>,
     install_scripts: Option<InstallScripts>,
     backup: Option<BackupConfig>,
     relations: Relations,
@@ -113,13 +113,13 @@ fn parse_output_section(
     let backup_cfg = fabricate_backup(&main_output);
 
     if table.is_empty() {
-        let fabricate = if main_output.hooks.is_some() || main_output.backup.is_some() {
-            Some(FabricateConfig::Single(main_output))
+        let outputs = if main_output.hooks.is_some() || main_output.backup.is_some() {
+            Some(OutputConfig::Single(main_output))
         } else {
             None
         };
         return Ok(OutputSection {
-            fabricate,
+            outputs,
             install_scripts,
             backup: backup_cfg,
             relations: main_relations,
@@ -151,7 +151,7 @@ fn parse_output_section(
     );
 
     Ok(OutputSection {
-        fabricate: Some(FabricateConfig::Multi(outputs)),
+        outputs: Some(OutputConfig::Multi(outputs)),
         install_scripts,
         backup: backup_cfg,
         relations: main_relations,
@@ -215,7 +215,7 @@ impl PlanManifest {
 
         let output_section = parse_output_section(&plan.name, output, hooks)?;
         let OutputSection {
-            fabricate,
+            outputs,
             install_scripts,
             backup,
             relations,
@@ -230,7 +230,7 @@ impl PlanManifest {
             lifecycle: lifecycle_stages,
             lifecycle_order,
             mvp,
-            fabricate,
+            outputs,
             install_scripts,
             backup,
         };

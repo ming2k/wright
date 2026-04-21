@@ -5,11 +5,11 @@ use crate::error::{Result, WrightError};
 use crate::util::checksum;
 
 pub fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Result<Vec<String>> {
-    let pkg = db
+    let part = db
         .get_part(name)?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
-    let files = db.get_files(pkg.id)?;
+    let files = db.get_files(part.id)?;
     let mut issues = Vec::new();
 
     for file in &files {

@@ -258,8 +258,8 @@ pub fn execute(
                 let part_name = part
                     .ok_or_else(|| anyhow::anyhow!("part name is required unless using --all"))?;
 
-                let pkg = db.get_part(&part_name).context("failed to query part")?;
-                if pkg.is_none() {
+                let part = db.get_part(&part_name).context("failed to query part")?;
+                if part.is_none() {
                     eprintln!("part '{}' is not installed", part_name);
                     std::process::exit(1);
                 }
@@ -318,7 +318,7 @@ pub fn execute(
                     println!("Install Size: {} bytes", info.install_size);
                     println!("Origin      : {}", info.origin);
                     println!("Installed At: {}", info.installed_at);
-                    if let Some(ref hash) = info.pkg_hash {
+                    if let Some(ref hash) = info.part_hash {
                         println!("Part Hash   : {}", hash);
                     }
                     let opt_deps = db
@@ -416,26 +416,26 @@ pub fn execute(
             let mut up_to_date = 0usize;
             let mut not_found = 0usize;
 
-            for pkg in &parts {
-                match resolver.resolve_all(&pkg.name) {
+            for part in &parts {
+                match resolver.resolve_all(&part.name) {
                     Ok(all_versions) if !all_versions.is_empty() => {
                         if let Some(latest) = pick_latest(&all_versions) {
                             let is_newer = {
                                 let new_ver = Version::parse(&latest.version).ok();
-                                let old_ver = Version::parse(&pkg.version).ok();
+                                let old_ver = Version::parse(&part.version).ok();
                                 match (new_ver, old_ver) {
                                     (Some(nv), Some(ov)) => {
-                                        if latest.epoch != pkg.epoch {
-                                            latest.epoch > pkg.epoch
+                                        if latest.epoch != part.epoch {
+                                            latest.epoch > part.epoch
                                         } else if nv != ov {
                                             nv > ov
                                         } else {
-                                            latest.release > pkg.release
+                                            latest.release > part.release
                                         }
                                     }
                                     _ => {
-                                        latest.version != pkg.version
-                                            || latest.release > pkg.release
+                                        latest.version != part.version
+                                            || latest.release > part.release
                                     }
                                 }
                             };
@@ -443,9 +443,9 @@ pub fn execute(
                             if is_newer {
                                 println!(
                                     "upgrade: {} {}-{} -> {}-{}",
-                                    pkg.name,
-                                    pkg.version,
-                                    pkg.release,
+                                    part.name,
+                                    part.version,
+                                    part.release,
                                     latest.version,
                                     latest.release
                                 );
@@ -472,7 +472,7 @@ pub fn execute(
                     Ok(_) => {
                         not_found += 1;
                     }
-                    Err(e) => eprintln!("warning: resolver error for {}: {}", pkg.name, e),
+                    Err(e) => eprintln!("warning: resolver error for {}: {}", part.name, e),
                 }
             }
 

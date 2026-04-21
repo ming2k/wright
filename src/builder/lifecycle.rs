@@ -23,7 +23,6 @@ pub const DEFAULT_STAGES: &[&str] = &[
     "compile",
     "check",
     "staging",
-    "fabricate",
 ];
 
 /// Built-in stages handled by the build tool itself (not user scripts)

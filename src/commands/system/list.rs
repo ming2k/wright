@@ -24,21 +24,22 @@ pub fn execute_list(
             println!("no parts installed");
         }
     } else {
-        for pkg in &parts {
-            if assumed && !pkg.assumed {
+        for part in &parts {
+            if assumed && !part.assumed {
                 continue;
             }
+
             if long {
-                if pkg.assumed {
-                    println!("{:<12} {:<24} {}", "external", pkg.name, pkg.version);
+                if part.assumed {
+                    println!("{:<12} {:<24} {}", "external", part.name, part.version);
                 } else {
                     println!(
-                        "{:<12} {:<24} {}-{} ({})",
-                        pkg.origin, pkg.name, pkg.version, pkg.release, pkg.arch
+                        "{:<12} {:<24} {}-{}-{}",
+                        part.origin, part.name, part.version, part.release, part.arch
                     );
                 }
             } else {
-                println!("{}", pkg.name);
+                println!("{}", part.name);
             }
         }
     }

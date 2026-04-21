@@ -20,7 +20,7 @@ fn test_apply_force_always_includes_explicit_targets() {
         license: "MIT",
         url: None,
         install_size: 100,
-        pkg_hash: Some("oldhash"),
+        part_hash: Some("oldhash"),
         install_scripts: None,
         origin: Origin::Manual,
     }).unwrap();

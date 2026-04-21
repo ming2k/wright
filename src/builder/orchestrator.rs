@@ -597,7 +597,7 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin"
             url: None,
             installed_at: "now".to_string(),
             install_size: 1,
-            pkg_hash: None,
+            part_hash: None,
             install_scripts: None,
             assumed: false,
             origin: crate::database::Origin::Manual,
@@ -657,7 +657,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             license: "MIT",
             url: None,
             install_size: 1,
-            pkg_hash: None,
+            part_hash: None,
             install_scripts: None,
             origin: crate::database::Origin::Manual,
         })
@@ -672,7 +672,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             license: "MIT",
             url: None,
             install_size: 1,
-            pkg_hash: None,
+            part_hash: None,
             install_scripts: None,
             origin: crate::database::Origin::Manual,
         })
@@ -846,7 +846,7 @@ script = "mkdir -p ${PART_DIR}/usr/lib"
             license: "MIT",
             url: None,
             install_size: 1,
-            pkg_hash: None,
+            part_hash: None,
             install_scripts: None,
             origin: crate::database::Origin::Manual,
         })

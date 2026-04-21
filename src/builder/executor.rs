@@ -111,7 +111,7 @@ pub struct ExecutorOptions {
     pub work_dir: PathBuf,
     pub output_dir: PathBuf,
     pub rlimits: ResourceLimits,
-    /// Main part's output_dir, mounted at /main-pkg for split part stages.
+    /// Main part's output_dir, mounted at /main-part for split part stages.
     pub main_part_dir: Option<PathBuf>,
     pub verbose: bool,
     /// Number of CPUs to pin the sandboxed process to via sched_setaffinity.
@@ -144,7 +144,7 @@ pub fn execute_script(
         v.insert(
             "MAIN_PART_DIR".to_string(),
             if options.main_part_dir.is_some() {
-                "/main-pkg".to_string()
+                "/main-part".to_string()
             } else {
                 "/output".to_string()
             },
@@ -189,7 +189,7 @@ pub fn execute_script(
     if let Some(ref main_part) = options.main_part_dir {
         config
             .extra_binds
-            .push((main_part.clone(), PathBuf::from("/main-pkg"), false));
+            .push((main_part.clone(), PathBuf::from("/main-part"), false));
     }
 
     // Set environment variables
@@ -253,7 +253,17 @@ pub fn execute_script(
     }
 
     // Execute in isolation
-    let output = run_in_isolation(&mut config, &executor.command, &args)?;
+    let mut output = run_in_isolation(&mut config, &executor.command, &args)?;
+
+    // Golden Standard: Map internal sandbox paths back to variables in stderr
+    // so the user sees "${PART_DIR}/..." instead of "/output/...".
+    if output.status.code() != Some(0) {
+        let mut remapped_stderr = output.stderr.tail.clone();
+        remapped_stderr = remapped_stderr.replace("/main-part", "${MAIN_PART_DIR}");
+        remapped_stderr = remapped_stderr.replace("/output", "${PART_DIR}");
+        remapped_stderr = remapped_stderr.replace("/build", "${WORKDIR}");
+        output.stderr.tail = remapped_stderr;
+    }
 
     let exit_code = output.status.code().unwrap_or(-1);
 

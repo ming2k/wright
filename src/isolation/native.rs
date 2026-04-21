@@ -555,7 +555,7 @@ pub fn run_in_isolation(
                     if let Err(e) = bind(&config.src_dir, "/build", false) {
                         die(e);
                     }
-                    if let Err(e) = bind(&config.pkg_dir, "/output", false) {
+                    if let Err(e) = bind(&config.output_dir, "/output", false) {
                         die(e);
                     }
 

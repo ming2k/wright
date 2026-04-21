@@ -26,7 +26,7 @@ impl InstalledDb {
 
         self.conn
             .execute(
-                "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, pkg_hash, install_scripts, origin)
+                "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 rusqlite::params![
                     part.name,
@@ -38,7 +38,7 @@ impl InstalledDb {
                     part.license,
                     part.url,
                     part.install_size,
-                    part.pkg_hash,
+                    part.part_hash,
                     part.install_scripts,
                     part.origin
                 ],
@@ -80,7 +80,7 @@ impl InstalledDb {
 
     pub fn update_part(&self, part: NewPart) -> Result<()> {
         let rows = self.conn.execute(
-            "UPDATE parts SET version = ?1, release = ?2, epoch = ?3, description = ?4, arch = ?5, license = ?6, url = ?7, install_size = ?8, pkg_hash = ?9, install_scripts = ?10
+            "UPDATE parts SET version = ?1, release = ?2, epoch = ?3, description = ?4, arch = ?5, license = ?6, url = ?7, install_size = ?8, part_hash = ?9, install_scripts = ?10
              WHERE name = ?11",
             rusqlite::params![
                 part.version,
@@ -91,7 +91,7 @@ impl InstalledDb {
                 part.license,
                 part.url,
                 part.install_size,
-                part.pkg_hash,
+                part.part_hash,
                 part.install_scripts,
                 part.name
             ],

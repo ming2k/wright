@@ -48,38 +48,38 @@ pub(super) fn journal_path_from_db(db: &InstalledDb) -> Option<PathBuf> {
 /// Replace provides, conflicts, and replaces rows for a part (used during upgrade).
 pub(super) fn self_replace_provides_conflicts(
     db: &InstalledDb,
-    pkg_id: i64,
-    pkginfo: &PartInfo,
+    part_id: i64,
+    partinfo: &PartInfo,
 ) -> Result<()> {
     db.connection()
-        .execute("DELETE FROM provides WHERE part_id = ?1", params![pkg_id])
+        .execute("DELETE FROM provides WHERE part_id = ?1", params![part_id])
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
     db.connection()
-        .execute("DELETE FROM conflicts WHERE part_id = ?1", params![pkg_id])
+        .execute("DELETE FROM conflicts WHERE part_id = ?1", params![part_id])
         .map_err(|e| {
             WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
         })?;
     db.connection()
-        .execute("DELETE FROM replaces WHERE part_id = ?1", params![pkg_id])
+        .execute("DELETE FROM replaces WHERE part_id = ?1", params![part_id])
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
 
-    if !pkginfo.provides.is_empty() {
-        db.insert_provides(pkg_id, &pkginfo.provides)?;
+    if !partinfo.provides.is_empty() {
+        db.insert_provides(part_id, &partinfo.provides)?;
     }
-    if !pkginfo.conflicts.is_empty() {
-        db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    if !partinfo.conflicts.is_empty() {
+        db.insert_conflicts(part_id, &partinfo.conflicts)?;
     }
-    if !pkginfo.replaces.is_empty() {
-        db.insert_replaces(pkg_id, &pkginfo.replaces)?;
+    if !partinfo.replaces.is_empty() {
+        db.insert_replaces(part_id, &partinfo.replaces)?;
     }
     Ok(())
 }
 
-pub(super) fn log_debug_timing(operation: &str, package: &str, phase: &str, elapsed: Duration) {
+pub(super) fn log_debug_timing(operation: &str, part_name: &str, phase: &str, elapsed: Duration) {
     debug!(
         "{} {}: {} completed in {:.3}s",
         operation,
-        package,
+        part_name,
         phase,
         elapsed.as_secs_f64()
     );
@@ -146,9 +146,9 @@ mod tests {
         }
 
         pub fn build(self, out_dir: &Path) -> PathBuf {
-            let pkg_dir = tempfile::tempdir().unwrap();
+            let part_dir = tempfile::tempdir().unwrap();
             for (rel, data) in &self.files {
-                let path = pkg_dir.path().join(rel);
+                let path = part_dir.path().join(rel);
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).unwrap();
                 }
@@ -181,7 +181,7 @@ mod tests {
                 )
             };
 
-            let pkginfo = format!(
+            let partinfo = format!(
                 "[part]\nname = \"{name}\"\nversion = \"{version}\"\nrelease = {release}\n                 description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n                 install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{deps}{backup}",
                 name = self.name,
                 version = self.version,
@@ -189,10 +189,10 @@ mod tests {
                 deps = deps_section,
                 backup = backup_section,
             );
-            std::fs::write(pkg_dir.path().join(".PARTINFO"), pkginfo).unwrap();
+            std::fs::write(part_dir.path().join(".PARTINFO"), partinfo).unwrap();
 
             let part_path = out_dir.join(format!("{}-{}-{}.wright.tar.zst", self.name, self.version, self.release));
-            compress::create_tar_zst(pkg_dir.path(), &part_path).unwrap();
+            compress::create_tar_zst(part_dir.path(), &part_path).unwrap();
             part_path
         }
     }
@@ -273,9 +273,9 @@ mod tests {
         files: &[(&str, &[u8])],
         out_dir: &Path,
     ) -> PathBuf {
-        let pkg_dir = tempfile::tempdir().unwrap();
+        let part_dir = tempfile::tempdir().unwrap();
         for (rel, data) in files {
-            let path = pkg_dir.path().join(rel);
+            let path = part_dir.path().join(rel);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).unwrap();
             }
@@ -295,7 +295,7 @@ mod tests {
             )
         };
 
-        let pkginfo = format!(
+        let partinfo = format!(
             r#"[part]
 name = "{name}"
 version = "{version}"
@@ -308,10 +308,10 @@ build_date = "1970-01-01T00:00:00Z"
 {deps}"#,
             deps = deps_section,
         );
-        std::fs::write(pkg_dir.path().join(".PARTINFO"), pkginfo).unwrap();
+        std::fs::write(part_dir.path().join(".PARTINFO"), partinfo).unwrap();
 
         let part_path = out_dir.join(format!("{name}-{version}-{release}.wright.tar.zst"));
-        compress::create_tar_zst(pkg_dir.path(), &part_path).unwrap();
+        compress::create_tar_zst(part_dir.path(), &part_path).unwrap();
         part_path
     }
 
@@ -584,8 +584,8 @@ build_date = "1970-01-01T00:00:00Z"
             result
         );
 
-        let pkg = db.get_part("hello").unwrap().unwrap();
-        assert_eq!(pkg.version, "1.0.0");
+        let part_record = db.get_part("hello").unwrap().unwrap();
+        assert_eq!(part_record.version, "1.0.0");
         assert!(root.path().join("usr/bin/hello").exists());
 
         let _ = std::fs::remove_file(&part);
@@ -631,7 +631,7 @@ build_date = "1970-01-01T00:00:00Z"
 
         let a_id = db
             .insert_part(NewPart {
-                name: "pkgA",
+                name: "partA",
                 version: "1.0.0",
                 release: 1,
                 description: "A",
@@ -643,7 +643,7 @@ build_date = "1970-01-01T00:00:00Z"
 
         let b_id = db
             .insert_part(NewPart {
-                name: "pkgB",
+                name: "partB",
                 version: "1.0.0",
                 release: 1,
                 description: "B",
@@ -698,7 +698,7 @@ build_date = "1970-01-01T00:00:00Z"
         .unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
-        let part = TestPartBuilder::new("pkgA").version("2.0.0").release(1).file("usr/bin/newtool", b"new").build(out_dir.path(),
+        let part = TestPartBuilder::new("partA").version("2.0.0").release(1).file("usr/bin/newtool", b"new").build(out_dir.path(),
         );
 
         upgrade_part(&db, &part, root.path(), false, true).unwrap();
@@ -734,9 +734,9 @@ build_date = "1970-01-01T00:00:00Z"
     fn test_upgrade_rollback_restores_symlink() {
         let (db, root) = setup_test();
 
-        let pkg_id = db
+        let part_id = db
             .insert_part(NewPart {
-                name: "linkpkg",
+                name: "linkpart",
                 version: "1.0.0",
                 release: 1,
                 description: "symlink test",
@@ -751,7 +751,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::os::unix::fs::symlink("target1", &link_path).unwrap();
 
         db.insert_files(
-            pkg_id,
+            part_id,
             &[DbFileEntry {
                 path: "/usr/bin/a_link".to_string(),
                 file_hash: Some("target1".to_string()),
@@ -767,7 +767,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::write(&bad_parent, b"not a dir").unwrap();
 
         let out_dir = tempfile::tempdir().unwrap();
-        let part = TestPartBuilder::new("linkpkg").version("2.0.0").release(1).file("usr/bin/a_link", b"").file("usr/z/conf", b"oops").build(out_dir.path(),
+        let part = TestPartBuilder::new("linkpart").version("2.0.0").release(1).file("usr/bin/a_link", b"").file("usr/z/conf", b"oops").build(out_dir.path(),
         );
 
         let temp_unpack = tempfile::tempdir().unwrap();
@@ -777,7 +777,7 @@ build_date = "1970-01-01T00:00:00Z"
             let _ = std::fs::remove_file(&part_link);
         }
         std::os::unix::fs::symlink("target2", &part_link).unwrap();
-        let rebuilt = out_dir.path().join("linkpkg-2.0.0-1.wright.tar.zst");
+        let rebuilt = out_dir.path().join("linkpart-2.0.0-1.wright.tar.zst");
         crate::util::compress::create_tar_zst(temp_unpack.path(), &rebuilt).unwrap();
 
         let result = upgrade_part(&db, &rebuilt, root.path(), false, true);
@@ -823,17 +823,17 @@ build_date = "1970-01-01T00:00:00Z"
         let (db, root) = setup_test();
         let out_dir = tempfile::tempdir().unwrap();
 
-        let first = TestPartBuilder::new("samepkg").version("1.0.0").release(1).file("usr/bin/samepkg", b"old").build(out_dir.path(),
+        let first = TestPartBuilder::new("samepart").version("1.0.0").release(1).file("usr/bin/samepart", b"old").build(out_dir.path(),
         );
         install_part(&db, &first, root.path(), false).unwrap();
 
-        let second = TestPartBuilder::new("samepkg").version("1.0.0").release(1).file("usr/bin/samepkg", b"new").build(out_dir.path(),
+        let second = TestPartBuilder::new("samepart").version("1.0.0").release(1).file("usr/bin/samepart", b"new").build(out_dir.path(),
         );
 
         let mut resolver = crate::archive::resolver::LocalResolver::new();
         resolver.add_search_dir(out_dir.path().to_path_buf());
 
-        let explicit_targets = HashSet::from(["samepkg".to_string()]);
+        let explicit_targets = HashSet::from(["samepart".to_string()]);
         install_parts_with_explicit_targets(
             &db,
             std::slice::from_ref(&second),
@@ -845,11 +845,11 @@ build_date = "1970-01-01T00:00:00Z"
         )
         .unwrap();
 
-        let installed = db.get_part("samepkg").unwrap().unwrap();
+        let installed = db.get_part("samepart").unwrap().unwrap();
         let expected_hash = crate::util::checksum::sha256_file(&second).unwrap();
-        assert_eq!(installed.pkg_hash.as_deref(), Some(expected_hash.as_str()));
+        assert_eq!(installed.part_hash.as_deref(), Some(expected_hash.as_str()));
         assert_eq!(
-            std::fs::read(root.path().join("usr/bin/samepkg")).unwrap(),
+            std::fs::read(root.path().join("usr/bin/samepart")).unwrap(),
             b"new"
         );
     }
@@ -858,9 +858,9 @@ build_date = "1970-01-01T00:00:00Z"
     fn test_verify_symlink_detects_change() {
         let (db, root) = setup_test();
 
-        let pkg_id = db
+        let part_id = db
             .insert_part(NewPart {
-                name: "linkpkg",
+                name: "linkpart",
                 version: "1.0.0",
                 release: 1,
                 description: "symlink test",
@@ -878,7 +878,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::os::unix::fs::symlink("target1", &link_path).unwrap();
 
         db.insert_files(
-            pkg_id,
+            part_id,
             &[FileEntry {
                 path: "/usr/bin/mytool".to_string(),
                 file_hash: Some("target1".to_string()),
@@ -890,7 +890,7 @@ build_date = "1970-01-01T00:00:00Z"
         )
         .unwrap();
 
-        let issues = verify_part(&db, "linkpkg", root.path()).unwrap();
+        let issues = verify_part(&db, "linkpart", root.path()).unwrap();
         assert!(issues.is_empty(), "Expected no issues, got: {:?}", issues);
 
         let target2 = root.path().join("usr/bin/target1-renamed");
@@ -898,7 +898,7 @@ build_date = "1970-01-01T00:00:00Z"
         std::fs::remove_file(&link_path).unwrap();
         std::os::unix::fs::symlink("target1-renamed", &link_path).unwrap();
 
-        let issues = verify_part(&db, "linkpkg", root.path()).unwrap();
+        let issues = verify_part(&db, "linkpart", root.path()).unwrap();
         assert!(issues.iter().any(|i| i.contains("MODIFIED")));
     }
 
@@ -917,13 +917,13 @@ build_date = "1970-01-01T00:00:00Z"
                          out: &std::path::Path| {
             std::fs::create_dir_all(dir.join("etc/myapp")).unwrap();
             std::fs::write(dir.join(conf_rel), content).unwrap();
-            let pkginfo = format!(
+            let partinfo = format!(
                 "[part]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
                  description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n\
                  [backup]\nfiles = [\"/etc/myapp/myapp.conf\"]\n"
             );
-            std::fs::write(dir.join(".PARTINFO"), pkginfo).unwrap();
+            std::fs::write(dir.join(".PARTINFO"), partinfo).unwrap();
             let part = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
             compress::create_tar_zst(dir, &part).unwrap();
             part
@@ -977,12 +977,12 @@ build_date = "1970-01-01T00:00:00Z"
             } else {
                 ""
             };
-            let pkginfo = format!(
+            let partinfo = format!(
                 "[part]\nname = \"{name}\"\nversion = \"{ver}\"\nrelease = 1\n\
                  description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
                  install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n{backup_section}"
             );
-            std::fs::write(dir.join(".PARTINFO"), pkginfo).unwrap();
+            std::fs::write(dir.join(".PARTINFO"), partinfo).unwrap();
             let part = out.join(format!("{name}-{ver}-1.wright.tar.zst"));
             compress::create_tar_zst(dir, &part).unwrap();
             part
@@ -1031,22 +1031,22 @@ build_date = "1970-01-01T00:00:00Z"
         let v1_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(v1_dir.path().join("usr/bin")).unwrap();
         std::fs::write(v1_dir.path().join("usr/bin/mytool"), b"v1").unwrap();
-        let pkginfo_v1 = "[part]\nname = \"mypkg\"\nversion = \"1.0.0\"\nrelease = 1\n\
+        let partinfo_v1 = "[part]\nname = \"mypart\"\nversion = \"1.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
-        std::fs::write(v1_dir.path().join(".PARTINFO"), pkginfo_v1).unwrap();
-        let v1 = out_dir.path().join("mypkg-1.0.0-1.wright.tar.zst");
+        std::fs::write(v1_dir.path().join(".PARTINFO"), partinfo_v1).unwrap();
+        let v1 = out_dir.path().join("mypart-1.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v1_dir.path(), &v1).unwrap();
         install_part(&db, &v1, root.path(), false).unwrap();
 
         let v2_dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(v2_dir.path().join("usr/bin")).unwrap();
         std::fs::write(v2_dir.path().join("usr/bin/mytool"), b"v2").unwrap();
-        let pkginfo_v2 = "[part]\nname = \"mypkg\"\nversion = \"2.0.0\"\nrelease = 1\n\
+        let partinfo_v2 = "[part]\nname = \"mypart\"\nversion = \"2.0.0\"\nrelease = 1\n\
              description = \"test\"\narch = \"x86_64\"\nlicense = \"MIT\"\n\
              install_size = 0\nbuild_date = \"1970-01-01T00:00:00Z\"\n";
-        std::fs::write(v2_dir.path().join(".PARTINFO"), pkginfo_v2).unwrap();
-        let v2 = out_dir.path().join("mypkg-2.0.0-1.wright.tar.zst");
+        std::fs::write(v2_dir.path().join(".PARTINFO"), partinfo_v2).unwrap();
+        let v2 = out_dir.path().join("mypart-2.0.0-1.wright.tar.zst");
         compress::create_tar_zst(v2_dir.path(), &v2).unwrap();
         upgrade_part(&db, &v2, root.path(), false, true).unwrap();
 

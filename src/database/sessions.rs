@@ -9,8 +9,8 @@ impl InstalledDb {
         let mut stmt = self.conn.prepare(
             "INSERT OR IGNORE INTO build_sessions (session_hash, package_name, status) VALUES (?1, ?2, 'pending')",
         )?;
-        for pkg in packages {
-            stmt.execute(rusqlite::params![session_hash, pkg])?;
+        for part in packages {
+            stmt.execute(rusqlite::params![session_hash, part])?;
         }
         Ok(())
     }

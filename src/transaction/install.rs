@@ -69,8 +69,8 @@ pub fn install_parts_with_explicit_targets(
                 continue;
             }
 
-            let dependencies = if let Some(pkg) = resolved_map.get(&name) {
-                pkg.dependencies.clone()
+            let dependencies = if let Some(part) = resolved_map.get(&name) {
+                part.dependencies.clone()
             } else {
                 continue;
             };
@@ -129,18 +129,18 @@ pub fn install_parts_with_explicit_targets(
 
             let incoming_hash = if let Some(hash) = archive_hashes.get(&name) {
                 Some(hash.clone())
-            } else if let Some(pkg) = resolved_map.get(&name) {
-                let hash = crate::util::checksum::sha256_file(&pkg.path)?;
+            } else if let Some(part) = resolved_map.get(&name) {
+                let hash = crate::util::checksum::sha256_file(&part.path)?;
                 archive_hashes.insert(name.clone(), hash.clone());
                 Some(hash)
             } else {
                 None
             };
 
-            if force || incoming_hash.as_deref() != installed.pkg_hash.as_deref() {
+            if force || incoming_hash.as_deref() != installed.part_hash.as_deref() {
                 info!("Upgrading installed part {} from the current archive", name);
-                let pkg = resolved_map.get(&name).expect("resolved package exists");
-                upgrade_part(db, &pkg.path, root_dir, true, true)?;
+                let part = resolved_map.get(&name).expect("resolved part exists");
+                upgrade_part(db, &part.path, root_dir, true, true)?;
             }
             continue;
         }
@@ -150,9 +150,9 @@ pub fn install_parts_with_explicit_targets(
         } else {
             Origin::Dependency
         };
-        let pkg = resolved_map.get(&name).expect("resolved package exists");
+        let part = resolved_map.get(&name).expect("resolved part exists");
         info!("Installing part {} (origin: {})", name, origin);
-        install_part_with_origin(db, &pkg.path, root_dir, force, origin, true)?;
+        install_part_with_origin(db, &part.path, root_dir, force, origin, true)?;
     }
 
     Ok(())
@@ -184,28 +184,28 @@ pub fn install_part_with_origin(
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
     let mut phase_start = Instant::now();
-    let (pkginfo, pkg_hash) = part::extract_part(part_path, temp_dir.path())?;
+    let (partinfo, part_hash) = part::extract_part(part_path, temp_dir.path())?;
     log_debug_timing(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         "archive extraction",
         phase_start.elapsed(),
     );
 
-    for replaced_name in &pkginfo.replaces {
+    for replaced_name in &partinfo.replaces {
         if db.get_part(replaced_name)?.is_some() {
-            info!("Replacing {} with {}", replaced_name, pkginfo.name);
+            info!("Replacing {} with {}", replaced_name, partinfo.name);
             remove_part(db, replaced_name, root_dir, true)?;
         }
     }
 
     if !force {
-        for conflict_name in &pkginfo.conflicts {
+        for conflict_name in &partinfo.conflicts {
             if db.get_part(conflict_name)?.is_some() {
                 return Err(WrightError::DependencyError(format!(
                     "part conflict detected: '{}' conflicts with installed part '{}'. \
                      Please remove it first or use --force.",
-                    pkginfo.name, conflict_name
+                    partinfo.name, conflict_name
                 )));
             }
             let providers = db.find_providers(conflict_name)?;
@@ -213,24 +213,24 @@ pub fn install_part_with_origin(
                 return Err(WrightError::DependencyError(format!(
                     "part conflict detected: '{}' conflicts with '{}' (provided by {}). \
                      Please remove it first or use --force.",
-                    pkginfo.name,
+                    partinfo.name,
                     conflict_name,
                     providers.join(", ")
                 )));
             }
         }
 
-        let reverse_conflicts = db.find_conflicting_parts(&pkginfo.name)?;
+        let reverse_conflicts = db.find_conflicting_parts(&partinfo.name)?;
         if !reverse_conflicts.is_empty() {
             return Err(WrightError::DependencyError(format!(
                 "part conflict detected: installed part(s) {} conflict with '{}'. \
                  Please remove them first or use --force.",
                 reverse_conflicts.join(", "),
-                pkginfo.name
+                partinfo.name
             )));
         }
 
-        for prov in &pkginfo.provides {
+        for prov in &partinfo.provides {
             let reverse = db.find_conflicting_parts(prov)?;
             if !reverse.is_empty() {
                 return Err(WrightError::DependencyError(format!(
@@ -238,34 +238,34 @@ pub fn install_part_with_origin(
                      Please remove them first or use --force.",
                     reverse.join(", "),
                     prov,
-                    pkginfo.name
+                    partinfo.name
                 )));
             }
         }
     }
 
-    if db.get_part(&pkginfo.name)?.is_some() {
+    if db.get_part(&partinfo.name)?.is_some() {
         if force {
             debug!(
                 "Part {} already installed, attempting upgrade/reinstall",
-                pkginfo.name
+                partinfo.name
             );
             return upgrade_part(db, part_path, root_dir, true, run_hooks);
         }
-        return Err(WrightError::PartAlreadyInstalled(pkginfo.name.clone()));
+        return Err(WrightError::PartAlreadyInstalled(partinfo.name.clone()));
     }
 
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
     phase_start = Instant::now();
-    let file_entries = collect_file_entries(temp_dir.path(), &pkginfo)?;
+    let file_entries = collect_file_entries(temp_dir.path(), &partinfo)?;
     log_debug_timing(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         "file scan and metadata collection",
         phase_start.elapsed(),
     );
 
-    info!("Installing {}: {} files", pkginfo.name, file_entries.len());
+    info!("Installing {}: {} files", partinfo.name, file_entries.len());
 
     phase_start = Instant::now();
     let file_paths: Vec<&str> = file_entries
@@ -280,10 +280,10 @@ pub fn install_part_with_origin(
     for entry in &file_entries {
         if entry.file_type == FileType::File {
             if let Some(owner_name) = owners.get(&entry.path) {
-                if owner_name.as_str() != pkginfo.name {
+                if owner_name.as_str() != partinfo.name {
                     warn!(
                         "[{}] diverted {} (owned by {})",
-                        pkginfo.name,
+                        partinfo.name,
                         super::compact_path(&entry.path),
                         owner_name
                     );
@@ -295,16 +295,16 @@ pub fn install_part_with_origin(
     }
     log_debug_timing(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         "owner conflict check",
         phase_start.elapsed(),
     );
 
     let tx_id = db.record_transaction(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         None,
-        Some(&pkginfo.version),
+        Some(&partinfo.version),
         "pending",
         None,
     )?;
@@ -319,14 +319,14 @@ pub fn install_part_with_origin(
 
     if run_hooks {
         if let Some(ref script) = hooks.pre_install {
-            log_running_hook(&pkginfo.name, "pre_install");
+            log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("pre_install script failed: {}", e);
             }
             log_debug_timing(
                 "install",
-                &pkginfo.name,
+                &partinfo.name,
                 "pre_install hook",
                 phase_start.elapsed(),
             );
@@ -353,29 +353,29 @@ pub fn install_part_with_origin(
     }
     log_debug_timing(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         "filesystem copy into target root",
         phase_start.elapsed(),
     );
 
     phase_start = Instant::now();
-    let pkg_id = db.insert_part(NewPart {
-        name: &pkginfo.name,
-        version: &pkginfo.version,
-        release: pkginfo.release,
-        epoch: pkginfo.epoch,
-        description: &pkginfo.description,
-        arch: &pkginfo.arch,
-        license: &pkginfo.license,
+    let part_id = db.insert_part(NewPart {
+        name: &partinfo.name,
+        version: &partinfo.version,
+        release: partinfo.release,
+        epoch: partinfo.epoch,
+        description: &partinfo.description,
+        arch: &partinfo.arch,
+        license: &partinfo.license,
         url: None,
-        install_size: pkginfo.install_size,
-        pkg_hash: Some(pkg_hash.as_str()),
+        install_size: partinfo.install_size,
+        part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         origin,
     })?;
 
     for (path, owner_name) in shadows {
-        if let Some(owner_pkg) = db.get_part(&owner_name)? {
+        if let Some(owner_part) = db.get_part(&owner_name)? {
             let diverted_to = if divert_paths.contains(&path) {
                 let mut p = PathBuf::from(&path);
                 let mut os = p.file_name().unwrap().to_os_string();
@@ -385,14 +385,14 @@ pub fn install_part_with_origin(
             } else {
                 None
             };
-            let _ = db.record_shadowed_file(&path, owner_pkg.id, pkg_id, diverted_to.as_deref());
+            let _ = db.record_shadowed_file(&path, owner_part.id, part_id, diverted_to.as_deref());
         }
     }
 
-    db.insert_files(pkg_id, &file_entries)?;
+    db.insert_files(part_id, &file_entries)?;
 
     let mut deps = Vec::new();
-    for d in &pkginfo.runtime_deps {
+    for d in &partinfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
         deps.push(Dependency {
             name,
@@ -402,41 +402,41 @@ pub fn install_part_with_origin(
     }
 
     if !deps.is_empty() {
-        db.insert_dependencies(pkg_id, &deps)?;
+        db.insert_dependencies(part_id, &deps)?;
     }
 
-    if !pkginfo.optional_deps.is_empty() {
-        db.insert_optional_dependencies(pkg_id, &pkginfo.optional_deps)?;
+    if !partinfo.optional_deps.is_empty() {
+        db.insert_optional_dependencies(part_id, &partinfo.optional_deps)?;
     }
 
-    if !pkginfo.provides.is_empty() {
-        db.insert_provides(pkg_id, &pkginfo.provides)?;
+    if !partinfo.provides.is_empty() {
+        db.insert_provides(part_id, &partinfo.provides)?;
     }
-    if !pkginfo.conflicts.is_empty() {
-        db.insert_conflicts(pkg_id, &pkginfo.conflicts)?;
+    if !partinfo.conflicts.is_empty() {
+        db.insert_conflicts(part_id, &partinfo.conflicts)?;
     }
-    if !pkginfo.replaces.is_empty() {
-        db.insert_replaces(pkg_id, &pkginfo.replaces)?;
+    if !partinfo.replaces.is_empty() {
+        db.insert_replaces(part_id, &partinfo.replaces)?;
     }
 
     db.update_transaction_status(tx_id, "completed")?;
     log_debug_timing(
         "install",
-        &pkginfo.name,
+        &partinfo.name,
         "database update",
         phase_start.elapsed(),
     );
 
     if run_hooks {
         if let Some(ref script) = hooks.post_install {
-            log_running_hook(&pkginfo.name, "post_install");
+            log_running_hook(&partinfo.name, "post_install");
             phase_start = Instant::now();
             if let Err(e) = run_install_script(script, root_dir) {
                 warn!("post_install script failed: {}", e);
             }
             log_debug_timing(
                 "install",
-                &pkginfo.name,
+                &partinfo.name,
                 "post_install hook",
                 phase_start.elapsed(),
             );
@@ -445,10 +445,10 @@ pub fn install_part_with_origin(
 
     rollback_state.commit();
 
-    log_debug_timing("install", &pkginfo.name, "total", overall_start.elapsed());
+    log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
     info!(
         "Installed {}: {}-{}",
-        pkginfo.name, pkginfo.version, pkginfo.release
+        partinfo.name, partinfo.version, partinfo.release
     );
     Ok(())
 }

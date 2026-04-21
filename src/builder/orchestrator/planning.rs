@@ -7,7 +7,7 @@ use crate::builder::mvp::{collect_phase_deps, PlanGraph};
 use crate::database::{InstalledDb, InstalledPart};
 use crate::error::Result;
 use crate::part::version;
-use crate::plan::manifest::{FabricateConfig, PlanManifest};
+use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 use super::{BuildOptions, DependentsMode, MatchPolicy, RebuildReason};
 
@@ -548,14 +548,14 @@ pub(super) fn build_dep_map(
     let mut build_set = HashSet::new();
     let mut bootstrap_excluded = HashMap::new();
 
-    let mut pkg_to_plan = HashMap::new();
+    let mut part_to_plan = HashMap::new();
     for (plan_name, path) in all_plans {
-        pkg_to_plan.insert(plan_name.clone(), plan_name.clone());
+        part_to_plan.insert(plan_name.clone(), plan_name.clone());
         if let Ok(m) = PlanManifest::from_file(path) {
-            if let Some(FabricateConfig::Multi(ref pkgs)) = m.fabricate {
-                for sub_name in pkgs.keys() {
+            if let Some(OutputConfig::Multi(ref parts)) = m.outputs {
+                for sub_name in parts.keys() {
                     if sub_name != &m.plan.name {
-                        pkg_to_plan.insert(sub_name.clone(), plan_name.clone());
+                        part_to_plan.insert(sub_name.clone(), plan_name.clone());
                     }
                 }
             }
@@ -570,11 +570,11 @@ pub(super) fn build_dep_map(
 
         let mut deps = Vec::new();
         if !checksum {
-            deps = collect_phase_deps(&manifest, &pkg_to_plan, is_mvp, Some(all_plans));
+            deps = collect_phase_deps(&manifest, &part_to_plan, is_mvp, Some(all_plans));
 
             if is_mvp {
-                let full_deps = collect_phase_deps(&manifest, &pkg_to_plan, false, Some(all_plans));
-                let mvp_deps = collect_phase_deps(&manifest, &pkg_to_plan, true, Some(all_plans));
+                let full_deps = collect_phase_deps(&manifest, &part_to_plan, false, Some(all_plans));
+                let mvp_deps = collect_phase_deps(&manifest, &part_to_plan, true, Some(all_plans));
                 let excluded: Vec<String> = full_deps
                     .into_iter()
                     .filter(|d| !mvp_deps.contains(d))
@@ -592,7 +592,7 @@ pub(super) fn build_dep_map(
         deps_map,
         build_set,
         rebuild_reasons,
-        pkg_to_plan,
+        part_to_plan,
         bootstrap_excluded,
     })
 }

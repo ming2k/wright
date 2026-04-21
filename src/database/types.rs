@@ -143,7 +143,7 @@ pub struct InstalledPart {
     pub url: Option<String>,
     pub installed_at: String,
     pub install_size: u64,
-    pub pkg_hash: Option<String>,
+    pub part_hash: Option<String>,
     pub install_scripts: Option<String>,
     pub assumed: bool,
     pub origin: Origin,
@@ -170,7 +170,7 @@ pub struct NewPart<'a> {
     pub license: &'a str,
     pub url: Option<&'a str>,
     pub install_size: u64,
-    pub pkg_hash: Option<&'a str>,
+    pub part_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
     pub origin: Origin,
 }
@@ -187,7 +187,7 @@ impl<'a> Default for NewPart<'a> {
             license: "",
             url: None,
             install_size: 0,
-            pkg_hash: None,
+            part_hash: None,
             install_scripts: None,
             origin: Origin::Manual,
         }

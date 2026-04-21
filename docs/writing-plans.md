@@ -208,7 +208,7 @@ patch -Np1 < ${WORKDIR}/normal-fix.patch
 | `memory_limit`   | integer     | —    | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit`  | integer     | —    | Max CPU time per build process (seconds), overrides global |
 | `timeout`      | integer     | —    | Wall-clock timeout per build stage (seconds), overrides global |
-| `skip_fhs_check`  | bool      | `false` | Skip FHS validation after the final output stage (`fabricate`). Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
+| `skip_fhs_check`  | bool      | `false` | Skip FHS validation after the implicit output slicing phase. Use only for parts with a deliberate reason to install outside standard paths (e.g. kernel modules). |
 
 Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
 
@@ -252,7 +252,7 @@ Override the default pipeline order:
 
 ```toml
 [lifecycle_order]
-stages = ["fetch", "verify", "extract", "configure", "compile", "staging", "fabricate"]
+stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 ```
 
 ### `[mvp]` — MVP Phase Overrides
@@ -311,18 +311,6 @@ Allowed top-level fields in `mvp.toml`:
 Do not duplicate part metadata, sources, outputs, or hooks there. Also do
 not mix inline `[mvp]` in `plan.toml` with a sibling `mvp.toml`; choose one.
 
-### `[lifecycle.fabricate]` — Final Build Stage
-
-`[lifecycle.fabricate]` now describes only the final build-stage script that
-runs after `staging` and before archive creation.
-
-```toml
-[lifecycle.fabricate]
-script = """
-find ${PART_DIR}/usr/share/doc -type f -name '*.la' -delete
-"""
-```
-
 ### `[hooks]` — Install / Upgrade / Remove Hooks
 
 `[hooks]` contains transaction-time scripts that run on the live system, not in
@@ -374,7 +362,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 [output."nginx-doc"]
 description = "Nginx documentation"
 provides = ["nginx-documentation"]
-script = "..."
+include = ["/usr/share/doc/.*", "/usr/share/man/.*"]
 ```
 
 | Field     | Type      | Description               |
@@ -384,9 +372,17 @@ script = "..."
 | `provides`   | list of strings | Virtual part names this output satisfies |
 | `backup`    | list of strings | Config files preserved across upgrades  |
 | `description` | string     | Sub-part description (multi-output mode) |
-| `script`    | string     | Script to select/install files into the sub-part (multi-output mode) |
+| `include`   | list of strings | Regex patterns for files to include in this sub-part (multi-output mode) |
+| `exclude`   | list of strings | Regex patterns for files to exclude from this sub-part (multi-output mode) |
 | `hooks.*`   | table/fields  | Transaction hooks for a sub-part   |
-| `dependencies` | table      | Sub-part dependencies (multi-output mode) |
+| `dependencies` | table      | Additional sub-part dependencies (sub-parts automatically inherit all dependencies from the parent) |
+
+#### Implicit Slicing (Declarative Outputs)
+
+Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. 
+Instead of writing explicit scripts to move files between packages, all files should be installed to the default `${PART_DIR}` during the `staging` lifecycle phase.
+
+After `staging` is complete, an implicit slicing engine processes the files based on the `[output.<name>]` definitions. The engine evaluates files in `${PART_DIR}` against the `include` and `exclude` regular expressions. Files that match are automatically moved out of `${PART_DIR}` into the respective sub-part directories. The main `[output]` implicitly contains whatever remains after all sub-parts have been sliced out.
 
 #### Part Relations
 
@@ -442,9 +438,8 @@ The default pipeline runs these stages in order:
 | `compile`   | user   | Compile the software           |
 | `check`    | user   | Run test suites             |
 | `staging`   | user   | Install files into `${PART_DIR}`     |
-| `fabricate`  | user   | Finalize the staged part before archiving |
 
-Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. Most plans install files during `staging`; use `[lifecycle.fabricate]` only when you need a final post-staging script before archive creation.
+Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. All file system layout operations (such as `make install`, path moving, and symlink creation) should be performed within the `staging` phase. After staging, an implicit and declarative "output slicing" engine processes the resulting files according to the `[output]` blocks to construct the final archives.
 
 Override this order with `[lifecycle_order]` if your build needs a different pipeline.
 
@@ -874,7 +869,7 @@ provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 
-### Multi-Package Mode
+### Multi-Output Mode
 
 A single plan can produce multiple output parts. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main part.
 
@@ -913,6 +908,9 @@ parent manifest unless overridden. Each sub-part can have a `description`, a
 `dependencies` table. Names containing `+` or `.` must be quoted in TOML table
 headers (e.g. `[output."libstdc++"]`).
 
+During sub-part staging, the main part's output is mounted read-only at
+`/main-part` (and available via `${MAIN_PART_DIR}`).
+
 Sub-part dependencies use dotted keys (`dependencies.runtime`) or a sub-table
 (`[output.<name>.dependencies]`) for parts that must be installed when this
 sub-part is installed independently.
@@ -923,6 +921,7 @@ sub-part is installed independently.
 [output."libfoo-dev"]
 description = "Development headers for libfoo"
 script = """
+mv ${MAIN_PART_DIR}/usr/include ${PART_DIR}/usr/
 """
 ```
 
@@ -935,7 +934,7 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[lifecycle.fabricate.linux-firmware-amd]
+[output."linux-firmware-amd"]
 description = "AMD GPU/CPU firmware"
 # ...
 ```
@@ -945,10 +944,11 @@ In this pattern the parent part itself may contain no files — it exists only t
 For a `-doc` sub-part that overrides the architecture:
 
 ```toml
-[lifecycle.fabricate.mypackage-doc]
-description = "Documentation for mypackage"
+[output."mypart-doc"]
+description = "Documentation for mypart"
 arch = "any"
 script = """
+mv ${MAIN_PART_DIR}/usr/share/doc ${PART_DIR}/usr/share/
 """
 ```
 
@@ -958,7 +958,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[lifecycle.fabricate."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[output."libstdc++"]`). |
 | **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |

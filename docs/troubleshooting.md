@@ -23,13 +23,13 @@ cat /var/tmp/wright/workshop/<name>-<version>/logs/<stage>.log
 **To re-run only the failed stage** after fixing the plan:
 
 ```bash
-wright build <pkg> --stage=compile
+wright build <part> --stage=compile
 ```
 
 **To see output live** instead of buffered to the log:
 
 ```bash
-wright build -v <pkg>
+wright build -v <part>
 ```
 
 Note: when Wright is building multiple tasks in parallel, `-v` still captures
@@ -88,23 +88,23 @@ If you see this but the build still fails, the issue is elsewhere.
 **Symptom:**
 
 ```
-ERROR Target not found: mypackage
+ERROR Target not found: mypart
 ```
 
 Wright searched all configured `plans_dir` directories and the current working
-directory but could not find a `plan.toml` for `mypackage`.
+directory but could not find a `plan.toml` for `mypart`.
 
 **Check:**
 
 ```bash
 # Verify the plan name matches the top-level name field in plan.toml
-grep '^name' path/to/mypackage/plan.toml
+grep '^name' path/to/mypart/plan.toml
 
 # Run with a path instead of a name
-wright build ./path/to/mypackage
+wright build ./path/to/mypart
 
 # Or from the plans directory root
-wright build mypackage  # looks for plans_dir/mypackage/plan.toml
+wright build mypart  # looks for plans_dir/mypart/plan.toml
 ```
 
 ---
@@ -130,7 +130,7 @@ Triggered during automatic dependency expansion when a dependency declared in
   declare it in both `runtime` and `link`.
 3. Skip dependency expansion and build only the target:
   ```bash
-  wright build mypkg
+  wright build mypart
   ```
 
 ---
@@ -141,8 +141,8 @@ Triggered during automatic dependency expansion when a dependency declared in
 
 ```
 ERROR Deadlock detected or dependency missing from plan set:
- - pkgA is waiting for: pkgB
- - pkgB is waiting for: pkgA
+ - partA is waiting for: partB
+ - partB is waiting for: partA
 ```
 
 A circular dependency exists and Wright could not resolve it automatically.
@@ -156,7 +156,7 @@ full pattern.
 To inspect which cycles exist without triggering a build:
 
 ```bash
-wright build pkgA pkgB --lint
+wright build partA partB --lint
 ```
 
 ---
@@ -184,13 +184,13 @@ The downloaded file does not match the hash in `plan.toml`.
 
 ```bash
 # Delete the bad cached file and let Wright re-download
-rm <source_dir>/<pkg>-<filename>
+rm <source_dir>/<part>-<filename>
 
 # Re-run to download fresh and re-verify
-wright build <pkg>
+wright build <part>
 
 # If you need to update the hash in plan.toml:
-wright build <pkg> --checksum
+wright build <part> --checksum
 ```
 
 ---
@@ -212,7 +212,7 @@ bumped.
 
 ```bash
 # Force rebuild regardless of existing archives
-wright build <pkg> --force
+wright build <part> --force
 
 # Or bump the top-level release in plan.toml to invalidate the archive
 # skip check
@@ -228,7 +228,7 @@ scratch, but if you hit issues:
 
 ```bash
 # Manually clean the working directory for one part
-wright build <pkg> --clean
+wright build <part> --clean
 
 # Or remove it directly
 rm -rf /var/tmp/wright/workshop/<name>-<version>
@@ -314,14 +314,14 @@ on a message such as:
 INFO Installing texlive-texmf: 252553 files
 ```
 
-Packages with hundreds of thousands of files are dominated by filesystem
+Parts with hundreds of thousands of files are dominated by filesystem
 metadata work and SQLite bookkeeping rather than raw CPU throughput. On SSDs,
 they can still take many minutes.
 
 **To see where time is going:**
 
 ```bash
-wright -v install <pkg>
+wright -v install <part>
 ```
 
 At `-v`, Wright prints `DEBUG` timings for:
@@ -358,3 +358,5 @@ lock automatically even if the `.lock` file remains on disk.
 
 If a later command succeeds, the lock is not stale. Only investigate further if
 new commands fail with a lock timeout while no Wright process is still running.
+ill running.
+ill running.

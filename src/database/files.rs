@@ -48,13 +48,13 @@ impl InstalledDb {
         Ok(())
     }
 
-    pub fn get_other_owners(&self, current_pkg_id: i64, path: &str) -> Result<Vec<String>> {
+    pub fn get_other_owners(&self, current_part_id: i64, path: &str) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id
               WHERE f.path = ?1 AND p.id != ?2",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![path, current_pkg_id], |row| {
+            .query_map(rusqlite::params![path, current_part_id], |row| {
                 row.get::<_, String>(0)
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -201,7 +201,7 @@ impl InstalledDb {
     /// Batch version of get_other_owners. Returns a map of path -> list of other owner names.
     pub fn get_other_owners_batch(
         &self,
-        current_pkg_id: i64,
+        current_part_id: i64,
         paths: &[&str],
     ) -> Result<HashMap<String, Vec<String>>> {
         let mut result: HashMap<String, Vec<String>> = HashMap::new();
@@ -224,7 +224,7 @@ impl InstalledDb {
                 ))
             })?;
             let params: Vec<Box<dyn rusqlite::ToSql>> =
-                std::iter::once(Box::new(current_pkg_id) as Box<dyn rusqlite::ToSql>)
+                std::iter::once(Box::new(current_part_id) as Box<dyn rusqlite::ToSql>)
                     .chain(
                         chunk
                             .iter()

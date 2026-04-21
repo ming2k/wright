@@ -57,13 +57,9 @@ pub struct SubFabricateOutput {
     #[serde(default)]
     pub provides: Vec<String>,
     #[serde(default)]
-    pub script: String,
-    #[serde(default = "default_executor")]
-    pub executor: String,
-    #[serde(default = "default_isolation_level")]
-    pub isolation: String,
+    pub include: Option<Vec<String>>,
     #[serde(default)]
-    pub env: HashMap<String, String>,
+    pub exclude: Option<Vec<String>>,
     #[serde(default)]
     pub hooks: Option<FabricateHooks>,
     #[serde(default)]
@@ -71,7 +67,7 @@ pub struct SubFabricateOutput {
 }
 
 #[derive(Debug, Clone)]
-pub enum FabricateConfig {
+pub enum OutputConfig {
     Single(FabricateOutput),
     Multi(HashMap<String, SubFabricateOutput>),
 }
@@ -178,7 +174,7 @@ pub struct PlanManifest {
     pub lifecycle_order: Option<LifecycleOrder>,
     pub mvp: Option<PhaseConfig>,
     /// Fabricate output configuration.
-    pub fabricate: Option<FabricateConfig>,
+    pub outputs: Option<OutputConfig>,
     /// Derived archive metadata populated from `fabricate`.
     pub install_scripts: Option<InstallScripts>,
     pub backup: Option<BackupConfig>,
@@ -394,9 +390,9 @@ impl PlanManifest {
         // Each source entry is self-contained (uri + sha256), no positional check needed
 
         // Validate fabricate config
-        if let Some(ref pkg) = self.fabricate {
-            match pkg {
-                FabricateConfig::Multi(ref parts) => {
+        if let Some(ref part) = self.outputs {
+            match part {
+                OutputConfig::Multi(ref parts) => {
                     for (sub_name, sub_part) in parts {
                         if !name_re.is_match(sub_name) {
                             return Err(WrightError::ValidationError(format!(
@@ -422,17 +418,9 @@ impl PlanManifest {
                                 )));
                             }
                         }
-
-                        // Validate sub-part isolation
-                        if let Err(e) = sub_part.isolation.parse::<crate::isolation::IsolationLevel>() {
-                            return Err(WrightError::ValidationError(format!(
-                                "sub-part '{}': invalid isolation level '{}': {}",
-                                sub_name, sub_part.isolation, e
-                            )));
-                        }
                     }
                 }
-                FabricateConfig::Single(_) => {
+                OutputConfig::Single(_) => {
                     // Main output uses default isolation from lifecycle stages
                 }
             }
@@ -474,9 +462,9 @@ impl PlanManifest {
     /// Iterate over sub-parts (multi-part mode).
     /// Returns an empty iterator for Single or None.
     pub fn sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
-        match self.fabricate {
-            Some(FabricateConfig::Multi(ref pkgs)) => {
-                Box::new(pkgs.iter()) as Box<dyn Iterator<Item = _>>
+        match self.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                Box::new(parts.iter()) as Box<dyn Iterator<Item = _>>
             }
             _ => Box::new(std::iter::empty()),
         }
@@ -660,8 +648,8 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         assert_eq!(backup.files.len(), 2);
 
         // New-style fabricate config
-        match manifest.fabricate {
-            Some(FabricateConfig::Single(ref output)) => {
+        match manifest.outputs {
+            Some(OutputConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert!(hooks.post_install.is_some());
                 assert!(hooks.pre_remove.is_some());
@@ -752,10 +740,10 @@ install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
 runtime = ["libgcc"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Multi(ref pkgs)) => {
-                assert_eq!(pkgs.len(), 2);
-                let libstdcpp = pkgs.get("libstdc++").unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                assert_eq!(parts.len(), 2);
+                let libstdcpp = parts.get("libstdc++").unwrap();
                 assert_eq!(
                     libstdcpp.description.as_deref(),
                     Some("GNU C++ standard library")
@@ -807,16 +795,16 @@ script = "true"
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
 
-        match manifest.fabricate {
-            Some(FabricateConfig::Multi(ref pkgs)) => {
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
                 // Main part carries the relations
-                let main = pkgs.get("nginx").unwrap();
+                let main = parts.get("nginx").unwrap();
                 let main_manifest = main.to_manifest("nginx", &manifest);
                 assert_eq!(main_manifest.relations.conflicts, vec!["apache"]);
                 assert_eq!(main_manifest.relations.provides, vec!["http-server"]);
 
                 // Sub-part has its own relations
-                let doc = pkgs.get("nginx-doc").unwrap();
+                let doc = parts.get("nginx-doc").unwrap();
                 let doc_manifest = doc.to_manifest("nginx-doc", &manifest);
                 assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
                 assert!(doc_manifest.relations.conflicts.is_empty());
@@ -845,9 +833,9 @@ arch = "any"
 script = "true"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Multi(ref pkgs)) => {
-                let doc = pkgs.get("test-doc").unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                let doc = parts.get("test-doc").unwrap();
                 let doc_manifest = doc.to_manifest("test-doc", &manifest);
                 assert_eq!(doc_manifest.plan.version, "1.0.0-doc");
                 assert_eq!(doc_manifest.plan.arch, "any");
@@ -914,8 +902,8 @@ pre_remove = "systemctl stop test"
 backup = ["/etc/test.conf"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Single(ref output)) => {
+        match manifest.outputs {
+            Some(OutputConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo pre"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
@@ -949,9 +937,9 @@ description = "GCC documentation"
 script = "true"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Multi(ref pkgs)) => {
-                let main = pkgs.get("gcc").unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                let main = parts.get("gcc").unwrap();
                 // Main part description is None — to_manifest will use parent's
                 let main_manifest = main.to_manifest("gcc", &manifest);
                 assert_eq!(
@@ -1234,8 +1222,8 @@ pre_install = "echo preparing"
 post_install = "ldconfig"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        match manifest.fabricate {
-            Some(FabricateConfig::Single(ref output)) => {
+        match manifest.outputs {
+            Some(OutputConfig::Single(ref output)) => {
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo preparing"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
@@ -1259,7 +1247,7 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "true"
 
-[lifecycle.fabricate]
+[lifecycle.outputs]
 script = "strip ${PART_DIR}/usr/bin/test"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();

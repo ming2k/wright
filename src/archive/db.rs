@@ -57,9 +57,9 @@ const BASE_SCHEMA: &str = "
 ";
 
 const INDEX_SCHEMA: &str = "
-    CREATE INDEX IF NOT EXISTS idx_inventory_pkg_name ON parts(name);
-    CREATE INDEX IF NOT EXISTS idx_inventory_pkg_filename ON parts(filename);
-    CREATE INDEX IF NOT EXISTS idx_inventory_deps_pkg ON dependencies(part_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_part_name ON parts(name);
+    CREATE INDEX IF NOT EXISTS idx_inventory_part_filename ON parts(filename);
+    CREATE INDEX IF NOT EXISTS idx_inventory_deps_part ON dependencies(part_id);
     CREATE INDEX IF NOT EXISTS idx_inventory_deps_on ON dependencies(depends_on);
     CREATE INDEX IF NOT EXISTS idx_inventory_provides_name ON provides(name);
     CREATE INDEX IF NOT EXISTS idx_inventory_conflicts_name ON conflicts(name);
@@ -180,33 +180,33 @@ impl ArchiveDb {
         )
         .map_err(|e| WrightError::DatabaseError(format!("insert part: {}", e)))?;
 
-        let pkg_id = tx.last_insert_rowid();
+        let part_id = tx.last_insert_rowid();
 
         for dep in &partinfo.runtime_deps {
             tx.execute(
                 "INSERT INTO dependencies (part_id, depends_on, dep_type) VALUES (?1, ?2, 'runtime')",
-                params![pkg_id, dep],
+                params![part_id, dep],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert runtime dep: {}", e)))?;
         }
         for name in &partinfo.provides {
             tx.execute(
                 "INSERT INTO provides (part_id, name) VALUES (?1, ?2)",
-                params![pkg_id, name],
+                params![part_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert provides: {}", e)))?;
         }
         for name in &partinfo.conflicts {
             tx.execute(
                 "INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)",
-                params![pkg_id, name],
+                params![part_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert conflicts: {}", e)))?;
         }
         for name in &partinfo.replaces {
             tx.execute(
                 "INSERT INTO replaces (part_id, name) VALUES (?1, ?2)",
-                params![pkg_id, name],
+                params![part_id, name],
             )
             .map_err(|e| WrightError::DatabaseError(format!("insert replaces: {}", e)))?;
         }
@@ -214,7 +214,7 @@ impl ArchiveDb {
         tx.commit()
             .map_err(|e| WrightError::DatabaseError(format!("commit: {}", e)))?;
 
-        Ok(pkg_id)
+        Ok(part_id)
     }
 
     pub fn list_parts(&self, name: Option<&str>) -> Result<Vec<ArchivePart>> {
@@ -249,8 +249,8 @@ impl ArchiveDb {
             rows
         };
 
-        for pkg in &mut parts {
-            pkg.runtime_deps = self.get_deps(pkg.id, "runtime")?;
+        for part in &mut parts {
+            part.runtime_deps = self.get_deps(part.id, "runtime")?;
         }
 
         Ok(parts)
@@ -267,17 +267,17 @@ impl ArchiveDb {
             )
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
-        let mut pkg = stmt
+        let mut part = stmt
             .query_map(params![name], row_to_archive_part)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?
             .filter_map(|r| r.ok())
             .next();
 
-        if let Some(ref mut p) = pkg {
+        if let Some(ref mut p) = part {
             p.runtime_deps = self.get_deps(p.id, "runtime")?;
         }
 
-        Ok(pkg)
+        Ok(part)
     }
 
     pub fn find_all_versions(&self, name: &str) -> Result<Vec<ArchivePart>> {

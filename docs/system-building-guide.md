@@ -62,7 +62,7 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 **opt for third-party trees**: `/opt` is available for self-contained third-party software (e.g. proprietary bundles, Flatpak runtimes) that cannot conform to standard FHS paths. Native Wright parts do not install into `/opt`.
 
-### 1.3 Package File Installation Conventions
+### 1.3 Part File Installation Conventions
 
 | File Type | Installation Path | Description |
 |-----------|-------------------|-------------|
@@ -73,11 +73,11 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 | pkg-config | `/usr/lib/pkgconfig/` | `.pc` files |
 | cmake module | `/usr/lib/cmake/` | cmake find modules |
 | Manual page | `/usr/share/man/` | man pages |
-| Documentation | `/usr/share/doc/{pkgname}/` | README, LICENSE, etc. |
+| Documentation | `/usr/share/doc/{partname}/` | README, LICENSE, etc. |
 | Configuration | `/etc/` | System-level configuration |
 | runit service | `/etc/sv/{service}/` | Service definition |
-| Runtime data | `/var/lib/{pkgname}/` | Databases, state files, etc. |
-| Logs | `/var/logs/{pkgname}/` | Log directory |
+| Runtime data | `/var/lib/{partname}/` | Databases, state files, etc. |
+| Logs | `/var/logs/{partname}/` | Log directory |
 
 ---
 
@@ -211,7 +211,7 @@ script = """
 
 ### 2.5 Recommendations for -dev Splitting
 
-Traditional distributions (Debian, Alpine) split header files (`.h`), static libraries (`.a`), and pkg-config (`.pc`) files into `-dev` subpackages. This is reasonable in:
+Traditional distributions (Debian, Alpine) split header files (`.h`), static libraries (`.a`), and pkg-config (`.pc`) files into `-dev` sub-parts. This is reasonable in:
 
 - **Large-scale public repositories**: Thousands of users, most are end-users who don't need development files.
 - **Embedded/Container environments**: Extremely limited disk space.
@@ -227,19 +227,23 @@ However, for Wright's target users (personal or small team maintained custom dis
 
 ### 2.6 Multi-Part Practice
 
-Use `[lifecycle.fabricate.<name>]` sub-tables in `plan.toml` to define sub-parts:
+Use `[output.<name>]` sub-tables in `plan.toml` to define sub-parts:
 
 ```toml
 # Example: Splitting large documentation only
-[lifecycle.fabricate.doc]
+[output.doc]
 description = "GCC documentation"
 script = """
+mv ${MAIN_PART_DIR}/usr/share/doc ${PART_DIR}/usr/share/
 """
 
 # Example: Library and daemon split
-[lifecycle.fabricate.libs]
+[output.libs]
 description = "D-Bus shared libraries"
 hooks.post_install = "ldconfig"
+script = """
+mv ${MAIN_PART_DIR}/usr/lib/*.so* ${PART_DIR}/usr/lib/
+"""
 ```
 
 ### 2.7 Decision Summary Table

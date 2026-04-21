@@ -13,7 +13,7 @@ use crate::util::checksum;
 
 pub(super) fn collect_file_entries(
     extract_dir: &Path,
-    pkginfo: &PartInfo,
+    partinfo: &PartInfo,
 ) -> Result<Vec<FileEntry>> {
     // Collect paths first (serial, preserves deterministic order).
     let raw: Vec<_> = WalkDir::new(extract_dir)
@@ -32,7 +32,7 @@ pub(super) fn collect_file_entries(
         .collect();
 
     // Compute per-file SHA-256 in parallel (the only CPU-bound work here).
-    let backup_set: HashSet<&str> = pkginfo.backup_files.iter().map(|s| s.as_str()).collect();
+    let backup_set: HashSet<&str> = partinfo.backup_files.iter().map(|s| s.as_str()).collect();
     let entries: std::result::Result<Vec<FileEntry>, WrightError> =
         raw.par_iter()
             .map(|entry| {

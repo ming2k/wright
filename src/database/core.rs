@@ -14,7 +14,7 @@ pub struct InstalledDb {
 }
 
 pub(super) const PART_COLUMNS: &str =
-    "id, name, version, release, description, arch, license, url, installed_at, install_size, pkg_hash, install_scripts, assumed, origin, epoch";
+    "id, name, version, release, description, arch, license, url, installed_at, install_size, part_hash, install_scripts, assumed, origin, epoch";
 
 pub(super) fn row_to_transaction(row: &rusqlite::Row) -> rusqlite::Result<TransactionRecord> {
     Ok(TransactionRecord {
@@ -39,7 +39,7 @@ pub(super) fn row_to_installed_part(row: &rusqlite::Row) -> rusqlite::Result<Ins
         url: row.get(7)?,
         installed_at: row.get::<_, String>(8)?,
         install_size: row.get::<_, u64>(9)?,
-        pkg_hash: row.get(10)?,
+        part_hash: row.get(10)?,
         install_scripts: row.get(11)?,
         assumed: row.get::<_, bool>(12)?,
         origin: Origin::try_from(row.get::<_, String>(13)?.as_str()).map_err(|e| {

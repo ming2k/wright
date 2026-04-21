@@ -29,7 +29,7 @@ mod tests {
                 name: "hello",
                 version: "1.0.0",
                 release: 1,
-                description: "test pkg",
+                description: "test part",
                 arch: "x86_64",
                 license: "MIT",
                 install_size: 1024,
@@ -38,12 +38,12 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let pkg = db.get_part("hello").unwrap().unwrap();
-        assert_eq!(pkg.name, "hello");
-        assert_eq!(pkg.version, "1.0.0");
-        assert_eq!(pkg.release, 1);
-        assert_eq!(pkg.install_size, 1024);
-        assert!(pkg.install_scripts.is_none());
+        let part = db.get_part("hello").unwrap().unwrap();
+        assert_eq!(part.name, "hello");
+        assert_eq!(part.version, "1.0.0");
+        assert_eq!(part.release, 1);
+        assert_eq!(part.install_size, 1024);
+        assert!(part.install_scripts.is_none());
     }
 
     #[test]
@@ -69,10 +69,10 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let pkgs = db.list_parts().unwrap();
-        assert_eq!(pkgs.len(), 2);
-        assert_eq!(pkgs[0].name, "alpha");
-        assert_eq!(pkgs[1].name, "beta");
+        let parts = db.list_parts().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].name, "alpha");
+        assert_eq!(parts[1].name, "beta");
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
             name: "hello",
             version: "1.0.0",
             release: 1,
-            description: "test pkg",
+            description: "test part",
             arch: "x86_64",
             license: "MIT",
             install_size: 1024,
@@ -361,7 +361,7 @@ mod tests {
             name: "hello",
             version: "2.0.0",
             release: 1,
-            description: "updated pkg",
+            description: "updated part",
             arch: "x86_64",
             license: "MIT",
             install_size: 2048,
@@ -370,12 +370,12 @@ mod tests {
         })
         .unwrap();
 
-        let pkg = db.get_part("hello").unwrap().unwrap();
-        assert_eq!(pkg.version, "2.0.0");
-        assert_eq!(pkg.description, "updated pkg");
-        assert_eq!(pkg.install_size, 2048);
+        let part = db.get_part("hello").unwrap().unwrap();
+        assert_eq!(part.version, "2.0.0");
+        assert_eq!(part.description, "updated part");
+        assert_eq!(part.install_size, 2048);
         assert_eq!(
-            pkg.install_scripts.as_deref(),
+            part.install_scripts.as_deref(),
             Some("post_install() { echo hi; }")
         );
     }
@@ -482,9 +482,9 @@ mod tests {
             })
             .unwrap();
 
-        let pkg = db.get_part("hello").unwrap().unwrap();
+        let part = db.get_part("hello").unwrap().unwrap();
         assert_eq!(
-            pkg.install_scripts.as_deref(),
+            part.install_scripts.as_deref(),
             Some("post_install() { echo done; }")
         );
 

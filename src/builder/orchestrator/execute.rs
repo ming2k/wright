@@ -13,7 +13,7 @@ use crate::database::InstalledDb;
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::part::fhs;
 use crate::part::part;
-use crate::plan::manifest::{FabricateConfig, PlanManifest};
+use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 use super::BuildOptions;
 
@@ -327,13 +327,13 @@ pub(super) fn lint_dependency_graph(
         let chosen = pick_candidate(candidates.clone());
         for cand in candidates {
             let selected = match &chosen {
-                Some(c) if c.pkg == cand.pkg && c.excluded == cand.excluded => "yes",
+                Some(c) if c.part == cand.part && c.excluded == cand.excluded => "yes",
                 _ => "no",
             };
             println!(
                 "{} | {} | {} | {}",
                 idx + 1,
-                cand.pkg,
+                cand.part,
                 cand.excluded.join(", "),
                 selected
             );
@@ -368,8 +368,8 @@ fn build_one(
             "valid plan: {} {}-{}",
             manifest.plan.name, manifest.plan.version, manifest.plan.release
         );
-        if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
-            for sub_name in pkgs.keys() {
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            for sub_name in parts.keys() {
                 if sub_name != &manifest.plan.name {
                     println!("  sub-part: {}", sub_name);
                 }
@@ -396,12 +396,12 @@ fn build_one(
         let part_name = manifest.part_filename();
         let existing = output_dir.join(&part_name);
         let all_exist = existing.exists()
-            && match manifest.fabricate {
-                Some(FabricateConfig::Multi(ref pkgs)) => pkgs
+            && match manifest.outputs {
+                Some(OutputConfig::Multi(ref parts)) => parts
                     .iter()
                     .filter(|(name, _)| *name != &manifest.plan.name)
-                    .all(|(sub_name, sub_pkg)| {
-                        let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
+                    .all(|(sub_name, sub_part)| {
+                        let sub_manifest = sub_part.to_manifest(sub_name, manifest);
                         output_dir.join(sub_manifest.part_filename()).exists()
                     }),
                 _ => true,
@@ -458,7 +458,7 @@ fn build_one(
         progress,
     )?;
 
-    let has_fabricate_stage = manifest.fabricate.is_some()
+    let has_fabricate_stage = manifest.outputs.is_some()
         || manifest.lifecycle.contains_key("fabricate")
         || manifest.lifecycle.contains_key("pre_fabricate")
         || manifest.lifecycle.contains_key("post_fabricate");
@@ -478,24 +478,24 @@ fn build_one(
         }
         register_in_archive_db(&config.general.archive_db_path, &part_path);
 
-        if let Some(FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
-            for (sub_name, sub_pkg) in pkgs {
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            for (sub_name, sub_part) in parts {
                 if sub_name == &manifest.plan.name {
                     continue;
                 }
-                let sub_pkg_dir = result.split_pkg_dirs.get(sub_name).ok_or_else(|| {
-                    WrightError::BuildError(format!("missing sub-part pkg_dir for '{}'", sub_name))
+                let sub_part_dir = result.split_part_dirs.get(sub_name).ok_or_else(|| {
+                    WrightError::BuildError(format!("missing sub-part output_dir for '{}'", sub_name))
                 })?;
                 if !manifest.options.skip_fhs_check {
-                    fhs::validate(sub_pkg_dir, sub_name)?;
+                    fhs::validate(sub_part_dir, sub_name)?;
                 }
-                let sub_manifest = sub_pkg.to_manifest(sub_name, manifest);
-                let sub_part = part::create_part(sub_pkg_dir, &sub_manifest, &output_dir)?;
-                info!("{}", logging::plan_packed(sub_name, &sub_part));
+                let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                let sub_part_path = part::create_part(sub_part_dir, &sub_manifest, &output_dir)?;
+                info!("{}", logging::plan_packed(sub_name, &sub_part_path));
                 if opts.print_parts {
-                    println!("{}", sub_part.display());
+                    println!("{}", sub_part_path.display());
                 }
-                register_in_archive_db(&config.general.archive_db_path, &sub_part);
+                register_in_archive_db(&config.general.archive_db_path, &sub_part_path);
             }
         }
     }
@@ -516,3 +516,5 @@ fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
         warn!("Failed to register in local archive DB: {}", e);
     }
 }
+
+

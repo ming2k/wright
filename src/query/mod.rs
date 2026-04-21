@@ -60,7 +60,7 @@ fn write_connector(out: &mut dyn std::io::Write, s: &str, color: bool) -> std::i
     }
 }
 
-fn write_pkg_name(out: &mut dyn std::io::Write, name: &str, _color: bool) -> std::io::Result<()> {
+fn write_part_name(out: &mut dyn std::io::Write, name: &str, _color: bool) -> std::io::Result<()> {
     write!(out, "{}", name)
 }
 
@@ -189,7 +189,7 @@ fn write_dep_tree_inner(
         if opts.prune.contains(&dep.name) {
             stats.total += 1;
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, &dep.name, opts.color)?;
+            write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
@@ -209,7 +209,7 @@ fn write_dep_tree_inner(
                 stats.max_depth_seen = current_depth;
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, &dep.name, opts.color)?;
+            write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
@@ -230,7 +230,7 @@ fn write_dep_tree_inner(
             }
             let installed = db.get_part(&dep.name).unwrap_or(None).is_some();
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, &dep.name, opts.color)?;
+            write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
@@ -251,7 +251,7 @@ fn write_dep_tree_inner(
             }
 
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, &dep.name, opts.color)?;
+            write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
@@ -384,7 +384,7 @@ fn write_reverse_dep_tree_inner(
         if opts.prune.iter().any(|p| p == dep_name) {
             stats.total += 1;
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, dep_name, opts.color)?;
+            write_part_name(out, dep_name, opts.color)?;
             if is_link {
                 write_link_tag(out, opts.color)?;
             }
@@ -400,7 +400,7 @@ fn write_reverse_dep_tree_inner(
                 stats.max_depth_seen = current_depth;
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, dep_name, opts.color)?;
+            write_part_name(out, dep_name, opts.color)?;
             if is_link {
                 write_link_tag(out, opts.color)?;
             }
@@ -415,7 +415,7 @@ fn write_reverse_dep_tree_inner(
                 stats.max_depth_seen = current_depth;
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, dep_name, opts.color)?;
+            write_part_name(out, dep_name, opts.color)?;
             if is_link {
                 write_link_tag(out, opts.color)?;
             }
@@ -427,7 +427,7 @@ fn write_reverse_dep_tree_inner(
                 stats.max_depth_seen = current_depth;
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
-            write_pkg_name(out, dep_name, opts.color)?;
+            write_part_name(out, dep_name, opts.color)?;
             if is_link {
                 write_link_tag(out, opts.color)?;
             }
@@ -524,8 +524,8 @@ pub fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
     let all_parts = db.list_parts()?;
     let mut broken = Vec::new();
 
-    for pkg in all_parts {
-        let deps = db.get_dependencies(pkg.id)?;
+    for part in all_parts {
+        let deps = db.get_dependencies(part.id)?;
         for dep in deps {
             if db.get_part(&dep.name)?.is_none() && db.find_providers(&dep.name)?.is_empty() {
                 let constraint_str = dep
@@ -534,7 +534,7 @@ pub fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
                     .unwrap_or_default();
                 broken.push(format!(
                     "Part '{}' has a broken dependency: '{}'{} not found",
-                    pkg.name, dep.name, constraint_str
+                    part.name, dep.name, constraint_str
                 ));
             }
         }
@@ -548,12 +548,12 @@ pub fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
     let all_parts = db.list_parts()?;
     let mut issues = Vec::new();
 
-    for pkg in all_parts {
-        if let Err(e) = db.get_recursive_dependents(&pkg.name) {
+    for part in all_parts {
+        if let Err(e) = db.get_recursive_dependents(&part.name) {
             if e.to_string().contains("circular") {
                 issues.push(format!(
                     "Circular dependency detected involving part '{}'",
-                    pkg.name
+                    part.name
                 ));
             }
         }

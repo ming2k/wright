@@ -16,7 +16,7 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             url TEXT,
             installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             install_size INTEGER,
-            pkg_hash TEXT,
+            part_hash TEXT,
             install_scripts TEXT,
             assumed INTEGER NOT NULL DEFAULT 0,
             origin TEXT NOT NULL DEFAULT 'manual'

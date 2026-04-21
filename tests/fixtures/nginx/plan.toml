@@ -107,9 +107,6 @@ backup = [
 
 [output.nginx-doc]
 description = "Nginx documentation files"
-script = """
-cd ${WORKDIR}
-install -d ${PART_DIR}/usr/share/doc/nginx
-install -Dm644 README ${PART_DIR}/usr/share/doc/nginx/README
-install -Dm644 LICENSE ${PART_DIR}/usr/share/doc/nginx/LICENSE
-"""
+include = [
+    "/usr/share/doc/.*"
+]

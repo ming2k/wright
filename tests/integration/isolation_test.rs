@@ -14,7 +14,7 @@ fn should_skip_isolation_test(err: &WrightError) -> bool {
 }
 
 fn run_shebang_script_from_src(src: &Path) -> Result<(String, String), WrightError> {
-    let pkg = tempfile::tempdir().unwrap();
+    let part = tempfile::tempdir().unwrap();
     let script = src.join("hello.sh");
     std::fs::write(&script, "#!/bin/sh\necho isolation-ok\n").unwrap();
     let mut perms = std::fs::metadata(&script).unwrap().permissions();
@@ -24,7 +24,7 @@ fn run_shebang_script_from_src(src: &Path) -> Result<(String, String), WrightErr
     let mut config = IsolationConfig::new(
         IsolationLevel::Strict,
         src.to_path_buf(),
-        pkg.path().to_path_buf(),
+        part.path().to_path_buf(),
         "isolation-shebang-repro".to_string(),
     );
 

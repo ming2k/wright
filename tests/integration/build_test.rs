@@ -4,7 +4,7 @@ use std::process::Command;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::part::part;
-use wright::plan::manifest::{FabricateConfig, PlanManifest};
+use wright::plan::manifest::{OutputConfig, PlanManifest};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -83,11 +83,11 @@ fn test_build_and_archive_hello() {
     assert!(archive_path.to_string_lossy().ends_with(".wright.tar.zst"));
 
     // Verify we can read PARTINFO from it
-    let pkginfo = part::read_partinfo(&archive_path).unwrap();
-    assert_eq!(pkginfo.name, "hello");
-    assert_eq!(pkginfo.version, "1.0.0");
-    assert_eq!(pkginfo.release, 1);
-    assert_eq!(pkginfo.arch, "x86_64");
+    let partinfo = part::read_partinfo(&archive_path).unwrap();
+    assert_eq!(partinfo.name, "hello");
+    assert_eq!(partinfo.version, "1.0.0");
+    assert_eq!(partinfo.release, 1);
+    assert_eq!(partinfo.arch, "x86_64");
 
     // Verify we can extract it
     let extract_dir = tempfile::tempdir().unwrap();
@@ -147,9 +147,9 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
-    let pkginfo = part::read_partinfo(&archive_path).unwrap();
+    let partinfo = part::read_partinfo(&archive_path).unwrap();
 
-    assert_eq!(pkginfo.runtime_deps, vec!["openssl", "zlib"]);
+    assert_eq!(partinfo.runtime_deps, vec!["openssl", "zlib"]);
 
     let extract_dir = tempfile::tempdir().unwrap();
     part::extract_part(&archive_path, extract_dir.path()).unwrap();
@@ -214,7 +214,7 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
         .unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
-    assert!(result.split_pkg_dirs["split-vars-doc"]
+    assert!(result.split_part_dirs["split-vars-doc"]
         .join("usr/share/doc/split-vars-doc")
         .exists());
 }
@@ -233,16 +233,16 @@ fn test_lint_nginx_fixture() {
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "nginx");
     assert_eq!(manifest.dependencies.runtime.len(), 3);
-    // Nginx uses fabricate metadata on the main output plus an extra doc output.
-    match manifest.fabricate {
-        Some(FabricateConfig::Multi(ref pkgs)) => {
-            assert!(pkgs.contains_key("nginx"));
-            assert!(pkgs.contains_key("nginx-doc"));
-            let main = pkgs.get("nginx").unwrap();
+    // Nginx uses output metadata on the main output plus an extra doc output.
+    match manifest.outputs {
+        Some(OutputConfig::Multi(ref parts)) => {
+            assert!(parts.contains_key("nginx"));
+            assert!(parts.contains_key("nginx-doc"));
+            let main = parts.get("nginx").unwrap();
             assert!(main.hooks.is_some());
             assert!(main.backup.is_some());
         }
-        _ => panic!("expected Multi fabricate config for nginx"),
+        _ => panic!("expected Multi output config for nginx"),
     }
 }
 

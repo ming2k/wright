@@ -42,8 +42,8 @@ fn visit_resolved(
 
     visiting.insert(name.to_string());
 
-    if let Some(pkg) = map.get(name) {
-        for dep in &pkg.dependencies {
+    if let Some(part) = map.get(name) {
+        for dep in &part.dependencies {
             let (dep_name, _) =
                 version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
             if map.contains_key(&dep_name) {

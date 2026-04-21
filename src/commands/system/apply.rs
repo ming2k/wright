@@ -25,23 +25,23 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
 }
 
 pub fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Vec<PathBuf>> {
-    let mut pkg_paths = Vec::new();
+    let mut part_paths = Vec::new();
     for arg in args {
         let path = PathBuf::from(arg);
         if path.is_file() {
-            pkg_paths.push(path);
+            part_paths.push(path);
             continue;
         }
 
         match resolver.resolve(arg)? {
-            Some(resolved) => pkg_paths.push(resolved.path),
+            Some(resolved) => part_paths.push(resolved.path),
             None => anyhow::bail!(
                 "'{}' is not a file and could not be resolved from the local archive catalogue",
                 arg
             ),
         }
     }
-    Ok(pkg_paths)
+    Ok(part_paths)
 }
 
 fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -50,12 +50,12 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
         manifest.plan.name.clone(),
         parts_dir.join(manifest.part_filename()),
     )];
-    if let Some(crate::plan::manifest::FabricateConfig::Multi(ref pkgs)) = manifest.fabricate {
-        for (sub_name, sub_pkg) in pkgs {
+    if let Some(crate::plan::manifest::OutputConfig::Multi(ref sub_outputs)) = manifest.outputs {
+        for (sub_name, sub_part) in sub_outputs {
             if sub_name == &manifest.plan.name {
                 continue;
             }
-            let sub_manifest = sub_pkg.to_manifest(sub_name, &manifest);
+            let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
             parts.push((
                 sub_name.clone(),
                 parts_dir.join(sub_manifest.part_filename()),

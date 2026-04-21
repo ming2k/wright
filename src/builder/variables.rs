@@ -70,13 +70,13 @@ mod tests {
     #[test]
     fn test_substitute_multiple_occurrences() {
         let mut vars = HashMap::new();
-        vars.insert("PART_DIR".to_string(), "/tmp/pkg".to_string());
+        vars.insert("PART_DIR".to_string(), "/tmp/part".to_string());
 
         let script = "install -d ${PART_DIR}/usr/bin\ninstall -m755 foo ${PART_DIR}/usr/bin/foo";
         let result = substitute(script, &vars);
         assert_eq!(
             result,
-            "install -d /tmp/pkg/usr/bin\ninstall -m755 foo /tmp/pkg/usr/bin/foo"
+            "install -d /tmp/part/usr/bin\ninstall -m755 foo /tmp/part/usr/bin/foo"
         );
     }
 
@@ -88,9 +88,9 @@ mod tests {
             release: 1,
             arch: "x86_64",
             workdir: "/tmp/src",
-            part_dir: "/tmp/pkg",
+            part_dir: "/tmp/part",
             main_part_name: "hello",
-            main_part_dir: "/tmp/pkg",
+            main_part_dir: "/tmp/part",
         };
         let vars = standard_variables(ctx);
         assert_eq!(vars["NAME"], "hello");
@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(vars["ARCH"], "x86_64");
         assert_eq!(vars["WORKDIR"], "/tmp/src");
         assert_eq!(vars["MAIN_PART_NAME"], "hello");
-        assert_eq!(vars["MAIN_PART_DIR"], "/tmp/pkg");
+        assert_eq!(vars["MAIN_PART_DIR"], "/tmp/part");
         assert!(!vars.contains_key("FILES_DIR"));
         assert!(!vars.contains_key("NPROC"));
         assert!(!vars.contains_key("version"));

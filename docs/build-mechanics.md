@@ -11,17 +11,17 @@ when work is skipped or repeated.
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
-| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `src/`, `pkg/`, `log/` | Scratch/workspace; may be deleted and recreated freely |
+| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `output/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
 | `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
 
 ### How the two layers relate
 
-- `build_dir/work/` decides whether Wright can reuse the previous unpacked source tree.
+- `build_dir/<name>-<version>/work/` decides whether Wright can reuse the previous unpacked source tree.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check whether `build_dir/work/` is reusable (build key match)
+1. Check whether `build_dir/<name>-<version>/work/` is reusable (build key match)
 2. If not reusable, fetch/extract from `source cache`
 
 ## Build Directory Layout
@@ -31,25 +31,39 @@ Each part gets its own working directory under `build_dir`
 
 ```
 <build_dir>/<name>-<version>/
-├── pkg/      # Main output staging root ($PART_DIR / $MAIN_PART_DIR)
-├── log/      # Per-stage log files
+├── work/     # The source tree (mounted at /build in isolation)
+├── output/   # Main output staging root ($PART_DIR / $MAIN_PART_DIR, mounted at /output)
+├── logs/     # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 ```
 
-`src/` is the isolation's `/build` mount. `pkg/` is `/output`. By default,
-`pkg/` and `log/` are recreated clean at the start of every build. `src/` is
+`work/` is the isolation's `/build` mount. `output/` is `/output`. By default,
+`output/` and `logs/` are recreated clean at the start of every build. `work/` is
 **reused** when the build key has not changed (same version, sources, and
 lifecycle scripts), enabling incremental builds — the fetch/verify/extract
 steps are skipped entirely. When the build key changes (e.g. a version bump),
-`src/` is cleaned and sources are re-extracted automatically. `--clean`
-always removes the entire working directory including `src/`.
+`work/` is cleaned and sources are re-extracted automatically. `--clean`
+always removes the entire working directory including `work/`.
+
+If multiple outputs are defined in `plan.toml` (split-parts), additional
+staging directories are created:
+
+```
+<build_dir>/<name>-<version>/
+├── output/          # Main part output
+├── output-<name>/   # Sub-part output (e.g. output-dev)
+└── ...
+```
+
+During sub-part staging, the main part's output is mounted read-only at
+`/main-part` (and available via `${MAIN_PART_DIR}`).
 
 
 set to that subdirectory (the common case for tarballs that unpack into
 
 ## Log Files
 
-Every lifecycle stage writes a log file under `log/`:
+Every lifecycle stage writes a log file under `logs/`:
 
 ```
 <build_dir>/<name>-<version>/logs/
@@ -65,7 +79,7 @@ Each file contains:
 === Stage: compile ===
 === Exit code: 0 ===
 === Duration: 42.3s ===
-=== Working dir: /var/tmp/wright/workshop/zlib-1.3.1/work/zlib-1.3.1 ===
+=== Working dir: /var/tmp/wright/workshop/zlib-1.3.1/work ===
 
 --- script ---
 make
@@ -87,9 +101,14 @@ is empty) are printed to the terminal directly. The full output is always in
 the log file. Logs from the failed run are **preserved** — they are only
 overwritten on the next build attempt.
 
+**Golden Standard:** Wright automatically maps internal sandbox paths back to
+their corresponding variables in error messages. If a script fails, you will
+see `${PART_DIR}/usr/bin` in the output instead of the internal `/output/usr/bin`
+path.
+
 ### Directory lifecycle rules
 
-| Operation | `src/` | `pkg/` | `log/` |
+| Operation | `work/` | `output/` | `logs/` |
 |-----------|:------:|:------:|:------:|
 | Full build (key match) | **preserved** | recreated | recreated |
 | Full build (key mismatch) | recreated | recreated | recreated |
@@ -98,8 +117,8 @@ overwritten on the next build attempt.
 | Cache hit | recreated empty | restored | restored |
 
 On a build-cache hit, Wright recreates the working directories first, then
-extracts the cached snapshot into `build_root`. Because `src/` is not part of
-that snapshot, the resulting `src/` directory exists but contains no restored
+extracts the cached snapshot into `build_root`. Because `work/` is not part of
+that snapshot, the resulting `work/` directory exists but contains no restored
 source tree.
 
 ## Source Cache
@@ -109,7 +128,7 @@ across builds:
 
 ```
 <source_dir>/
-├── zlib-zlib-1.3.1.tar.gz     # <pkg_name>-<dependency_basename>
+├── zlib-zlib-1.3.1.tar.gz     # <part_name>-<dependency_basename>
 ├── gcc-gcc-14.2.0.tar.xz
 └── git/
   └── linux            # bare git repos
@@ -124,12 +143,12 @@ Before extraction, each source is verified against its `sha256` checksum from
 re-downloaded. Local path sources use `"SKIP"` as their checksum and bypass
 verification.
 
-The source cache is only consulted when Wright needs to materialize `src/`
-again. If `src/` is reusable, it is not used in that run.
+The source cache is only consulted when Wright needs to materialize `work/`
+again. If `work/` is reusable, it is not used in that run.
 
 ## FHS Validation
 
-After the final output stage completes (`fabricate`), Wright validates every
+After the final staging and output slicing completes, Wright validates every
 file and symlink in `$PART_DIR` against the distribution's FHS whitelist before
 creating the part. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
@@ -154,7 +173,7 @@ skip_fhs_check = true
 
 ## Output parts (Components)
 
-After a successful build the part is packed into an part and placed in
+After a successful build the part is packed into a part file and placed in
 `parts_dir` (default `/var/lib/wright/parts`):
 
 ```
@@ -174,14 +193,14 @@ Use `--force` to override this and rebuild regardless.
 
 ### What the part contains
 
-The part is created from the staged root (`pkg/`) after the final
-`fabricate` phase and records the full part metadata (name, version,
+The part is created from the staged root (`output/`) after the final
+output slicing phase and records the full part metadata (name, version,
 dependencies, file list) for the installer. Sub-parts each get their own
 part produced by their `script`.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Output part | `src/` | `pkg/` / `log/` |
+| Flag | Source cache | Output part | `work/` | `output/` / `logs/` |
 |------|:---:|:---:|:---:|:---:|
 | (default) | reuse | skip if exists | reuse if key matches | recreated |
 | `--force` | reuse | overwrite | reuse if key matches | recreated |
@@ -190,17 +209,18 @@ part produced by their `script`.
 | `--stage=<s>` | reuse | skip | preserved | recreated |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — force a clean `src/` re-extraction
+- `--clean` — force a clean `work/` re-extraction
 - `--force` — bypass the output part skip check (always produce a new part)
 - `--clean --force` — "start completely from scratch": re-extract sources and always write a new part
 
 ### Incremental builds
 
-By default, `src/` is preserved across builds when the **build key** has not
+By default, `work/` is preserved across builds when the **build key** has not
 changed. This allows plan authors to write lifecycle scripts that support
 incremental compilation (e.g. `make` without `make clean` first). The
-fetch/verify/extract steps are skipped entirely when `src/` is reused.
+fetch/verify/extract steps are skipped entirely when `work/` is reused.
 
 When the build key changes — because the version, sources, or lifecycle scripts
-were modified — `src/` is automatically cleaned and sources are re-extracted.
+were modified — `work/` is automatically cleaned and sources are re-extracted.
 To force a clean re-extraction without changing the plan, use `--clean`.
+

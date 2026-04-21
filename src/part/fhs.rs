@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::error::{Result, WrightError};
 
-/// Validate that every file and symlink in `pkg_dir` resides under an
+/// Validate that every file and symlink in `part_dir` resides under an
 /// FHS-compliant path for this distribution's merged-usr layout.
 ///
 /// Only files and symlinks are checked — intermediate directories (e.g. `/usr`,
@@ -18,17 +18,17 @@ use crate::error::{Result, WrightError};
 /// are allowed.
 ///
 /// Absolute symlink targets are also validated against the same whitelist.
-pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
-    for entry in WalkDir::new(pkg_dir) {
+pub fn validate(part_dir: &Path, part_name: &str) -> Result<()> {
+    for entry in WalkDir::new(part_dir) {
         let entry = entry.map_err(|e| {
             WrightError::BuildError(format!(
                 "failed to walk part directory {}: {}",
-                pkg_dir.display(),
+                part_dir.display(),
                 e
             ))
         })?;
 
-        let rel = entry.path().strip_prefix(pkg_dir).unwrap();
+        let rel = entry.path().strip_prefix(part_dir).unwrap();
 
         // Skip root and directory entries — only validate files and symlinks.
         if rel.components().count() == 0 || entry.file_type().is_dir() {
@@ -41,7 +41,7 @@ pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
             let hint = rejection_hint(&abs);
             return Err(WrightError::ValidationError(format!(
                 "part '{}': file '{}' violates FHS — {}",
-                pkg_name,
+                part_name,
                 abs.display(),
                 hint
             )));
@@ -54,7 +54,7 @@ pub fn validate(pkg_dir: &Path, pkg_name: &str) -> Result<()> {
                     let hint = rejection_hint(&target);
                     return Err(WrightError::ValidationError(format!(
                         "part '{}': symlink '{}' points to '{}' which violates FHS — {}",
-                        pkg_name,
+                        part_name,
                         abs.display(),
                         target.display(),
                         hint
@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_pkg_dir() {
+    fn test_empty_part_dir() {
         let tmp = TempDir::new().unwrap();
         assert!(validate(tmp.path(), "empty").is_ok());
     }

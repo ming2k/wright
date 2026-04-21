@@ -20,11 +20,11 @@ pub fn remove_part_with_ignored_dependents(
     force: bool,
     ignored_dependents: &HashSet<String>,
 ) -> Result<()> {
-    let pkg = db
+    let part = db
         .get_part(name)?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
-    let mut dependents = collect_removal_dependents(db, &pkg, name, ignored_dependents)?;
+    let mut dependents = collect_removal_dependents(db, &part, name, ignored_dependents)?;
 
     if !ignored_dependents.is_empty() {
         dependents.retain(|(dep_name, _)| !ignored_dependents.contains(dep_name));
@@ -66,7 +66,7 @@ pub fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = pkg.install_scripts {
+    if let Some(ref content) = part.install_scripts {
         if let Some(script) = get_hook(content, "pre_remove") {
             log_running_hook(name, "pre_remove");
             if let Err(e) = run_install_script(&script, root_dir) {
@@ -75,11 +75,11 @@ pub fn remove_part_with_ignored_dependents(
         }
     }
 
-    let tx_id = db.record_transaction("remove", name, Some(&pkg.version), None, "pending", None)?;
-    let files = db.get_files(pkg.id)?;
+    let tx_id = db.record_transaction("remove", name, Some(&part.version), None, "pending", None)?;
+    let files = db.get_files(part.id)?;
 
     let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    let other_owners_map = db.get_other_owners_batch(pkg.id, &file_paths)?;
+    let other_owners_map = db.get_other_owners_batch(part.id, &file_paths)?;
 
     for file in files.iter().rev() {
         let full_path = root_dir.join(file.path.trim_start_matches('/'));
@@ -121,7 +121,7 @@ pub fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = pkg.install_scripts {
+    if let Some(ref content) = part.install_scripts {
         if let Some(script) = get_hook(content, "post_remove") {
             log_running_hook(name, "post_remove");
             if let Err(e) = run_install_script(&script, root_dir) {
@@ -130,7 +130,7 @@ pub fn remove_part_with_ignored_dependents(
         }
     }
 
-    let diversions = db.get_all_diverted_files(pkg.id).unwrap_or_default();
+    let diversions = db.get_all_diverted_files(part.id).unwrap_or_default();
 
     db.remove_part(name)?;
 
@@ -146,7 +146,7 @@ pub fn remove_part_with_ignored_dependents(
             }
         }
     }
-    let _ = db.remove_shadowed_records(pkg.id);
+    let _ = db.remove_shadowed_records(part.id);
 
     db.update_transaction_status(tx_id, "completed")?;
 
@@ -156,13 +156,13 @@ pub fn remove_part_with_ignored_dependents(
 
 fn collect_removal_dependents(
     db: &InstalledDb,
-    pkg: &InstalledPart,
+    part: &InstalledPart,
     name: &str,
     ignored_dependents: &HashSet<String>,
 ) -> Result<Vec<(String, String)>> {
     let mut dependents = db.get_dependents(name)?;
 
-    let provides_list = db.get_provides(pkg.id)?;
+    let provides_list = db.get_provides(part.id)?;
     for virtual_name in &provides_list {
         let virtual_dependents = db.get_dependents(virtual_name)?;
         for (dep_name, dep_type) in virtual_dependents {
@@ -219,7 +219,7 @@ fn visit_removal_target(
         return Ok(());
     }
 
-    let pkg = db
+    let part = db
         .get_part(name)?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
     let batch_ignored: HashSet<String> = target_set
@@ -227,7 +227,7 @@ fn visit_removal_target(
         .filter(|candidate| candidate.as_str() != name)
         .cloned()
         .collect();
-    let dependents = collect_removal_dependents(db, &pkg, name, &batch_ignored)?;
+    let dependents = collect_removal_dependents(db, &part, name, &batch_ignored)?;
     let mut next: Vec<String> = dependents
         .into_iter()
         .map(|(dep_name, _)| dep_name)

@@ -94,8 +94,8 @@ fn test_file_diversion_and_restoration() {
     );
 
     // Check DB
-    let b_pkg = db.get_part("part-b").unwrap().unwrap();
-    let diverted = db.get_diverted_file("/usr/bin/shared", b_pkg.id).unwrap();
+    let b_part = db.get_part("part-b").unwrap().unwrap();
+    let diverted = db.get_diverted_file("/usr/bin/shared", b_part.id).unwrap();
     assert_eq!(
         diverted,
         Some("/usr/bin/shared.wright-diverted".to_string())

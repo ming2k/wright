@@ -14,14 +14,14 @@ use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
 use crate::isolation::ResourceLimits;
 use crate::error::{Result, WrightError};
-use crate::plan::manifest::{FabricateConfig, PlanManifest, Source};
+use crate::plan::manifest::{OutputConfig, PlanManifest, Source};
 use crate::util::{checksum, compress, download, progress};
 
 pub struct BuildResult {
     pub output_dir: PathBuf,
     pub work_dir: PathBuf,
     pub logs_dir: PathBuf,
-    pub split_pkg_dirs: std::collections::HashMap<String, PathBuf>,
+    pub split_part_dirs: std::collections::HashMap<String, PathBuf>,
 }
 
 pub struct Builder {
@@ -32,9 +32,9 @@ pub struct Builder {
 /// Compute the cache filename for a remote source URI.
 /// Prefixes with the part name to prevent collisions between plans/parts
 /// that use similarly-named upstream tarballs (e.g. GitHub archive v*.tar.gz).
-fn source_cache_filename(pkg_name: &str, uri: &str) -> String {
+fn source_cache_filename(part_name: &str, uri: &str) -> String {
     let basename = uri.split('/').next_back().unwrap_or("source");
-    sanitize_cache_filename(&format!("{}-{}", pkg_name, basename))
+    sanitize_cache_filename(&format!("{}-{}", part_name, basename))
 }
 
 /// Compute a stable, collision-free cache directory name for a git URL.
@@ -294,9 +294,9 @@ impl Builder {
                 output_dir,
                 work_dir,
                 logs_dir,
-                split_pkg_dirs: std::collections::HashMap::new(),
+                split_part_dirs: std::collections::HashMap::new(),
             });
-        }
+            }
 
         // Resolve resource limits: per-plan overrides global config
         let rlimits = ResourceLimits {
@@ -347,7 +347,7 @@ impl Builder {
         // Bootstrap / MVP env (highest priority among injected vars).
         vars.extend(extra_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let vars_for_splits = vars.clone();
+        // let vars_for_splits = vars.clone();
 
         let pipeline = lifecycle::LifecyclePipeline::new(lifecycle::LifecycleContext {
             manifest,
@@ -370,16 +370,13 @@ impl Builder {
 
         pipeline.run()?;
 
-        // Run sub-part stages (multi-part mode)
-        let mut split_pkg_dirs = std::collections::HashMap::new();
-        if let Some(FabricateConfig::Multi(ref parts)) = manifest.fabricate {
-            for (sub_name, sub_pkg) in parts {
-                // Main part uses PART_DIR directly, skip
+        // Run implicit fabricate / sub-part file splitting (multi-part mode)
+        let mut split_part_dirs = std::collections::HashMap::new();
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            let mut sub_rules = Vec::new();
+            for (sub_name, sub_part) in parts {
+                // Main part takes whatever is left
                 if sub_name == &manifest.plan.name {
-                    continue;
-                }
-                // Sub-parts with empty script use the main PART_DIR (no separate stage)
-                if sub_pkg.script.is_empty() {
                     continue;
                 }
 
@@ -392,68 +389,91 @@ impl Builder {
                     ))
                 })?;
 
-                let mut sub_vars = vars_for_splits.clone();
-                sub_vars.insert(
-                    "PART_DIR".to_string(),
-                    sub_output_dir.to_string_lossy().to_string(),
-                );
-                sub_vars.insert("NAME".to_string(), sub_name.clone());
-                sub_vars.insert(
-                    "MAIN_PART_DIR".to_string(),
-                    output_dir.to_string_lossy().to_string(),
-                );
-
-                debug!("Running fabricate stage for sub-part: {}", sub_name);
-
-                let mut sub_options = executor::ExecutorOptions {
-                    level: sub_pkg.isolation.parse()?,
-                    base_root: base_root.to_path_buf(),
-                    work_dir: work_dir.clone(),
-                    output_dir: sub_output_dir.clone(),
-                    rlimits: rlimits.clone(),
-                    main_part_dir: Some(output_dir.clone()),
-                    verbose,
-                    cpu_count: Some(cpu_count),
-                    log_stdout: None,
-                };
-
-                let sub_executor = self.executors.get(&sub_pkg.executor).ok_or_else(|| {
-                    WrightError::BuildError(format!("executor not found: {}", sub_pkg.executor))
-                })?;
-
-                let mut result = executor::execute_script(
-                    sub_executor,
-                    &sub_pkg.script,
-                    &work_dir,
-                    &sub_pkg.env,
-                    &sub_vars,
-                    &mut sub_options,
-                )?;
-
-                // Write log — stream from captured temp files
-                let log_path = logs_dir.join(format!("part-{}.log", sub_name));
-                if let Ok(mut log_file) = std::fs::File::create(&log_path) {
-                    use std::io::Write;
-                    let _ = write!(
-                        log_file,
-                        "=== Sub-part: {} ===\n=== Exit code: {} ===\n\n",
-                        sub_name, result.exit_code
-                    );
-                    let _ = log_file.write_all(b"--- stdout ---\n");
-                    let _ = std::io::copy(&mut result.stdout.file, &mut log_file);
-                    let _ = log_file.write_all(b"\n--- stderr ---\n");
-                    let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
-                    let _ = log_file.write_all(b"\n");
+                let mut includes = Vec::new();
+                if let Some(ref incs) = sub_part.include {
+                    for pat in incs {
+                        let re = regex::Regex::new(pat).map_err(|e| {
+                            WrightError::BuildError(format!("invalid include regex '{}' for {}: {}", pat, sub_name, e))
+                        })?;
+                        includes.push(re);
+                    }
+                }
+                
+                let mut excludes = Vec::new();
+                if let Some(ref excs) = sub_part.exclude {
+                    for pat in excs {
+                        let re = regex::Regex::new(pat).map_err(|e| {
+                            WrightError::BuildError(format!("invalid exclude regex '{}' for {}: {}", pat, sub_name, e))
+                        })?;
+                        excludes.push(re);
+                    }
                 }
 
-                if result.exit_code != 0 {
-                    return Err(WrightError::BuildError(format!(
-                        "sub-part '{}' packaging stage failed with exit code {}\nstderr: {}",
-                        sub_name, result.exit_code, result.stderr.tail
-                    )));
+                sub_rules.push((sub_name, sub_output_dir.clone(), includes, excludes));
+                split_part_dirs.insert(sub_name.clone(), sub_output_dir);
+            }
+
+            if !sub_rules.is_empty() {
+                debug!("Running implicit fabricate splitting for sub-parts");
+                let mut all_entries = Vec::new();
+                let mut dirs_to_visit = vec![output_dir.clone()];
+                while let Some(dir) = dirs_to_visit.pop() {
+                    if let Ok(entries) = std::fs::read_dir(&dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                dirs_to_visit.push(path);
+                            } else {
+                                all_entries.push(path);
+                            }
+                        }
+                    }
                 }
 
-                split_pkg_dirs.insert(sub_name.clone(), sub_output_dir);
+                for file_path in all_entries {
+                    if let Ok(rel_path) = file_path.strip_prefix(&output_dir) {
+                        // Match against an absolute-like path string e.g. "/usr/share/doc/..."
+                        let rel_str = format!("/{}", rel_path.display());
+
+                        for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
+                            let mut matched = false;
+
+                            if !includes.is_empty() {
+                                if includes.iter().any(|re| re.is_match(&rel_str)) {
+                                    matched = true;
+                                }
+                            } else {
+                                // If no includes are specified, but this sub-part exists,
+                                // should it match everything? No, that would break.
+                                // It should probably match nothing if includes are omitted,
+                                // or we can require includes to be non-empty. 
+                                // Let's match nothing if includes is empty.
+                            }
+
+                            if matched && !excludes.is_empty() {
+                                if excludes.iter().any(|re| re.is_match(&rel_str)) {
+                                    matched = false;
+                                }
+                            }
+
+                            if matched {
+                                let dest_path = sub_dir.join(rel_path);
+                                if let Some(parent) = dest_path.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Err(e) = std::fs::rename(&file_path, &dest_path) {
+                                    return Err(WrightError::BuildError(format!(
+                                        "failed to move {} to {}: {}",
+                                        file_path.display(),
+                                        dest_path.display(),
+                                        e
+                                    )));
+                                }
+                                break; // Only first matching sub-part gets the file
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -470,7 +490,7 @@ impl Builder {
             output_dir,
             work_dir,
             logs_dir,
-            split_pkg_dirs,
+            split_part_dirs,
         })
     }
 

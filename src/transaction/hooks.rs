@@ -52,8 +52,8 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
     }
 }
 
-pub(super) fn log_running_hook(pkg_name: &str, hook_name: &str) {
-    tracing::info!("Running hook [{}] for {}", hook_name, pkg_name);
+pub(super) fn log_running_hook(part_name: &str, hook_name: &str) {
+    tracing::info!("Running hook [{}] for {}", hook_name, part_name);
 }
 
 pub(super) fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {

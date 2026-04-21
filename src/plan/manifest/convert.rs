@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use super::{
-    default_isolation_level, default_executor, BackupConfig, BuildOptions, Dependencies,
-    FabricateHooks, InstallScripts, PlanManifest, PlanMetadata, Relations, Sources,
-    SubFabricateOutput,
+    BackupConfig, BuildOptions, Dependencies, FabricateHooks, InstallScripts, PlanManifest,
+    PlanMetadata, Relations, Sources, SubFabricateOutput,
 };
 
 impl SubFabricateOutput {
@@ -26,6 +25,23 @@ impl SubFabricateOutput {
             files: files.clone(),
         });
 
+        let mut merged_deps = parent.dependencies.clone();
+        for dep in &self.dependencies.runtime {
+            if !merged_deps.runtime.contains(dep) {
+                merged_deps.runtime.push(dep.clone());
+            }
+        }
+        for dep in &self.dependencies.build {
+            if !merged_deps.build.contains(dep) {
+                merged_deps.build.push(dep.clone());
+            }
+        }
+        for dep in &self.dependencies.link {
+            if !merged_deps.link.contains(dep) {
+                merged_deps.link.push(dep.clone());
+            }
+        }
+
         PlanManifest {
             plan: PlanMetadata {
                 name: name.to_string(),
@@ -47,7 +63,7 @@ impl SubFabricateOutput {
                 url: parent.plan.url.clone(),
                 maintainer: parent.plan.maintainer.clone(),
             },
-            dependencies: self.dependencies.clone(),
+            dependencies: merged_deps,
             relations: Relations {
                 replaces: self.replaces.clone(),
                 conflicts: self.conflicts.clone(),
@@ -58,7 +74,7 @@ impl SubFabricateOutput {
             lifecycle: HashMap::new(),
             lifecycle_order: None,
             mvp: None,
-            fabricate: None,
+            outputs: None,
             install_scripts,
             backup,
         }
@@ -98,10 +114,8 @@ pub(super) fn empty_sub_fabricate_output(
         replaces,
         conflicts,
         provides,
-        script: String::new(),
-        executor: default_executor(),
-        isolation: default_isolation_level(),
-        env: HashMap::new(),
+        include: None,
+        exclude: None,
         hooks,
         backup,
     }

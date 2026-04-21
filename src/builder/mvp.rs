@@ -13,21 +13,21 @@ pub(crate) struct PlanGraph {
     pub(crate) deps_map: HashMap<String, Vec<String>>,
     pub(crate) build_set: HashSet<String>,
     pub(crate) rebuild_reasons: HashMap<String, crate::builder::orchestrator::RebuildReason>,
-    pub(crate) pkg_to_plan: HashMap<String, String>,
-    /// For bootstrap tasks (key = "{pkg}:bootstrap"), the deps that were
+    pub(crate) part_to_plan: HashMap<String, String>,
+    /// For bootstrap tasks (key = "{part}:bootstrap"), the deps that were
     /// excluded so the cycle could be broken.
     pub(crate) bootstrap_excluded: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct CycleCandidate {
-    pub(crate) pkg: String,
+    pub(crate) part: String,
     pub(crate) excluded: Vec<String>,
 }
 
 pub(crate) fn collect_phase_deps(
     manifest: &PlanManifest,
-    pkg_to_plan: &HashMap<String, String>,
+    part_to_plan: &HashMap<String, String>,
     is_mvp: bool,
     all_plans: Option<&HashMap<String, PathBuf>>,
 ) -> Vec<String> {
@@ -55,16 +55,16 @@ pub(crate) fn collect_phase_deps(
     raw_deps.extend(link);
 
     for dep in &raw_deps {
-        let dep_pkg_name = version::parse_dependency(dep)
+        let dep_part_name = version::parse_dependency(dep)
             .unwrap_or_else(|_| (dep.clone(), None))
             .0;
 
-        if let Some(parent_plan) = pkg_to_plan.get(&dep_pkg_name) {
+        if let Some(parent_plan) = part_to_plan.get(&dep_part_name) {
             if parent_plan != &manifest.plan.name {
                 deps.push(parent_plan.clone());
             }
         } else {
-            deps.push(dep_pkg_name);
+            deps.push(dep_part_name);
         }
     }
 
@@ -75,7 +75,7 @@ pub(crate) fn collect_phase_deps(
             let build_dep_name = version::parse_dependency(build_dep)
                 .unwrap_or_else(|_| (build_dep.clone(), None))
                 .0;
-            let build_dep_plan = pkg_to_plan
+            let build_dep_plan = part_to_plan
                 .get(&build_dep_name)
                 .cloned()
                 .unwrap_or(build_dep_name);
@@ -95,7 +95,7 @@ pub(crate) fn collect_phase_deps(
                                 .unwrap_or_else(|_| (rdep.clone(), None))
                                 .0;
                             let rdep_plan =
-                                pkg_to_plan.get(&rdep_name).cloned().unwrap_or(rdep_name);
+                                part_to_plan.get(&rdep_name).cloned().unwrap_or(rdep_name);
                             if rdep_plan != manifest.plan.name {
                                 deps.push(rdep_plan.clone());
                             }
@@ -114,8 +114,8 @@ pub(crate) fn cycle_candidates_for(cycle: &[String], graph: &PlanGraph) -> Vec<C
     let cycle_set: HashSet<&str> = cycle.iter().map(|s| s.as_str()).collect();
     let mut candidates = Vec::new();
 
-    for pkg in cycle {
-        let path = match graph.name_to_path.get(pkg) {
+    for part in cycle {
+        let path = match graph.name_to_path.get(part) {
             Some(p) => p,
             None => continue,
         };
@@ -132,8 +132,8 @@ pub(crate) fn cycle_candidates_for(cycle: &[String], graph: &PlanGraph) -> Vec<C
             continue;
         }
 
-        let full_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, false, None);
-        let mvp_deps = collect_phase_deps(&manifest, &graph.pkg_to_plan, true, None);
+        let full_deps = collect_phase_deps(&manifest, &graph.part_to_plan, false, None);
+        let mvp_deps = collect_phase_deps(&manifest, &graph.part_to_plan, true, None);
 
         let cycle_edges: Vec<String> = full_deps
             .iter()
@@ -149,7 +149,7 @@ pub(crate) fn cycle_candidates_for(cycle: &[String], graph: &PlanGraph) -> Vec<C
 
         if !excluded.is_empty() {
             candidates.push(CycleCandidate {
-                pkg: pkg.clone(),
+                part: part.clone(),
                 excluded,
             });
         }
@@ -165,7 +165,7 @@ pub(crate) fn pick_candidate(mut candidates: Vec<CycleCandidate>) -> Option<Cycl
     candidates.sort_by(|a, b| {
         let len_cmp = a.excluded.len().cmp(&b.excluded.len());
         if len_cmp == std::cmp::Ordering::Equal {
-            a.pkg.cmp(&b.pkg)
+            a.part.cmp(&b.part)
         } else {
             len_cmp
         }
@@ -283,8 +283,8 @@ pub(crate) fn format_cycle_path(scc: &[String], graph: &HashMap<String, Vec<Stri
 
 /// For each dependency cycle in the graph, find a part with an
 /// `mvp.toml` override that breaks the cycle and insert a two-pass
-/// build plan: `{pkg}:bootstrap` runs first (no cyclic dep), then
-/// the rest of the cycle, then `{pkg}` rebuilds fully with all deps.
+/// build plan: `{part}:bootstrap` runs first (no cyclic dep), then
+/// the rest of the cycle, then `{part}` rebuilds fully with all deps.
 pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
     let cycles = find_cycles(&graph.deps_map);
     if cycles.is_empty() {
@@ -299,8 +299,8 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         let candidates = cycle_candidates_for(cycle, graph);
         let chosen = pick_candidate(candidates.clone());
 
-        let (pkg, excl) = match chosen {
-            Some(c) => (c.pkg, c.excluded),
+        let (part, excl) = match chosen {
+            Some(c) => (c.part, c.excluded),
             None => {
                 return Err(WrightError::BuildError(format!(
                     "Dependency cycle cannot be automatically resolved.\n\
@@ -312,31 +312,31 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
             }
         };
 
-        let bootstrap_key = format!("{}:bootstrap", pkg);
+        let bootstrap_key = format!("{}:bootstrap", part);
 
-        let mvp_manifest = PlanManifest::from_file(&graph.name_to_path[&pkg])?;
-        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.pkg_to_plan, true, None);
+        let mvp_manifest = PlanManifest::from_file(&graph.name_to_path[&part])?;
+        let bootstrap_deps = collect_phase_deps(&mvp_manifest, &graph.part_to_plan, true, None);
 
         graph.deps_map.insert(bootstrap_key.clone(), bootstrap_deps);
         graph.build_set.insert(bootstrap_key.clone());
         graph
             .name_to_path
-            .insert(bootstrap_key.clone(), graph.name_to_path[&pkg].clone());
+            .insert(bootstrap_key.clone(), graph.name_to_path[&part].clone());
         graph
             .bootstrap_excluded
             .insert(bootstrap_key.clone(), excl.clone());
 
-        if let Some(deps) = graph.deps_map.get_mut(&pkg) {
+        if let Some(deps) = graph.deps_map.get_mut(&part) {
             deps.push(bootstrap_key.clone());
         }
 
         for other in cycle {
-            if other == &pkg {
+            if other == &part {
                 continue;
             }
             if let Some(deps) = graph.deps_map.get_mut(other) {
                 for dep in deps.iter_mut() {
-                    if dep == &pkg {
+                    if dep == &part {
                         *dep = bootstrap_key.clone();
                     }
                 }
@@ -345,7 +345,7 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
 
         info!(
             "Scheduling cycle resolution for {}: build:mvp without {}, then build:full",
-            pkg,
+            part,
             excl.join(", ")
         );
     }
