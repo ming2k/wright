@@ -3,15 +3,16 @@ mod core;
 mod dependencies;
 mod files;
 mod meta;
+mod migrations;
 mod parts;
 pub mod schema;
-mod migrations;
 mod sessions;
 mod types;
 
 pub use archive::{ArchiveDb, ArchivePart};
 pub use core::InstalledDb;
 use core::PART_COLUMNS;
+pub use sessions::ExecutionSession;
 pub use types::{
     DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, Origin, TransactionRecord,
 };
@@ -38,7 +39,8 @@ mod tests {
                 install_size: 1024,
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(id > 0);
 
         let part = db.get_part("hello").await.unwrap().unwrap();
@@ -61,7 +63,8 @@ mod tests {
             license: "MIT",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
         db.insert_part(NewPart {
             name: "beta",
             version: "2.0.0",
@@ -71,7 +74,8 @@ mod tests {
             license: "MIT",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
         let parts = db.list_parts().await.unwrap();
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].name, "alpha");
@@ -90,7 +94,8 @@ mod tests {
             license: "MIT",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
         db.remove_part("hello").await.unwrap();
         assert!(db.get_part("hello").await.unwrap().is_none());
     }
@@ -108,7 +113,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
         db.insert_files(
             id,
             &[FileEntry {
@@ -120,7 +126,8 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         db.remove_part("hello").await.unwrap();
         assert!(db.find_owner("/usr/bin/hello").await.unwrap().is_none());
@@ -139,7 +146,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
         let files = vec![
             FileEntry {
@@ -179,7 +187,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
         db.insert_files(
             id,
             &[FileEntry {
@@ -191,13 +200,18 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         assert_eq!(
             db.find_owner("/usr/bin/hello").await.unwrap(),
             Some("hello".to_string())
         );
-        assert!(db.find_owner("/usr/bin/nonexistent").await.unwrap().is_none());
+        assert!(db
+            .find_owner("/usr/bin/nonexistent")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -213,7 +227,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
         let world_id = db
             .insert_part(NewPart {
                 name: "world",
@@ -224,7 +239,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
         db.insert_files(
             hello_id,
@@ -237,7 +253,8 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         db.insert_files(
             world_id,
             &[FileEntry {
@@ -249,11 +266,13 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let owners = db
             .find_owners_batch(&["/usr/bin/hello", "/usr/bin/world", "/usr/bin/missing"])
-            .await.unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(owners.get("/usr/bin/hello"), Some(&"hello".to_string()));
         assert_eq!(owners.get("/usr/bin/world"), Some(&"world".to_string()));
@@ -272,7 +291,8 @@ mod tests {
             license: "MIT",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
         db.insert_part(NewPart {
             name: "nginx",
             version: "1.25.3",
@@ -282,7 +302,8 @@ mod tests {
             license: "BSD",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let results = db.search_parts("hello").await.unwrap();
         assert_eq!(results.len(), 1);
@@ -305,16 +326,19 @@ mod tests {
             license: "MIT",
             ..Default::default()
         })
-        .await.unwrap();
-        let result = db.insert_part(NewPart {
-            name: "hello",
-            version: "2.0.0",
-            release: 1,
-            description: "test",
-            arch: "x86_64",
-            license: "MIT",
-            ..Default::default()
-        }).await;
+        .await
+        .unwrap();
+        let result = db
+            .insert_part(NewPart {
+                name: "hello",
+                version: "2.0.0",
+                release: 1,
+                description: "test",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
+            .await;
         assert!(result.is_err());
     }
 
@@ -330,7 +354,8 @@ mod tests {
             license: "Apache",
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
         assert!(db.check_dependency("openssl").await.unwrap());
         assert!(!db.check_dependency("nonexistent").await.unwrap());
     }
@@ -340,9 +365,12 @@ mod tests {
         let db = test_db().await;
         let id = db
             .record_transaction("install", "hello", None, Some("1.0.0"), "completed", None)
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(id > 0);
-        db.update_transaction_status(id, "rolled_back").await.unwrap();
+        db.update_transaction_status(id, "rolled_back")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -358,7 +386,8 @@ mod tests {
             install_size: 1024,
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         db.update_part(NewPart {
             name: "hello",
@@ -371,7 +400,8 @@ mod tests {
             install_scripts: Some("post_install() { echo hi; }"),
             ..Default::default()
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(part.version, "2.0.0");
@@ -396,7 +426,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
         db.insert_files(
             id,
@@ -409,7 +440,8 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         db.replace_files(
             id,
@@ -422,7 +454,8 @@ mod tests {
                 is_config: false,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let files = db.get_files(id).await.unwrap();
         assert_eq!(files.len(), 1);
@@ -442,7 +475,8 @@ mod tests {
                 license: "MIT",
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
         db.insert_dependencies(
             id,
@@ -452,7 +486,8 @@ mod tests {
                 dep_type: DepType::Runtime,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
         db.replace_dependencies(
             id,
             &[Dependency {
@@ -461,7 +496,8 @@ mod tests {
                 dep_type: DepType::Runtime,
             }],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
         let deps = db.get_dependencies(id).await.unwrap();
         assert_eq!(deps.len(), 1);
@@ -483,7 +519,8 @@ mod tests {
                 install_scripts: Some("post_install() { echo done; }"),
                 ..Default::default()
             })
-            .await.unwrap();
+            .await
+            .unwrap();
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(

@@ -1,6 +1,6 @@
+use super::{InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS};
 use crate::error::{Result, WrightError};
 use sqlx::{query, query_as};
-use super::{InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS};
 
 impl InstalledDb {
     pub async fn insert_part(&self, part: NewPart<'_>) -> Result<i64> {
@@ -9,11 +9,13 @@ impl InstalledDb {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to query assumed: {}", e)))?;
-        
+
         let was_assumed = match row {
             Some(r) => {
                 use sqlx::Row;
-                let val: i64 = r.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let val: i64 = r
+                    .try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
                 val != 0
             }
             None => false,
@@ -74,10 +76,10 @@ impl InstalledDb {
     pub async fn unassume_part(&self, name: &str) -> Result<()> {
         let res = query("DELETE FROM parts WHERE name = ? AND assumed = 1")
             .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to unassume part: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to unassume part: {}", e)))?;
+
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
         }
@@ -112,10 +114,10 @@ impl InstalledDb {
     pub async fn remove_part(&self, name: &str) -> Result<()> {
         let res = query("DELETE FROM parts WHERE name = ?")
             .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to remove part: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to remove part: {}", e)))?;
+
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
         }
@@ -173,9 +175,9 @@ impl InstalledDb {
         query("UPDATE parts SET origin = ? WHERE name = ?")
             .bind(new_origin)
             .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
         Ok(())
     }
 
@@ -183,10 +185,10 @@ impl InstalledDb {
         let res = query("UPDATE parts SET origin = ? WHERE name = ?")
             .bind(new_origin)
             .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
+
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
         }

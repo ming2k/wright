@@ -30,12 +30,11 @@ async fn seed_schema_without_sqlx_migrations(path: &Path, schema: &str) {
 async fn migration_count(path: &Path) -> i64 {
     let options = SqliteConnectOptions::new().filename(path);
     let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     pool.close().await;
     count
 }

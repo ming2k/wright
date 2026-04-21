@@ -1,9 +1,9 @@
-use std::collections::HashSet;
-use crate::error::{Result, WrightError};
-use sqlx::{query, query_as};
 use super::{Dependency, InstalledDb};
+use crate::error::{Result, WrightError};
 use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use sqlx::{query, query_as};
+use std::collections::HashSet;
 
 impl InstalledDb {
     pub async fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
@@ -23,22 +23,28 @@ impl InstalledDb {
     pub async fn replace_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
         query("DELETE FROM dependencies WHERE part_id = ?")
             .bind(part_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old dependencies: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old dependencies: {}", e))
+            })?;
+
         self.insert_dependencies(part_id, deps).await
     }
 
     pub async fn check_dependency(&self, name: &str) -> Result<bool> {
         let row = query("SELECT COUNT(*) as count FROM parts WHERE name = ?")
             .bind(name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to check part dependency: {}", e)))?;
-        
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to check part dependency: {}", e))
+            })?;
+
         use sqlx::Row;
-        let count: i64 = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+        let count: i64 = row
+            .try_get(0)
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
         if count > 0 {
             return Ok(true);
@@ -46,11 +52,15 @@ impl InstalledDb {
 
         let prov_row = query("SELECT COUNT(*) as count FROM provides WHERE name = ?")
             .bind(name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to check provides dependency: {}", e)))?;
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to check provides dependency: {}", e))
+            })?;
 
-        let prov_count: i64 = prov_row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+        let prov_count: i64 = prov_row
+            .try_get(0)
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
         Ok(prov_count > 0)
     }
@@ -59,8 +69,9 @@ impl InstalledDb {
         let rows = query(
             "SELECT DISTINCT p.name, d.dep_type FROM dependencies d
              JOIN parts p ON d.part_id = p.id
-             WHERE d.depends_on = ?")
-            .bind(name)
+             WHERE d.depends_on = ?",
+        )
+        .bind(name)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to get dependents: {}", e)))?;
@@ -68,8 +79,12 @@ impl InstalledDb {
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            let name: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            let dep_type: String = row.try_get(1).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let name: String = row
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let dep_type: String = row
+                .try_get(1)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             result.push((name, dep_type));
         }
         Ok(result)
@@ -89,8 +104,9 @@ impl InstalledDb {
             "SELECT d.depends_on as \"name\", d.version_constraint, d.dep_type as \"dep_type\"
              FROM dependencies d
              JOIN parts p ON d.part_id = p.id
-             WHERE p.name = ?")
-            .bind(name)
+             WHERE p.name = ?",
+        )
+        .bind(name)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))
@@ -100,7 +116,8 @@ impl InstalledDb {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         visited.insert(name.to_string());
-        self.collect_dependents_recursive(name, &mut visited, &mut result).await?;
+        self.collect_dependents_recursive(name, &mut visited, &mut result)
+            .await?;
         Ok(result)
     }
 
@@ -117,11 +134,13 @@ impl InstalledDb {
                     continue;
                 }
                 visited.insert(dep_name.to_string());
-                self.collect_dependents_recursive(dep_name, visited, result).await?;
+                self.collect_dependents_recursive(dep_name, visited, result)
+                    .await?;
                 result.push(dep_name.to_string());
             }
             Ok(())
-        }.boxed()
+        }
+        .boxed()
     }
 
     pub async fn get_orphan_dependencies(&self, name: &str) -> Result<Vec<String>> {
@@ -146,7 +165,10 @@ impl InstalledDb {
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -156,9 +178,11 @@ impl InstalledDb {
             query("INSERT INTO optional_dependencies (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert optional dep: {}", e)))?;
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to insert optional dep: {}", e))
+                })?;
         }
         Ok(())
     }
@@ -166,24 +190,31 @@ impl InstalledDb {
     pub async fn replace_optional_dependencies(&self, part_id: i64, deps: &[String]) -> Result<()> {
         query("DELETE FROM optional_dependencies WHERE part_id = ?")
             .bind(part_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e))
+            })?;
+
         self.insert_optional_dependencies(part_id, deps).await
     }
 
     pub async fn get_optional_dependencies(&self, part_id: i64) -> Result<Vec<String>> {
         let rows = query("SELECT name FROM optional_dependencies WHERE part_id = ? ORDER BY name")
             .bind(part_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get optional deps: {}", e)))?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get optional deps: {}", e))
+            })?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -193,9 +224,11 @@ impl InstalledDb {
             query("INSERT INTO provides (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert provides: {}", e)))?;
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to insert provides: {}", e))
+                })?;
         }
         Ok(())
     }
@@ -203,14 +236,17 @@ impl InstalledDb {
     pub async fn get_provides(&self, part_id: i64) -> Result<Vec<String>> {
         let rows = query("SELECT name FROM provides WHERE part_id = ? ORDER BY name")
             .bind(part_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get provides: {}", e)))?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get provides: {}", e)))?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -219,8 +255,9 @@ impl InstalledDb {
         let rows = query(
             "SELECT p.name FROM parts p
              JOIN provides pv ON p.id = pv.part_id
-             WHERE pv.name = ?")
-            .bind(virtual_name)
+             WHERE pv.name = ?",
+        )
+        .bind(virtual_name)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to find providers: {}", e)))?;
@@ -228,7 +265,10 @@ impl InstalledDb {
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -238,9 +278,11 @@ impl InstalledDb {
             query("INSERT INTO conflicts (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert conflicts: {}", e)))?;
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to insert conflicts: {}", e))
+                })?;
         }
         Ok(())
     }
@@ -248,14 +290,17 @@ impl InstalledDb {
     pub async fn get_conflicts(&self, part_id: i64) -> Result<Vec<String>> {
         let rows = query("SELECT name FROM conflicts WHERE part_id = ? ORDER BY name")
             .bind(part_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -264,16 +309,22 @@ impl InstalledDb {
         let rows = query(
             "SELECT p.name FROM parts p
              JOIN conflicts c ON p.id = c.part_id
-             WHERE c.name = ?")
-            .bind(name)
+             WHERE c.name = ?",
+        )
+        .bind(name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to find conflicting parts: {}", e)))?;
+        .map_err(|e| {
+            WrightError::DatabaseError(format!("failed to find conflicting parts: {}", e))
+        })?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -283,9 +334,11 @@ impl InstalledDb {
             query("INSERT INTO replaces (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert replaces: {}", e)))?;
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to insert replaces: {}", e))
+                })?;
         }
         Ok(())
     }
@@ -293,24 +346,29 @@ impl InstalledDb {
     pub async fn replace_replaces(&self, part_id: i64, names: &[String]) -> Result<()> {
         query("DELETE FROM replaces WHERE part_id = ?")
             .bind(part_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old replaces: {}", e))
+            })?;
+
         self.insert_replaces(part_id, names).await
     }
 
     pub async fn get_replaces(&self, part_id: i64) -> Result<Vec<String>> {
         let rows = query("SELECT name FROM replaces WHERE part_id = ? ORDER BY name")
             .bind(part_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get replaces: {}", e)))?;
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get replaces: {}", e)))?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }

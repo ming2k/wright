@@ -1,10 +1,10 @@
-use std::path::Path;
-use sqlx::{query, query_as, SqlitePool, FromRow};
-use sqlx::sqlite::SqliteConnectOptions;
+use super::migrations::run_archive_migrations;
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::util::lock::ProcessLock;
-use super::migrations::run_archive_migrations;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{query, query_as, FromRow, SqlitePool};
+use std::path::Path;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct ArchivePart {
@@ -45,7 +45,11 @@ impl ArchiveDb {
     pub async fn open(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                WrightError::DatabaseError(format!("failed to create archive database directory {}: {}", parent.display(), e))
+                WrightError::DatabaseError(format!(
+                    "failed to create archive database directory {}: {}",
+                    parent.display(),
+                    e
+                ))
             })?;
         }
 
@@ -82,9 +86,9 @@ impl ArchiveDb {
             .bind(&partinfo.version)
             .bind(partinfo.release as i64)
             .bind(partinfo.epoch as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("delete old entry: {}", e)))?;
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("delete old entry: {}", e)))?;
 
         let res = query(
             "INSERT INTO parts (name, version, release, epoch, description, arch, license, filename, sha256, install_size, build_date)
@@ -107,9 +111,11 @@ impl ArchiveDb {
         let part_id = res.last_insert_rowid();
 
         for dep in &partinfo.runtime_deps {
-            query("INSERT INTO dependencies (part_id, depends_on, dep_type) VALUES (?, ?, 'runtime')")
-                .bind(part_id)
-                .bind(dep)
+            query(
+                "INSERT INTO dependencies (part_id, depends_on, dep_type) VALUES (?, ?, 'runtime')",
+            )
+            .bind(part_id)
+            .bind(dep)
             .execute(&mut *tx)
             .await?;
         }
@@ -117,25 +123,27 @@ impl ArchiveDb {
             query("INSERT INTO provides (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&mut *tx)
-            .await?;
+                .execute(&mut *tx)
+                .await?;
         }
         for name in &partinfo.conflicts {
             query("INSERT INTO conflicts (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&mut *tx)
-            .await?;
+                .execute(&mut *tx)
+                .await?;
         }
         for name in &partinfo.replaces {
             query("INSERT INTO replaces (part_id, name) VALUES (?, ?)")
                 .bind(part_id)
                 .bind(name)
-            .execute(&mut *tx)
-            .await?;
+                .execute(&mut *tx)
+                .await?;
         }
 
-        tx.commit().await.map_err(|e| WrightError::DatabaseError(format!("commit: {}", e)))?;
+        tx.commit()
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("commit: {}", e)))?;
         Ok(part_id)
     }
 
@@ -192,7 +200,8 @@ impl ArchiveDb {
             if !dir.join(&filename).exists() {
                 query("DELETE FROM parts WHERE filename = ?")
                     .bind(&filename)
-                .execute(&self.pool).await?;
+                    .execute(&self.pool)
+                    .await?;
                 removed.push(filename);
             }
         }
@@ -200,11 +209,16 @@ impl ArchiveDb {
     }
 
     pub async fn list_filenames(&self) -> Result<Vec<String>> {
-        let rows = query("SELECT filename FROM parts ORDER BY filename").fetch_all(&self.pool).await?;
+        let rows = query("SELECT filename FROM parts ORDER BY filename")
+            .fetch_all(&self.pool)
+            .await?;
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
@@ -213,12 +227,15 @@ impl ArchiveDb {
         let rows = query("SELECT depends_on FROM dependencies WHERE part_id = ? AND dep_type = ?")
             .bind(part_id)
             .bind(dep_type)
-        .fetch_all(&self.pool)
-        .await?;
+            .fetch_all(&self.pool)
+            .await?;
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }

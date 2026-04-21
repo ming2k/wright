@@ -1,11 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use crate::archive::resolver::ResolvedPart;
 use crate::error::{Result, WrightError};
 use crate::part::version;
-use crate::archive::resolver::ResolvedPart;
+use std::collections::{HashMap, HashSet};
 
-pub fn sort_dependencies(
-    resolved_map: &HashMap<String, ResolvedPart>,
-) -> Result<Vec<String>> {
+pub fn sort_dependencies(resolved_map: &HashMap<String, ResolvedPart>) -> Result<Vec<String>> {
     let mut sorted_names = Vec::new();
     let mut visited = HashSet::new();
     let mut visiting = HashSet::new();

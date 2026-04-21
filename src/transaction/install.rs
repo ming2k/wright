@@ -301,14 +301,16 @@ pub async fn install_part_with_origin(
         phase_start.elapsed(),
     );
 
-    let tx_id = db.record_transaction(
-        "install",
-        &partinfo.name,
-        None,
-        Some(&partinfo.version),
-        "pending",
-        None,
-    ).await?;
+    let tx_id = db
+        .record_transaction(
+            "install",
+            &partinfo.name,
+            None,
+            Some(&partinfo.version),
+            "pending",
+            None,
+        )
+        .await?;
 
     let mut rollback_state = match journal_path_from_db(db) {
         Some(jp) => RollbackState::with_journal(jp),
@@ -343,7 +345,9 @@ pub async fn install_part_with_origin(
         Some(backup_dir.path()),
         &HashSet::new(),
         &divert_paths,
-    ).await {
+    )
+    .await
+    {
         Ok(_) => {}
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
@@ -360,20 +364,22 @@ pub async fn install_part_with_origin(
     );
 
     phase_start = Instant::now();
-    let part_id = db.insert_part(NewPart {
-        name: &partinfo.name,
-        version: &partinfo.version,
-        release: partinfo.release,
-        epoch: partinfo.epoch,
-        description: &partinfo.description,
-        arch: &partinfo.arch,
-        license: &partinfo.license,
-        url: None,
-        install_size: partinfo.install_size,
-        part_hash: Some(part_hash.as_str()),
-        install_scripts: hooks_content.as_deref(),
-        origin,
-    }).await?;
+    let part_id = db
+        .insert_part(NewPart {
+            name: &partinfo.name,
+            version: &partinfo.version,
+            release: partinfo.release,
+            epoch: partinfo.epoch,
+            description: &partinfo.description,
+            arch: &partinfo.arch,
+            license: &partinfo.license,
+            url: None,
+            install_size: partinfo.install_size,
+            part_hash: Some(part_hash.as_str()),
+            install_scripts: hooks_content.as_deref(),
+            origin,
+        })
+        .await?;
 
     for (path, owner_name) in shadows {
         if let Some(owner_part) = db.get_part(&owner_name).await? {
@@ -386,7 +392,9 @@ pub async fn install_part_with_origin(
             } else {
                 None
             };
-            let _ = db.record_shadowed_file(&path, owner_part.id, part_id, diverted_to.as_deref()).await;
+            let _ = db
+                .record_shadowed_file(&path, owner_part.id, part_id, diverted_to.as_deref())
+                .await;
         }
     }
 
@@ -407,7 +415,8 @@ pub async fn install_part_with_origin(
     }
 
     if !partinfo.optional_deps.is_empty() {
-        db.insert_optional_dependencies(part_id, &partinfo.optional_deps).await?;
+        db.insert_optional_dependencies(part_id, &partinfo.optional_deps)
+            .await?;
     }
 
     if !partinfo.provides.is_empty() {

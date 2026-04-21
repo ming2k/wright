@@ -166,6 +166,11 @@ pub enum Commands {
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
+        /// Resume a previous apply session using the same targets and scope flags.
+        /// Optionally pass the session hash printed on failure.
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        resume: Option<String>,
+
         /// Expand dependencies.
         /// `link` follows ABI-sensitive link dependencies.
         /// `runtime` follows runtime dependencies.

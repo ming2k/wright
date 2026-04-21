@@ -1,12 +1,12 @@
-use std::collections::HashSet;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 use crate::database::{FileEntry, FileType};
 use crate::error::{Result, WrightError};
 use crate::part::part::PartInfo;
 use crate::transaction::rollback::RollbackState;
 use crate::util::checksum;
+use std::collections::HashSet;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 pub(super) fn collect_file_entries(
     extract_dir: &Path,
@@ -32,7 +32,7 @@ pub(super) fn collect_file_entries(
     // For now, let's keep it simple.
     let backup_set: HashSet<&str> = partinfo.backup_files.iter().map(|s| s.as_str()).collect();
     let mut entries = Vec::new();
-    
+
     for entry in raw {
         let relative = entry
             .path()
@@ -41,9 +41,10 @@ pub(super) fn collect_file_entries(
         let relative_str = relative.to_string_lossy().to_string();
         let file_path = format!("/{}", relative_str);
 
-        let metadata = entry.path().symlink_metadata().map_err(|e| {
-            WrightError::InstallError(format!("failed to get metadata: {}", e))
-        })?;
+        let metadata = entry
+            .path()
+            .symlink_metadata()
+            .map_err(|e| WrightError::InstallError(format!("failed to get metadata: {}", e)))?;
 
         let file_type = if metadata.is_dir() {
             FileType::Directory
@@ -94,7 +95,9 @@ async fn move_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
     match tokio::fs::rename(src, dst).await {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-            if tokio::fs::metadata(dst).await.is_ok() || tokio::fs::symlink_metadata(dst).await.is_ok() {
+            if tokio::fs::metadata(dst).await.is_ok()
+                || tokio::fs::symlink_metadata(dst).await.is_ok()
+            {
                 let _ = tokio::fs::remove_file(dst).await;
             }
             tokio::fs::copy(src, dst).await?;
@@ -163,7 +166,10 @@ pub(super) async fn copy_entries_to_root(
             if let Ok(existing_meta) = tokio::fs::symlink_metadata(&dest_path).await {
                 if existing_meta.file_type().is_symlink() {
                     if let Ok(target) = tokio::fs::read_link(&dest_path).await {
-                        rollback.record_symlink_backup(dest_path.clone(), target.to_string_lossy().into_owned());
+                        rollback.record_symlink_backup(
+                            dest_path.clone(),
+                            target.to_string_lossy().into_owned(),
+                        );
                     }
                 } else if existing_meta.is_file() {
                     if let Some(bdir) = backup_dir {
@@ -202,15 +208,25 @@ pub(super) async fn copy_entries_to_root(
             rollback.record_file_created(dest_path);
         } else {
             // Regular file
-            if config_paths.contains(&entry.path) && tokio::fs::symlink_metadata(&dest_path).await.is_ok() {
+            if config_paths.contains(&entry.path)
+                && tokio::fs::symlink_metadata(&dest_path).await.is_ok()
+            {
                 let mut new_name = dest_path.as_os_str().to_owned();
                 new_name.push(".wnew");
                 let side_path = PathBuf::from(new_name);
                 move_or_copy(&src_path, &side_path).await.map_err(|e| {
-                    WrightError::InstallError(format!("failed to write {}: {}", side_path.display(), e))
+                    WrightError::InstallError(format!(
+                        "failed to write {}: {}",
+                        side_path.display(),
+                        e
+                    ))
                 })?;
                 if let Some(mode) = entry.file_mode {
-                    let _ = tokio::fs::set_permissions(&side_path, std::fs::Permissions::from_mode(mode as u32)).await;
+                    let _ = tokio::fs::set_permissions(
+                        &side_path,
+                        std::fs::Permissions::from_mode(mode as u32),
+                    )
+                    .await;
                 }
                 rollback.record_file_created(side_path);
                 preserved_configs.push(entry.path.clone());
@@ -219,7 +235,9 @@ pub(super) async fn copy_entries_to_root(
                 divert_name.push(".wright-diverted");
                 let divert_path = PathBuf::from(divert_name);
 
-                if tokio::fs::metadata(&dest_path).await.is_ok() || tokio::fs::symlink_metadata(&dest_path).await.is_ok() {
+                if tokio::fs::metadata(&dest_path).await.is_ok()
+                    || tokio::fs::symlink_metadata(&dest_path).await.is_ok()
+                {
                     move_or_copy(&dest_path, &divert_path).await.map_err(|e| {
                         WrightError::InstallError(format!(
                             "failed to divert {} to {}: {}",
@@ -240,7 +258,11 @@ pub(super) async fn copy_entries_to_root(
                     ))
                 })?;
                 if let Some(mode) = entry.file_mode {
-                    let _ = tokio::fs::set_permissions(&dest_path, std::fs::Permissions::from_mode(mode as u32)).await;
+                    let _ = tokio::fs::set_permissions(
+                        &dest_path,
+                        std::fs::Permissions::from_mode(mode as u32),
+                    )
+                    .await;
                 }
                 rollback.record_file_created(dest_path);
             } else {
@@ -271,7 +293,11 @@ pub(super) async fn copy_entries_to_root(
                     ))
                 })?;
                 if let Some(mode) = entry.file_mode {
-                    let _ = tokio::fs::set_permissions(&dest_path, std::fs::Permissions::from_mode(mode as u32)).await;
+                    let _ = tokio::fs::set_permissions(
+                        &dest_path,
+                        std::fs::Permissions::from_mode(mode as u32),
+                    )
+                    .await;
                 }
                 rollback.record_file_created(dest_path);
             }

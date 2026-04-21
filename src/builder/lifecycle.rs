@@ -1,15 +1,15 @@
+use indicatif::ProgressBar;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use indicatif::ProgressBar;
 use tracing::{debug, info};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::builder::logging;
+use crate::error::{Result, WrightError};
 use crate::isolation::IsolationLevel;
 use crate::isolation::ResourceLimits;
-use crate::error::{Result, WrightError};
 use crate::plan::manifest::{LifecycleStage, PlanManifest};
 
 pub const DEFAULT_STAGES: &[&str] = &[
@@ -25,6 +25,20 @@ pub const DEFAULT_STAGES: &[&str] = &[
 
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
+pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
+    if build_phase == Some("mvp") {
+        if let Some(ref cfg) = manifest.mvp {
+            if let Some(ref order) = cfg.lifecycle_order {
+                return order.stages.clone();
+            }
+        }
+    }
+    if let Some(ref order) = manifest.lifecycle_order {
+        return order.stages.clone();
+    }
+    DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
+}
+
 pub struct LifecyclePipeline<'a> {
     manifest: &'a PlanManifest,
     vars: HashMap<String, String>,
@@ -34,6 +48,7 @@ pub struct LifecyclePipeline<'a> {
     work_dir: PathBuf,
     output_dir: PathBuf,
     stages: Vec<String>,
+    stop_after_stage: Option<String>,
     skip_check: bool,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
@@ -53,6 +68,7 @@ pub struct LifecycleContext<'a> {
     pub work_dir: PathBuf,
     pub output_dir: PathBuf,
     pub stages: Vec<String>,
+    pub stop_after_stage: Option<String>,
     pub skip_check: bool,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
@@ -74,6 +90,7 @@ impl<'a> LifecyclePipeline<'a> {
             work_dir: ctx.work_dir,
             output_dir: ctx.output_dir,
             stages: ctx.stages,
+            stop_after_stage: ctx.stop_after_stage,
             skip_check: ctx.skip_check,
             executors: ctx.executors,
             rlimits: ctx.rlimits,
@@ -105,19 +122,42 @@ impl<'a> LifecyclePipeline<'a> {
             }
             for stage_name in &pipeline {
                 if self.stages.contains(stage_name) {
-                    self.run_stage_with_hooks(stage_name, self.cpu_count).await?;
+                    self.run_stage_with_hooks(stage_name, self.cpu_count)
+                        .await?;
                 }
             }
             return Ok(());
         }
 
-        for stage_name in &pipeline {
+        let stop_after_index = if let Some(stage_name) = self.stop_after_stage.as_ref() {
+            Some(
+                pipeline
+                    .iter()
+                    .position(|p| p == stage_name)
+                    .ok_or_else(|| {
+                        WrightError::BuildError(format!(
+                            "stage '{}' not found in lifecycle pipeline",
+                            stage_name
+                        ))
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        for (idx, stage_name) in pipeline.iter().enumerate() {
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
                 debug!("Built-in stage {} is handled by Builder", stage_name);
+                if stop_after_index == Some(idx) {
+                    return Ok(());
+                }
                 continue;
             }
             if self.skip_check && stage_name == "check" {
                 debug!("Skipping check stage due to --skip-check");
+                if stop_after_index == Some(idx) {
+                    return Ok(());
+                }
                 continue;
             }
 
@@ -130,7 +170,12 @@ impl<'a> LifecyclePipeline<'a> {
                 let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
                 self.run_stage_with_hooks(stage_name, effective_cpu).await?;
             } else {
-                self.run_stage_with_hooks(stage_name, self.cpu_count).await?;
+                self.run_stage_with_hooks(stage_name, self.cpu_count)
+                    .await?;
+            }
+
+            if stop_after_index == Some(idx) {
+                return Ok(());
             }
         }
 
@@ -169,17 +214,10 @@ impl<'a> LifecyclePipeline<'a> {
     }
 
     fn get_stage_order(&self) -> Vec<String> {
-        if self.is_mvp_pass() {
-            if let Some(ref cfg) = self.manifest.mvp {
-                if let Some(ref order) = cfg.lifecycle_order {
-                    return order.stages.clone();
-                }
-            }
-        }
-        if let Some(ref order) = self.manifest.lifecycle_order {
-            return order.stages.clone();
-        }
-        DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
+        stage_order_for_manifest(
+            self.manifest,
+            self.vars.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str()),
+        )
     }
 
     fn is_mvp_pass(&self) -> bool {
@@ -197,7 +235,12 @@ impl<'a> LifecyclePipeline<'a> {
         self.manifest.lifecycle.get(name)
     }
 
-    async fn run_stage(&self, stage_name: &str, stage: &LifecycleStage, cpu_count: u32) -> Result<()> {
+    async fn run_stage(
+        &self,
+        stage_name: &str,
+        stage: &LifecycleStage,
+        cpu_count: u32,
+    ) -> Result<()> {
         if stage.script.is_empty() {
             debug!("Stage {} has empty script, skipping", stage_name);
             return Ok(());
@@ -247,7 +290,8 @@ impl<'a> LifecyclePipeline<'a> {
             &stage.env,
             &self.vars,
             &mut options,
-        ).await?;
+        )
+        .await?;
         let elapsed = t0.elapsed().as_secs_f64();
 
         let exit_code = result.status.code().unwrap_or(-1);

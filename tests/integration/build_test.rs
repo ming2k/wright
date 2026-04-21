@@ -36,6 +36,7 @@ async fn test_build_hello_fixture() {
             &plan_dir,
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -43,7 +44,9 @@ async fn test_build_hello_fixture() {
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     // Verify the binary was built
     assert!(result.output_dir.join("usr/bin/hello").exists());
@@ -64,6 +67,7 @@ async fn test_build_and_archive_hello() {
             &plan_dir,
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -71,7 +75,9 @@ async fn test_build_and_archive_hello() {
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -133,6 +139,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
             plan_dir.path(),
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -140,7 +147,9 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -200,6 +209,7 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
             plan_dir.path(),
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -207,7 +217,9 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(result.split_part_dirs["split-vars-doc"]
@@ -259,6 +271,7 @@ async fn test_build_single_stage() {
             &plan_dir,
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -266,7 +279,8 @@ async fn test_build_single_stage() {
             None,
             None,
             None,
-        ).await
+        )
+        .await
         .unwrap();
 
     // Now run a single stage on the existing build tree
@@ -276,6 +290,7 @@ async fn test_build_single_stage() {
             &plan_dir,
             Path::new("/"),
             &["prepare".to_string()],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -283,12 +298,48 @@ async fn test_build_single_stage() {
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not
     // (output_dir is recreated fresh for single-stage runs)
     assert!(result.work_dir.join("hello.c").exists());
     assert!(!result.output_dir.join("usr/bin/hello").exists());
+}
+
+#[tokio::test]
+async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
+    let (manifest, plan_dir) = load_manifest_without_isolation("hello");
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.build_dir = build_tmp.path().to_path_buf();
+
+    let builder = Builder::new(config);
+    let result = builder
+        .build(
+            &manifest,
+            &plan_dir,
+            Path::new("/"),
+            &[],
+            Some("staging"),
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.work_dir.join("hello.c").exists());
+    assert!(result.work_dir.join("hello").exists());
+    assert!(result.output_dir.join("usr/bin/hello").exists());
+    assert!(result.logs_dir.join("compile.log").exists());
+    assert!(result.logs_dir.join("staging.log").exists());
 }
 
 #[tokio::test]
@@ -406,5 +457,283 @@ retry_count = 3
     assert!(
         stderr.contains("LIVE-BUILD-OUTPUT"),
         "expected live verbose build output on stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_until_stage_stops_before_packing_parts() {
+    let root = tempfile::tempdir().unwrap();
+    let plans_dir = root.path().join("plans");
+    let parts_dir = root.path().join("parts");
+    let cache_dir = root.path().join("cache");
+    let db_dir = root.path().join("state");
+    let logs_dir = root.path().join("logs");
+    let build_dir = root.path().join("build");
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::create_dir_all(&db_dir).unwrap();
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    std::fs::create_dir_all(&build_dir).unwrap();
+
+    let plan_dir = plans_dir.join("stop-at-staging");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "stop-at-staging"
+version = "1.0.0"
+release = 1
+description = "verify --until-stage"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+runtime = []
+build = []
+
+[lifecycle.prepare]
+executor = "shell"
+isolation = "none"
+script = """
+cat > hello.sh <<'EOF'
+#!/bin/sh
+echo stop-at-staging
+EOF
+chmod +x hello.sh
+"""
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 hello.sh ${PART_DIR}/usr/bin/stop-at-staging
+"""
+"#,
+    )
+    .unwrap();
+
+    let config_path = root.path().join("wright.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+parts_dir = "{}"
+source_dir = "{}"
+installed_db_path = "{}"
+archive_db_path = "{}"
+logs_dir = "{}"
+executors_dir = "/etc/wright/executors"
+assemblies_dir = "{}"
+
+[build]
+build_dir = "{}"
+default_isolation = "none"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans_dir.display(),
+            parts_dir.display(),
+            cache_dir.display(),
+            db_dir.join("installed.db").display(),
+            db_dir.join("archives.db").display(),
+            logs_dir.display(),
+            root.path().join("assemblies").display(),
+            build_dir.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("build")
+        .arg("stop-at-staging")
+        .arg("--until-stage")
+        .arg("staging")
+        .arg("--print-parts")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wright build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().is_empty(),
+        "no part path should be printed when stopping before packing: {stdout:?}"
+    );
+    assert!(
+        parts_dir.read_dir().unwrap().next().is_none(),
+        "parts dir should stay empty when build stops after staging"
+    );
+    assert!(
+        build_dir
+            .join("stop-at-staging-1.0.0/output/usr/bin/stop-at-staging")
+            .exists(),
+        "staged output should remain available for inspection"
+    );
+}
+
+#[test]
+fn test_build_resume_skips_already_completed_dependency_tasks() {
+    let root = tempfile::tempdir().unwrap();
+    let plans_dir = root.path().join("plans");
+    let parts_dir = root.path().join("parts");
+    let source_dir = root.path().join("sources");
+    let state_dir = root.path().join("state");
+    let logs_dir = root.path().join("logs");
+    let build_dir = root.path().join("build");
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    std::fs::create_dir_all(&build_dir).unwrap();
+
+    let counter_path = root.path().join("dep-counter");
+    let signal_path = root.path().join("allow-main");
+
+    let dep_dir = plans_dir.join("resume-dep");
+    std::fs::create_dir_all(&dep_dir).unwrap();
+    std::fs::write(
+        dep_dir.join("plan.toml"),
+        format!(
+            r#"
+name = "resume-dep"
+version = "1.0.0"
+release = 1
+description = "dependency"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+printf x >> "{}"
+install -Dm644 /dev/null ${{PART_DIR}}/usr/share/resume-dep
+"""
+"#,
+            counter_path.display()
+        ),
+    )
+    .unwrap();
+
+    let main_dir = plans_dir.join("resume-main");
+    std::fs::create_dir_all(&main_dir).unwrap();
+    std::fs::write(
+        main_dir.join("plan.toml"),
+        format!(
+            r#"
+name = "resume-main"
+version = "1.0.0"
+release = 1
+description = "main"
+license = "MIT"
+arch = "x86_64"
+
+[dependencies]
+build = ["resume-dep"]
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+test -f "{}"
+install -Dm644 /dev/null ${{PART_DIR}}/usr/share/resume-main
+"""
+"#,
+            signal_path.display()
+        ),
+    )
+    .unwrap();
+
+    let config_path = root.path().join("wright.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+parts_dir = "{}"
+source_dir = "{}"
+installed_db_path = "{}"
+archive_db_path = "{}"
+logs_dir = "{}"
+executors_dir = "/etc/wright/executors"
+assemblies_dir = "{}"
+
+[build]
+build_dir = "{}"
+default_isolation = "none"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans_dir.display(),
+            parts_dir.display(),
+            source_dir.display(),
+            state_dir.join("installed.db").display(),
+            state_dir.join("archives.db").display(),
+            logs_dir.display(),
+            root.path().join("assemblies").display(),
+            build_dir.display(),
+        ),
+    )
+    .unwrap();
+
+    let first = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("build")
+        .arg("resume-dep")
+        .arg("resume-main")
+        .output()
+        .unwrap();
+
+    assert!(
+        !first.status.success(),
+        "first build should fail to leave a resumable session"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&counter_path).unwrap(),
+        "x",
+        "dependency should build exactly once before the failure"
+    );
+
+    std::fs::write(&signal_path, "ok").unwrap();
+
+    let second = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("build")
+        .arg("resume-dep")
+        .arg("resume-main")
+        .arg("--resume")
+        .output()
+        .unwrap();
+
+    assert!(
+        second.status.success(),
+        "resume build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&counter_path).unwrap(),
+        "x",
+        "resume should skip the already completed dependency build"
     );
 }

@@ -220,8 +220,7 @@ pub struct Sources {
     pub entries: Vec<Source>,
 }
 
-impl Sources {
-}
+impl Sources {}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1147,7 +1146,7 @@ ref = "v1.0"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.sources.entries.len(), 3);
-        
+
         if let Source::Http(http) = &manifest.sources.entries[0] {
             assert_eq!(http.url, "https://example.com/foo.tar.gz");
             assert_eq!(http.sha256, "abc123");

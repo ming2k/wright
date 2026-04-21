@@ -142,7 +142,8 @@ pub async fn write_dep_tree(
         &mut ancestors,
         &mut stats,
         out,
-    ).await?;
+    )
+    .await?;
     Ok(stats)
 }
 
@@ -282,7 +283,8 @@ async fn write_dep_tree_inner(
                     ancestors,
                     stats,
                     out,
-                )).await?;
+                ))
+                .await?;
                 ancestors.remove(&dep.name);
             }
         }
@@ -345,7 +347,8 @@ pub async fn write_reverse_dep_tree(
         &mut ancestors,
         &mut stats,
         out,
-    ).await?;
+    )
+    .await?;
     Ok(stats)
 }
 
@@ -450,7 +453,8 @@ async fn write_reverse_dep_tree_inner(
                 ancestors,
                 stats,
                 out,
-            )).await?;
+            ))
+            .await?;
             ancestors.remove(dep_name.as_str());
         }
     }
@@ -507,7 +511,8 @@ pub async fn write_system_tree(
             &mut ancestors,
             &mut combined_stats,
             out,
-        ).await?;
+        )
+        .await?;
         if i < roots.len() - 1 {
             writeln!(out)?;
         }
@@ -526,7 +531,9 @@ pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
     for part in all_parts {
         let deps = db.get_dependencies(part.id).await?;
         for dep in deps {
-            if db.get_part(&dep.name).await?.is_none() && db.find_providers(&dep.name).await?.is_empty() {
+            if db.get_part(&dep.name).await?.is_none()
+                && db.find_providers(&dep.name).await?.is_empty()
+            {
                 let version_constraint_str = dep
                     .version_constraint
                     .map(|c| format!(" ({})", c))

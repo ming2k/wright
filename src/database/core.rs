@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
-use sqlx::SqlitePool;
-use sqlx::sqlite::SqliteConnectOptions;
+use super::schema;
 use crate::error::{Result, WrightError};
 use crate::util::lock::ProcessLock;
-use super::schema;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::SqlitePool;
+use std::path::{Path, PathBuf};
 
 pub struct InstalledDb {
     pub(crate) pool: SqlitePool,
@@ -41,15 +41,15 @@ impl InstalledDb {
         }
 
         let lock_file = acquire_lock(path)?;
-        
+
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
-        let pool = SqlitePool::connect_with(options)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to connect to database: {}", e)))?;
+        let pool = SqlitePool::connect_with(options).await.map_err(|e| {
+            WrightError::DatabaseError(format!("failed to connect to database: {}", e))
+        })?;
 
         schema::init_db(&pool).await?;
 
@@ -61,12 +61,12 @@ impl InstalledDb {
     }
 
     pub async fn open_in_memory() -> Result<Self> {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to connect to in-memory database: {}", e)))?;
-        
+        let pool = SqlitePool::connect("sqlite::memory:").await.map_err(|e| {
+            WrightError::DatabaseError(format!("failed to connect to in-memory database: {}", e))
+        })?;
+
         schema::init_db(&pool).await?;
-        
+
         Ok(InstalledDb {
             pool,
             _lock: None,

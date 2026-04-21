@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use crate::database::ArchiveDb;
 use crate::archive::resolver::ResolvedPartVersioned;
+use crate::database::ArchiveDb;
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 pub struct PruneReport {
     pub untracked: Vec<std::path::PathBuf>,
@@ -32,10 +32,16 @@ pub async fn plan_prune(
     let mut stale_tracked = Vec::new();
 
     if prune_untracked {
-        let mut entries = tokio::fs::read_dir(parts_dir).await.map_err(WrightError::IoError)?;
+        let mut entries = tokio::fs::read_dir(parts_dir)
+            .await
+            .map_err(WrightError::IoError)?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if !tokio::fs::metadata(&path).await.map(|m| m.is_file()).unwrap_or(false) {
+            if !tokio::fs::metadata(&path)
+                .await
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let filename = match path.file_name().and_then(|s| s.to_str()) {
@@ -121,25 +127,38 @@ pub async fn apply_prune(
     keep_latest: bool,
 ) -> Result<PruneReport> {
     let stale_db_rows = archive_db.remove_missing_files(parts_dir).await?;
-    let mut report = plan_prune(archive_db, installed_db, parts_dir, prune_untracked, keep_latest).await?;
+    let mut report = plan_prune(
+        archive_db,
+        installed_db,
+        parts_dir,
+        prune_untracked,
+        keep_latest,
+    )
+    .await?;
     report.stale_db_rows = stale_db_rows;
 
     for path in &report.untracked {
         if tokio::fs::metadata(path).await.is_ok() {
-            tokio::fs::remove_file(path).await.map_err(WrightError::IoError)?;
+            tokio::fs::remove_file(path)
+                .await
+                .map_err(WrightError::IoError)?;
         }
     }
 
     for stale in &report.stale_tracked {
         if tokio::fs::metadata(&stale.path).await.is_ok() {
-            tokio::fs::remove_file(&stale.path).await.map_err(WrightError::IoError)?;
+            tokio::fs::remove_file(&stale.path)
+                .await
+                .map_err(WrightError::IoError)?;
         }
         // remove_part is not yet implemented in async ArchiveDb, let's implement it if needed or just use query
         sqlx::query("DELETE FROM parts WHERE name = ? AND version = ? AND release = ?")
             .bind(&stale.name)
             .bind(&stale.version)
             .bind(stale.release)
-            .execute(&archive_db.pool).await.map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            .execute(&archive_db.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
     }
     Ok(report)
 }

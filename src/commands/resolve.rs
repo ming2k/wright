@@ -1,8 +1,8 @@
+use anyhow::Result;
+use owo_colors::OwoColorize;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use anyhow::Result;
-use owo_colors::OwoColorize;
 
 use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
@@ -13,7 +13,10 @@ use crate::plan::manifest::PlanManifest;
 pub async fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let is_tty = std::io::stdout().is_terminal();
 
-    if is_tty && !args.exclude_targets && (args.tree || (args.deps.is_none() && args.rdeps.is_none())) {
+    if is_tty
+        && !args.exclude_targets
+        && (args.tree || (args.deps.is_none() && args.rdeps.is_none()))
+    {
         render_interactive_trees(&args, config).await?;
         return Ok(());
     }
@@ -56,7 +59,8 @@ async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> 
             println!();
         }
 
-        let show_dependencies = (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
+        let show_dependencies =
+            (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
         if show_dependencies {
             println!("{}", "Dependencies:".bold().cyan());
             print!("{}", target.bold().green());
@@ -144,7 +148,8 @@ async fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<
             include_targets: !args.exclude_targets,
             preserve_targets: false,
         },
-    ).await?;
+    )
+    .await?;
 
     for name in &names {
         println!("{}", name);
@@ -187,7 +192,11 @@ fn print_dependency_tree(
             .map(|(n, _)| n)
             .unwrap_or_else(|_| dep_raw.clone());
         let last_child = i == deps.len() - 1;
-        let connector = if last_child { "└── " } else { "├── " };
+        let connector = if last_child {
+            "└── "
+        } else {
+            "├── "
+        };
         print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), dep_name);
         if visited.contains(&dep_name) {
             print!(" {}", "(*)".dimmed());
@@ -195,7 +204,15 @@ fn print_dependency_tree(
         }
         visited.insert(dep_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependency_tree(&dep_name, all_plans, &new_prefix, current_depth + 1, max_depth, visited, filter)?;
+        print_dependency_tree(
+            &dep_name,
+            all_plans,
+            &new_prefix,
+            current_depth + 1,
+            max_depth,
+            visited,
+            filter,
+        )?;
     }
     Ok(true)
 }
@@ -230,7 +247,11 @@ fn print_dependent_tree(
     }
     for (i, (child_name, kind)) in rdeps.iter().enumerate() {
         let last_child = i == rdeps.len() - 1;
-        let connector = if last_child { "└── " } else { "├── " };
+        let connector = if last_child {
+            "└── "
+        } else {
+            "├── "
+        };
         print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), child_name);
         if visited.contains(child_name) {
             print!(" {}", "(*)".dimmed());
@@ -238,7 +259,15 @@ fn print_dependent_tree(
         }
         visited.insert(child_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependent_tree(child_name, rdeps_map, &new_prefix, current_depth + 1, max_depth, visited, filter)?;
+        print_dependent_tree(
+            child_name,
+            rdeps_map,
+            &new_prefix,
+            current_depth + 1,
+            max_depth,
+            visited,
+            filter,
+        )?;
     }
     Ok(true)
 }

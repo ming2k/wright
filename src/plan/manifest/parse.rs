@@ -7,8 +7,8 @@ use crate::error::{Result, WrightError};
 
 use super::{
     convert::{empty_sub_fabricate_output, fabricate_backup, fabricate_install_scripts},
-    BackupConfig, OutputConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder,
-    LifecycleStage, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
+    BackupConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder, LifecycleStage,
+    OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 use super::{BuildOptions, Dependencies};
 

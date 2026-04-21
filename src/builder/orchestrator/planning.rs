@@ -15,18 +15,6 @@ const SYSTEM_TOOLCHAIN: &[&str] = &[
     "gawk",
 ];
 
-pub(super) fn compute_session_hash(build_set: &HashSet<String>) -> String {
-    use sha2::{Digest, Sha256};
-    let mut names: Vec<&str> = build_set.iter().map(|s| s.as_str()).collect();
-    names.sort();
-    let mut hasher = Sha256::new();
-    for name in &names {
-        hasher.update(name.as_bytes());
-        hasher.update(b"\n");
-    }
-    format!("{:x}", hasher.finalize())
-}
-
 pub(super) async fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
@@ -143,7 +131,8 @@ pub(super) async fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_name)
-                            && dependency_matches_policy(&rdep_name, all_plans, db, policies).await?
+                            && dependency_matches_policy(&rdep_name, all_plans, db, policies)
+                                .await?
                         {
                             if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                 info!(
@@ -495,7 +484,8 @@ pub(super) fn build_dep_map(
             deps = collect_phase_deps(&manifest, &part_to_plan, is_mvp, Some(all_plans));
 
             if is_mvp {
-                let full_deps = collect_phase_deps(&manifest, &part_to_plan, false, Some(all_plans));
+                let full_deps =
+                    collect_phase_deps(&manifest, &part_to_plan, false, Some(all_plans));
                 let mvp_deps = collect_phase_deps(&manifest, &part_to_plan, true, Some(all_plans));
                 let excluded: Vec<String> = full_deps
                     .into_iter()

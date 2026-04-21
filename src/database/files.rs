@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use super::{FileEntry, InstalledDb};
 use crate::error::{Result, WrightError};
 use sqlx::{query, query_as, QueryBuilder, Sqlite};
-use super::{FileEntry, InstalledDb};
+use std::collections::HashMap;
 
 impl InstalledDb {
     pub async fn record_shadowed_file(
@@ -48,9 +48,9 @@ impl InstalledDb {
             })?;
         }
 
-        tx.commit().await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to commit files: {}", e))
-        })?;
+        tx.commit()
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to commit files: {}", e)))?;
         Ok(())
     }
 
@@ -65,29 +65,43 @@ impl InstalledDb {
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            result.push(row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?);
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
         }
         Ok(result)
     }
 
-    pub async fn get_diverted_file(&self, path: &str, shadowed_by_id: i64) -> Result<Option<String>> {
-        let row = query("SELECT diverted_to FROM shadowed_files WHERE path = ? AND shadowed_by_id = ?")
-            .bind(path)
-            .bind(shadowed_by_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query diverted file: {}", e)))?;
-        
+    pub async fn get_diverted_file(
+        &self,
+        path: &str,
+        shadowed_by_id: i64,
+    ) -> Result<Option<String>> {
+        let row =
+            query("SELECT diverted_to FROM shadowed_files WHERE path = ? AND shadowed_by_id = ?")
+                .bind(path)
+                .bind(shadowed_by_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to query diverted file: {}", e))
+                })?;
+
         match row {
             Some(r) => {
                 use sqlx::Row;
-                Ok(r.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?)
+                Ok(r.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?)
             }
             None => Ok(None),
         }
     }
 
-    pub async fn get_all_diverted_files(&self, shadowed_by_id: i64) -> Result<Vec<(String, String)>> {
+    pub async fn get_all_diverted_files(
+        &self,
+        shadowed_by_id: i64,
+    ) -> Result<Vec<(String, String)>> {
         let rows = query("SELECT path, diverted_to FROM shadowed_files WHERE shadowed_by_id = ? AND diverted_to IS NOT NULL")
             .bind(shadowed_by_id)
         .fetch_all(&self.pool)
@@ -97,8 +111,12 @@ impl InstalledDb {
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            let path: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            let div: String = row.try_get(1).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let path: String = row
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let div: String = row
+                .try_get(1)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             result.push((path, div));
         }
         Ok(result)
@@ -107,43 +125,50 @@ impl InstalledDb {
     pub async fn remove_shadowed_records(&self, shadowed_by_id: i64) -> Result<()> {
         query("DELETE FROM shadowed_files WHERE shadowed_by_id = ?")
             .bind(shadowed_by_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to remove shadowed records: {}", e)))?;
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to remove shadowed records: {}", e))
+            })?;
         Ok(())
     }
 
     pub async fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
         query("DELETE FROM files WHERE part_id = ?")
             .bind(part_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old files: {}", e)))?;
-        
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to delete old files: {}", e))
+            })?;
+
         self.insert_files(part_id, files).await
     }
 
     pub async fn get_files(&self, part_id: i64) -> Result<Vec<FileEntry>> {
         query_as::<_, FileEntry>(
             "SELECT path, file_hash, file_type, file_mode, file_size, is_config
-             FROM files WHERE part_id = ? ORDER BY path")
-            .bind(part_id)
+             FROM files WHERE part_id = ? ORDER BY path",
+        )
+        .bind(part_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))
     }
 
     pub async fn find_owner(&self, path: &str) -> Result<Option<String>> {
-        let row = query("SELECT p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path = ?")
-            .bind(path)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to find owner: {}", e)))?;
-        
+        let row =
+            query("SELECT p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path = ?")
+                .bind(path)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| WrightError::DatabaseError(format!("failed to find owner: {}", e)))?;
+
         match row {
             Some(r) => {
                 use sqlx::Row;
-                Ok(r.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?)
+                Ok(r.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?)
             }
             None => Ok(None),
         }
@@ -155,7 +180,7 @@ impl InstalledDb {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
                 "SELECT f.path, p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path IN ("
             );
-            
+
             let mut separated = query_builder.separated(", ");
             for path in chunk {
                 separated.push_bind(path);
@@ -166,12 +191,18 @@ impl InstalledDb {
                 .build()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to query find_owners_batch: {}", e)))?;
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to query find_owners_batch: {}", e))
+                })?;
 
             for row in rows {
                 use sqlx::Row;
-                let path: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-                let name: String = row.try_get(1).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let path: String = row
+                    .try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let name: String = row
+                    .try_get(1)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
                 result.insert(path, name);
             }
         }
@@ -190,7 +221,7 @@ impl InstalledDb {
             );
             query_builder.push_bind(current_part_id);
             query_builder.push(" AND f.path IN (");
-            
+
             let mut separated = query_builder.separated(", ");
             for path in chunk {
                 separated.push_bind(path);
@@ -201,12 +232,21 @@ impl InstalledDb {
                 .build()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to query get_other_owners_batch: {}", e)))?;
+                .map_err(|e| {
+                    WrightError::DatabaseError(format!(
+                        "failed to query get_other_owners_batch: {}",
+                        e
+                    ))
+                })?;
 
             for row in rows {
                 use sqlx::Row;
-                let path: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-                let name: String = row.try_get(1).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let path: String = row
+                    .try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let name: String = row
+                    .try_get(1)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
                 result.entry(path).or_default().push(name);
             }
         }
@@ -219,17 +259,27 @@ impl InstalledDb {
              FROM files f
              JOIN parts p ON f.part_id = p.id
              GROUP BY path
-             HAVING COUNT(DISTINCT part_id) > 1")
+             HAVING COUNT(DISTINCT part_id) > 1",
+        )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get ownership conflicts: {}", e)))?;
+        .map_err(|e| {
+            WrightError::DatabaseError(format!("failed to get ownership conflicts: {}", e))
+        })?;
 
         let mut result = Vec::new();
         for row in rows {
             use sqlx::Row;
-            let path: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            let owners: String = row.try_get(1).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            result.push(format!("Path '{}' is claimed by multiple parts: {}", path, owners));
+            let path: String = row
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let owners: String = row
+                .try_get(1)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            result.push(format!(
+                "Path '{}' is claimed by multiple parts: {}",
+                path, owners
+            ));
         }
         Ok(result)
     }

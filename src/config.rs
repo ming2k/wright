@@ -1,6 +1,9 @@
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use figment::{Figment, providers::{Format, Toml, Env}};
 
 use crate::error::{Result, WrightError};
 
@@ -259,12 +262,9 @@ impl AssembliesConfig {
                     WrightError::ConfigError(format!("failed to parse {}: {}", path.display(), e))
                 })?;
 
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| {
-                        WrightError::ConfigError(format!("invalid file name: {}", path.display()))
-                    })?;
+                let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                    WrightError::ConfigError(format!("invalid file name: {}", path.display()))
+                })?;
 
                 if assembly.name != stem {
                     return Err(WrightError::ConfigError(format!(
@@ -304,20 +304,20 @@ impl GlobalConfig {
             figment = figment.merge(Toml::file(p));
         } else {
             figment = figment.merge(Toml::file("/etc/wright/wright.toml"));
-            
+
             if let Some(xdg) = get_xdg_config() {
                 figment = figment.merge(Toml::file(xdg));
             }
-            
+
             figment = figment.merge(Toml::file("./wright.toml"));
         }
-        
+
         // Allow env var overrides, e.g., WRIGHT_WORKDIR
         figment = figment.merge(Env::prefixed("WRIGHT_").split("_"));
 
-        figment.extract().map_err(|e| {
-            WrightError::ConfigError(format!("Failed to load config: {}", e))
-        })
+        figment
+            .extract()
+            .map_err(|e| WrightError::ConfigError(format!("Failed to load config: {}", e)))
     }
 }
 

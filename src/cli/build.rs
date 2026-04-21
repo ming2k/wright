@@ -5,6 +5,7 @@ Examples:
   wright build zlib
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
+  wright build freetype --until-stage=staging
   wright resolve openssl --dependents | wright build
   echo -e 'curl\\nwget' | wright build --force";
 
@@ -16,8 +17,13 @@ pub struct BuildArgs {
     /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
     /// Skips fetch/verify/extract — requires a previous full build.
     /// Example: --stage=check --stage=staging --stage=fabricate
-    #[arg(long)]
+    #[arg(long, conflicts_with = "until_stage")]
     pub stage: Vec<String>,
+
+    /// Run a normal build pipeline and stop after the specified lifecycle stage.
+    /// Unlike `--stage`, this still runs all prior stages in order.
+    #[arg(long, conflicts_with = "stage")]
+    pub until_stage: Option<String>,
 
     /// Skip the lifecycle `check` stage during a normal full build.
     /// Unlike `--stage`, this still runs the full pipeline (including fetch/verify/extract).

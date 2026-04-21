@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.3] - 2026-04-21
+
+### Added
+- **Stop-After Staging Builds**: Added `wright build --until-stage <NAME>` so full builds can stop after a chosen lifecycle stage while keeping staged output available for inspection.
+- **Apply Resume Support**: Added `wright apply --resume [HASH]` so failed apply runs can continue from the same request scope without rebuilding already completed work.
+
+### Changed
+- **Unified Execution Sessions**: Replaced the old build-only session tracking with shared execution session tables used by both `build` and `apply`.
+- **Resume Fingerprinting**: Resume hashes now include execution-plan details and plan file fingerprints instead of only the task name set, preventing unsafe cross-run reuse.
+
+### Fixed
+- **Resume Artifact Validation**: Build resume now reuses completed tasks only when the expected archived artifacts still exist, avoiding false skips after cleanup or partial loss.
+
 ## [3.0.2] - 2026-04-21
 
 ### Fixed

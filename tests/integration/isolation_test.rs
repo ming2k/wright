@@ -1,8 +1,8 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use wright::isolation::{run_in_isolation, IsolationConfig, IsolationLevel};
 use wright::error::WrightError;
+use wright::isolation::{run_in_isolation, IsolationConfig, IsolationLevel};
 
 fn should_skip_isolation_test(err: &WrightError) -> bool {
     let msg = err.to_string();

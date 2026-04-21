@@ -1,11 +1,12 @@
-use std::path::Path;
 use crate::database::{FileType, InstalledDb};
 use crate::error::{Result, WrightError};
 use crate::util::checksum;
+use std::path::Path;
 
 pub async fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Result<Vec<String>> {
     let part = db
-        .get_part(name).await?
+        .get_part(name)
+        .await?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
     let files = db.get_files(part.id).await?;

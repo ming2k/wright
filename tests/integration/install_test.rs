@@ -32,6 +32,7 @@ async fn build_hello_archive() -> PathBuf {
             plan_dir,
             Path::new("/"),
             &[],
+            None,
             false,
             false,
             &std::collections::HashMap::new(),
@@ -39,7 +40,9 @@ async fn build_hello_archive() -> PathBuf {
             None,
             None,
             None,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -63,7 +66,9 @@ async fn test_end_to_end_install_query_remove() {
     let archive = build_hello_archive().await;
 
     // Install
-    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
 
     // Verify file exists on disk
     let hello_bin = root.path().join("usr/bin/hello");
@@ -89,11 +94,15 @@ async fn test_end_to_end_install_query_remove() {
     assert_eq!(owner, Some("hello".to_string()));
 
     // Verify integrity
-    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path())
+        .await
+        .unwrap();
     assert!(issues.is_empty());
 
     // Remove
-    transaction::remove_part(&db, "hello", root.path(), false).await.unwrap();
+    transaction::remove_part(&db, "hello", root.path(), false)
+        .await
+        .unwrap();
 
     // Verify file is gone
     assert!(!hello_bin.exists());
@@ -113,7 +122,9 @@ async fn test_file_conflict_detection() {
     let archive = build_hello_archive().await;
 
     // Install first copy
-    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
 
     // Try to install again — should fail because the part is already installed
     let result = transaction::install_part(&db, &archive, root.path(), false);
@@ -128,12 +139,16 @@ async fn test_verify_detects_modification() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
 
     // Tamper with installed file
     std::fs::write(root.path().join("usr/bin/hello"), b"tampered content").unwrap();
 
-    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path())
+        .await
+        .unwrap();
     assert!(!issues.is_empty());
     assert!(issues.iter().any(|i: &String| i.contains("MODIFIED")));
 
@@ -146,12 +161,16 @@ async fn test_verify_detects_missing_file() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
 
     // Delete installed file
     std::fs::remove_file(root.path().join("usr/bin/hello")).unwrap();
 
-    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path())
+        .await
+        .unwrap();
     assert!(!issues.is_empty());
     assert!(issues.iter().any(|i: &String| i.contains("MISSING")));
 
@@ -164,7 +183,9 @@ async fn test_search_installed_parts() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
 
     // Search by name
     let results = db.search_parts("hello").await.unwrap();

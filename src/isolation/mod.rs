@@ -134,7 +134,12 @@ pub struct IsolationConfig {
 }
 
 impl IsolationConfig {
-    pub fn new(level: IsolationLevel, src_dir: PathBuf, output_dir: PathBuf, task_id: String) -> Self {
+    pub fn new(
+        level: IsolationLevel,
+        src_dir: PathBuf,
+        output_dir: PathBuf,
+        task_id: String,
+    ) -> Self {
         Self {
             level,
             base_root: PathBuf::from("/"),

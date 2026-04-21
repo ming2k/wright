@@ -123,7 +123,10 @@ fn acquire_lock_path_with_timeout(
         .open(lock_path)
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                WrightError::AccessDenied(format!("permission denied for lock file {}", lock_path.display()))
+                WrightError::AccessDenied(format!(
+                    "permission denied for lock file {}",
+                    lock_path.display()
+                ))
             } else {
                 WrightError::LockError(format!(
                     "failed to open lock file {}: {}",

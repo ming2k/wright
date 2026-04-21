@@ -36,7 +36,8 @@ This database represents the ground truth of the operating system's state as man
 - **`provides`, `conflicts`, `replaces`**: Metadata used to handle virtual packages and ensure system consistency during upgrades.
 - **`transactions`**: A log of all install, upgrade, and remove operations, allowing for rollback in case of failure.
 - **`shadowed_files`**: Tracks file collisions where one part's file is "diverted" or overwritten by another, ensuring safe restoration when the shadowing part is removed.
-- **`build_sessions`**: Tracks progress of multi-package `apply` runs to support the `--resume` feature.
+- **`execution_sessions`**: Stores resumable execution contexts for `build` and `apply`.
+- **`execution_session_items`**: Tracks per-task completion state for resumable build work reused by both commands.
 
 ---
 

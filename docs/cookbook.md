@@ -118,6 +118,14 @@ wright build mypart
 wright build mypart --stage=staging
 ```
 
+To run a normal build from the start but stop after a stage so you can inspect
+the current `${PART_DIR}` contents, use `--until-stage`:
+
+```bash
+wright build mypart --until-stage=staging
+# Inspect /var/tmp/wright/workshop/mypart-<version>/output/
+```
+
 To iterate on a subset of stages and inspect the result:
 
 ```bash
@@ -294,6 +302,31 @@ wright resolve pcre2 --rdeps --depth=0 | wright build --resume a1b2c3...
 ```
 
 Sessions are cleaned up automatically when all parts complete successfully.
+
+## Resuming After a Failed Apply
+
+`wright apply` can also resume, but its behavior is intentionally split across
+two layers:
+
+- The live system state determines which batches are already converged.
+- The execution session remembers which build tasks already finished, so a
+  resumed apply does not rebuild archives that were completed before the
+  failure.
+
+Re-run the same apply request with `--resume`:
+
+```bash
+wright apply @base --deps --resume
+```
+
+Or pass the explicit hash printed on failure:
+
+```bash
+wright apply @base --deps --resume a1b2c3...
+```
+
+`apply --resume` must be used with the same targets and scope flags
+(`--deps/--rdeps/--match/--depth/--force`) as the original run.
 
 ---
 

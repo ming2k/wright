@@ -1,5 +1,5 @@
-use std::io::BufRead;
 use anyhow::{Context, Result};
+use std::io::BufRead;
 
 use crate::builder::orchestrator::{self, BuildOptions};
 use crate::cli::build::BuildArgs;
@@ -20,10 +20,11 @@ pub async fn execute_build(
     .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
-        let db = InstalledDb::open(&config.general.installed_db_path).await
+        let db = InstalledDb::open(&config.general.installed_db_path)
+            .await
             .context("failed to open database")?;
         let count = db.clear_all_sessions().await?;
-        tracing::info!("Cleared {} build session(s)", count);
+        tracing::info!("Cleared {} execution session(s)", count);
         return Ok(());
     }
 
@@ -44,6 +45,7 @@ pub async fn execute_build(
         all_targets,
         BuildOptions {
             stages: args.stage,
+            until_stage: args.until_stage,
             fetch_only: args.fetch,
             clean: args.clean,
             force: args.force,
@@ -59,6 +61,7 @@ pub async fn execute_build(
             print_parts: args.print_parts,
             nproc_per_isolation: config.build.nproc_per_isolation,
         },
-    ).await?;
+    )
+    .await?;
     Ok(())
 }

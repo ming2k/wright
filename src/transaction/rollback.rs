@@ -183,7 +183,11 @@ impl RollbackState {
             match serde_json::from_str::<JournalEntry>(line) {
                 Ok(JournalEntry::FileCreated { path }) => {
                     if let Err(e) = std::fs::remove_file(&path) {
-                        warn!("Journal replay: failed to remove file {}: {}", path.display(), e);
+                        warn!(
+                            "Journal replay: failed to remove file {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
                 Ok(JournalEntry::DirCreated { path }) => {
@@ -211,7 +215,9 @@ impl RollbackState {
                     if let Err(e) = std::os::unix::fs::symlink(&target, &original) {
                         warn!(
                             "Journal replay: failed to restore symlink {} -> {}: {}",
-                            original.display(), target, e
+                            original.display(),
+                            target,
+                            e
                         );
                     }
                 }

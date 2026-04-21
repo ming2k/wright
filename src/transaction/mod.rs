@@ -6,12 +6,12 @@ pub mod rollback;
 mod upgrade;
 mod verify;
 
-use std::path::PathBuf;
-use std::time::Duration;
-use tracing::debug;
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use crate::part::part::PartInfo;
+use std::path::PathBuf;
+use std::time::Duration;
+use tracing::debug;
 
 pub use hooks::get_hook;
 pub use install::{
@@ -48,9 +48,23 @@ pub(super) async fn self_replace_provides_conflicts(
     part_id: i64,
     partinfo: &PartInfo,
 ) -> Result<()> {
-    sqlx::query("DELETE FROM provides WHERE part_id = ?").bind(part_id).execute(&db.pool).await.map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
-    sqlx::query("DELETE FROM conflicts WHERE part_id = ?").bind(part_id).execute(&db.pool).await.map_err(|e| WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e)))?;
-    sqlx::query("DELETE FROM replaces WHERE part_id = ?").bind(part_id).execute(&db.pool).await.map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
+    sqlx::query("DELETE FROM provides WHERE part_id = ?")
+        .bind(part_id)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
+    sqlx::query("DELETE FROM conflicts WHERE part_id = ?")
+        .bind(part_id)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| {
+            WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
+        })?;
+    sqlx::query("DELETE FROM replaces WHERE part_id = ?")
+        .bind(part_id)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
 
     if !partinfo.provides.is_empty() {
         db.insert_provides(part_id, &partinfo.provides).await?;
@@ -63,7 +77,6 @@ pub(super) async fn self_replace_provides_conflicts(
     }
     Ok(())
 }
-
 
 pub(super) fn log_debug_timing(operation: &str, part_name: &str, phase: &str, elapsed: Duration) {
     debug!(

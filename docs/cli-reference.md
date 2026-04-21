@@ -50,6 +50,7 @@ Useful `wright build` flags:
 - `--clean`
 - `--resume [HASH]`
 - `--stage <NAME>`
+- `--until-stage <NAME>`
 - `--skip-check`
 - `--mvp`
 - `--print-parts`
@@ -78,6 +79,7 @@ Useful `wright apply` flags:
 - `--match [missing|outdated|installed|all]`
 - `--depth <N>`
 - `-f`, `--force`
+- `--resume [HASH]`
 - `--dry-run`
 
 

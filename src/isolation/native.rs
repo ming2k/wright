@@ -198,10 +198,16 @@ pub fn run_in_isolation(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle =
-            make_stream_capture(child.stdout.take().unwrap(), config.verbose, config.log_stdout.take());
-        let stderr_handle =
-            make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
+        let stdout_handle = make_stream_capture(
+            child.stdout.take().unwrap(),
+            config.verbose,
+            config.log_stdout.take(),
+        );
+        let stderr_handle = make_stream_capture(
+            child.stderr.take().unwrap(),
+            config.verbose,
+            config.log_stderr.take(),
+        );
         let status = child
             .wait()
             .map_err(|e| WrightError::IsolationError(format!("failed to wait for command: {e}")))?;
@@ -287,10 +293,16 @@ pub fn run_in_isolation(
             .rlimits
             .timeout_secs
             .map(|t| spawn_timeout_watchdog(child.id(), t, true));
-        let stdout_handle =
-            make_stream_capture(child.stdout.take().unwrap(), config.verbose, config.log_stdout.take());
-        let stderr_handle =
-            make_stream_capture(child.stderr.take().unwrap(), config.verbose, config.log_stderr.take());
+        let stdout_handle = make_stream_capture(
+            child.stdout.take().unwrap(),
+            config.verbose,
+            config.log_stdout.take(),
+        );
+        let stderr_handle = make_stream_capture(
+            child.stderr.take().unwrap(),
+            config.verbose,
+            config.log_stderr.take(),
+        );
         let status = child
             .wait()
             .map_err(|e| WrightError::IsolationError(format!("failed to wait for command: {e}")))?;
@@ -813,8 +825,10 @@ pub fn run_in_isolation(
                 .timeout_secs
                 .map(|t| spawn_timeout_watchdog(child.as_raw() as u32, t, false));
 
-            let stdout_handle = make_stream_capture(out_file, config.verbose, config.log_stdout.take());
-            let stderr_handle = make_stream_capture(err_file, config.verbose, config.log_stderr.take());
+            let stdout_handle =
+                make_stream_capture(out_file, config.verbose, config.log_stdout.take());
+            let stderr_handle =
+                make_stream_capture(err_file, config.verbose, config.log_stderr.take());
 
             let status = wait_for_child(child)?;
             if let Some(done) = watchdog {

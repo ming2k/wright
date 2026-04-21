@@ -1,11 +1,13 @@
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use serde::Deserialize;
 use tracing::debug;
 
 use crate::builder::variables;
-use crate::isolation::{run_in_isolation, IsolationConfig, IsolationLevel, ResourceLimits, IsolationOutput};
 use crate::error::{Result, WrightError};
+use crate::isolation::{
+    run_in_isolation, IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits,
+};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ExecutorConfig {
@@ -63,7 +65,9 @@ impl ExecutorRegistry {
         let mut registry = Self {
             executors: HashMap::new(),
         };
-        registry.executors.insert("shell".to_string(), ExecutorConfig::default());
+        registry
+            .executors
+            .insert("shell".to_string(), ExecutorConfig::default());
         registry
     }
 
@@ -77,8 +81,13 @@ impl ExecutorRegistry {
             if path.extension().and_then(|s| s.to_str()) == Some("toml") {
                 let content = std::fs::read_to_string(&path).map_err(WrightError::IoError)?;
                 let config: ExecutorWrapper = toml::from_str(&content)?;
-                debug!("Loaded executor: {} from {}", config.executor.name, path.display());
-                self.executors.insert(config.executor.name.clone(), config.executor);
+                debug!(
+                    "Loaded executor: {} from {}",
+                    config.executor.name,
+                    path.display()
+                );
+                self.executors
+                    .insert(config.executor.name.clone(), config.executor);
             }
         }
         Ok(())
@@ -119,7 +128,14 @@ pub async fn execute_script(
         let mut v = vars.clone();
         v.insert("WORKDIR".to_string(), "/build".to_string());
         v.insert("PART_DIR".to_string(), "/output".to_string());
-        v.insert("MAIN_PART_DIR".to_string(), if options.main_part_dir.is_some() { "/main-part".to_string() } else { "/output".to_string() });
+        v.insert(
+            "MAIN_PART_DIR".to_string(),
+            if options.main_part_dir.is_some() {
+                "/main-part".to_string()
+            } else {
+                "/output".to_string()
+            },
+        );
         v
     } else {
         vars.clone()
@@ -128,10 +144,26 @@ pub async fn execute_script(
     let expanded = variables::substitute(script, &effective_vars);
     let script_name = format!(".wright_script{}", executor.tempfile_extension);
     let script_path = working_dir.join(&script_name);
-    tokio::fs::write(&script_path, &expanded).await.map_err(|e| WrightError::BuildError(format!("failed to write build script: {}", e)))?;
+    tokio::fs::write(&script_path, &expanded)
+        .await
+        .map_err(|e| WrightError::BuildError(format!("failed to write build script: {}", e)))?;
 
-    let task_id = format!("{}-{}", vars.get("NAME").cloned().unwrap_or_else(|| "unknown".to_string()), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
-    let mut config = IsolationConfig::new(options.level, options.work_dir.clone(), options.output_dir.clone(), task_id);
+    let task_id = format!(
+        "{}-{}",
+        vars.get("NAME")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string()),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let mut config = IsolationConfig::new(
+        options.level,
+        options.work_dir.clone(),
+        options.output_dir.clone(),
+        task_id,
+    );
     config.base_root = options.base_root.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
@@ -139,7 +171,9 @@ pub async fn execute_script(
     config.log_stdout = options.log_stdout.take();
 
     if let Some(ref main_part) = options.main_part_dir {
-        config.extra_binds.push((main_part.clone(), PathBuf::from("/main-part"), false));
+        config
+            .extra_binds
+            .push((main_part.clone(), PathBuf::from("/main-part"), false));
     }
 
     for (key, value) in env_vars {
@@ -153,7 +187,29 @@ pub async fn execute_script(
         }
     }
 
-    for key in ["CC", "CXX", "AR", "AS", "LD", "NM", "RANLIB", "STRIP", "OBJCOPY", "OBJDUMP", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "PKG_CONFIG_PATH", "PKG_CONFIG_SYSROOT_DIR", "MAKEFLAGS", "JOBS"] {
+    for key in [
+        "CC",
+        "CXX",
+        "AR",
+        "AS",
+        "LD",
+        "NM",
+        "RANLIB",
+        "STRIP",
+        "OBJCOPY",
+        "OBJDUMP",
+        "CFLAGS",
+        "CXXFLAGS",
+        "CPPFLAGS",
+        "LDFLAGS",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH",
+        "LIBRARY_PATH",
+        "PKG_CONFIG_PATH",
+        "PKG_CONFIG_SYSROOT_DIR",
+        "MAKEFLAGS",
+        "JOBS",
+    ] {
         if let Ok(value) = std::env::var(key) {
             if !config.env.iter().any(|(k, _)| k == key) {
                 config.env.push((key.to_string(), value));
@@ -171,9 +227,10 @@ pub async fn execute_script(
     }
 
     let command = executor.command.clone();
-    let mut output = tokio::task::spawn_blocking(move || {
-        run_in_isolation(&mut config, &command, &args)
-    }).await.map_err(|e| WrightError::BuildError(format!("spawn_blocking failed: {}", e)))??;
+    let mut output =
+        tokio::task::spawn_blocking(move || run_in_isolation(&mut config, &command, &args))
+            .await
+            .map_err(|e| WrightError::BuildError(format!("spawn_blocking failed: {}", e)))??;
 
     if output.status.code() != Some(0) {
         let mut remapped_stderr = output.stderr.tail.clone();
@@ -183,5 +240,9 @@ pub async fn execute_script(
         output.stderr.tail = remapped_stderr;
     }
 
-    Ok(IsolationOutput { stdout: output.stdout, stderr: output.stderr, status: output.status })
+    Ok(IsolationOutput {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        status: output.status,
+    })
 }

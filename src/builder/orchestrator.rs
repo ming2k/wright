@@ -1,8 +1,8 @@
 //! Build orchestrator — parallel build scheduling, dependency resolution,
 //! cascade expansion, and automatic bootstrap cycle detection/resolution.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::builder::logging;
 use crate::builder::mvp::inject_bootstrap_passes;
@@ -19,14 +19,15 @@ mod resolver;
 
 use execute::{execute_builds, lint_dependency_graph};
 use planning::{
-    build_dep_map, compute_session_hash, construction_plan_batches, construction_plan_label,
-    expand_missing_dependencies, expand_rebuild_deps,
+    build_dep_map, construction_plan_batches, construction_plan_label, expand_missing_dependencies,
+    expand_rebuild_deps,
 };
 use resolver::resolve_targets;
 
 pub use resolver::setup_resolver;
 
 use crate::archive::resolver::LocalResolver;
+use crate::plan::manifest::OutputConfig;
 
 #[derive(Debug, Clone)]
 pub struct BuildExecutionPlan {
@@ -77,6 +78,7 @@ pub struct ResolveOptions {
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     pub stages: Vec<String>,
+    pub until_stage: Option<String>,
     pub fetch_only: bool,
     pub clean: bool,
     pub lint: bool,
@@ -95,6 +97,127 @@ impl BuildOptions {
     fn is_build_op(&self) -> bool {
         !self.checksum && !self.lint && !self.fetch_only
     }
+}
+
+fn plan_file_fingerprint(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    hasher.update(canonical.to_string_lossy().as_bytes());
+    hasher.update(b"\n-- plan.toml --\n");
+    let content = std::fs::read(path).map_err(|e| {
+        WrightError::BuildError(format!(
+            "failed to read {} for session hash: {}",
+            path.display(),
+            e
+        ))
+    })?;
+    hasher.update(&content);
+
+    let mvp_path = path.with_file_name("mvp.toml");
+    if mvp_path.exists() {
+        hasher.update(b"\n-- mvp.toml --\n");
+        let mvp_content = std::fs::read(&mvp_path).map_err(|e| {
+            WrightError::BuildError(format!(
+                "failed to read {} for session hash: {}",
+                mvp_path.display(),
+                e
+            ))
+        })?;
+        hasher.update(&mvp_content);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn task_fingerprints(plan: &BuildExecutionPlan) -> Result<BTreeMap<String, String>> {
+    let mut fingerprints = BTreeMap::new();
+    let mut tasks: Vec<_> = plan.name_to_path.iter().collect();
+    tasks.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (task_name, path) in tasks {
+        fingerprints.insert(task_name.clone(), plan_file_fingerprint(path)?);
+    }
+
+    Ok(fingerprints)
+}
+
+pub fn compute_build_session_hash(
+    plan: &BuildExecutionPlan,
+    opts: &BuildOptions,
+    session_scope: &str,
+) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let fingerprints = task_fingerprints(plan)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"wright-session-v2\n");
+    hasher.update(session_scope.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(format!("force={}\n", opts.force).as_bytes());
+    hasher.update(format!("clean={}\n", opts.clean).as_bytes());
+    hasher.update(format!("mvp={}\n", opts.mvp).as_bytes());
+    hasher.update(format!("fetch_only={}\n", opts.fetch_only).as_bytes());
+    hasher.update(format!("skip_check={}\n", opts.skip_check).as_bytes());
+    hasher.update(format!("checksum={}\n", opts.checksum).as_bytes());
+    hasher.update(format!("until_stage={:?}\n", opts.until_stage).as_bytes());
+    hasher.update(format!("stages={:?}\n", opts.stages).as_bytes());
+
+    for (batch_idx, tasks) in plan.batches.iter().enumerate() {
+        hasher.update(format!("batch:{}\n", batch_idx).as_bytes());
+        let mut batch_tasks = tasks.clone();
+        batch_tasks.sort();
+        for task in batch_tasks {
+            hasher.update(task.as_bytes());
+            hasher.update(b"\n");
+            if let Some(fingerprint) = fingerprints.get(&task) {
+                hasher.update(fingerprint.as_bytes());
+                hasher.update(b"\n");
+            }
+        }
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn expected_task_artifacts(parts_dir: &Path, plan_path: &Path) -> Result<Vec<PathBuf>> {
+    let manifest = PlanManifest::from_file(plan_path)?;
+    let mut artifacts = vec![parts_dir.join(manifest.part_filename())];
+    if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+        for (sub_name, sub_part) in parts {
+            if sub_name == &manifest.plan.name {
+                continue;
+            }
+            let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
+            artifacts.push(parts_dir.join(sub_manifest.part_filename()));
+        }
+    }
+    Ok(artifacts)
+}
+
+pub async fn load_completed_build_tasks(
+    db: &InstalledDb,
+    config: &GlobalConfig,
+    plan: &BuildExecutionPlan,
+    session_hash: &str,
+) -> Result<HashSet<String>> {
+    let completed = db
+        .get_execution_session_completed_items(session_hash)
+        .await?;
+    let mut reusable = HashSet::new();
+
+    for task_name in completed {
+        let Some(plan_path) = plan.name_to_path.get(&task_name) else {
+            continue;
+        };
+        let artifacts = expected_task_artifacts(&config.general.parts_dir, plan_path)?;
+        if artifacts.iter().all(|path| path.exists()) {
+            reusable.insert(task_name);
+        }
+    }
+
+    Ok(reusable)
 }
 
 pub fn resolve_explicit_plan_names(
@@ -142,7 +265,8 @@ pub async fn resolve_build_set(
 
     {
         let db_path = config.general.installed_db_path.clone();
-        let db = InstalledDb::open(&db_path).await
+        let db = InstalledDb::open(&db_path)
+            .await
             .context("failed to open database for dependency resolution")?;
 
         if let Some(domain) = opts.deps {
@@ -153,7 +277,8 @@ pub async fn resolve_build_set(
                 &opts.match_policies,
                 domain,
                 actual_max,
-            ).await?;
+            )
+            .await?;
         }
 
         if !opts.match_policies.contains(&MatchPolicy::All) {
@@ -170,7 +295,10 @@ pub async fn resolve_build_set(
                         &all_plans,
                         &db,
                         &opts.match_policies,
-                    ).await.unwrap_or(true) {
+                    )
+                    .await
+                    .unwrap_or(true)
+                    {
                         retained.insert(path);
                     }
                 } else {
@@ -182,7 +310,8 @@ pub async fn resolve_build_set(
 
         if let Some(domain) = opts.rdeps {
             let installed_names: HashSet<String> = db
-                .list_parts().await
+                .list_parts()
+                .await
                 .context("failed to list installed parts for dependents filter")?
                 .into_iter()
                 .map(|p| p.name)
@@ -193,7 +322,8 @@ pub async fn resolve_build_set(
                 domain,
                 actual_max,
                 &installed_names,
-            ).await?;
+            )
+            .await?;
         }
     }
 
@@ -290,6 +420,8 @@ impl BuildExecutionPlan {
         config: &GlobalConfig,
         batch_index: usize,
         opts: &BuildOptions,
+        session_hash: Option<&str>,
+        session_completed: &HashSet<String>,
     ) -> Result<()> {
         let batch = self.batches.get(batch_index).ok_or_else(|| {
             WrightError::BuildError(format!("unknown build batch {}", batch_index))
@@ -302,9 +434,10 @@ impl BuildExecutionPlan {
             &batch_set,
             opts,
             &self.bootstrap_excluded,
-            None,
-            &HashSet::new(),
-        ).await
+            session_hash,
+            session_completed,
+        )
+        .await
     }
 }
 
@@ -352,7 +485,11 @@ pub fn describe_batch_actions(
     actions.join(", ")
 }
 
-pub async fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildOptions) -> Result<()> {
+pub async fn run_build(
+    config: &GlobalConfig,
+    targets: Vec<String>,
+    opts: BuildOptions,
+) -> Result<()> {
     if opts.lint {
         let resolver = setup_resolver(config)?;
         let all_plans = resolver.get_all_plans()?;
@@ -363,7 +500,7 @@ pub async fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildO
     let plan = create_execution_plan(config, targets, &opts)?;
 
     let session_hash = if opts.resume.is_some() || opts.is_build_op() {
-        Some(compute_session_hash(&plan.build_set))
+        Some(compute_build_session_hash(&plan, &opts, "build")?)
     } else {
         None
     };
@@ -377,10 +514,24 @@ pub async fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildO
             if hash.is_empty() {
                 (false, HashSet::new())
             } else {
-                let db = InstalledDb::open(&config.general.installed_db_path).await
+                let db = InstalledDb::open(&config.general.installed_db_path)
+                    .await
                     .context("failed to open database for resume")?;
-                if db.session_exists(&hash).await? {
-                    let completed = db.get_session_completed(&hash).await?;
+                if let Some(session) = db.get_execution_session(&hash).await? {
+                    if session.command_kind != "build" {
+                        return Err(WrightError::BuildError(format!(
+                            "session {} is for '{}', not 'build'",
+                            &hash[..12.min(hash.len())],
+                            session.command_kind
+                        )));
+                    }
+                    let completed = load_completed_build_tasks(
+                        &db,
+                        config,
+                        &plan,
+                        session.task_session_hash.as_deref().unwrap_or(&hash),
+                    )
+                    .await?;
                     info!(
                         "resuming session {} ({}/{} completed)",
                         &hash[..12.min(hash.len())],
@@ -441,7 +592,10 @@ pub async fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildO
         if opts.is_build_op() {
             if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
                 let packages: Vec<String> = plan.name_to_path.keys().cloned().collect();
-                let _ = db.create_session(hash, &packages).await;
+                let _ = db
+                    .ensure_execution_session(hash, "build", Some(hash), None)
+                    .await;
+                let _ = db.ensure_execution_session_items(hash, &packages).await;
             }
             Some(hash.clone())
         } else {
@@ -460,13 +614,14 @@ pub async fn run_build(config: &GlobalConfig, targets: Vec<String>, opts: BuildO
         &plan.bootstrap_excluded,
         active_session_hash.as_deref(),
         &session_completed,
-    ).await;
+    )
+    .await;
 
     match &result {
         Ok(()) => {
             if let Some(ref hash) = active_session_hash {
                 if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
-                    let _ = db.clear_session(hash).await;
+                    let _ = db.clear_execution_session(hash).await;
                 }
             }
         }

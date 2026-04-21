@@ -28,11 +28,11 @@ pub async fn upgrade_part(
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let mut phase_start = Instant::now();
-    
-    // Blocking call to extract_part, but it's mainly I/O. 
+
+    // Blocking call to extract_part, but it's mainly I/O.
     // We could wrap it in spawn_blocking if it's too slow.
     let (partinfo, part_hash) = part::extract_part(part_path, temp_dir.path())?;
-    
+
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -62,7 +62,11 @@ pub async fn upgrade_part(
         if !is_newer {
             return Err(WrightError::UpgradeError(format!(
                 "{} {}-{} is not newer than installed {}-{}",
-                partinfo.name, partinfo.version, partinfo.release, old_part.version, old_part.release,
+                partinfo.name,
+                partinfo.version,
+                partinfo.release,
+                old_part.version,
+                old_part.release,
             )));
         }
     }
@@ -111,14 +115,16 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    let tx_id = db.record_transaction(
-        "upgrade",
-        &partinfo.name,
-        Some(&old_part.version),
-        Some(&partinfo.version),
-        "pending",
-        None,
-    ).await?;
+    let tx_id = db
+        .record_transaction(
+            "upgrade",
+            &partinfo.name,
+            Some(&old_part.version),
+            Some(&partinfo.version),
+            "pending",
+            None,
+        )
+        .await?;
 
     let mut rollback_state = match journal_path_from_db(db) {
         Some(jp) => RollbackState::with_journal(jp),
@@ -162,7 +168,7 @@ pub async fn upgrade_part(
                 Ok(()) => Ok(()),
                 Err(_) => tokio::fs::copy(&full_path, &backup_path).await.map(|_| ()),
             };
-            
+
             match result {
                 Ok(()) => {
                     rollback_state.record_backup(full_path, backup_path);
@@ -177,7 +183,8 @@ pub async fn upgrade_part(
             }
         } else if old_file.file_type == FileType::Symlink {
             if let Ok(target) = tokio::fs::read_link(&full_path).await {
-                rollback_state.record_symlink_backup(full_path, target.to_string_lossy().to_string());
+                rollback_state
+                    .record_symlink_backup(full_path, target.to_string_lossy().to_string());
             }
         }
     }
@@ -200,9 +207,9 @@ pub async fn upgrade_part(
 
     let config_paths = collect_config_paths(&new_entries);
     phase_start = Instant::now();
-    
-    // copy_entries_to_root should probably also be async. 
-    // For now I'll assume it's still sync and wraps internal tokio calls if needed, 
+
+    // copy_entries_to_root should probably also be async.
+    // For now I'll assume it's still sync and wraps internal tokio calls if needed,
     // but better to refactor it to async too.
     let preserved_configs = match copy_entries_to_root(
         &new_entries,
@@ -212,7 +219,9 @@ pub async fn upgrade_part(
         None,
         &config_paths,
         &divert_paths,
-    ).await {
+    )
+    .await
+    {
         Ok(paths) => paths,
         Err(e) => {
             warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
@@ -221,7 +230,7 @@ pub async fn upgrade_part(
             return Err(e);
         }
     };
-    
+
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -237,7 +246,9 @@ pub async fn upgrade_part(
         .filter(|f| !new_paths.contains(f.path.as_str()) && !f.is_config)
         .map(|f| f.path.as_str())
         .collect();
-    let other_owners_map = db.get_other_owners_batch(old_part.id, &to_delete_paths).await?;
+    let other_owners_map = db
+        .get_other_owners_batch(old_part.id, &to_delete_paths)
+        .await?;
 
     for old_file in old_files.iter().rev() {
         if new_paths.contains(old_file.path.as_str()) {
@@ -292,9 +303,13 @@ pub async fn upgrade_part(
         part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         origin: old_part.origin, // Preserve origin
-    }).await?;
+    })
+    .await?;
 
-    let updated_part = db.get_part(&partinfo.name).await?.expect("updated package exists");
+    let updated_part = db
+        .get_part(&partinfo.name)
+        .await?
+        .expect("updated package exists");
 
     for (path, owner_name) in shadows {
         if let Some(owner_part) = db.get_part(&owner_name).await? {
@@ -307,12 +322,14 @@ pub async fn upgrade_part(
             } else {
                 None
             };
-            let _ = db.record_shadowed_file(
-                &path,
-                owner_part.id,
-                updated_part.id,
-                diverted_to.as_deref(),
-            ).await;
+            let _ = db
+                .record_shadowed_file(
+                    &path,
+                    owner_part.id,
+                    updated_part.id,
+                    diverted_to.as_deref(),
+                )
+                .await;
         }
     }
 
@@ -328,7 +345,8 @@ pub async fn upgrade_part(
         });
     }
     db.replace_dependencies(updated_part.id, &deps).await?;
-    db.replace_optional_dependencies(updated_part.id, &partinfo.optional_deps).await?;
+    db.replace_optional_dependencies(updated_part.id, &partinfo.optional_deps)
+        .await?;
 
     self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 

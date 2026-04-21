@@ -79,7 +79,9 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    let tx_id = db.record_transaction("remove", name, Some(&part.version), None, "pending", None).await?;
+    let tx_id = db
+        .record_transaction("remove", name, Some(&part.version), None, "pending", None)
+        .await?;
     let files = db.get_files(part.id).await?;
 
     let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -206,7 +208,8 @@ pub async fn order_removal_batch(db: &InstalledDb, targets: &[String]) -> Result
             &mut visiting,
             &mut visited,
             &mut ordered,
-        ).await?;
+        )
+        .await?;
     }
 
     Ok(ordered)
@@ -254,7 +257,8 @@ fn visit_removal_target<'a>(
         visited.insert(name.to_string());
         ordered.push(name.to_string());
         Ok(())
-    }.boxed()
+    }
+    .boxed()
 }
 
 pub async fn cascade_remove_list(db: &InstalledDb, name: &str) -> Result<Vec<String>> {
@@ -282,5 +286,6 @@ fn cascade_collect<'a>(
             result.push(orphan);
         }
         Ok(())
-    }.boxed()
+    }
+    .boxed()
 }

@@ -37,6 +37,7 @@ pub async fn execute(
 
     if let SystemCommands::Apply {
         targets,
+        resume,
         deps,
         rdeps,
         match_policies,
@@ -45,31 +46,68 @@ pub async fn execute(
         dry_run,
     } = command
     {
-        return apply::execute_apply(targets, deps, rdeps, match_policies, depth, force, dry_run, config, installed_db_path, root_dir, verbose, quiet, &resolver).await;
+        return apply::execute_apply(
+            targets,
+            resume,
+            deps,
+            rdeps,
+            match_policies,
+            depth,
+            force,
+            dry_run,
+            config,
+            installed_db_path,
+            root_dir,
+            verbose,
+            quiet,
+            &resolver,
+        )
+        .await;
     }
 
     if let SystemCommands::SystemInit = command {
         info!("Initializing system databases...");
 
         info!("  -> {}...", installed_db_path.display());
-        let _db = InstalledDb::open(installed_db_path).await.context("failed to initialize system database")?;
+        let _db = InstalledDb::open(installed_db_path)
+            .await
+            .context("failed to initialize system database")?;
 
         let archive_db_path = &config.general.archive_db_path;
         info!("  -> {}...", archive_db_path.display());
-        let _adb = crate::database::ArchiveDb::open(archive_db_path).await.context("failed to initialize archive database")?;
+        let _adb = crate::database::ArchiveDb::open(archive_db_path)
+            .await
+            .context("failed to initialize archive database")?;
 
         info!("Databases are up-to-date.");
         return Ok(());
     }
 
-    let db = InstalledDb::open(installed_db_path).await.context("failed to open database")?;
+    let db = InstalledDb::open(installed_db_path)
+        .await
+        .context("failed to open database")?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
         SystemCommands::SystemInit => unreachable!(),
-        SystemCommands::Install { parts, force, nodeps } => { install::execute_install(&db, parts, force, nodeps, root_dir, &resolver).await?; }
-        SystemCommands::List { long, roots, assumed, orphans } => { list::execute_list(&db, long, roots, assumed, orphans).await?; }
-        SystemCommands::Doctor => { doctor::execute_doctor(&db).await?; }
+        SystemCommands::Install {
+            parts,
+            force,
+            nodeps,
+        } => {
+            install::execute_install(&db, parts, force, nodeps, root_dir, &resolver).await?;
+        }
+        SystemCommands::List {
+            long,
+            roots,
+            assumed,
+            orphans,
+        } => {
+            list::execute_list(&db, long, roots, assumed, orphans).await?;
+        }
+        SystemCommands::Doctor => {
+            doctor::execute_doctor(&db).await?;
+        }
         SystemCommands::Upgrade {
             parts,
             force,
@@ -91,7 +129,8 @@ pub async fn execute(
 
                 // Resolve by name
                 let all_versions = resolver
-                    .resolve_all(arg).await
+                    .resolve_all(arg)
+                    .await
                     .context(format!("failed to resolve '{}'", arg))?;
 
                 if all_versions.is_empty() {
@@ -125,7 +164,9 @@ pub async fn execute(
                     root_dir,
                     effective_force,
                     true,
-                ).await {
+                )
+                .await
+                {
                     Ok(()) => println!(
                         "upgraded: {} -> {}-{}",
                         arg, selected.version, selected.release
@@ -151,14 +192,16 @@ pub async fn execute(
             let removal_order = if recursive {
                 parts.clone()
             } else {
-                transaction::order_removal_batch(&db, &parts).await
+                transaction::order_removal_batch(&db, &parts)
+                    .await
                     .context("failed to plan removal order")?
             };
 
             for name in &removal_order {
                 if recursive {
                     let dependents = db
-                        .get_recursive_dependents(name).await
+                        .get_recursive_dependents(name)
+                        .await
                         .context(format!("failed to resolve dependents of {}", name))?;
 
                     if !dependents.is_empty() {
@@ -182,7 +225,8 @@ pub async fn execute(
 
                 // Compute cascade list before removing the target
                 let cascade_list = if cascade {
-                    let list = transaction::cascade_remove_list(&db, name).await
+                    let list = transaction::cascade_remove_list(&db, name)
+                        .await
                         .context(format!("failed to compute cascade list for {}", name))?;
                     if !list.is_empty() {
                         println!(
@@ -210,7 +254,8 @@ pub async fn execute(
                         root_dir,
                         force,
                         &ignored_dependents,
-                    ).await
+                    )
+                    .await
                 };
 
                 match result {
@@ -274,7 +319,10 @@ pub async fn execute(
                 let part_name = part
                     .ok_or_else(|| anyhow::anyhow!("part name is required unless using --all"))?;
 
-                let part = db.get_part(&part_name).await.context("failed to query part")?;
+                let part = db
+                    .get_part(&part_name)
+                    .await
+                    .context("failed to query part")?;
                 if part.is_none() {
                     eprintln!("part '{}' is not installed", part_name);
                     std::process::exit(1);
@@ -338,7 +386,8 @@ pub async fn execute(
                         println!("Part Hash   : {}", hash);
                     }
                     let opt_deps = db
-                        .get_optional_dependencies(info.id).await
+                        .get_optional_dependencies(info.id)
+                        .await
                         .context("failed to get optional dependencies")?;
                     if !opt_deps.is_empty() {
                         println!("Optional    :");
@@ -355,7 +404,8 @@ pub async fn execute(
         }
         SystemCommands::Search { keyword } => {
             let results = db
-                .search_parts(&keyword).await
+                .search_parts(&keyword)
+                .await
                 .context("failed to search parts")?;
             if results.is_empty() {
                 println!("no parts found matching '{}'", keyword);
@@ -399,7 +449,8 @@ pub async fn execute(
             let parts_to_verify: Vec<String> = if let Some(name) = part {
                 vec![name]
             } else {
-                db.list_parts().await
+                db.list_parts()
+                    .await
                     .context("failed to list parts")?
                     .iter()
                     .map(|p| p.name.clone())
@@ -408,7 +459,8 @@ pub async fn execute(
 
             let mut all_ok = true;
             for name in &parts_to_verify {
-                let issues = transaction::verify_part(&db, name, root_dir).await
+                let issues = transaction::verify_part(&db, name, root_dir)
+                    .await
                     .context(format!("failed to verify {}", name))?;
                 if issues.is_empty() {
                     println!("{}: OK", name);
@@ -472,7 +524,9 @@ pub async fn execute(
                                         root_dir,
                                         false,
                                         true,
-                                    ).await {
+                                    )
+                                    .await
+                                    {
                                         eprintln!("  error: {}", e);
                                     } else {
                                         upgraded += 1;
@@ -563,7 +617,11 @@ pub async fn execute(
                     };
                     println!(
                         "{}  {:<9} {} {}{}",
-                        r.timestamp.as_deref().unwrap_or_default(), r.operation, r.part_name, version, status
+                        r.timestamp.as_deref().unwrap_or_default(),
+                        r.operation,
+                        r.part_name,
+                        version,
+                        status
                     );
                 }
             }

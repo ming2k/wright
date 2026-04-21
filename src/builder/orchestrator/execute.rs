@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use crate::builder::logging;
@@ -158,7 +158,8 @@ pub(super) async fn execute_builds(
                     &bootstrap_excl,
                     compile_lock_clone.clone(),
                     spinner.clone(),
-                ).await;
+                )
+                .await;
 
                 match res {
                     Ok(_) => {
@@ -223,7 +224,8 @@ pub(super) async fn execute_builds(
                     &completed,
                     &name,
                     opts.quiet,
-                ).await;
+                )
+                .await;
             }
             Some(Err((name, _))) => {
                 in_progress.lock().await.remove(&name);
@@ -271,7 +273,7 @@ async fn complete_build_task(
 ) {
     if let Some(hash) = session_hash {
         if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
-            let _ = db.mark_session_completed(hash, name).await;
+            let _ = db.mark_execution_session_item_completed(hash, name).await;
         }
     }
     completed.lock().await.insert(name.to_string());
@@ -357,7 +359,8 @@ async fn build_one(
 ) -> Result<()> {
     if opts.checksum {
         builder
-            .update_hashes(manifest, manifest_path).await
+            .update_hashes(manifest, manifest_path)
+            .await
             .context("failed to update hashes")?;
         info!("Updated source hashes in plan {}", manifest.plan.name);
         return Ok(());
@@ -380,19 +383,27 @@ async fn build_one(
 
     if opts.clean {
         builder
-            .clean(manifest).await
+            .clean(manifest)
+            .await
             .context("failed to clean workspace")?;
     }
 
     let output_dir = if config.general.parts_dir.exists()
-        || tokio::fs::create_dir_all(&config.general.parts_dir).await.is_ok()
+        || tokio::fs::create_dir_all(&config.general.parts_dir)
+            .await
+            .is_ok()
     {
         config.general.parts_dir.clone()
     } else {
         std::env::current_dir().map_err(WrightError::IoError)?
     };
 
-    if !opts.force && opts.resume.is_none() && opts.stages.is_empty() && !opts.fetch_only {
+    if !opts.force
+        && opts.resume.is_none()
+        && opts.stages.is_empty()
+        && opts.until_stage.is_none()
+        && !opts.fetch_only
+    {
         let part_name = manifest.part_filename();
         let existing = output_dir.join(&part_name);
         let all_exist = existing.exists()
@@ -444,22 +455,26 @@ async fn build_one(
         extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
     }
     let plan_dir = manifest_path.parent().expect("plan parent").to_path_buf();
-    let result = builder.build(
-        manifest,
-        &plan_dir,
-        base_root,
-        &opts.stages,
-        opts.fetch_only,
-        opts.skip_check,
-        &extra_env,
-        opts.verbose,
-        opts.nproc_per_isolation,
-        Some(compile_lock),
-        progress,
-    ).await?;
+    let result = builder
+        .build(
+            manifest,
+            &plan_dir,
+            base_root,
+            &opts.stages,
+            opts.until_stage.as_deref(),
+            opts.fetch_only,
+            opts.skip_check,
+            &extra_env,
+            opts.verbose,
+            opts.nproc_per_isolation,
+            Some(compile_lock),
+            progress,
+        )
+        .await?;
 
     let has_fabricate_stage = manifest.outputs.is_some();
-    let produces_output = opts.stages.is_empty() || has_fabricate_stage; // Simplified for now
+    let produces_output =
+        opts.until_stage.is_none() && (opts.stages.is_empty() || has_fabricate_stage); // Simplified for now
     if produces_output && !opts.fetch_only {
         if !manifest.options.skip_fhs_check {
             fhs::validate(&result.output_dir, &manifest.plan.name)?;
@@ -477,7 +492,10 @@ async fn build_one(
                     continue;
                 }
                 let sub_part_dir = result.split_part_dirs.get(sub_name).ok_or_else(|| {
-                    WrightError::BuildError(format!("missing sub-part output_dir for '{}'", sub_name))
+                    WrightError::BuildError(format!(
+                        "missing sub-part output_dir for '{}'",
+                        sub_name
+                    ))
                 })?;
                 if !manifest.options.skip_fhs_check {
                     fhs::validate(sub_part_dir, sub_name)?;
@@ -497,12 +515,12 @@ async fn build_one(
 }
 
 async fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
-    // Local registration might still be sync if it uses rusqlite, 
+    // Local registration might still be sync if it uses rusqlite,
     // but ArchiveDb should also be refactored eventually.
     // For now, I'll assume ArchiveDb is still sync but I'll mark this as async.
     let archive_db_path = archive_db_path.to_path_buf();
     let part_path = part_path.to_path_buf();
-    
+
     let _ = tokio::spawn(async move {
         let archive_db = match crate::database::ArchiveDb::open(&archive_db_path).await {
             Ok(db) => db,
@@ -511,11 +529,13 @@ async fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
                 return;
             }
         };
-        
+
         let partinfo = match tokio::task::spawn_blocking({
             let path = part_path.clone();
             move || part::read_partinfo(&path)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(info)) => info,
             Ok(Err(e)) => {
                 warn!("Failed to read partinfo for DB registration: {}", e);
@@ -530,7 +550,9 @@ async fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
         let sha256 = match tokio::task::spawn_blocking({
             let path = part_path.clone();
             move || crate::util::checksum::sha256_file(&path)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(hash)) => hash,
             Ok(Err(e)) => {
                 warn!("Failed to compute sha256 for DB registration: {}", e);
@@ -546,5 +568,6 @@ async fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
         if let Err(e) = archive_db.register_part(&partinfo, filename, &sha256).await {
             warn!("Failed to register in local archive DB: {}", e);
         }
-    }).await;
+    })
+    .await;
 }

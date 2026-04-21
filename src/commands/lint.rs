@@ -5,7 +5,11 @@ use crate::plan::manifest::PlanManifest;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
-pub async fn execute_lint(targets: Vec<String>, _recursive: bool, config: &GlobalConfig) -> Result<()> {
+pub async fn execute_lint(
+    targets: Vec<String>,
+    _recursive: bool,
+    config: &GlobalConfig,
+) -> Result<()> {
     let resolver = setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
     let assemblies_cfg = AssembliesConfig::load_all(&config.general.assemblies_dir)?;
@@ -23,7 +27,10 @@ pub async fn execute_lint(targets: Vec<String>, _recursive: bool, config: &Globa
                     assembly_targets.push(assembly_name.to_string());
                 } else {
                     error!("Assembly not found: @{}", assembly_name);
-                    return Err(crate::error::WrightError::ValidationError(format!("Assembly not found: @{}", assembly_name)));
+                    return Err(crate::error::WrightError::ValidationError(format!(
+                        "Assembly not found: @{}",
+                        assembly_name
+                    )));
                 }
             } else if let Some(path) = all_plans.get(&target) {
                 plan_targets.push(path.clone());
@@ -56,13 +63,19 @@ pub async fn execute_lint(targets: Vec<String>, _recursive: bool, config: &Globa
         let mut assembly_failed = false;
         for plan_name in &assembly.plans {
             if !all_plans.contains_key(plan_name) {
-                error!("Assembly [ERR]: @{} references non-existent plan '{}'", name, plan_name);
+                error!(
+                    "Assembly [ERR]: @{} references non-existent plan '{}'",
+                    name, plan_name
+                );
                 assembly_failed = true;
             }
         }
         for include_name in &assembly.includes {
             if !assemblies_cfg.assemblies.contains_key(include_name) {
-                error!("Assembly [ERR]: @{} includes non-existent assembly '@{}'", name, include_name);
+                error!(
+                    "Assembly [ERR]: @{} includes non-existent assembly '@{}'",
+                    name, include_name
+                );
                 assembly_failed = true;
             }
         }
@@ -74,8 +87,15 @@ pub async fn execute_lint(targets: Vec<String>, _recursive: bool, config: &Globa
     }
 
     if failed > 0 {
-        return Err(crate::error::WrightError::ValidationError(format!("Lint failed for {} target(s)", failed)));
+        return Err(crate::error::WrightError::ValidationError(format!(
+            "Lint failed for {} target(s)",
+            failed
+        )));
     }
-    info!("Lint passed: {} plans, {} assemblies.", plan_targets.len(), assembly_targets.len());
+    info!(
+        "Lint passed: {} plans, {} assemblies.",
+        plan_targets.len(),
+        assembly_targets.len()
+    );
     Ok(())
 }

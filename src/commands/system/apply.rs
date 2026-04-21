@@ -1,13 +1,20 @@
-use std::io::BufRead;
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashSet};
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
 
 use crate::archive::resolver::LocalResolver;
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::transaction;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApplySessionMeta {
+    build_session_hash: String,
+    task_fingerprints: BTreeMap<String, String>,
+}
 
 pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     use std::io::IsTerminal;
@@ -23,7 +30,10 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     Ok(args)
 }
 
-pub async fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Vec<PathBuf>> {
+pub async fn resolve_install_paths(
+    resolver: &LocalResolver,
+    args: &[String],
+) -> Result<Vec<PathBuf>> {
     let mut part_paths = Vec::new();
     for arg in args {
         let path = PathBuf::from(arg);
@@ -87,6 +97,126 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
     }
 }
 
+fn domain_arg_key(domain: Option<DomainArg>) -> &'static str {
+    match domain.unwrap_or(DomainArg::All) {
+        DomainArg::Link => "link",
+        DomainArg::Runtime => "runtime",
+        DomainArg::Build => "build",
+        DomainArg::All => "all",
+    }
+}
+
+fn match_policy_key(policy: MatchPolicyArg) -> &'static str {
+    match policy {
+        MatchPolicyArg::Missing => "missing",
+        MatchPolicyArg::Outdated => "outdated",
+        MatchPolicyArg::Installed => "installed",
+        MatchPolicyArg::All => "all",
+    }
+}
+
+fn compute_apply_session_hash(
+    targets: &[String],
+    deps: Option<DomainArg>,
+    rdeps: Option<DomainArg>,
+    match_policies: &[MatchPolicyArg],
+    depth: Option<usize>,
+    force: bool,
+    root_dir: &Path,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut normalized_targets = targets.to_vec();
+    normalized_targets.sort();
+    normalized_targets.dedup();
+
+    let mut normalized_policies: Vec<&'static str> = if match_policies.is_empty() {
+        vec!["outdated"]
+    } else {
+        match_policies
+            .iter()
+            .copied()
+            .map(match_policy_key)
+            .collect()
+    };
+    normalized_policies.sort();
+    normalized_policies.dedup();
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"wright-apply-session-v1\n");
+    hasher.update(root_dir.to_string_lossy().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(format!("deps={}\n", domain_arg_key(deps)).as_bytes());
+    hasher.update(format!("rdeps={}\n", domain_arg_key(rdeps)).as_bytes());
+    hasher.update(format!("depth={:?}\n", depth).as_bytes());
+    hasher.update(format!("force={}\n", force).as_bytes());
+    for policy in normalized_policies {
+        hasher.update(policy.as_bytes());
+        hasher.update(b"\n");
+    }
+    for target in normalized_targets {
+        hasher.update(target.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+async fn load_apply_resume_state(
+    db: &InstalledDb,
+    ctx: &ApplyContext<'_>,
+    apply_session_hash: &str,
+    plan: &crate::builder::orchestrator::BuildExecutionPlan,
+) -> Result<Option<(String, HashSet<String>)>> {
+    let Some(session) = db.get_execution_session(apply_session_hash).await? else {
+        return Ok(None);
+    };
+
+    if session.command_kind != "apply" {
+        anyhow::bail!(
+            "session {} is for '{}', not 'apply'",
+            &session.session_hash[..12.min(session.session_hash.len())],
+            session.command_kind
+        );
+    }
+
+    let metadata_json = session.metadata_json.as_deref().context(format!(
+        "apply session {} is missing metadata",
+        &session.session_hash[..12.min(session.session_hash.len())]
+    ))?;
+    let metadata: ApplySessionMeta = serde_json::from_str(metadata_json).context(format!(
+        "failed to decode apply session {} metadata",
+        &session.session_hash[..12.min(session.session_hash.len())]
+    ))?;
+
+    let current_fingerprints = crate::builder::orchestrator::task_fingerprints(plan)?;
+    for (task, fingerprint) in current_fingerprints {
+        let Some(stored) = metadata.task_fingerprints.get(&task) else {
+            anyhow::bail!(
+                "apply session {} is stale: task '{}' is not part of the original execution plan",
+                &session.session_hash[..12.min(session.session_hash.len())],
+                task
+            );
+        };
+        if stored != &fingerprint {
+            anyhow::bail!(
+                "apply session {} is stale: plan '{}' changed since the original run",
+                &session.session_hash[..12.min(session.session_hash.len())],
+                task
+            );
+        }
+    }
+
+    let completed = crate::builder::orchestrator::load_completed_build_tasks(
+        db,
+        ctx.config,
+        plan,
+        &metadata.build_session_hash,
+    )
+    .await?;
+
+    Ok(Some((metadata.build_session_hash, completed)))
+}
+
 fn map_resolve_domain(
     domain: crate::cli::resolve::DomainArg,
 ) -> crate::builder::orchestrator::DependentsMode {
@@ -148,6 +278,8 @@ fn resolve_options_for_apply(
 
 async fn apply_targets(
     ctx: ApplyContext<'_>,
+    apply_session_hash: &str,
+    resume_requested: bool,
     targets: Vec<String>,
     resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
@@ -162,9 +294,22 @@ async fn apply_targets(
     let install_nodeps = resolve_opts.deps.is_none();
 
     let build_set: Vec<String> =
-        crate::builder::orchestrator::resolve_build_set(ctx.config, targets, resolve_opts).await?;
+        crate::builder::orchestrator::resolve_build_set(ctx.config, targets.clone(), resolve_opts)
+            .await?;
+
+    let db = InstalledDb::open(ctx.installed_db_path)
+        .await
+        .context("failed to open database for apply session")?;
 
     if build_set.is_empty() {
+        if let Some(session) = db.get_execution_session(apply_session_hash).await? {
+            if session.command_kind == "apply" {
+                if let Some(build_session_hash) = session.task_session_hash.as_deref() {
+                    let _ = db.clear_execution_session(build_session_hash).await;
+                }
+                let _ = db.clear_execution_session(apply_session_hash).await;
+            }
+        }
         if ctx.dry_run {
             println!(
                 "Apply plan (dry-run): already converged. All requested targets match the plan state."
@@ -202,6 +347,75 @@ async fn apply_targets(
         return Ok(());
     }
 
+    let (build_session_hash, mut completed_build_tasks) = if resume_requested {
+        match load_apply_resume_state(&db, &ctx, apply_session_hash, &plan).await? {
+            Some(state) => {
+                if !ctx.quiet {
+                    tracing::info!(
+                        "resuming apply session {}",
+                        &apply_session_hash[..12.min(apply_session_hash.len())]
+                    );
+                }
+                state
+            }
+            None => {
+                tracing::warn!(
+                    "no existing apply session {} found, starting fresh apply",
+                    &apply_session_hash[..12.min(apply_session_hash.len())]
+                );
+                let build_hash = crate::builder::orchestrator::compute_build_session_hash(
+                    &plan,
+                    &build_opts,
+                    "apply-build",
+                )?;
+                (build_hash, HashSet::new())
+            }
+        }
+    } else {
+        if let Some(existing) = db.get_execution_session(apply_session_hash).await? {
+            if existing.command_kind == "apply" {
+                if let Some(build_hash) = existing.task_session_hash.as_deref() {
+                    let _ = db.clear_execution_session(build_hash).await;
+                }
+                let _ = db.clear_execution_session(apply_session_hash).await;
+            }
+        }
+        let build_hash = crate::builder::orchestrator::compute_build_session_hash(
+            &plan,
+            &build_opts,
+            "apply-build",
+        )?;
+        (build_hash, HashSet::new())
+    };
+
+    let metadata_json = serde_json::to_string(&ApplySessionMeta {
+        build_session_hash: build_session_hash.clone(),
+        task_fingerprints: crate::builder::orchestrator::task_fingerprints(&plan)?,
+    })
+    .context("failed to encode apply session metadata")?;
+
+    db.ensure_execution_session(
+        apply_session_hash,
+        "apply",
+        Some(&build_session_hash),
+        Some(&metadata_json),
+    )
+    .await?;
+    db.ensure_execution_session(
+        &build_session_hash,
+        "build",
+        Some(&build_session_hash),
+        None,
+    )
+    .await?;
+    let build_items: Vec<String> = plan
+        .batches()
+        .iter()
+        .flat_map(|batch| batch.iter().cloned())
+        .collect();
+    db.ensure_execution_session_items(&build_session_hash, &build_items)
+        .await?;
+
     let mut applied_parts: Vec<String> = Vec::new();
 
     if !ctx.quiet {
@@ -222,10 +436,18 @@ async fn apply_targets(
             );
         }
 
-        plan.execute_batch(ctx.config, batch_idx, &build_opts).await
-            .inspect_err(|_| {
-                emit_partial_apply_note(&applied_parts);
-            })?;
+        plan.execute_batch(
+            ctx.config,
+            batch_idx,
+            &build_opts,
+            Some(&build_session_hash),
+            &completed_build_tasks,
+        )
+        .await
+        .inspect_err(|_| {
+            emit_partial_apply_note(&applied_parts);
+        })?;
+        completed_build_tasks.extend(tasks.iter().cloned());
 
         let mut parts = Vec::new();
         let mut explicit_targets = HashSet::new();
@@ -254,9 +476,6 @@ async fn apply_targets(
             }
         }
 
-        let db = InstalledDb::open(ctx.installed_db_path).await
-            .context("failed to open database for install")?;
-
         transaction::install_parts_with_explicit_targets(
             &db,
             &parts,
@@ -265,13 +484,18 @@ async fn apply_targets(
             ctx.resolver,
             ctx.force,
             install_nodeps,
-        ).await
+        )
+        .await
         .inspect_err(|_| {
             emit_partial_apply_note(&applied_parts);
         })?;
 
         applied_parts.extend(batch_part_names);
     }
+
+    db.clear_execution_session(&build_session_hash).await?;
+    db.clear_execution_session(apply_session_hash).await?;
+
     Ok(())
 }
 
@@ -286,6 +510,7 @@ fn emit_partial_apply_note(applied_parts: &[String]) {
 
 pub async fn execute_apply(
     targets: Vec<String>,
+    resume: Option<String>,
     deps: Option<DomainArg>,
     rdeps: Option<DomainArg>,
     match_policies: Vec<MatchPolicyArg>,
@@ -300,6 +525,11 @@ pub async fn execute_apply(
     resolver: &LocalResolver,
 ) -> Result<()> {
     let targets = collect_install_args(targets)?;
+    let (resume_requested, explicit_resume_hash) = match resume {
+        Some(hash) if hash.is_empty() => (true, None),
+        Some(hash) => (true, Some(hash)),
+        None => (false, None),
+    };
 
     if targets.is_empty() {
         use std::io::IsTerminal;
@@ -307,6 +537,24 @@ pub async fn execute_apply(
             anyhow::bail!("no targets received from stdin; did the resolve succeed?");
         }
         anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
+    }
+
+    let computed_apply_session_hash = compute_apply_session_hash(
+        &targets,
+        deps,
+        rdeps,
+        &match_policies,
+        depth,
+        force,
+        root_dir,
+    );
+    let apply_session_hash =
+        explicit_resume_hash.unwrap_or_else(|| computed_apply_session_hash.clone());
+    if resume_requested && apply_session_hash != computed_apply_session_hash {
+        anyhow::bail!(
+            "apply session hash {} does not match the current targets/scope; rerun with the original apply arguments",
+            &apply_session_hash[..12.min(apply_session_hash.len())]
+        );
     }
 
     let resolve_opts = resolve_options_for_apply(deps, rdeps, match_policies, depth, force);
@@ -322,15 +570,30 @@ pub async fn execute_apply(
             quiet,
             dry_run,
         },
+        &apply_session_hash,
+        resume_requested,
         targets,
         resolve_opts,
-    ).await {
+    )
+    .await
+    {
         Ok(()) => {
             if !dry_run {
                 println!("apply completed successfully");
             }
         }
         Err(e) => {
+            if !dry_run {
+                eprintln!(
+                    "Apply session saved as {}. Resume with the same apply arguments plus --resume{}.",
+                    apply_session_hash,
+                    if resume_requested {
+                        String::new()
+                    } else {
+                        format!(" {}", apply_session_hash)
+                    }
+                );
+            }
             eprintln!("error: {:#}", e);
             std::process::exit(1);
         }

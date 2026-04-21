@@ -1,9 +1,9 @@
-use std::path::Path;
-use anyhow::Result;
+use super::apply::{collect_install_args, resolve_install_paths};
 use crate::archive::resolver::LocalResolver;
 use crate::database::InstalledDb;
 use crate::transaction;
-use super::apply::{collect_install_args, resolve_install_paths};
+use anyhow::Result;
+use std::path::Path;
 
 pub async fn execute_install(
     db: &InstalledDb,
@@ -19,9 +19,7 @@ pub async fn execute_install(
         if !std::io::stdin().is_terminal() {
             anyhow::bail!("no part paths received from stdin; did the build succeed?");
         }
-        anyhow::bail!(
-            "no parts specified (pass part names/paths as arguments or via stdin)"
-        );
+        anyhow::bail!("no parts specified (pass part names/paths as arguments or via stdin)");
     }
     let part_paths = resolve_install_paths(resolver, &parts).await?;
 
