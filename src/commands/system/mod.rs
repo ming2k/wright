@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use tracing::info;
 
 use crate::archive::resolver::{pick_latest, pick_version};
 use crate::cli::system::{Commands as SystemCommands, PrefixModeArg};
@@ -48,16 +49,16 @@ pub async fn execute(
     }
 
     if let SystemCommands::SystemInit = command {
-        println!("Initializing system databases...");
-        
-        println!("  -> {}...", installed_db_path.display());
+        info!("Initializing system databases...");
+
+        info!("  -> {}...", installed_db_path.display());
         let _db = InstalledDb::open(installed_db_path).await.context("failed to initialize system database")?;
-        
+
         let archive_db_path = &config.general.archive_db_path;
-        println!("  -> {}...", archive_db_path.display());
+        info!("  -> {}...", archive_db_path.display());
         let _adb = crate::database::ArchiveDb::open(archive_db_path).await.context("failed to initialize archive database")?;
-        
-        println!("Databases are up-to-date.");
+
+        info!("Databases are up-to-date.");
         return Ok(());
     }
 

@@ -7,7 +7,6 @@ use owo_colors::OwoColorize;
 use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
 
@@ -30,8 +29,6 @@ pub async fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result
 async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let resolver = orchestrator::setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
-    let db_path = config.general.installed_db_path.clone();
-    let _db = InstalledDb::open(&db_path).await.ok(); 
 
     let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for (name, path) in &all_plans {

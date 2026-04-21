@@ -4,6 +4,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::util::lock::ProcessLock;
+use super::migrations::run_archive_migrations;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct ArchivePart {
@@ -58,10 +59,7 @@ impl ArchiveDb {
             WrightError::DatabaseError(format!("failed to connect to archive database: {}", e))
         })?;
 
-        sqlx::migrate!("./src/database/migrations/archive")
-            .run(&pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to run archive migrations: {}", e)))?;
+        run_archive_migrations(&pool).await?;
 
         Ok(Self {
             pool,

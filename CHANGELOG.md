@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2] - 2026-04-21
+
+### Fixed
+- **Migration Logging Noise**: Suppressed the unconditional `Running database migrations...` message unless there are actual pending migrations to apply.
+- **Resolve Side Effects**: Stopped interactive `wright resolve` output from opening the installed database when it only needs static plan analysis.
+- **System Init Output Ordering**: Moved `system-init` status lines onto the structured logging path so they no longer interleave awkwardly with migration logs.
+
 ## [3.0.1] - 2026-04-21
 
 ### Fixed
