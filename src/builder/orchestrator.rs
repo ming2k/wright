@@ -175,7 +175,7 @@ pub fn resolve_build_set(
         let db = InstalledDb::open(&db_path)
             .context("failed to open database for dependency resolution")?;
 
-        // 1. Traverse upstream
+        // 1. Traverse dependencies
         if let Some(domain) = opts.deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
@@ -187,7 +187,7 @@ pub fn resolve_build_set(
             )?;
         }
 
-        // 2. Filter the targets and expanded upstream deps
+        // 2. Filter the targets and expanded dependencies
         if !opts.match_policies.contains(&MatchPolicy::All) {
             plans_to_build.retain(|path| {
                 let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
@@ -208,7 +208,7 @@ pub fn resolve_build_set(
             });
         }
 
-        // 3. Traverse downstream from the filtered changing set
+        // 3. Traverse dependents from the filtered changing set
         if let Some(domain) = opts.rdeps {
             let installed_names: HashSet<String> = db
                 .list_parts()

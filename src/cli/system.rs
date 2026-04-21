@@ -158,7 +158,7 @@ pub enum Commands {
     },
     /// Build and apply plan-driven installs/upgrades for plans or assemblies
     #[command(
-        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright is the high-level source-first combo command: it resolves requested targets, automatically pulls in upstream plans that are missing or outdated under the selected match policy, builds what is needed in dependency waves, and installs each completed wave onto the live system. Use it for natural plan-driven install and upgrade workflows.",
+        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright is the high-level source-first combo command: it resolves requested targets, automatically pulls in dependencies that are missing or outdated under the selected match policy, builds what is needed in dependency waves, and installs each completed wave onto the live system. Use it for natural plan-driven install and upgrade workflows.",
         after_help = WRIGHT_APPLY_AFTER_HELP
     )]
     Apply {
@@ -166,7 +166,7 @@ pub enum Commands {
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
-        /// Expand upstream dependencies.
+        /// Expand dependencies.
         /// `link` follows ABI-sensitive link dependencies.
         /// `runtime` follows runtime dependencies.
         /// `build` follows build dependencies.
@@ -180,7 +180,7 @@ pub enum Commands {
         )]
         deps: Option<crate::cli::resolve::DomainArg>,
 
-        /// Expand downstream reverse dependencies (rdeps) for installed parts.
+        /// Expand reverse dependents (rdeps) for installed parts.
         /// `link` follows ABI-sensitive link dependents.
         /// `runtime` follows runtime dependents.
         /// `build` follows build dependents.
@@ -196,7 +196,7 @@ pub enum Commands {
 
         /// Match policy for filtering based on installation state.
         /// Can be specified multiple times. If omitted, `apply` defaults to
-        /// `outdated`, so missing and changed upstream plans are added
+        /// `outdated`, so missing and changed dependencies are added
         /// automatically while already-converged ones are skipped.
         #[arg(long = "match", alias = "match-policies", value_enum)]
         match_policies: Vec<crate::cli::resolve::MatchPolicyArg>,

@@ -8,7 +8,7 @@ Unlike plans, assemblies do not define how to build software; they simply point 
 
 Assemblies are stored in the directory defined by `assemblies_dir` in your `wright.toml` (default: `/var/lib/wright/assemblies/`).
 
-Wright loads all `.toml` files in that directory. Each file can contain one or more assembly definitions.
+Wright loads all `.toml` files in that directory.
 
 ```
 /var/lib/wright/assemblies/
@@ -18,21 +18,21 @@ Wright loads all `.toml` files in that directory. Each file can contain one or m
 
 ## Assembly Definition
 
-An assembly is defined using the `[[assembly]]` table in a TOML file.
+An assembly is defined in a TOML file. The name of the file (minus the `.toml` extension) must match the `name` field inside the file.
 
 ### Basic Fields
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `name` | string | **Required**. The unique name of the assembly. |
+| `name` | string | **Required**. The unique name of the assembly. Must match the filename. |
 | `description` | string | *Optional*. A brief description of what this assembly includes. |
 | `plans` | list of strings | *Optional*. A list of plan names included in this assembly. |
 | `includes` | list of strings | *Optional*. A list of other assembly names to include in this one. |
 
 ### Example
 
+`base.toml`:
 ```toml
-[[assembly]]
 name = "base"
 description = "Essential system parts"
 plans = [
@@ -43,8 +43,10 @@ plans = [
     "sed",
     "util-linux"
 ]
+```
 
-[[assembly]]
+`devel.toml`:
+```toml
 name = "devel"
 description = "Core development toolchain"
 plans = [
@@ -78,7 +80,7 @@ wright apply @base
 ```
 
 This will:
-1. Resolve the requested plans and add missing or outdated upstream dependency plans.
+1. Resolve the requested plans and add missing or outdated dependencies.
 2. Build what is needed in dependency order.
 3. Install/upgrade parts to match the assembly targets.
 
@@ -94,13 +96,15 @@ wright apply @base @devel git vim
 
 Assemblies support composition through the `includes` field. This allows you to build layered system definitions.
 
+`server.toml`:
 ```toml
-[[assembly]]
 name = "server"
 plans = ["nginx", "openssl"]
 includes = ["base"]
+```
 
-[[assembly]]
+`web-dev.toml`:
+```toml
 name = "web-dev"
 plans = ["nodejs", "python"]
 includes = ["server", "devel"]

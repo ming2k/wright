@@ -86,12 +86,6 @@ pub struct AssembliesConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct AssemblyFile {
-    #[serde(default)]
-    assembly: Vec<Assembly>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct Assembly {
     pub name: String,
     pub description: Option<String>,
@@ -261,10 +255,27 @@ impl AssembliesConfig {
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
                 })?;
-                let file: AssemblyFile = toml::from_str(&content)?;
-                for assembly in file.assembly {
-                    config.assemblies.insert(assembly.name.clone(), assembly);
+                let assembly: Assembly = toml::from_str(&content).map_err(|e| {
+                    WrightError::ConfigError(format!("failed to parse {}: {}", path.display(), e))
+                })?;
+
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| {
+                        WrightError::ConfigError(format!("invalid file name: {}", path.display()))
+                    })?;
+
+                if assembly.name != stem {
+                    return Err(WrightError::ConfigError(format!(
+                        "assembly name '{}' in {} does not match file name '{}'",
+                        assembly.name,
+                        path.display(),
+                        stem
+                    )));
                 }
+
+                config.assemblies.insert(assembly.name.clone(), assembly);
             }
         }
         Ok(config)

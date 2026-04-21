@@ -14,14 +14,15 @@ Higher-priority files override lower-priority ones by key.
 
 Assemblies live under `assemblies_dir` and allow you to group plans together. For a detailed guide, see [Writing Assemblies](writing-assemblies.md).
 
+`base.toml`:
 ```toml
-[[assembly]]
-...
 name = "base"
 description = "Base system maintenance set"
 plans = ["bash", "coreutils", "grep"]
+```
 
-[[assembly]]
+`devel.toml`:
+```toml
 name = "devel"
 plans = ["gcc", "make", "pkgconf"]
 includes = ["base"]

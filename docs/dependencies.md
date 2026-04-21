@@ -31,7 +31,7 @@ You do not need to declare transitive dependencies. Wright expands them when you
 
 **Upward Expansion: Missing Dependencies**
 By default, `wright build` builds only the listed targets. Add `--deps` to
-`wright resolve` when you want Wright to expand upstream dependencies from the
+`wright resolve` when you want Wright to expand dependencies from the
 hold tree before building.
 
 - With `wright resolve --deps`, dependencies in the selected domain are added to the output target set.
@@ -88,7 +88,7 @@ Wright exposes separate build and install flows:
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
 assemblies, checks the local archive inventory, automatically adds missing or
-outdated upstream dependency plans, builds what is needed, and then installs or
+outdated dependency plans, builds what is needed, and then installs or
 upgrades the requested outputs. In other words, `apply` is the natural
 plan-driven install/upgrade/dependency combo command.
 
@@ -100,13 +100,13 @@ wright build curl
 ```
 
 Example: Build and install from plans while automatically materializing missing
-or outdated upstream dependencies.
+or outdated dependencies.
 
 ```bash
 wright apply curl
 ```
 
-Example: Force a deep rebuild of upstream dependencies.
+Example: Force a deep rebuild of dependencies.
 
 ```bash
 wright resolve openssl --deps=all | wright build --force

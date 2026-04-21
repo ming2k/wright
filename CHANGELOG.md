@@ -61,7 +61,7 @@
 - **`wright lint` command**: Introduced a dedicated subcommand for static validation of plan files. It performs deep structural and semantic checks (isolation levels, version formats, etc.) and reports clear errors with file paths.
 
 ### Changed
-- **Strengthened Plan Validation**: Integrated mandatory `validate()` into the plan loading pipeline. Parsing errors are now immediately fatal, preventing invalid plans from being silently skipped or causing downstream failures.
+- **Strengthened Plan Validation**: Integrated mandatory `validate()` into the plan loading pipeline. Parsing errors are now immediately fatal, preventing invalid plans from being silently skipped or causing dependent failures.
 - **Improved Path Robustness**: Resolution now uses path canonicalization to ensure consistent matching when plans are referenced via symlinks or relative paths.
 - **Enhanced Error Messages**: Replaced generic "converged" messages with more actionable feedback when build targets are filtered.
 
@@ -115,7 +115,7 @@
 ## [2.2.0] - 2026-04-14
 
 ### Changed
-- **`apply` default convergence policy**: `wright apply` now defaults to `--match=outdated`, so plan-driven runs naturally cover first installs, upgrades, and missing/outdated upstream dependencies in one command.
+- **`apply` default convergence policy**: `wright apply` now defaults to `--match=outdated`, so plan-driven runs naturally cover first installs, upgrades, and missing/outdated dependencies in one command.
 - **`apply` no-op behavior**: when requested targets already match the current plan state under the selected policy, `wright apply` now exits successfully instead of surfacing a confusing empty-build error.
 - **CLI/docs alignment**: `--match` is now the primary flag name for resolve/apply match policies, with documentation updated to present `apply` as Wright's natural plan-driven install/upgrade/dependency combo workflow.
 - **Plan metadata variable cleanup**: removed the legacy `${PART_NAME}` / `${PART_VERSION}` / `${PART_RELEASE}` / `${PART_ARCH}` aliases in favor of `${NAME}` / `${VERSION}` / `${RELEASE}` / `${ARCH}`.
@@ -133,7 +133,7 @@
 ## [2.1.8] - 2026-04-13
 
 ### Changed
-- **`apply` smart defaults restored**: `wright apply` now expands missing upstream dependency plans by default, so source-first maintenance runs can converge without an extra manual resolve step.
+- **`apply` smart defaults restored**: `wright apply` now expands missing dependency plans by default, so source-first maintenance runs can converge without an extra manual resolve step.
 - **Apply docs refresh**: updated the apply design notes, usage guide, assemblies docs, and related references to match the current default dependency-expansion behavior.
 - **CLI/docs cleanup**: removed stale references to legacy `--deps=sync`/`--print-archives` syntax and aligned command examples with the current `--match` and `--print-parts` interfaces.
 
@@ -370,7 +370,7 @@
 ## [1.7.10] - 2026-03-18
 
 ### Changes
-- **part metadata completeness**: preserve build dependency metadata in generated parts for downstream tooling and inspection.
+- **part metadata completeness**: preserve build dependency metadata in generated parts for dependent tooling and inspection.
 - **Docs sync**: update dependency and build documentation to reflect the partd build-dependency metadata behavior.
 
 ## [1.7.9] - 2026-03-18

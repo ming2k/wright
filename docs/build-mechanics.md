@@ -109,14 +109,14 @@ across builds:
 
 ```
 <source_dir>/
-├── zlib-zlib-1.3.1.tar.gz     # <pkg_name>-<upstream_basename>
+├── zlib-zlib-1.3.1.tar.gz     # <pkg_name>-<dependency_basename>
 ├── gcc-gcc-14.2.0.tar.xz
 └── git/
   └── linux            # bare git repos
 ```
 
 The filename is prefixed with the part name to avoid collisions between
-plans that use similarly-named upstream parts (e.g. two parts both
+plans that use similarly-named dependency parts (e.g. two parts both
 fetching `v1.0.tar.gz` from different projects).
 
 Before extraction, each source is verified against its `sha256` checksum from

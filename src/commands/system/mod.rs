@@ -31,7 +31,7 @@ pub fn execute(
         crate::util::lock::LockIdentity::Command("wright"),
         crate::util::lock::LockMode::Exclusive,
     )
-    .context("failed to acquire wright command lock")?;
+    .context("failed to start wright operation")?;
     let resolver = crate::commands::setup_local_resolver(config)?;
 
     if let SystemCommands::Apply {

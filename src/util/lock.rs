@@ -73,10 +73,8 @@ fn acquire_flock(file: &File, lock_path: &Path, mode: LockMode, timeout: Duratio
         }
         if start.elapsed() >= timeout {
             return Err(WrightError::LockError(format!(
-                "another process is already holding {} ({:?}); timed out after {}s",
-                lock_path.display(),
-                mode,
-                timeout.as_secs()
+                "another wright process is already running (lock held at {})",
+                lock_path.display()
             )));
         }
         std::thread::sleep(delay);
@@ -102,13 +100,19 @@ fn acquire_lock_path_with_timeout(
     timeout: Duration,
 ) -> Result<ProcessLock> {
     if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            WrightError::LockError(format!(
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                return Err(WrightError::AccessDenied(format!(
+                    "cannot create directory {}",
+                    parent.display()
+                )));
+            }
+            return Err(WrightError::LockError(format!(
                 "failed to create lock directory {}: {}",
                 parent.display(),
                 e
-            ))
-        })?;
+            )));
+        }
     }
 
     let file = OpenOptions::new()
@@ -118,11 +122,15 @@ fn acquire_lock_path_with_timeout(
         .truncate(false)
         .open(lock_path)
         .map_err(|e| {
-            WrightError::LockError(format!(
-                "failed to open lock file {}: {}",
-                lock_path.display(),
-                e
-            ))
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                WrightError::AccessDenied(format!("permission denied for lock file {}", lock_path.display()))
+            } else {
+                WrightError::LockError(format!(
+                    "failed to open lock file {}: {}",
+                    lock_path.display(),
+                    e
+                ))
+            }
         })?;
 
     acquire_flock(&file, lock_path, mode, timeout)?;

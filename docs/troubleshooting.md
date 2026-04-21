@@ -175,7 +175,7 @@ The downloaded file does not match the hash in `plan.toml`.
 
 **Possible causes:**
 
-- Upstream changed the tarball without bumping the version (uncommon but
+- Dependency changed the tarball without bumping the version (uncommon but
  happens with "rolling" release tarballs).
 - A partial download is in the source cache.
 - The hash in `plan.toml` is wrong.

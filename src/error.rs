@@ -26,6 +26,9 @@ pub enum WrightError {
     #[error("config error: {0}")]
     ConfigError(String),
 
+    #[error("access denied: {0}. (hint: try running with sudo)")]
+    AccessDenied(String),
+
     #[error("lock error: {0}")]
     LockError(String),
 

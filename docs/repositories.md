@@ -26,7 +26,7 @@ wright apply curl
 ```
 
 `wright apply` checks the local inventory first, automatically adds missing
-upstream dependency plans, builds what is needed from plans, and then installs
+dependency plans, builds what is needed from plans, and then installs
 the requested outputs.
 
 ## Inventory Records

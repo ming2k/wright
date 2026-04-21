@@ -35,18 +35,18 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 | Field     | Type   | Required | Default | Description            |
 |---------------|----------|----------|---------|------------------------------------|
 | `name`    | string  | yes   | —    | Part name             |
-| `version`   | string  | yes   | —    | Upstream version (free-form)    |
+| `version`   | string  | yes   | —    | Dependency version (free-form)    |
 | `release`   | integer | yes   | —    | Build revision (must be >= 1)   |
 | `epoch`    | integer | no    | `0`   | Version epoch — overrides version comparison (see below) |
 | `description` | string  | yes   | —    | Short description (must not be empty) |
 | `license`   | string  | yes   | —    | SPDX license identifier      |
 | `arch`    | string  | yes   | —    | Target architecture (e.g. `x86_64`) |
-| `url`     | string  | no    | —    | Upstream project URL        |
+| `url`     | string  | no    | —    | Dependency project URL        |
 | `maintainer` | string  | no    | —    | Maintainer name and email     |
 
 #### Epoch
 
-The `epoch` field forces a part to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
+The `epoch` field forces a part to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when dependency changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
 
 ```toml
 name = "example"
@@ -978,7 +978,7 @@ To keep your plans clean and robust across version updates, follow these organiz
 #### 1. Single Main Archive (Recommended)
 For plans with one primary source code archive, always extract it to a directory named `source`.
 - **Convention**: Use `extract_to = "source"`.
-- **Benefit**: You can hardcode `cd source` in your scripts. It works regardless of whether the upstream folder is named `app-1.0` or `app-v2.0-final`.
+- **Benefit**: You can hardcode `cd source` in your scripts. It works regardless of whether the dependency folder is named `app-1.0` or `app-v2.0-final`.
 
 ```toml
 [[sources]]

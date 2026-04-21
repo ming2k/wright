@@ -38,7 +38,7 @@ This pessimistic policy is intentionally conservative to reduce ABI and integrat
 
 ## 3. Recommended Commands
 
-Build the changed part and force a full downstream cascade:
+Build the changed part and force a full dependent cascade:
 
 ```bash
 wright resolve <changed-part> --rdeps=all --depth=0 | wright build --force
@@ -50,7 +50,7 @@ Build, then install the resulting archives:
 wright resolve <changed-part> --rdeps=all --depth=0 | wright build --force --print-parts | wright install
 ```
 
-When you also want a deep upstream refresh, include dependency force-rebuild:
+When you also want a deep dependency refresh, include dependency force-rebuild:
 
 ```bash
 wright resolve <changed-part> --deps=all --rdeps=all --depth=0 | wright build --force --print-parts | wright install

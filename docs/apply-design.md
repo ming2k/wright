@@ -18,7 +18,7 @@ level policy:
 
 - start from plans, not from archive filenames
 - reuse local archives when they are already valid
-- add missing or outdated upstream plans when they are required
+- add missing or outdated dependency plans when they are required
 - install and upgrade in dependency waves so later work sees the updated system
 
 That policy is opinionated by design. The command is meant to feel "smart"
@@ -36,7 +36,7 @@ without becoming magical.
 Its job is to converge those requested targets onto the live system by:
 
 1. resolving the requested plans
-2. expanding the necessary upstream build set
+2. expanding the necessary dependency build set
 3. creating a dependency-ordered execution plan
 4. building each dependency wave
 5. installing each completed wave before moving to the next one
@@ -61,21 +61,21 @@ wright resolve <targets> --deps --match=outdated
 More precisely:
 
 - explicit targets are included when they are missing or differ from the installed plan state
-- upstream dependencies are expanded across build, link, and runtime edges
-- missing and outdated upstream dependencies are auto-added by default
+- dependencies are expanded across build, link, and runtime edges
+- missing and outdated dependencies are auto-added by default
 - reverse dependent expansion is disabled by default
-- depth is unlimited for the default upstream traversal
+- depth is unlimited for the default dependency traversal
 
 This default is deliberate.
 
-Adding missing and outdated upstream plans is the minimum useful "smart"
+Adding missing and outdated dependency plans is the minimum useful "smart"
 behavior for a source-first convergence command. If the user asks Wright to
 apply a target and some prerequisites are absent or no longer match the plan
 tree, Wright should pull those plans into the build graph automatically instead
 of requiring a separate manual resolve step.
 
 At the same time, `apply` does **not** default to reverse rebuild cascades.
-Rebuilding downstream dependents is a heavier policy decision and remains an
+Rebuilding dependent dependents is a heavier policy decision and remains an
 explicit low-level workflow through `wright resolve --rdeps`.
 
 ### Inventory-First, Plan-Driven
@@ -83,7 +83,7 @@ explicit low-level workflow through `wright resolve --rdeps`.
 `wright apply` does not blindly rebuild everything.
 
 - If the local inventory already contains matching build outputs, they can be reused.
-- If an upstream part is missing or outdated and a plan exists for it, Wright builds it.
+- If an dependency part is missing or outdated and a plan exists for it, Wright builds it.
 - The install step still resolves archive dependencies from the local inventory.
 
 This makes `apply` neither purely build-first nor purely install-first. It is a

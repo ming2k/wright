@@ -1,192 +1,303 @@
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use owo_colors::OwoColorize;
 
 use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
+use crate::database::InstalledDb;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
 
 pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
-    if args.tree {
-        let target = args
-            .targets
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("--tree requires at least one target"))?;
-        let effective_depth = match args.depth {
-            Some(0) | None => usize::MAX,
-            Some(d) => d,
-        };
-        let resolver = orchestrator::setup_resolver(config)?;
-        let all_plans = resolver.get_all_plans()?;
-        println!(
-            "Plan dependency tree for: {} (source: hold-tree plan.toml)",
-            target
-        );
-        let stats = print_plan_tree(&target, &all_plans, "", 1, effective_depth)?;
-        println!(
-            "\n{} parts, max depth {}, {} repeated, {} cycles",
-            stats.total, stats.max_depth_seen, stats.repeated, stats.cycles
-        );
-        println!("\nSource: hold-tree plan.toml");
-    } else {
-        let deps = args.deps.map(|d| match d {
-            DomainArg::Link => DependentsMode::Link,
-            DomainArg::Runtime => DependentsMode::Runtime,
-            DomainArg::Build => DependentsMode::Build,
-            DomainArg::All => DependentsMode::All,
-        });
+    let is_tty = std::io::stdout().is_terminal();
 
-        let rdeps = args.rdeps.map(|d| match d {
-            DomainArg::Link => DependentsMode::Link,
-            DomainArg::Runtime => DependentsMode::Runtime,
-            DomainArg::Build => DependentsMode::Build,
-            DomainArg::All => DependentsMode::All,
-        });
+    // 1. Interactive Tree Mode (TTY + No filter flags or Explicit Tree flag)
+    if is_tty && !args.exclude_targets && (args.tree || (args.deps.is_none() && args.rdeps.is_none())) {
+        render_interactive_trees(&args, config)?;
+        return Ok(());
+    }
 
-        let match_policies = args
-            .match_policies
-            .iter()
-            .map(|p| match p {
-                MatchPolicyArg::All => MatchPolicy::All,
-                MatchPolicyArg::Missing => MatchPolicy::Missing,
-                MatchPolicyArg::Outdated => MatchPolicy::Outdated,
-                MatchPolicyArg::Installed => MatchPolicy::Installed,
-            })
-            .collect();
+    // 2. Specialized Multi-Tree Mode (TTY + specific selection of -d or -r)
+    if is_tty && !args.exclude_targets && (args.deps.is_some() || args.rdeps.is_some()) {
+        render_interactive_trees(&args, config)?;
+        return Ok(());
+    }
 
-        let effective_depth = match args.depth {
-            Some(value) => Some(value),
-            None if rdeps.is_some() => Some(1),
-            None => Some(0),
-        };
+    // 3. Script/Pipe Mode (Traditional List Output)
+    render_list_output(args, config)
+}
 
-        let names = orchestrator::resolve_build_set(
-            config,
-            args.targets,
-            ResolveOptions {
-                deps,
-                rdeps,
-                match_policies,
-                depth: effective_depth,
-                include_targets: !args.exclude_targets,
-                preserve_targets: false,
-            },
-        )?;
+fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result<()> {
+    let resolver = orchestrator::setup_resolver(config)?;
+    let all_plans = resolver.get_all_plans()?;
+    let db_path = config.general.installed_db_path.clone();
+    let _db = InstalledDb::open(&db_path).ok(); // DB is optional for tree view
 
-        for name in &names {
-            println!("{}", name);
+    // Build reverse dependency map for downstream trees
+    let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for (name, path) in &all_plans {
+        if let Ok(m) = PlanManifest::from_file(path) {
+            for (dep_raw, kind) in m.all_dependencies() {
+                let dep_name = version::parse_dependency(&dep_raw)
+                    .map(|(n, _)| n)
+                    .unwrap_or(dep_raw);
+                rdeps_map
+                    .entry(dep_name)
+                    .or_default()
+                    .push((name.clone(), kind));
+            }
+        }
+    }
+
+    let effective_depth = match args.depth {
+        Some(0) => usize::MAX,
+        Some(d) => d,
+        None => 1, // Default depth for interactive view
+    };
+
+    for (idx, target) in args.targets.iter().enumerate() {
+        if idx > 0 {
+            println!();
+        }
+
+        // Show Dependencies if: (no flags at all) OR (explicitly requested --deps)
+        let show_dependencies = (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
+        if show_dependencies {
+            println!("{}", "Dependencies:".bold().cyan());
+            print!("{}", target.bold().green());
+            let mut visited = HashSet::new();
+            visited.insert(target.to_string());
+            if !print_dependency_tree(
+                target,
+                &all_plans,
+                "",
+                1,
+                effective_depth,
+                &mut visited,
+                args.deps,
+            )? {
+                println!(" {}", "(none)".dimmed());
+            } else {
+                println!();
+            }
+        }
+
+        // Show Dependents if: (no flags at all) OR (explicitly requested --rdeps)
+        let show_dependents = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
+        if show_dependents {
+            println!("{}", "Dependents:".bold().cyan());
+            print!("{}", target.bold().green());
+            let mut visited = HashSet::new();
+            visited.insert(target.to_string());
+            if !print_dependent_tree(
+                target,
+                &rdeps_map,
+                "",
+                1,
+                effective_depth,
+                &mut visited,
+                args.rdeps,
+            )? {
+                println!(" {}", "(none)".dimmed());
+            } else {
+                println!();
+            }
         }
     }
     Ok(())
 }
 
-#[derive(Default)]
-pub struct PlanTreeStats {
-    pub total: usize,
-    pub max_depth_seen: usize,
-    pub cycles: usize,
-    pub repeated: usize,
-}
+fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
+    let deps = args.deps.map(|d| match d {
+        DomainArg::Link => DependentsMode::Link,
+        DomainArg::Runtime => DependentsMode::Runtime,
+        DomainArg::Build => DependentsMode::Build,
+        DomainArg::All => DependentsMode::All,
+    });
 
-pub fn print_plan_tree(
-    name: &str,
-    all_plans: &HashMap<String, PathBuf>,
-    prefix: &str,
-    current_depth: usize,
-    max_depth: usize,
-) -> Result<PlanTreeStats> {
-    let mut visited = HashSet::new();
-    let mut ancestors = HashSet::new();
-    let mut stats = PlanTreeStats::default();
-    visited.insert(name.to_string());
-    ancestors.insert(name.to_string());
-    print_plan_tree_inner(
-        name,
-        all_plans,
-        prefix,
-        current_depth,
-        max_depth,
-        &mut visited,
-        &mut ancestors,
-        &mut stats,
+    let rdeps = args.rdeps.map(|d| match d {
+        DomainArg::Link => DependentsMode::Link,
+        DomainArg::Runtime => DependentsMode::Runtime,
+        DomainArg::Build => DependentsMode::Build,
+        DomainArg::All => DependentsMode::All,
+    });
+
+    let match_policies = args
+        .match_policies
+        .iter()
+        .map(|p| match p {
+            MatchPolicyArg::All => MatchPolicy::All,
+            MatchPolicyArg::Missing => MatchPolicy::Missing,
+            MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+            MatchPolicyArg::Installed => MatchPolicy::Installed,
+        })
+        .collect();
+
+    let effective_depth = match args.depth {
+        Some(value) => Some(value),
+        None if rdeps.is_some() => Some(1),
+        None => Some(0),
+    };
+
+    let names = orchestrator::resolve_build_set(
+        config,
+        args.targets,
+        ResolveOptions {
+            deps,
+            rdeps,
+            match_policies,
+            depth: effective_depth,
+            include_targets: !args.exclude_targets,
+            preserve_targets: false,
+        },
     )?;
-    Ok(stats)
+
+    for name in &names {
+        println!("{}", name);
+    }
+
+    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn print_plan_tree_inner(
+fn print_dependency_tree(
     name: &str,
     all_plans: &HashMap<String, PathBuf>,
     prefix: &str,
     current_depth: usize,
     max_depth: usize,
     visited: &mut HashSet<String>,
-    ancestors: &mut HashSet<String>,
-    stats: &mut PlanTreeStats,
-) -> Result<()> {
+    filter: Option<DomainArg>,
+) -> Result<bool> {
     if current_depth > max_depth {
-        return Ok(());
+        return Ok(false);
     }
 
-    let path = all_plans
-        .get(name)
-        .ok_or_else(|| anyhow::anyhow!("Plan '{}' not found in hold tree", name))?;
+    let path = match all_plans.get(name) {
+        Some(p) => p,
+        None => return Ok(false),
+    };
 
     let manifest = PlanManifest::from_file(path)?;
+    let mut deps = manifest.all_dependencies();
 
-    let mut all_deps = Vec::new();
-    all_deps.extend(manifest.dependencies.build.iter().cloned());
-    all_deps.extend(manifest.dependencies.link.iter().cloned());
-    all_deps.extend(manifest.dependencies.runtime.iter().cloned());
-
-    for (i, dep) in all_deps.iter().enumerate() {
-        let dep_name = version::parse_dependency(dep)
-            .unwrap_or_else(|_| (dep.clone(), None))
-            .0;
-        let is_last = i == all_deps.len() - 1;
-        let connector = if is_last { "└── " } else { "├── " };
-        stats.total += 1;
-        if current_depth > stats.max_depth_seen {
-            stats.max_depth_seen = current_depth;
-        }
-
-        if ancestors.contains(&dep_name) {
-            stats.cycles += 1;
-            let cycle_note = all_plans
-                .get(&dep_name)
-                .and_then(|p| PlanManifest::from_file(p).ok())
-                .and_then(|m| m.mvp)
-                .and_then(|mvp| mvp.dependencies)
-                .map(|_| " (cycle → resolvable via mvp)")
-                .unwrap_or(" (cycle → no mvp defined!)");
-            println!("{}{}{}{}", prefix, connector, dep, cycle_note);
-        } else if visited.contains(&dep_name) {
-            stats.repeated += 1;
-            println!("{}{}{} (*)", prefix, connector, dep);
-        } else {
-            println!("{}{}{}", prefix, connector, dep);
-            if all_plans.contains_key(&dep_name) {
-                visited.insert(dep_name.clone());
-                ancestors.insert(dep_name.clone());
-                let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
-                print_plan_tree_inner(
-                    &dep_name,
-                    all_plans,
-                    &new_prefix,
-                    current_depth + 1,
-                    max_depth,
-                    visited,
-                    ancestors,
-                    stats,
-                )?;
-                ancestors.remove(&dep_name);
-            }
-        }
+    // Apply filtering if a domain was specified
+    if let Some(domain) = filter {
+        deps.retain(|(_, kind)| match domain {
+            DomainArg::Link => kind == "link",
+            DomainArg::Runtime => kind == "runtime",
+            DomainArg::Build => kind == "build",
+            DomainArg::All => true,
+        });
     }
 
-    Ok(())
+    if deps.is_empty() {
+        return Ok(false);
+    }
+
+    for (i, (dep_raw, kind)) in deps.iter().enumerate() {
+        let dep_name = version::parse_dependency(dep_raw)
+            .map(|(n, _)| n)
+            .unwrap_or_else(|_| dep_raw.clone());
+        let last_child = i == deps.len() - 1;
+        let connector = if last_child { "└── " } else { "├── " };
+
+        let kind_label: &str = kind;
+        print!(
+            "\n{}{}{}: {}",
+            prefix,
+            connector,
+            kind_label.dimmed(),
+            dep_name
+        );
+
+        if visited.contains(&dep_name) {
+            print!(" {}", "(*)".dimmed());
+            continue;
+        }
+
+        visited.insert(dep_name.clone());
+        let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
+        print_dependency_tree(
+            &dep_name,
+            all_plans,
+            &new_prefix,
+            current_depth + 1,
+            max_depth,
+            visited,
+            filter,
+        )?;
+    }
+
+    Ok(true)
+}
+
+fn print_dependent_tree(
+    name: &str,
+    rdeps_map: &HashMap<String, Vec<(String, String)>>,
+    prefix: &str,
+    current_depth: usize,
+    max_depth: usize,
+    visited: &mut HashSet<String>,
+    filter: Option<DomainArg>,
+) -> Result<bool> {
+    if current_depth > max_depth {
+        return Ok(false);
+    }
+
+    let rdeps_full = match rdeps_map.get(name) {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    // Apply filtering if a domain was specified
+    let mut rdeps = rdeps_full.clone();
+    if let Some(domain) = filter {
+        rdeps.retain(|(_, kind)| match domain {
+            DomainArg::Link => kind == "link",
+            DomainArg::Runtime => kind == "runtime",
+            DomainArg::Build => kind == "build",
+            DomainArg::All => true,
+        });
+    }
+
+    if rdeps.is_empty() {
+        return Ok(false);
+    }
+
+    for (i, (child_name, kind)) in rdeps.iter().enumerate() {
+        let last_child = i == rdeps.len() - 1;
+        let connector = if last_child { "└── " } else { "├── " };
+
+        let kind_label: &str = kind;
+        print!(
+            "\n{}{}{}: {}",
+            prefix,
+            connector,
+            kind_label.dimmed(),
+            child_name
+        );
+
+        if visited.contains(child_name) {
+            print!(" {}", "(*)".dimmed());
+            continue;
+        }
+
+        visited.insert(child_name.clone());
+        let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
+        print_dependent_tree(
+            child_name,
+            rdeps_map,
+            &new_prefix,
+            current_depth + 1,
+            max_depth,
+            visited,
+            filter,
+        )?;
+    }
+
+    Ok(true)
 }

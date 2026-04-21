@@ -27,8 +27,8 @@ wright build zlib --checksum
 ### Dependency Scope
 
 - `wright build` builds exactly what it receives.
-- `wright resolve` expands upstream dependencies and downstream rebuilds before the build starts.
-- `wright resolve --deps --match=outdated` is the usual maintenance mode when you want outdated upstream dependencies rebuilt before the target.
+- `wright resolve` expands dependencies and dependent rebuilds before the build starts.
+- `wright resolve --deps --match=outdated` is the usual maintenance mode when you want outdated dependencies rebuilt before the target.
 
 ### Part Inventory
 
@@ -80,7 +80,7 @@ wright apply @base --dry-run
 `wright apply`:
 
 1. resolves the requested plans or assemblies
-2. automatically adds missing or outdated upstream dependency plans to the build graph
+2. automatically adds missing or outdated dependency plans to the build graph
 3. computes dependency waves for the required build graph
 4. for each wave, builds what is needed there
 5. installs or upgrades that wave before continuing, so later waves see the updated system state

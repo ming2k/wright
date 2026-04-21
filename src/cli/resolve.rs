@@ -44,7 +44,7 @@ pub struct ResolveArgs {
     #[arg(short = 'x', long = "exclude-targets")]
     pub exclude_targets: bool,
 
-    /// Expand upstream dependencies.
+    /// Expand dependencies.
     /// `link` follows ABI-sensitive link dependencies.
     /// `runtime` follows runtime dependencies.
     /// `build` follows build dependencies.
@@ -58,7 +58,7 @@ pub struct ResolveArgs {
     )]
     pub deps: Option<DomainArg>,
 
-    /// Expand downstream reverse dependencies (rdeps) for installed parts.
+    /// Expand reverse dependents (rdeps) for installed parts.
     /// `link` follows ABI-sensitive link dependents.
     /// `runtime` follows runtime dependents.
     /// `build` follows build dependents.

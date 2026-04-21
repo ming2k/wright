@@ -85,7 +85,7 @@ The target distribution for Wright follows a streamlined variant of the FHS (Fil
 
 ### 2.1 Core Philosophy
 
-Splitting a part (split part) involves dividing the build products of a single upstream source plan into multiple independent binary parts. Splitting increases complexity and should only be done when truly necessary.
+Splitting a part (split part) involves dividing the build products of a single dependency source plan into multiple independent binary parts. Splitting increases complexity and should only be done when truly necessary.
 
 ### 2.2 Criteria for Splitting
 
@@ -153,7 +153,7 @@ script = """
 
 #### linux-firmware: Split by Hardware
 
-The upstream `linux-firmware` repository contains firmware binaries for all hardware, totaling over 800MB. Most users only need the firmware corresponding to their own hardware.
+The dependency `linux-firmware` repository contains firmware binaries for all hardware, totaling over 800MB. Most users only need the firmware corresponding to their own hardware.
 
 ```
 linux-firmware (source, ~800MB+)
@@ -189,7 +189,7 @@ script = """
 
 #### More Quick Reference Cases
 
-| Upstream Project | Splitting Method | Reason |
+| Dependency Project | Splitting Method | Reason |
 |------------------|------------------|--------|
 | **dbus** | `libdbus` + `dbus-daemon` | Many programs link against libdbus but don't need the daemon itself |
 | **Python** | `python` + `python-doc` | Documentation ~50MB, not needed at runtime |
@@ -285,7 +285,7 @@ optional = ["nghttp2"]
 
 ### 3.3 Avoiding Circular Dependencies
 
-Circular dependencies (A → B → A) are detected and rejected by Wright's dependency resolver. If you encounter circular dependencies upstream:
+Circular dependencies (A → B → A) are detected and rejected by Wright's dependency resolver. If you encounter circular dependencies dependency:
 
 1. Determine if it's a true runtime circular dependency (usually it's not).
 2. Change one direction to `optional` or handle it in `build` dependencies.
@@ -313,7 +313,7 @@ Pay attention to musl-specific issues during packaging:
 - Limited locale support.
 - Some software assumes glibc-specific header files exist.
 
-When encountering compatibility issues, prioritize submitting patches upstream; if unresolved, distribute via Flatpak (which uses its own glibc runtime).
+When encountering compatibility issues, prioritize submitting patches dependency; if unresolved, distribute via Flatpak (which uses its own glibc runtime).
 
 ### 4.3 runit Service Packaging
 
@@ -350,12 +350,12 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 |------|------|---------|---------------|
 | **core** | Core System | Toolchain, libc, kernel, init, essential utilities | Extremely conservative, security fixes only |
 | **base** | Base System | Networking tools, filesystem tools, common libraries, Wright itself | Stable versions, promoted after testing against core |
-| **extra** | Extra Parts | Servers, language runtimes, development tools | Track stable upstream |
+| **extra** | Extra Parts | Servers, language runtimes, development tools | Track stable dependency |
 | **community**| Community | User-contributed parts | No stability guarantees |
 
 ### 5.2 Software NOT Included in Native Repositories
 
 - Desktop applications with complex dependency trees → Use Flatpak.
-- Upstream software that is no longer maintained.
+- Dependency software that is no longer maintained.
 - Software that only supports glibc and cannot be reasonably patched.
 - Closed-source software.

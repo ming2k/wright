@@ -482,11 +482,26 @@ impl PlanManifest {
         }
     }
 
-    /// Get sub-parts that are not the main part (need their own script/PART_DIR).
+    /// Iterate over sub-parts that are not the main part (need their own script/PART_DIR).
     pub fn extra_sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
         let main_name = self.plan.name.clone();
         self.sub_parts()
             .filter(move |(name, _)| *name != &main_name)
+    }
+
+    /// Get all dependencies (build, link, runtime) with their type labels.
+    pub fn all_dependencies(&self) -> Vec<(String, String)> {
+        let mut all = Vec::new();
+        for dep in &self.dependencies.build {
+            all.push((dep.clone(), "build".to_string()));
+        }
+        for dep in &self.dependencies.link {
+            all.push((dep.clone(), "link".to_string()));
+        }
+        for dep in &self.dependencies.runtime {
+            all.push((dep.clone(), "runtime".to_string()));
+        }
+        all
     }
 }
 

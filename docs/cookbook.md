@@ -130,7 +130,7 @@ wright build mypkg --stage=staging --stage=fabricate
 wright build mypkg --stage=compile --stage=staging --stage=fabricate
 ```
 
-To skip the `check` stage (e.g. tests are slow or broken upstream):
+To skip the `check` stage (e.g. tests are slow or broken dependency):
 
 ```bash
 wright build mypkg --stage=prepare --stage=configure --stage=compile --stage=staging --stage=fabricate
@@ -215,7 +215,7 @@ wright build gcc binutils glibc --lint
 
 ## Building a Dependency Chain
 
-Build a part and all of its missing upstream dependencies:
+Build a part and all of its missing dependencies:
 
 ```bash
 # Resolve gtk4 plus any missing build/link deps, then build
@@ -228,7 +228,7 @@ Build only the missing deps, not gtk4 itself (pre-stage before the main build):
 wright resolve gtk4 --deps | wright build
 ```
 
-Build everything — deps, the part, and downstream link dependents:
+Build everything — deps, the part, and dependent link dependents:
 
 ```bash
 wright resolve gtk4 --deps --rdeps | wright build
@@ -307,7 +307,7 @@ plans are deduplicated.
 ```bash
 wright build @base         # build all plans in the "base" assembly
 wright build @base @devel mypackage # combine assemblies and individual plans
-wright apply @base         # plan-driven install/upgrade combo: add missing or outdated upstream plans, build what is needed, then install the assembly
+wright apply @base         # plan-driven install/upgrade combo: add missing or outdated dependency plans, build what is needed, then install the assembly
 wright resolve @base --deps --match=all | wright build # override the default policy for a broader rebuild set
 ```
 
@@ -423,7 +423,7 @@ install -Dm755 ${WORKDIR}/target/release/rg ${PART_DIR}/usr/bin/rg
 """
 ```
 
-If the upstream tarball does not include a `vendor/` directory, generate one
+If the dependency tarball does not include a `vendor/` directory, generate one
 locally and repack:
 
 ```bash
