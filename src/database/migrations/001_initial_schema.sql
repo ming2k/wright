@@ -1,7 +1,7 @@
 -- V1: Initial Clean Schema (Combined)
 
 -- Core parts table with all metadata fields
-CREATE TABLE parts (
+CREATE TABLE IF NOT EXISTS parts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     version TEXT NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE parts (
 );
 
 -- File tracking for each part
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     path TEXT NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE files (
 );
 
 -- Part dependencies
-CREATE TABLE dependencies (
+CREATE TABLE IF NOT EXISTS dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     depends_on TEXT NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE dependencies (
 );
 
 -- System transactions (install/upgrade/remove)
-CREATE TABLE transactions (
+CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     operation TEXT NOT NULL,
@@ -61,7 +61,7 @@ CREATE INDEX idx_deps_package ON dependencies(part_id);
 CREATE INDEX idx_deps_on ON dependencies(depends_on);
 
 -- Shadowed files (for conflict analysis and safe removal)
-CREATE TABLE shadowed_files (
+CREATE TABLE IF NOT EXISTS shadowed_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL,
     original_owner_id INTEGER NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE shadowed_files (
 CREATE INDEX idx_shadowed_path ON shadowed_files(path);
 
 -- Optional (informational) dependencies, not enforced
-CREATE TABLE optional_dependencies (
+CREATE TABLE IF NOT EXISTS optional_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -85,7 +85,7 @@ CREATE TABLE optional_dependencies (
 CREATE INDEX idx_opt_deps_package ON optional_dependencies(part_id);
 
 -- Virtual provides (e.g. http-server provided by nginx)
-CREATE TABLE provides (
+CREATE TABLE IF NOT EXISTS provides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -95,7 +95,7 @@ CREATE INDEX idx_provides_name ON provides(name);
 CREATE INDEX idx_provides_package ON provides(part_id);
 
 -- Part conflicts
-CREATE TABLE conflicts (
+CREATE TABLE IF NOT EXISTS conflicts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -105,7 +105,7 @@ CREATE INDEX idx_conflicts_name ON conflicts(name);
 CREATE INDEX idx_conflicts_package ON conflicts(part_id);
 
 -- Parts this package replaces (supersedes) at install time
-CREATE TABLE replaces (
+CREATE TABLE IF NOT EXISTS replaces (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -115,7 +115,7 @@ CREATE INDEX idx_replaces_name ON replaces(name);
 CREATE INDEX idx_replaces_package ON replaces(part_id);
 
 -- Build sessions: track progress of multi-package build runs for --resume
-CREATE TABLE build_sessions (
+CREATE TABLE IF NOT EXISTS build_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_hash TEXT NOT NULL,
     package_name TEXT NOT NULL,

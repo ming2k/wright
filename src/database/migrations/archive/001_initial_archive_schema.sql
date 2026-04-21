@@ -1,6 +1,6 @@
 -- V1: Initial Archive Inventory Schema
 
-CREATE TABLE parts (
+CREATE TABLE IF NOT EXISTS parts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE parts (
     UNIQUE(name, version, release, epoch)
 );
 
-CREATE TABLE dependencies (
+CREATE TABLE IF NOT EXISTS dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     depends_on TEXT NOT NULL,
@@ -25,21 +25,21 @@ CREATE TABLE dependencies (
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE TABLE provides (
+CREATE TABLE IF NOT EXISTS provides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE TABLE conflicts (
+CREATE TABLE IF NOT EXISTS conflicts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE TABLE replaces (
+CREATE TABLE IF NOT EXISTS replaces (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_id INTEGER NOT NULL,
     name TEXT NOT NULL,
