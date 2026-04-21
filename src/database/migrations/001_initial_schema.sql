@@ -55,10 +55,10 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 -- Performance indices
-CREATE INDEX idx_files_package ON files(part_id);
-CREATE INDEX idx_files_path ON files(path);
-CREATE INDEX idx_deps_package ON dependencies(part_id);
-CREATE INDEX idx_deps_on ON dependencies(depends_on);
+CREATE INDEX IF NOT EXISTS idx_files_package ON files(part_id);
+CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+CREATE INDEX IF NOT EXISTS idx_deps_package ON dependencies(part_id);
+CREATE INDEX IF NOT EXISTS idx_deps_on ON dependencies(depends_on);
 
 -- Shadowed files (for conflict analysis and safe removal)
 CREATE TABLE IF NOT EXISTS shadowed_files (
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS shadowed_files (
     FOREIGN KEY (shadowed_by_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_shadowed_path ON shadowed_files(path);
+CREATE INDEX IF NOT EXISTS idx_shadowed_path ON shadowed_files(path);
 
 -- Optional (informational) dependencies, not enforced
 CREATE TABLE IF NOT EXISTS optional_dependencies (
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS optional_dependencies (
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_opt_deps_package ON optional_dependencies(part_id);
+CREATE INDEX IF NOT EXISTS idx_opt_deps_package ON optional_dependencies(part_id);
 
 -- Virtual provides (e.g. http-server provided by nginx)
 CREATE TABLE IF NOT EXISTS provides (
@@ -91,8 +91,8 @@ CREATE TABLE IF NOT EXISTS provides (
     name TEXT NOT NULL,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_provides_name ON provides(name);
-CREATE INDEX idx_provides_package ON provides(part_id);
+CREATE INDEX IF NOT EXISTS idx_provides_name ON provides(name);
+CREATE INDEX IF NOT EXISTS idx_provides_package ON provides(part_id);
 
 -- Part conflicts
 CREATE TABLE IF NOT EXISTS conflicts (
@@ -101,8 +101,8 @@ CREATE TABLE IF NOT EXISTS conflicts (
     name TEXT NOT NULL,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_conflicts_name ON conflicts(name);
-CREATE INDEX idx_conflicts_package ON conflicts(part_id);
+CREATE INDEX IF NOT EXISTS idx_conflicts_name ON conflicts(name);
+CREATE INDEX IF NOT EXISTS idx_conflicts_package ON conflicts(part_id);
 
 -- Parts this package replaces (supersedes) at install time
 CREATE TABLE IF NOT EXISTS replaces (
@@ -111,8 +111,8 @@ CREATE TABLE IF NOT EXISTS replaces (
     name TEXT NOT NULL,
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_replaces_name ON replaces(name);
-CREATE INDEX idx_replaces_package ON replaces(part_id);
+CREATE INDEX IF NOT EXISTS idx_replaces_name ON replaces(name);
+CREATE INDEX IF NOT EXISTS idx_replaces_package ON replaces(part_id);
 
 -- Build sessions: track progress of multi-package build runs for --resume
 CREATE TABLE IF NOT EXISTS build_sessions (
@@ -124,4 +124,4 @@ CREATE TABLE IF NOT EXISTS build_sessions (
     UNIQUE(session_hash, package_name)
 );
 
-CREATE INDEX idx_build_sessions_hash ON build_sessions(session_hash);
+CREATE INDEX IF NOT EXISTS idx_build_sessions_hash ON build_sessions(session_hash);

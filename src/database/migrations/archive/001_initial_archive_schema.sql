@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS replaces (
     FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_inventory_part_name ON parts(name);
-CREATE INDEX idx_inventory_part_filename ON parts(filename);
-CREATE INDEX idx_inventory_deps_part ON dependencies(part_id);
-CREATE INDEX idx_inventory_provides_name ON provides(name);
+CREATE INDEX IF NOT EXISTS idx_inventory_part_name ON parts(name);
+CREATE INDEX IF NOT EXISTS idx_inventory_part_filename ON parts(filename);
+CREATE INDEX IF NOT EXISTS idx_inventory_deps_part ON dependencies(part_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_provides_name ON provides(name);

@@ -91,8 +91,8 @@ python3 final_migration.py
 ```
 
 This script will:
-1.  Back up your existing `installed.db` and `archives.db`.
-2.  Create new databases consistent with the v3.0 SQL migration schema.
+1.  Read your pre-created `installed.db.bak` and `archives.db.bak` backups.
+2.  Create new databases consistent with the v3.0 SQL migration schema and register the SQLx migration baseline.
 3.  Transfer all existing part records, file manifests, and dependency data.
 
 ### 6.2 Schema Integrity

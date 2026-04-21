@@ -17,7 +17,7 @@ Wright v3.0.0 introduces a structured migration system using standard `.sql` fil
 
 - **Schema Location**: Migrations are stored in `src/database/migrations/`.
 - **Initialization**: Databases are automatically initialized on the first run.
-- **Upgrading**: The system uses SQLite's `user_version` PRAGMA to track and apply pending migrations.
+- **Upgrading**: The system uses SQLx's `_sqlx_migrations` table to track and apply pending migrations.
 - **2.x -> 3.x Migration**: A dedicated tool `final_migration.py` is provided in the project root to migrate existing databases to the new v3 format.
 
 ---
