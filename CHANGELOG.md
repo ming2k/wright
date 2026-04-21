@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1] - 2026-04-21
+
+### Fixed
+- **Migration Compatibility**: Made the initial SQL migrations idempotent so upgraded databases with pre-existing indices do not fail on `CREATE INDEX`.
+- **SQLx Baseline Handling**: Corrected `final_migration.py` to register the initial `_sqlx_migrations` baseline instead of relying on `PRAGMA user_version`.
+- **Migration Script Robustness**: Hardened `final_migration.py` to stream table copies in batches, avoid swallowing schema inspection errors, and replace target databases atomically after a successful migration.
+
 ## [3.0.0] - 2026-04-21
 
 ### Changed
