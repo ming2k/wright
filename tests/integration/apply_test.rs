@@ -5,8 +5,8 @@ use wright::commands::system;
 use wright::cli::system::Commands as SystemCommands;
 use wright::cli::resolve::{DomainArg, MatchPolicyArg};
 
-#[test]
-fn test_apply_with_dependency_in_cwd() {
+#[tokio::test]
+async fn test_apply_with_dependency_in_cwd() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("root");
     let plans = temp.path().join("plans");
@@ -81,7 +81,7 @@ script = "mkdir -p ${PART_DIR}/usr/bin"
         &root,
         2,
         false,
-    );
+    ).await;
 
     std::env::set_current_dir(old_cwd).unwrap();
 

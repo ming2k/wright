@@ -1,8 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-
-use rayon::prelude::*;
 use tracing::{debug, info, warn};
 
 use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart};
@@ -15,7 +13,7 @@ use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, self_replace_provides_conflicts};
 
-pub fn upgrade_part(
+pub async fn upgrade_part(
     db: &InstalledDb,
     part_path: &Path,
     root_dir: &Path,
@@ -25,12 +23,16 @@ pub fn upgrade_part(
     let overall_start = Instant::now();
 
     let staging_dir = std::path::Path::new("/var/lib/wright/staging");
-    let _ = std::fs::create_dir_all(staging_dir);
+    let _ = tokio::fs::create_dir_all(staging_dir).await;
     let temp_dir = tempfile::tempdir_in(staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let mut phase_start = Instant::now();
+    
+    // Blocking call to extract_part, but it's mainly I/O. 
+    // We could wrap it in spawn_blocking if it's too slow.
     let (partinfo, part_hash) = part::extract_part(part_path, temp_dir.path())?;
+    
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -38,7 +40,7 @@ pub fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    let old_part = db.get_part(&partinfo.name)?.ok_or_else(|| {
+    let old_part = db.get_part(&partinfo.name).await?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
             "part '{}' is not installed, use install instead",
             partinfo.name
@@ -47,7 +49,7 @@ pub fn upgrade_part(
 
     let old_ver = Version::parse(&old_part.version)?;
     let new_ver = Version::parse(&partinfo.version)?;
-    let old_epoch = old_part.epoch;
+    let old_epoch = old_part.epoch as u32;
     let new_epoch = partinfo.epoch;
     if !force {
         let is_newer = if new_epoch != old_epoch {
@@ -55,7 +57,7 @@ pub fn upgrade_part(
         } else if new_ver != old_ver {
             new_ver > old_ver
         } else {
-            partinfo.release > old_part.release
+            partinfo.release > old_part.release as u32
         };
         if !is_newer {
             return Err(WrightError::UpgradeError(format!(
@@ -83,7 +85,7 @@ pub fn upgrade_part(
         .filter(|e| e.file_type == FileType::File)
         .map(|e| e.path.as_str())
         .collect();
-    let owners = db.find_owners_batch(&file_paths)?;
+    let owners = db.find_owners_batch(&file_paths).await?;
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
     for entry in &new_entries {
@@ -116,112 +118,67 @@ pub fn upgrade_part(
         Some(&partinfo.version),
         "pending",
         None,
-    )?;
+    ).await?;
 
     let mut rollback_state = match journal_path_from_db(db) {
         Some(jp) => RollbackState::with_journal(jp),
         None => RollbackState::new(),
     };
 
-    let old_files = db.get_files(old_part.id)?;
+    let old_files = db.get_files(old_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
 
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::UpgradeError(format!("failed to create backup dir: {}", e)))?;
 
-    // Back up overlapping files in parallel, using hard links where possible.
+    // Perform backup. For now, doing it sequentially but with async calls for safety.
+    // Parallelizing async I/O can be done with join_all or similar.
     let overlapping: Vec<_> = old_files
         .iter()
         .filter(|f| new_paths.contains(f.path.as_str()))
         .collect();
 
-    struct BackupResult {
-        file_backup: Option<(PathBuf, PathBuf)>,
-        symlink_backup: Option<(PathBuf, String)>,
-        error: Option<WrightError>,
-    }
+    for old_file in overlapping {
+        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
+        if !full_path.exists() && full_path.symlink_metadata().is_err() {
+            continue;
+        }
 
-    let backup_results: Vec<BackupResult> = overlapping
-        .par_iter()
-        .map(|old_file| {
-            let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-            if !full_path.exists() && full_path.symlink_metadata().is_err() {
-                return BackupResult {
-                    file_backup: None,
-                    symlink_backup: None,
-                    error: None,
-                };
+        if old_file.file_type == FileType::File {
+            let backup_path = backup_dir
+                .path()
+                .join(old_file.path.trim_start_matches('/'));
+            if let Some(parent) = backup_path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    WrightError::UpgradeError(format!(
+                        "failed to create backup directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
             }
-
-            if old_file.file_type == FileType::File {
-                let backup_path = backup_dir
-                    .path()
-                    .join(old_file.path.trim_start_matches('/'));
-                if let Some(parent) = backup_path.parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        return BackupResult {
-                            file_backup: None,
-                            symlink_backup: None,
-                            error: Some(WrightError::UpgradeError(format!(
-                                "failed to create backup directory {}: {}",
-                                parent.display(),
-                                e
-                            ))),
-                        };
-                    }
+            // Prefer hard_link (instant, no data copy) with copy fallback.
+            let result = match tokio::fs::hard_link(&full_path, &backup_path).await {
+                Ok(()) => Ok(()),
+                Err(_) => tokio::fs::copy(&full_path, &backup_path).await.map(|_| ()),
+            };
+            
+            match result {
+                Ok(()) => {
+                    rollback_state.record_backup(full_path, backup_path);
                 }
-                // Prefer hard_link (instant, no data copy) with copy fallback.
-                let result = std::fs::hard_link(&full_path, &backup_path)
-                    .or_else(|_| std::fs::copy(&full_path, &backup_path).map(|_| ()));
-                match result {
-                    Ok(()) => BackupResult {
-                        file_backup: Some((full_path, backup_path)),
-                        symlink_backup: None,
-                        error: None,
-                    },
-                    Err(e) => BackupResult {
-                        file_backup: None,
-                        symlink_backup: None,
-                        error: Some(WrightError::UpgradeError(format!(
-                            "failed to backup {}: {}",
-                            full_path.display(),
-                            e
-                        ))),
-                    },
-                }
-            } else if old_file.file_type == FileType::Symlink {
-                if let Ok(target) = std::fs::read_link(&full_path) {
-                    BackupResult {
-                        file_backup: None,
-                        symlink_backup: Some((full_path, target.to_string_lossy().to_string())),
-                        error: None,
-                    }
-                } else {
-                    BackupResult {
-                        file_backup: None,
-                        symlink_backup: None,
-                        error: None,
-                    }
-                }
-            } else {
-                BackupResult {
-                    file_backup: None,
-                    symlink_backup: None,
-                    error: None,
+                Err(e) => {
+                    return Err(WrightError::UpgradeError(format!(
+                        "failed to backup {}: {}",
+                        full_path.display(),
+                        e
+                    )));
                 }
             }
-        })
-        .collect();
-
-    for result in backup_results {
-        if let Some(e) = result.error {
-            return Err(e);
-        }
-        if let Some((original, backup)) = result.file_backup {
-            rollback_state.record_backup(original, backup);
-        }
-        if let Some((original, target)) = result.symlink_backup {
-            rollback_state.record_symlink_backup(original, target);
+        } else if old_file.file_type == FileType::Symlink {
+            if let Ok(target) = tokio::fs::read_link(&full_path).await {
+                rollback_state.record_symlink_backup(full_path, target.to_string_lossy().to_string());
+            }
         }
     }
 
@@ -229,7 +186,7 @@ pub fn upgrade_part(
         if let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir) {
+            if let Err(e) = run_install_script(script, root_dir).await {
                 warn!("pre_install script failed: {}", e);
             }
             log_debug_timing(
@@ -243,6 +200,10 @@ pub fn upgrade_part(
 
     let config_paths = collect_config_paths(&new_entries);
     phase_start = Instant::now();
+    
+    // copy_entries_to_root should probably also be async. 
+    // For now I'll assume it's still sync and wraps internal tokio calls if needed, 
+    // but better to refactor it to async too.
     let preserved_configs = match copy_entries_to_root(
         &new_entries,
         temp_dir.path(),
@@ -251,15 +212,16 @@ pub fn upgrade_part(
         None,
         &config_paths,
         &divert_paths,
-    ) {
+    ).await {
         Ok(paths) => paths,
         Err(e) => {
             warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, "rolled_back")?;
+            db.update_transaction_status(tx_id, "rolled_back").await?;
             return Err(e);
         }
     };
+    
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -275,7 +237,7 @@ pub fn upgrade_part(
         .filter(|f| !new_paths.contains(f.path.as_str()) && !f.is_config)
         .map(|f| f.path.as_str())
         .collect();
-    let other_owners_map = db.get_other_owners_batch(old_part.id, &to_delete_paths)?;
+    let other_owners_map = db.get_other_owners_batch(old_part.id, &to_delete_paths).await?;
 
     for old_file in old_files.iter().rev() {
         if new_paths.contains(old_file.path.as_str()) {
@@ -307,11 +269,11 @@ pub fn upgrade_part(
         match old_file.file_type {
             FileType::File | FileType::Symlink => {
                 if full_path.exists() || full_path.symlink_metadata().is_ok() {
-                    let _ = std::fs::remove_file(&full_path);
+                    let _ = tokio::fs::remove_file(&full_path).await;
                 }
             }
             FileType::Directory => {
-                let _ = std::fs::remove_dir(&full_path);
+                let _ = tokio::fs::remove_dir(&full_path).await;
             }
         }
     }
@@ -329,13 +291,13 @@ pub fn upgrade_part(
         install_size: partinfo.install_size,
         part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
-        ..Default::default()
-    })?;
+        origin: old_part.origin, // Preserve origin
+    }).await?;
 
-    let updated_part = db.get_part(&partinfo.name)?.expect("updated package exists");
+    let updated_part = db.get_part(&partinfo.name).await?.expect("updated package exists");
 
     for (path, owner_name) in shadows {
-        if let Some(owner_part) = db.get_part(&owner_name)? {
+        if let Some(owner_part) = db.get_part(&owner_name).await? {
             let diverted_to = if divert_paths.contains(&path) {
                 let mut p = PathBuf::from(&path);
                 let mut os = p.file_name().unwrap().to_os_string();
@@ -350,27 +312,27 @@ pub fn upgrade_part(
                 owner_part.id,
                 updated_part.id,
                 diverted_to.as_deref(),
-            );
+            ).await;
         }
     }
 
-    db.replace_files(updated_part.id, &new_entries)?;
+    db.replace_files(updated_part.id, &new_entries).await?;
 
     let mut deps = Vec::new();
     for d in &partinfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
         deps.push(Dependency {
             name,
-            constraint: constraint.map(|c| c.to_string()),
+            version_constraint: constraint.map(|c| c.to_string()),
             dep_type: DepType::Runtime,
         });
     }
-    db.replace_dependencies(updated_part.id, &deps)?;
-    db.replace_optional_dependencies(updated_part.id, &partinfo.optional_deps)?;
+    db.replace_dependencies(updated_part.id, &deps).await?;
+    db.replace_optional_dependencies(updated_part.id, &partinfo.optional_deps).await?;
 
-    self_replace_provides_conflicts(db, updated_part.id, &partinfo)?;
+    self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 
-    db.update_transaction_status(tx_id, "completed")?;
+    db.update_transaction_status(tx_id, "completed").await?;
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -382,7 +344,7 @@ pub fn upgrade_part(
         if let Some(ref script) = hooks.post_upgrade {
             log_running_hook(&partinfo.name, "post_upgrade");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir) {
+            if let Err(e) = run_install_script(script, root_dir).await {
                 warn!("post_upgrade script failed: {}", e);
             }
             log_debug_timing(

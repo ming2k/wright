@@ -13,7 +13,7 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn build_hello_archive() -> PathBuf {
+async fn build_hello_archive() -> PathBuf {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
     for stage in manifest.lifecycle.values_mut() {
@@ -39,8 +39,7 @@ fn build_hello_archive() -> PathBuf {
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -57,126 +56,126 @@ fn build_hello_archive() -> PathBuf {
     persistent
 }
 
-#[test]
-fn test_end_to_end_install_query_remove() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_end_to_end_install_query_remove() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let archive = build_hello_archive();
+    let archive = build_hello_archive().await;
 
     // Install
-    transaction::install_part(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
 
     // Verify file exists on disk
     let hello_bin = root.path().join("usr/bin/hello");
     assert!(hello_bin.exists());
 
     // Query part in DB
-    let part = db.get_part("hello").unwrap().unwrap();
+    let part = db.get_part("hello").await.unwrap().unwrap();
     assert_eq!(part.name, "hello");
     assert_eq!(part.version, "1.0.0");
     assert_eq!(part.release, 1);
     assert_eq!(part.arch, "x86_64");
 
     // List parts
-    let parts = db.list_parts().unwrap();
+    let parts = db.list_parts().await.unwrap();
     assert_eq!(parts.len(), 1);
 
     // Query files
-    let files = db.get_files(part.id).unwrap();
+    let files = db.get_files(part.id).await.unwrap();
     assert!(files.iter().any(|f| f.path == "/usr/bin/hello"));
 
     // Find owner
-    let owner = db.find_owner("/usr/bin/hello").unwrap();
+    let owner = db.find_owner("/usr/bin/hello").await.unwrap();
     assert_eq!(owner, Some("hello".to_string()));
 
     // Verify integrity
-    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
     assert!(issues.is_empty());
 
     // Remove
-    transaction::remove_part(&db, "hello", root.path(), false).unwrap();
+    transaction::remove_part(&db, "hello", root.path(), false).await.unwrap();
 
     // Verify file is gone
     assert!(!hello_bin.exists());
 
     // Verify DB is clean
-    assert!(db.get_part("hello").unwrap().is_none());
-    assert!(db.list_parts().unwrap().is_empty());
-    assert!(db.find_owner("/usr/bin/hello").unwrap().is_none());
+    assert!(db.get_part("hello").await.unwrap().is_none());
+    assert!(db.list_parts().await.unwrap().is_empty());
+    assert!(db.find_owner("/usr/bin/hello").await.unwrap().is_none());
 
     let _ = std::fs::remove_file(&archive);
 }
 
-#[test]
-fn test_file_conflict_detection() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_file_conflict_detection() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let archive = build_hello_archive();
+    let archive = build_hello_archive().await;
 
     // Install first copy
-    transaction::install_part(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
 
     // Try to install again — should fail because the part is already installed
     let result = transaction::install_part(&db, &archive, root.path(), false);
-    assert!(result.is_err());
+    assert!(result.await.is_err());
 
     let _ = std::fs::remove_file(&archive);
 }
 
-#[test]
-fn test_verify_detects_modification() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_verify_detects_modification() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let archive = build_hello_archive();
+    let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
 
     // Tamper with installed file
     std::fs::write(root.path().join("usr/bin/hello"), b"tampered content").unwrap();
 
-    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
     assert!(!issues.is_empty());
-    assert!(issues.iter().any(|i| i.contains("MODIFIED")));
+    assert!(issues.iter().any(|i: &String| i.contains("MODIFIED")));
 
     let _ = std::fs::remove_file(&archive);
 }
 
-#[test]
-fn test_verify_detects_missing_file() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_verify_detects_missing_file() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let archive = build_hello_archive();
+    let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
 
     // Delete installed file
     std::fs::remove_file(root.path().join("usr/bin/hello")).unwrap();
 
-    let issues = transaction::verify_part(&db, "hello", root.path()).unwrap();
+    let issues = transaction::verify_part(&db, "hello", root.path()).await.unwrap();
     assert!(!issues.is_empty());
-    assert!(issues.iter().any(|i| i.contains("MISSING")));
+    assert!(issues.iter().any(|i: &String| i.contains("MISSING")));
 
     let _ = std::fs::remove_file(&archive);
 }
 
-#[test]
-fn test_search_installed_parts() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_search_installed_parts() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let archive = build_hello_archive();
+    let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive, root.path(), false).await.unwrap();
 
     // Search by name
-    let results = db.search_parts("hello").unwrap();
+    let results = db.search_parts("hello").await.unwrap();
     assert_eq!(results.len(), 1);
 
     // Search by description
-    let results = db.search_parts("World").unwrap();
+    let results = db.search_parts("World").await.unwrap();
     assert_eq!(results.len(), 1);
 
     // Search with no results
-    let results = db.search_parts("nonexistent").unwrap();
+    let results = db.search_parts("nonexistent").await.unwrap();
     assert!(results.is_empty());
 
     let _ = std::fs::remove_file(&archive);

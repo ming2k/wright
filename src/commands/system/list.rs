@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
 use crate::database::InstalledDb;
+use crate::error::Result;
 
-pub fn execute_list(
+pub async fn execute_list(
     db: &InstalledDb,
     long: bool,
     roots: bool,
@@ -9,18 +9,15 @@ pub fn execute_list(
     orphans: bool,
 ) -> Result<()> {
     let parts = if orphans {
-        db.get_orphan_parts()
+        db.get_orphan_parts().await?
     } else if roots {
-        db.get_root_parts()
+        db.get_root_parts().await?
     } else {
-        db.list_parts()
-    }
-    .context("failed to list parts")?;
+        db.list_parts().await?
+    };
 
     if parts.is_empty() {
-        if orphans {
-            println!("no orphan parts");
-        } else {
+        if !assumed && !roots && !orphans {
             println!("no parts installed");
         }
     } else {

@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.0] - 2026-04-21
+
+### Changed
+- **Major Database Refactoring (Breaking)**: Migrated the entire database layer from hand-rolled SQL strings to a structured, async migration-based architecture using SQLx.
+    - Consolidated database modules under `src/database/` with dedicated submodules for core, parts, files, and migrations.
+    - Switched to standard `.sql` migration files located in `src/database/migrations/` for reliable schema evolution.
+    - Improved database connection management with support for explicit locking and better error handling.
+- **Archive System Integration**: Merged the previous archive/inventory database logic into the unified database architecture, providing a consistent API for both installed state and local archive catalogues.
+
+### Added
+- **Migration Tooling**: Introduced `final_migration.py` to automate the transition from 2.x database formats to the new 3.0 schema.
+- **SQL Migration Support**: Added a robust migration runner that ensures databases are initialized with the correct V1 schema and `user_version`.
+
 ## [2.7.0] - 2026-04-20
 
 ### Added

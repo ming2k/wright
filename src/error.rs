@@ -66,7 +66,7 @@ pub enum WrightError {
     TomlError(#[from] toml::de::Error),
 
     #[error("SQLite error: {0}")]
-    SqliteError(#[from] rusqlite::Error),
+    SqliteError(#[from] sqlx::Error),
 }
 
 pub type Result<T> = std::result::Result<T, WrightError>;

@@ -8,7 +8,7 @@ use wright::part::part;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
 
-fn create_test_archive(name: &str, shared_file_content: &str) -> PathBuf {
+async fn create_test_archive(name: &str, shared_file_content: &str) -> PathBuf {
     let tmp = tempfile::tempdir().unwrap();
     let plan_dir = tmp.path().to_path_buf();
 
@@ -53,8 +53,7 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -68,21 +67,21 @@ script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin
     persistent
 }
 
-#[test]
-fn test_file_diversion_and_restoration() {
-    let db = InstalledDb::open_in_memory().unwrap();
+#[tokio::test]
+async fn test_file_diversion_and_restoration() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
 
-    let archive_a = create_test_archive("part-a", "content-a");
-    let archive_b = create_test_archive("part-b", "content-b");
+    let archive_a = create_test_archive("part-a", "content-a").await;
+    let archive_b = create_test_archive("part-b", "content-b").await;
 
     // 1. Install Part A
-    transaction::install_part(&db, &archive_a, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive_a, root.path(), false).await.unwrap();
     let shared_path = root.path().join("usr/bin/shared");
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-a");
 
     // 2. Install Part B (conflicts with A)
-    transaction::install_part(&db, &archive_b, root.path(), false).unwrap();
+    transaction::install_part(&db, &archive_b, root.path(), false).await.unwrap();
 
     // 3. Verify diversion
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-b");
@@ -94,15 +93,15 @@ fn test_file_diversion_and_restoration() {
     );
 
     // Check DB
-    let b_part = db.get_part("part-b").unwrap().unwrap();
-    let diverted = db.get_diverted_file("/usr/bin/shared", b_part.id).unwrap();
+    let b_part = db.get_part("part-b").await.unwrap().unwrap();
+    let diverted = db.get_diverted_file("/usr/bin/shared", b_part.id).await.unwrap();
     assert_eq!(
         diverted,
         Some("/usr/bin/shared.wright-diverted".to_string())
     );
 
     // 4. Remove Part B
-    transaction::remove_part(&db, "part-b", root.path(), false).unwrap();
+    transaction::remove_part(&db, "part-b", root.path(), false).await.unwrap();
 
     // 5. Verify restoration
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-a");

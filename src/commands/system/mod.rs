@@ -18,7 +18,7 @@ use crate::query;
 use crate::query::PrefixMode;
 use crate::transaction;
 
-pub fn execute(
+pub async fn execute(
     command: SystemCommands,
     config: &GlobalConfig,
     installed_db_path: &Path,
@@ -44,16 +44,31 @@ pub fn execute(
         dry_run,
     } = command
     {
-        return apply::execute_apply(targets, deps, rdeps, match_policies, depth, force, dry_run, config, installed_db_path, root_dir, verbose, quiet, &resolver);
+        return apply::execute_apply(targets, deps, rdeps, match_policies, depth, force, dry_run, config, installed_db_path, root_dir, verbose, quiet, &resolver).await;
     }
 
-    let db = InstalledDb::open(installed_db_path).context("failed to open database")?;
+    if let SystemCommands::SystemInit = command {
+        println!("Initializing system databases...");
+        
+        println!("  -> {}...", installed_db_path.display());
+        let _db = InstalledDb::open(installed_db_path).await.context("failed to initialize system database")?;
+        
+        let archive_db_path = &config.general.archive_db_path;
+        println!("  -> {}...", archive_db_path.display());
+        let _adb = crate::database::ArchiveDb::open(archive_db_path).await.context("failed to initialize archive database")?;
+        
+        println!("Databases are up-to-date.");
+        return Ok(());
+    }
+
+    let db = InstalledDb::open(installed_db_path).await.context("failed to open database")?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
-        SystemCommands::Install { parts, force, nodeps } => { install::execute_install(&db, parts, force, nodeps, root_dir, &resolver)?; }
-        SystemCommands::List { long, roots, assumed, orphans } => { list::execute_list(&db, long, roots, assumed, orphans)?; }
-        SystemCommands::Doctor => { doctor::execute_doctor(&db)?; }
+        SystemCommands::SystemInit => unreachable!(),
+        SystemCommands::Install { parts, force, nodeps } => { install::execute_install(&db, parts, force, nodeps, root_dir, &resolver).await?; }
+        SystemCommands::List { long, roots, assumed, orphans } => { list::execute_list(&db, long, roots, assumed, orphans).await?; }
+        SystemCommands::Doctor => { doctor::execute_doctor(&db).await?; }
         SystemCommands::Upgrade {
             parts,
             force,
@@ -63,7 +78,7 @@ pub fn execute(
                 let path = PathBuf::from(arg);
                 if path.exists() {
                     // Direct part file path
-                    match transaction::upgrade_part(&db, &path, root_dir, force, true) {
+                    match transaction::upgrade_part(&db, &path, root_dir, force, true).await {
                         Ok(()) => println!("upgraded: {}", path.display()),
                         Err(e) => {
                             eprintln!("error upgrading {}: {}", path.display(), e);
@@ -75,7 +90,7 @@ pub fn execute(
 
                 // Resolve by name
                 let all_versions = resolver
-                    .resolve_all(arg)
+                    .resolve_all(arg).await
                     .context(format!("failed to resolve '{}'", arg))?;
 
                 if all_versions.is_empty() {
@@ -109,7 +124,7 @@ pub fn execute(
                     root_dir,
                     effective_force,
                     true,
-                ) {
+                ).await {
                     Ok(()) => println!(
                         "upgraded: {} -> {}-{}",
                         arg, selected.version, selected.release
@@ -135,14 +150,14 @@ pub fn execute(
             let removal_order = if recursive {
                 parts.clone()
             } else {
-                transaction::order_removal_batch(&db, &parts)
+                transaction::order_removal_batch(&db, &parts).await
                     .context("failed to plan removal order")?
             };
 
             for name in &removal_order {
                 if recursive {
                     let dependents = db
-                        .get_recursive_dependents(name)
+                        .get_recursive_dependents(name).await
                         .context(format!("failed to resolve dependents of {}", name))?;
 
                     if !dependents.is_empty() {
@@ -154,7 +169,7 @@ pub fn execute(
                     }
 
                     for dep in &dependents {
-                        match transaction::remove_part(&db, dep, root_dir, true) {
+                        match transaction::remove_part(&db, dep, root_dir, true).await {
                             Ok(()) => println!("removed: {}", dep),
                             Err(e) => {
                                 eprintln!("error removing {}: {}", dep, e);
@@ -166,7 +181,7 @@ pub fn execute(
 
                 // Compute cascade list before removing the target
                 let cascade_list = if cascade {
-                    let list = transaction::cascade_remove_list(&db, name)
+                    let list = transaction::cascade_remove_list(&db, name).await
                         .context(format!("failed to compute cascade list for {}", name))?;
                     if !list.is_empty() {
                         println!(
@@ -181,7 +196,7 @@ pub fn execute(
                 };
 
                 let result = if recursive {
-                    transaction::remove_part(&db, name, root_dir, force || recursive)
+                    transaction::remove_part(&db, name, root_dir, force || recursive).await
                 } else {
                     let ignored_dependents: HashSet<String> = batch_targets
                         .iter()
@@ -194,7 +209,7 @@ pub fn execute(
                         root_dir,
                         force,
                         &ignored_dependents,
-                    )
+                    ).await
                 };
 
                 match result {
@@ -207,7 +222,7 @@ pub fn execute(
 
                 // Remove orphan dependencies (leaf-first order)
                 for orphan in &cascade_list {
-                    match transaction::remove_part(&db, orphan, root_dir, true) {
+                    match transaction::remove_part(&db, orphan, root_dir, true).await {
                         Ok(()) => println!("removed: {}", orphan),
                         Err(e) => {
                             eprintln!("error removing {}: {}", orphan, e);
@@ -253,12 +268,12 @@ pub fn execute(
                     )?;
                 }
                 writeln!(buf)?;
-                query::write_system_tree(&db, &opts, &mut buf)?
+                query::write_system_tree(&db, &opts, &mut buf).await?
             } else {
                 let part_name = part
                     .ok_or_else(|| anyhow::anyhow!("part name is required unless using --all"))?;
 
-                let part = db.get_part(&part_name).context("failed to query part")?;
+                let part = db.get_part(&part_name).await.context("failed to query part")?;
                 if part.is_none() {
                     eprintln!("part '{}' is not installed", part_name);
                     std::process::exit(1);
@@ -279,9 +294,9 @@ pub fn execute(
                 }
                 writeln!(buf, "{}", part_name)?;
                 if reverse {
-                    query::write_reverse_dep_tree(&db, &part_name, &opts, &mut buf)?
+                    query::write_reverse_dep_tree(&db, &part_name, &opts, &mut buf).await?
                 } else {
-                    query::write_dep_tree(&db, &part_name, &opts, &mut buf)?
+                    query::write_dep_tree(&db, &part_name, &opts, &mut buf).await?
                 }
             };
 
@@ -303,26 +318,26 @@ pub fn execute(
             print_paged(&String::from_utf8_lossy(&buf));
         }
         SystemCommands::Query { part } => {
-            let installed_part = db.get_part(&part).context("failed to query part")?;
+            let installed_part = db.get_part(&part).await.context("failed to query part")?;
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);
                     println!("Version     : {}", info.version);
                     println!("Release     : {}", info.release);
-                    println!("Description : {}", info.description);
+                    println!("Description : {}", info.description.unwrap_or_default());
                     println!("Architecture: {}", info.arch);
-                    println!("License     : {}", info.license);
+                    println!("License     : {}", info.license.unwrap_or_default());
                     if let Some(ref url) = info.url {
                         println!("URL         : {}", url);
                     }
-                    println!("Install Size: {} bytes", info.install_size);
+                    println!("Install Size: {} bytes", info.install_size.unwrap_or(0));
                     println!("Origin      : {}", info.origin);
-                    println!("Installed At: {}", info.installed_at);
+                    println!("Installed At: {}", info.installed_at.unwrap_or_default());
                     if let Some(ref hash) = info.part_hash {
                         println!("Part Hash   : {}", hash);
                     }
                     let opt_deps = db
-                        .get_optional_dependencies(info.id)
+                        .get_optional_dependencies(info.id).await
                         .context("failed to get optional dependencies")?;
                     if !opt_deps.is_empty() {
                         println!("Optional    :");
@@ -339,7 +354,7 @@ pub fn execute(
         }
         SystemCommands::Search { keyword } => {
             let results = db
-                .search_parts(&keyword)
+                .search_parts(&keyword).await
                 .context("failed to search parts")?;
             if results.is_empty() {
                 println!("no parts found matching '{}'", keyword);
@@ -350,16 +365,16 @@ pub fn execute(
                         installed_part.name,
                         installed_part.version,
                         installed_part.release,
-                        installed_part.description
+                        installed_part.description.as_deref().unwrap_or_default()
                     );
                 }
             }
         }
         SystemCommands::Files { part } => {
-            let installed_part = db.get_part(&part).context("failed to query part")?;
+            let installed_part = db.get_part(&part).await.context("failed to query part")?;
             match installed_part {
                 Some(info) => {
-                    let files = db.get_files(info.id).context("failed to get files")?;
+                    let files = db.get_files(info.id).await.context("failed to get files")?;
                     for file in &files {
                         println!("{}", file.path);
                     }
@@ -371,7 +386,7 @@ pub fn execute(
             }
         }
         SystemCommands::Owner { file } => {
-            match db.find_owner(&file).context("failed to find owner")? {
+            match db.find_owner(&file).await.context("failed to find owner")? {
                 Some(owner) => println!("{} is owned by {}", file, owner),
                 None => {
                     println!("{} is not owned by any part", file);
@@ -383,7 +398,7 @@ pub fn execute(
             let parts_to_verify: Vec<String> = if let Some(name) = part {
                 vec![name]
             } else {
-                db.list_parts()
+                db.list_parts().await
                     .context("failed to list parts")?
                     .iter()
                     .map(|p| p.name.clone())
@@ -392,7 +407,7 @@ pub fn execute(
 
             let mut all_ok = true;
             for name in &parts_to_verify {
-                let issues = transaction::verify_part(&db, name, root_dir)
+                let issues = transaction::verify_part(&db, name, root_dir).await
                     .context(format!("failed to verify {}", name))?;
                 if issues.is_empty() {
                     println!("{}: OK", name);
@@ -411,13 +426,13 @@ pub fn execute(
         SystemCommands::Sysupgrade { dry_run } => {
             use crate::part::version::Version;
 
-            let parts = db.list_parts().context("failed to list parts")?;
+            let parts = db.list_parts().await.context("failed to list parts")?;
             let mut upgraded = 0usize;
             let mut up_to_date = 0usize;
             let mut not_found = 0usize;
 
             for part in &parts {
-                match resolver.resolve_all(&part.name) {
+                match resolver.resolve_all(&part.name).await {
                     Ok(all_versions) if !all_versions.is_empty() => {
                         if let Some(latest) = pick_latest(&all_versions) {
                             let is_newer = {
@@ -425,17 +440,17 @@ pub fn execute(
                                 let old_ver = Version::parse(&part.version).ok();
                                 match (new_ver, old_ver) {
                                     (Some(nv), Some(ov)) => {
-                                        if latest.epoch != part.epoch {
-                                            latest.epoch > part.epoch
+                                        if latest.epoch != part.epoch as u32 {
+                                            latest.epoch > part.epoch as u32
                                         } else if nv != ov {
                                             nv > ov
                                         } else {
-                                            latest.release > part.release
+                                            latest.release > part.release as u32
                                         }
                                     }
                                     _ => {
                                         latest.version != part.version
-                                            || latest.release > part.release
+                                            || latest.release > part.release as u32
                                     }
                                 }
                             };
@@ -456,7 +471,7 @@ pub fn execute(
                                         root_dir,
                                         false,
                                         true,
-                                    ) {
+                                    ).await {
                                         eprintln!("  error: {}", e);
                                     } else {
                                         upgraded += 1;
@@ -488,14 +503,14 @@ pub fn execute(
                 );
             }
         }
-        SystemCommands::Assume { name, version } => match db.assume_part(&name, &version) {
+        SystemCommands::Assume { name, version } => match db.assume_part(&name, &version).await {
             Ok(()) => println!("assumed: {} {}", name, version),
             Err(e) => {
                 eprintln!("error: {:#}", e);
                 std::process::exit(1);
             }
         },
-        SystemCommands::Unassume { name } => match db.unassume_part(&name) {
+        SystemCommands::Unassume { name } => match db.unassume_part(&name).await {
             Ok(()) => println!("unassumed: {}", name),
             Err(e) => {
                 eprintln!("error: {:#}", e);
@@ -519,7 +534,7 @@ pub fn execute(
             };
 
             for name in &parts {
-                match db.force_set_origin(name, origin) {
+                match db.force_set_origin(name, origin).await {
                     Ok(()) => println!("{}: marked as {}", name, origin),
                     Err(e) => {
                         eprintln!("error: {}: {}", name, e);
@@ -529,7 +544,7 @@ pub fn execute(
             }
         }
         SystemCommands::History { part } => {
-            let records = db.get_history(part.as_deref())?;
+            let records = db.get_history(part.as_deref()).await?;
             if records.is_empty() {
                 println!("no transaction history");
             } else {
@@ -547,7 +562,7 @@ pub fn execute(
                     };
                     println!(
                         "{}  {:<9} {} {}{}",
-                        r.timestamp, r.operation, r.part_name, version, status
+                        r.timestamp.as_deref().unwrap_or_default(), r.operation, r.part_name, version, status
                     );
                 }
             }
@@ -555,6 +570,7 @@ pub fn execute(
     }
     Ok(())
 }
+
 fn print_paged(content: &str) {
     use std::io::IsTerminal;
     if std::io::stdout().is_terminal() {
@@ -583,4 +599,3 @@ fn parse_prefix_mode(mode: PrefixModeArg) -> PrefixMode {
         PrefixModeArg::None => PrefixMode::None,
     }
 }
-

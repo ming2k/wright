@@ -15,6 +15,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/cli/build.rs");
     println!("cargo:rerun-if-changed=src/cli/wright.rs");
 
+    // 1. Generate man pages
     let out_dir = man_output_dir();
     fs::create_dir_all(&out_dir).expect("failed to create man output directory");
 

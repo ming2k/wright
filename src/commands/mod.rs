@@ -5,15 +5,13 @@ pub mod resolve;
 pub mod system;
 
 use std::path::PathBuf;
-
 use anyhow::Result;
-
 use crate::archive::resolver::LocalResolver;
 use crate::cli::Cli;
 use crate::config::GlobalConfig;
 
 /// Dispatch the parsed CLI command to the appropriate handler.
-pub fn dispatch(
+pub async fn dispatch(
     cli: Cli,
     config: &GlobalConfig,
     installed_db_path: PathBuf,
@@ -27,15 +25,15 @@ pub fn dispatch(
             &root_dir,
             cli.verbose,
             cli.quiet,
-        ),
+        ).await,
         crate::cli::Commands::Build(args) => {
-            build::execute_build(args, config, cli.verbose, cli.quiet)
+            build::execute_build(args, config, cli.verbose, cli.quiet).await
         }
-        crate::cli::Commands::Resolve(args) => resolve::execute_resolve(args, config),
+        crate::cli::Commands::Resolve(args) => resolve::execute_resolve(args, config).await,
         crate::cli::Commands::Lint { targets, recursive } => {
-            lint::execute_lint(targets, recursive, config).map_err(Into::into)
+            lint::execute_lint(targets, recursive, config).await.map_err(Into::into)
         }
-        crate::cli::Commands::Prune(args) => prune::execute_prune(args, config),
+        crate::cli::Commands::Prune(args) => prune::execute_prune(args, config).await,
     }
 }
 

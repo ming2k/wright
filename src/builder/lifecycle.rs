@@ -1,8 +1,7 @@
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use indicatif::ProgressBar;
 use tracing::{debug, info};
 
@@ -13,7 +12,6 @@ use crate::isolation::ResourceLimits;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::{LifecycleStage, PlanManifest};
 
-/// Default lifecycle pipeline order
 pub const DEFAULT_STAGES: &[&str] = &[
     "fetch",
     "verify",
@@ -25,7 +23,6 @@ pub const DEFAULT_STAGES: &[&str] = &[
     "staging",
 ];
 
-/// Built-in stages handled by the build tool itself (not user scripts)
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
 pub struct LifecyclePipeline<'a> {
@@ -36,25 +33,14 @@ pub struct LifecyclePipeline<'a> {
     base_root: PathBuf,
     work_dir: PathBuf,
     output_dir: PathBuf,
-    /// Stages to run; empty = run all non-builtin stages in order.
     stages: Vec<String>,
-    /// Skip the `check` stage when running the default full pipeline.
     skip_check: bool,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
-    /// CPU count for non-compile stages (partitioned across active isolations).
-    /// Uses `Cell` so the compile stage can temporarily override it while
-    /// holding the compile lock.
-    cpu_count: Cell<Option<u32>>,
-    /// CPU count used during the compile stage (= total_cpus, respecting
-    /// max_cpus). `None` means inherit the partitioned cpu_count as-is.
+    cpu_count: u32,
     compile_cpu_count: Option<u32>,
-    /// When set, the compile stage acquires this lock so only one isolation
-    /// compiles at a time, giving the active compile access to all capped
-    /// CPU cores.
     compile_lock: Option<Arc<Mutex<()>>>,
-    /// Optional spinner for live stage progress (used in multi-isolation builds).
     progress: Option<ProgressBar>,
 }
 
@@ -66,21 +52,14 @@ pub struct LifecycleContext<'a> {
     pub base_root: PathBuf,
     pub work_dir: PathBuf,
     pub output_dir: PathBuf,
-    /// Stages to run; empty = run all non-builtin stages in order.
     pub stages: Vec<String>,
-    /// Skip the `check` stage when running the default full pipeline.
     pub skip_check: bool,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
     pub verbose: bool,
     pub cpu_count: Option<u32>,
-    /// CPU count for the compile stage (= total_cpus, respecting max_cpus).
-    /// When `None`, the compile stage inherits the partitioned `cpu_count`.
     pub compile_cpu_count: Option<u32>,
-    /// Compile-stage semaphore: serializes compile stages across isolations
-    /// so the active compile gets exclusive access to all capped CPU cores.
     pub compile_lock: Option<Arc<Mutex<()>>>,
-    /// Optional spinner for live stage progress (used in multi-isolation builds).
     pub progress: Option<ProgressBar>,
 }
 
@@ -99,18 +78,17 @@ impl<'a> LifecyclePipeline<'a> {
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
-            cpu_count: Cell::new(ctx.cpu_count),
+            cpu_count: ctx.cpu_count.unwrap_or(1),
             compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
             progress: ctx.progress,
         }
     }
 
-    pub fn run(&self) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         let pipeline = self.get_stage_order();
 
         if !self.stages.is_empty() {
-            // Validate requested stages
             for s in &self.stages {
                 if BUILTIN_STAGES.contains(&s.as_str()) {
                     return Err(WrightError::BuildError(format!(
@@ -125,17 +103,15 @@ impl<'a> LifecyclePipeline<'a> {
                     )));
                 }
             }
-            // Run only the requested stages, in pipeline order
             for stage_name in &pipeline {
                 if self.stages.contains(stage_name) {
-                    self.run_stage_with_hooks(stage_name)?;
+                    self.run_stage_with_hooks(stage_name, self.cpu_count).await?;
                 }
             }
             return Ok(());
         }
 
         for stage_name in &pipeline {
-            // Skip built-in stages (handled by Builder)
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
                 debug!("Built-in stage {} is handled by Builder", stage_name);
                 continue;
@@ -145,42 +121,35 @@ impl<'a> LifecyclePipeline<'a> {
                 continue;
             }
 
-            // Compile stages are serialized behind a semaphore so only one
-            // isolation compiles at a time, getting access to all capped CPU
-            // cores (total_cpus, respecting max_cpus).
             if stage_name == "compile" {
-                let _guard = self.compile_lock.as_ref().map(|l| l.lock().unwrap());
-                let saved_cpu = self.cpu_count.get();
-                self.cpu_count.set(self.compile_cpu_count);
-                let result = self.run_stage_with_hooks(stage_name);
-                self.cpu_count.set(saved_cpu);
-                result?;
+                let _guard = if let Some(ref l) = self.compile_lock {
+                    Some(l.lock().await)
+                } else {
+                    None
+                };
+                let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
+                self.run_stage_with_hooks(stage_name, effective_cpu).await?;
             } else {
-                self.run_stage_with_hooks(stage_name)?;
+                self.run_stage_with_hooks(stage_name, self.cpu_count).await?;
             }
         }
 
         Ok(())
     }
 
-    fn run_stage_with_hooks(&self, stage_name: &str) -> Result<()> {
-        // Run pre-hook if exists
+    async fn run_stage_with_hooks(&self, stage_name: &str, cpu_count: u32) -> Result<()> {
         let pre_hook = format!("pre_{}", stage_name);
         if let Some(stage) = self.get_stage(&pre_hook) {
             debug!("Running hook: {}", pre_hook);
-            self.run_stage(&pre_hook, stage)?;
+            self.run_stage(&pre_hook, stage, cpu_count).await?;
         }
 
-        // Run the actual stage
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-
             if let Some(ref pb) = self.progress {
                 pb.set_message(stage_name.to_string());
             }
-
-            self.run_stage(stage_name, stage)?;
-
+            self.run_stage(stage_name, stage, cpu_count).await?;
             let elapsed = t0.elapsed().as_secs_f64();
             info!(
                 "{}",
@@ -190,11 +159,10 @@ impl<'a> LifecyclePipeline<'a> {
             debug!("Skipping undefined stage: {}", stage_name);
         }
 
-        // Run post-hook if exists
         let post_hook = format!("post_{}", stage_name);
         if let Some(stage) = self.get_stage(&post_hook) {
             debug!("Running hook: {}", post_hook);
-            self.run_stage(&post_hook, stage)?;
+            self.run_stage(&post_hook, stage, cpu_count).await?;
         }
 
         Ok(())
@@ -229,14 +197,13 @@ impl<'a> LifecyclePipeline<'a> {
         self.manifest.lifecycle.get(name)
     }
 
-    fn run_stage(&self, stage_name: &str, stage: &LifecycleStage) -> Result<()> {
+    async fn run_stage(&self, stage_name: &str, stage: &LifecycleStage, cpu_count: u32) -> Result<()> {
         if stage.script.is_empty() {
             debug!("Stage {} has empty script, skipping", stage_name);
             return Ok(());
         }
 
         let isolation_level: IsolationLevel = stage.isolation.parse()?;
-
         let executor = self.executors.get(&stage.executor).ok_or_else(|| {
             WrightError::BuildError(format!("executor not found: {}", stage.executor))
         })?;
@@ -244,8 +211,6 @@ impl<'a> LifecyclePipeline<'a> {
         let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{}.log", stage_name));
 
-        // Open the log file before execution and write the header so that
-        // stdout content is streamed into it in real time (tail -f ready).
         let stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
             use std::io::Write;
             let ok = write!(
@@ -254,8 +219,7 @@ impl<'a> LifecyclePipeline<'a> {
                 stage_name,
                 self.working_dir.display(),
                 expanded_script.trim()
-            )
-            .is_ok();
+            ).is_ok();
             if ok { Some(f) } else { None }
         });
 
@@ -267,7 +231,7 @@ impl<'a> LifecyclePipeline<'a> {
             rlimits: self.rlimits.clone(),
             main_part_dir: None,
             verbose: self.verbose,
-            cpu_count: self.cpu_count.get(),
+            cpu_count: Some(cpu_count),
             log_stdout: stdout_log_file,
         };
 
@@ -283,11 +247,11 @@ impl<'a> LifecyclePipeline<'a> {
             &stage.env,
             &self.vars,
             &mut options,
-        )?;
+        ).await?;
         let elapsed = t0.elapsed().as_secs_f64();
 
-        // Append stderr section and footer. Stdout was already streamed into
-        // the log file in real time; we just need to add what's missing.
+        let exit_code = result.status.code().unwrap_or(-1);
+
         if let Ok(mut log_file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
             use std::io::Write;
             let _ = log_file.write_all(b"\n--- stderr ---\n");
@@ -295,20 +259,17 @@ impl<'a> LifecyclePipeline<'a> {
             let _ = write!(
                 log_file,
                 "\n=== Exit code: {} ===\n=== Duration: {:.1}s ===\n",
-                result.exit_code, elapsed
+                exit_code, elapsed
             );
         }
 
-        if result.exit_code != 0 {
-            // Many build tools (meson, cmake, autoconf) write errors to stdout.
-            // Show stderr if non-empty, otherwise fall back to the tail of stdout.
+        if exit_code != 0 {
             let output_snippet = {
                 let relevant = if !result.stderr.tail.trim().is_empty() {
                     result.stderr.tail.trim()
                 } else {
                     result.stdout.tail.trim()
                 };
-                // Limit to last 40 lines to keep the message readable.
                 let lines: Vec<&str> = relevant.lines().collect();
                 if lines.len() > 40 {
                     format!(
@@ -323,7 +284,7 @@ impl<'a> LifecyclePipeline<'a> {
             return Err(WrightError::BuildError(format!(
                 "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
                 stage_name,
-                result.exit_code,
+                exit_code,
                 log_path.display(),
                 output_snippet
             )));

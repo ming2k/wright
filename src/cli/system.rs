@@ -404,6 +404,11 @@ pub enum Commands {
         #[arg(value_name = "PART")]
         part: Option<String>,
     },
+    /// Initialize or upgrade the local part database
+    #[command(
+        long_about = "Proactively initialize or upgrade the local part database schemas and run any pending migrations."
+    )]
+    SystemInit,
     /// Upgrade all installed parts to latest available versions
     #[command(
         long_about = "Upgrade all installed parts to the latest versions available in the local archive catalogue.\n\nUse `--dry-run` to preview the transaction without making any changes.",

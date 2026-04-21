@@ -1,13 +1,12 @@
 use std::path::PathBuf;
-
 use anyhow::{Context, Result};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-
 use wright::cli::Cli;
 use wright::config::GlobalConfig;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // 1. Setup Logging
@@ -46,5 +45,5 @@ fn main() -> Result<()> {
     let root_dir = cli.root.clone().unwrap_or_else(|| PathBuf::from("/"));
 
     // 3. Dispatch to Command Handlers
-    wright::commands::dispatch(cli, &config, installed_db_path, root_dir)
+    wright::commands::dispatch(cli, &config, installed_db_path, root_dir).await
 }

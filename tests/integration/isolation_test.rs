@@ -40,8 +40,8 @@ fn run_shebang_script_from_src(src: &Path) -> Result<(String, String), WrightErr
     Ok((stdout, stderr))
 }
 
-#[test]
-fn isolation_executes_shebang_script_from_build_mount() {
+#[tokio::test]
+async fn isolation_executes_shebang_script_from_build_mount() {
     let src = tempfile::tempdir().unwrap();
     let (stdout, stderr) = match run_shebang_script_from_src(src.path()) {
         Ok(output) => output,
@@ -52,8 +52,8 @@ fn isolation_executes_shebang_script_from_build_mount() {
     assert!(stderr.is_empty(), "unexpected stderr: {stderr:?}");
 }
 
-#[test]
-fn isolation_executes_shebang_script_from_var_tmp_build_mount() {
+#[tokio::test]
+async fn isolation_executes_shebang_script_from_var_tmp_build_mount() {
     let root = match tempfile::tempdir_in("/var/tmp") {
         Ok(dir) => dir,
         Err(_) => return,

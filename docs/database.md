@@ -1,6 +1,6 @@
-# Database Design
+# Database Design (v3.0.0)
 
-Wright uses two distinct SQLite databases to manage the lifecycle of parts, from their creation to their deployment on the live system. This dual-database architecture separates "what is available to be installed" from "what is currently installed."
+Wright uses two distinct SQLite databases to manage the lifecycle of parts, from their creation to their deployment on the live system. Starting with v3.0.0, both databases use a unified SQL-based migration system.
 
 ## Overview
 
@@ -8,6 +8,17 @@ Wright uses two distinct SQLite databases to manage the lifecycle of parts, from
 |----------|----------|-------|--------------|
 | **Installed DB** | `installed.db` | System-wide | Authoritative state of the live system. Tracks deployed files and ownership. |
 | **Archive DB** | `archives.db` | Local cache | Catalogue of locally built archives (`.wright.tar.zst`). Speeds up dependency resolution. |
+
+---
+
+## Migration System
+
+Wright v3.0.0 introduces a structured migration system using standard `.sql` files.
+
+- **Schema Location**: Migrations are stored in `src/database/migrations/`.
+- **Initialization**: Databases are automatically initialized on the first run.
+- **Upgrading**: The system uses SQLite's `user_version` PRAGMA to track and apply pending migrations.
+- **2.x -> 3.x Migration**: A dedicated tool `final_migration.py` is provided in the project root to migrate existing databases to the new v3 format.
 
 ---
 

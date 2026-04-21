@@ -1,7 +1,6 @@
 //! Query and analysis operations — dependency tree rendering, etc.
 
 use crate::error::{Result, WrightError};
-use rusqlite::params;
 
 use crate::database::{DepType, InstalledDb};
 
@@ -119,10 +118,10 @@ fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Resul
 // ─── forward dependency tree ─────────────────────────────────────────────────
 
 /// Render the forward dependency tree for a part into a writer.
-pub fn write_dep_tree(
+pub async fn write_dep_tree(
     db: &InstalledDb,
     name: &str,
-    opts: &TreeOptions,
+    opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
@@ -143,17 +142,17 @@ pub fn write_dep_tree(
         &mut ancestors,
         &mut stats,
         out,
-    )?;
+    ).await?;
     Ok(stats)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_dep_tree_inner(
+async fn write_dep_tree_inner(
     db: &InstalledDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
-    opts: &TreeOptions,
+    opts: &TreeOptions<'_>,
     visited: &mut std::collections::HashSet<String>,
     ancestors: &mut std::collections::HashSet<String>,
     stats: &mut TreeStats,
@@ -163,7 +162,7 @@ fn write_dep_tree_inner(
         return Ok(());
     }
 
-    let deps = db.get_dependencies_by_name(name).map_err(|e| {
+    let deps = db.get_dependencies_by_name(name).await.map_err(|e| {
         WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e))
     })?;
 
@@ -190,7 +189,7 @@ fn write_dep_tree_inner(
             stats.total += 1;
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, &dep.name, opts.color)?;
-            if let Some(c) = &dep.constraint {
+            if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
             if dep.dep_type == DepType::Link {
@@ -210,7 +209,7 @@ fn write_dep_tree_inner(
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, &dep.name, opts.color)?;
-            if let Some(c) = &dep.constraint {
+            if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
             if dep.dep_type == DepType::Link {
@@ -228,10 +227,10 @@ fn write_dep_tree_inner(
             if current_depth > stats.max_depth_seen {
                 stats.max_depth_seen = current_depth;
             }
-            let installed = db.get_part(&dep.name).unwrap_or(None).is_some();
+            let installed = db.get_part(&dep.name).await.unwrap_or(None).is_some();
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, &dep.name, opts.color)?;
-            if let Some(c) = &dep.constraint {
+            if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
             if dep.dep_type == DepType::Link {
@@ -244,7 +243,7 @@ fn write_dep_tree_inner(
             write_dup_tag(out, opts.color)?;
             writeln!(out)?;
         } else {
-            let installed = db.get_part(&dep.name).unwrap_or(None).is_some();
+            let installed = db.get_part(&dep.name).await.unwrap_or(None).is_some();
             stats.total += 1;
             if current_depth > stats.max_depth_seen {
                 stats.max_depth_seen = current_depth;
@@ -252,7 +251,7 @@ fn write_dep_tree_inner(
 
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, &dep.name, opts.color)?;
-            if let Some(c) = &dep.constraint {
+            if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
             if dep.dep_type == DepType::Link {
@@ -273,7 +272,7 @@ fn write_dep_tree_inner(
                     }
                     _ => String::new(),
                 };
-                write_dep_tree_inner(
+                Box::pin(write_dep_tree_inner(
                     db,
                     &dep.name,
                     &new_prefix,
@@ -283,7 +282,7 @@ fn write_dep_tree_inner(
                     ancestors,
                     stats,
                     out,
-                )?;
+                )).await?;
                 ancestors.remove(&dep.name);
             }
         }
@@ -322,10 +321,10 @@ fn write_line_prefix(
 // ─── reverse dependency tree ─────────────────────────────────────────────────
 
 /// Render the reverse dependency tree for a part into a writer.
-pub fn write_reverse_dep_tree(
+pub async fn write_reverse_dep_tree(
     db: &InstalledDb,
     name: &str,
-    opts: &TreeOptions,
+    opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
     let mut visited = std::collections::HashSet::new();
@@ -346,17 +345,17 @@ pub fn write_reverse_dep_tree(
         &mut ancestors,
         &mut stats,
         out,
-    )?;
+    ).await?;
     Ok(stats)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_reverse_dep_tree_inner(
+async fn write_reverse_dep_tree_inner(
     db: &InstalledDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
-    opts: &TreeOptions,
+    opts: &TreeOptions<'_>,
     visited: &mut std::collections::HashSet<String>,
     ancestors: &mut std::collections::HashSet<String>,
     stats: &mut TreeStats,
@@ -366,7 +365,7 @@ fn write_reverse_dep_tree_inner(
         return Ok(());
     }
 
-    let dependents = db.get_dependents(name).map_err(|e| {
+    let dependents = db.get_dependents(name).await.map_err(|e| {
         WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e))
     })?;
 
@@ -441,7 +440,7 @@ fn write_reverse_dep_tree_inner(
                 }
                 _ => String::new(),
             };
-            write_reverse_dep_tree_inner(
+            Box::pin(write_reverse_dep_tree_inner(
                 db,
                 dep_name,
                 &new_prefix,
@@ -451,7 +450,7 @@ fn write_reverse_dep_tree_inner(
                 ancestors,
                 stats,
                 out,
-            )?;
+            )).await?;
             ancestors.remove(dep_name.as_str());
         }
     }
@@ -462,14 +461,14 @@ fn write_reverse_dep_tree_inner(
 // ─── system tree ─────────────────────────────────────────────────────────────
 
 /// Render the full system dependency tree into a writer.
-pub fn write_system_tree(
+pub async fn write_system_tree(
     db: &InstalledDb,
-    opts: &TreeOptions,
+    opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
-    let roots = db.get_root_parts()?;
+    let roots = db.get_root_parts().await?;
     if roots.is_empty() {
-        let all = db.list_parts()?;
+        let all = db.list_parts().await?;
         if all.is_empty() {
             writeln!(out, "No parts installed.")?;
         } else {
@@ -508,7 +507,7 @@ pub fn write_system_tree(
             &mut ancestors,
             &mut combined_stats,
             out,
-        )?;
+        ).await?;
         if i < roots.len() - 1 {
             writeln!(out)?;
         }
@@ -520,21 +519,21 @@ pub fn write_system_tree(
 // ─── health-check functions (unchanged) ──────────────────────────────────────
 
 /// Check all installed parts for broken dependencies.
-pub fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
-    let all_parts = db.list_parts()?;
+pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+    let all_parts = db.list_parts().await?;
     let mut broken = Vec::new();
 
     for part in all_parts {
-        let deps = db.get_dependencies(part.id)?;
+        let deps = db.get_dependencies(part.id).await?;
         for dep in deps {
-            if db.get_part(&dep.name)?.is_none() && db.find_providers(&dep.name)?.is_empty() {
-                let constraint_str = dep
-                    .constraint
+            if db.get_part(&dep.name).await?.is_none() && db.find_providers(&dep.name).await?.is_empty() {
+                let version_constraint_str = dep
+                    .version_constraint
                     .map(|c| format!(" ({})", c))
                     .unwrap_or_default();
                 broken.push(format!(
                     "Part '{}' has a broken dependency: '{}'{} not found",
-                    part.name, dep.name, constraint_str
+                    part.name, dep.name, version_constraint_str
                 ));
             }
         }
@@ -544,12 +543,12 @@ pub fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
 }
 
 /// Check for circular dependencies in the installed database.
-pub fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
-    let all_parts = db.list_parts()?;
+pub async fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+    let all_parts = db.list_parts().await?;
     let mut issues = Vec::new();
 
     for part in all_parts {
-        if let Err(e) = db.get_recursive_dependents(&part.name) {
+        if let Err(e) = db.get_recursive_dependents(&part.name).await {
             if e.to_string().contains("circular") {
                 issues.push(format!(
                     "Circular dependency detected involving part '{}'",
@@ -563,41 +562,11 @@ pub fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
 }
 
 /// Check if multiple parts claim ownership of the same file.
-pub fn check_file_ownership_conflicts(db: &InstalledDb) -> Result<Vec<String>> {
-    let mut stmt = db.connection().prepare(
-        "SELECT path, COUNT(part_id) as count FROM files
-         WHERE file_type != 'dir'
-         GROUP BY path HAVING count > 1",
-    )?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            let path: String = row.get(0)?;
-            Ok(path)
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    let mut issues = Vec::new();
-    for path in rows {
-        // Find who the owners are
-        let mut owner_stmt = db.connection().prepare(
-            "SELECT p.name FROM parts p JOIN files f ON p.id = f.part_id WHERE f.path = ?1",
-        )?;
-        let owners = owner_stmt
-            .query_map(params![path], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        issues.push(format!(
-            "File conflict: '{}' is claimed by multiple parts: {}",
-            path,
-            owners.join(", ")
-        ));
-    }
-
-    Ok(issues)
+pub async fn check_file_ownership_conflicts(db: &InstalledDb) -> Result<Vec<String>> {
+    db.get_file_ownership_conflicts().await
 }
 
 /// Get recorded shadowed file information.
-pub fn check_shadowed_files(db: &InstalledDb) -> Result<Vec<String>> {
-    db.get_shadowed_conflicts()
+pub async fn check_shadowed_files(db: &InstalledDb) -> Result<Vec<String>> {
+    db.get_shadowed_conflicts().await
 }

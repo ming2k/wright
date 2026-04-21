@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::PathBuf;
-
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
@@ -12,32 +11,28 @@ use crate::database::InstalledDb;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
 
-pub fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
+pub async fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let is_tty = std::io::stdout().is_terminal();
 
-    // 1. Interactive Tree Mode (TTY + No filter flags or Explicit Tree flag)
     if is_tty && !args.exclude_targets && (args.tree || (args.deps.is_none() && args.rdeps.is_none())) {
-        render_interactive_trees(&args, config)?;
+        render_interactive_trees(&args, config).await?;
         return Ok(());
     }
 
-    // 2. Specialized Multi-Tree Mode (TTY + specific selection of -d or -r)
     if is_tty && !args.exclude_targets && (args.deps.is_some() || args.rdeps.is_some()) {
-        render_interactive_trees(&args, config)?;
+        render_interactive_trees(&args, config).await?;
         return Ok(());
     }
 
-    // 3. Script/Pipe Mode (Traditional List Output)
-    render_list_output(args, config)
+    render_list_output(args, config).await
 }
 
-fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result<()> {
+async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let resolver = orchestrator::setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
     let db_path = config.general.installed_db_path.clone();
-    let _db = InstalledDb::open(&db_path).ok(); // DB is optional for tree view
+    let _db = InstalledDb::open(&db_path).await.ok(); 
 
-    // Build reverse dependency map for downstream trees
     let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for (name, path) in &all_plans {
         if let Ok(m) = PlanManifest::from_file(path) {
@@ -56,7 +51,7 @@ fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result
     let effective_depth = match args.depth {
         Some(0) => usize::MAX,
         Some(d) => d,
-        None => 1, // Default depth for interactive view
+        None => 1,
     };
 
     for (idx, target) in args.targets.iter().enumerate() {
@@ -64,7 +59,6 @@ fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result
             println!();
         }
 
-        // Show Dependencies if: (no flags at all) OR (explicitly requested --deps)
         let show_dependencies = (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
         if show_dependencies {
             println!("{}", "Dependencies:".bold().cyan());
@@ -86,7 +80,6 @@ fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result
             }
         }
 
-        // Show Dependents if: (no flags at all) OR (explicitly requested --rdeps)
         let show_dependents = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
         if show_dependents {
             println!("{}", "Dependents:".bold().cyan());
@@ -111,7 +104,7 @@ fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result
     Ok(())
 }
 
-fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
+async fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let deps = args.deps.map(|d| match d {
         DomainArg::Link => DependentsMode::Link,
         DomainArg::Runtime => DependentsMode::Runtime,
@@ -154,7 +147,7 @@ fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
             include_targets: !args.exclude_targets,
             preserve_targets: false,
         },
-    )?;
+    ).await?;
 
     for name in &names {
         println!("{}", name);
@@ -175,16 +168,12 @@ fn print_dependency_tree(
     if current_depth > max_depth {
         return Ok(false);
     }
-
     let path = match all_plans.get(name) {
         Some(p) => p,
         None => return Ok(false),
     };
-
     let manifest = PlanManifest::from_file(path)?;
     let mut deps = manifest.all_dependencies();
-
-    // Apply filtering if a domain was specified
     if let Some(domain) = filter {
         deps.retain(|(_, kind)| match domain {
             DomainArg::Link => kind == "link",
@@ -193,45 +182,24 @@ fn print_dependency_tree(
             DomainArg::All => true,
         });
     }
-
     if deps.is_empty() {
         return Ok(false);
     }
-
     for (i, (dep_raw, kind)) in deps.iter().enumerate() {
         let dep_name = version::parse_dependency(dep_raw)
             .map(|(n, _)| n)
             .unwrap_or_else(|_| dep_raw.clone());
         let last_child = i == deps.len() - 1;
         let connector = if last_child { "└── " } else { "├── " };
-
-        let kind_label: &str = kind;
-        print!(
-            "\n{}{}{}: {}",
-            prefix,
-            connector,
-            kind_label.dimmed(),
-            dep_name
-        );
-
+        print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), dep_name);
         if visited.contains(&dep_name) {
             print!(" {}", "(*)".dimmed());
             continue;
         }
-
         visited.insert(dep_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependency_tree(
-            &dep_name,
-            all_plans,
-            &new_prefix,
-            current_depth + 1,
-            max_depth,
-            visited,
-            filter,
-        )?;
+        print_dependency_tree(&dep_name, all_plans, &new_prefix, current_depth + 1, max_depth, visited, filter)?;
     }
-
     Ok(true)
 }
 
@@ -247,13 +215,10 @@ fn print_dependent_tree(
     if current_depth > max_depth {
         return Ok(false);
     }
-
     let rdeps_full = match rdeps_map.get(name) {
         Some(r) => r,
         None => return Ok(false),
     };
-
-    // Apply filtering if a domain was specified
     let mut rdeps = rdeps_full.clone();
     if let Some(domain) = filter {
         rdeps.retain(|(_, kind)| match domain {
@@ -263,41 +228,20 @@ fn print_dependent_tree(
             DomainArg::All => true,
         });
     }
-
     if rdeps.is_empty() {
         return Ok(false);
     }
-
     for (i, (child_name, kind)) in rdeps.iter().enumerate() {
         let last_child = i == rdeps.len() - 1;
         let connector = if last_child { "└── " } else { "├── " };
-
-        let kind_label: &str = kind;
-        print!(
-            "\n{}{}{}: {}",
-            prefix,
-            connector,
-            kind_label.dimmed(),
-            child_name
-        );
-
+        print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), child_name);
         if visited.contains(child_name) {
             print!(" {}", "(*)".dimmed());
             continue;
         }
-
         visited.insert(child_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependent_tree(
-            child_name,
-            rdeps_map,
-            &new_prefix,
-            current_depth + 1,
-            max_depth,
-            visited,
-            filter,
-        )?;
+        print_dependent_tree(child_name, rdeps_map, &new_prefix, current_depth + 1, max_depth, visited, filter)?;
     }
-
     Ok(true)
 }

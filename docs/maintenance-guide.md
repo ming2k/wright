@@ -78,6 +78,28 @@ find /usr/bin -type f -executable -exec ldd {} \; | grep "not found"
 
 ---
 
-## 5. Summary: The Maintainer's Intuition
+## 6. Database Maintenance & Migration
+
+As Wright evolves, the underlying database schema may change.
+
+### 6.1 Wright 2.x to 3.0 Migration
+Version 3.0 introduces a significant database refactoring. To migrate your existing system state and archive catalogue, use the provided migration script:
+
+```bash
+# Run the migration script from the Wright project root
+python3 final_migration.py
+```
+
+This script will:
+1.  Back up your existing `installed.db` and `archives.db`.
+2.  Create new databases consistent with the v3.0 SQL migration schema.
+3.  Transfer all existing part records, file manifests, and dependency data.
+
+### 6.2 Schema Integrity
+Always ensure your system is running the expected schema version by running `wright doctor`. If schema mismatches are detected, Wright will attempt to apply pending migrations automatically, or provide instructions for manual intervention.
+
+---
+
+## 7. Summary: The Maintainer's Intuition
 
 A great maintainer treats the system as a "living organism." When you touch a core library, you should expect the entire tree to vibrate. By combining **Recursive Updates** with **AI-driven Analysis**, you turn the "Dependency Hell" into a controlled, automated routine.

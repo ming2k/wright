@@ -1,12 +1,10 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-
 use crate::config::AssembliesConfig;
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::Version;
 
-/// Strip path separators and dangerous components from a filename derived from a URL.
 #[inline]
 pub fn sanitize_cache_filename(raw: &str) -> String {
     crate::util::sanitize_filename(raw)
@@ -108,17 +106,17 @@ impl LocalResolver {
         self.assemblies = config;
     }
 
-    pub fn resolve(&self, name: &str) -> Result<Option<ResolvedPart>> {
-        self.resolve_local(name)
+    pub async fn resolve(&self, name: &str) -> Result<Option<ResolvedPart>> {
+        self.resolve_local(name).await
     }
 
-    fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
+    async fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
         let archive_db_path = match &self.archive_db_path {
             Some(p) => p,
             None => return Ok(None),
         };
-        let archive_db = crate::archive::db::ArchiveDb::open(archive_db_path)?;
-        let entry = match archive_db.find_part(name)? {
+        let archive_db = crate::database::ArchiveDb::open(archive_db_path).await?;
+        let entry = match archive_db.find_part(name).await? {
             Some(e) => e,
             None => return Ok(None),
         };
@@ -135,13 +133,13 @@ impl LocalResolver {
         Ok(None)
     }
 
-    pub fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
+    pub async fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
         let archive_db_path = match &self.archive_db_path {
             Some(p) => p,
             None => return Ok(Vec::new()),
         };
-        let archive_db = crate::archive::db::ArchiveDb::open(archive_db_path)?;
-        let entries = archive_db.find_all_versions(name)?;
+        let archive_db = crate::database::ArchiveDb::open(archive_db_path).await?;
+        let entries = archive_db.find_all_versions(name).await?;
 
         let mut results = Vec::new();
         for entry in entries {
@@ -151,8 +149,8 @@ impl LocalResolver {
                     results.push(ResolvedPartVersioned {
                         name: entry.name.clone(),
                         version: entry.version.clone(),
-                        release: entry.release,
-                        epoch: entry.epoch,
+                        release: entry.release as u32,
+                        epoch: entry.epoch as u32,
                         path,
                         dependencies: entry.runtime_deps.clone(),
                     });
@@ -185,21 +183,13 @@ impl LocalResolver {
             if let Some(path) = all_plans.get(&name) {
                 paths.push(path.clone());
             } else {
-                tracing::warn!(
-                    "Plan {} defined in assembly {} not found in plans tree",
-                    name,
-                    assembly_name
-                );
+                tracing::warn!("Plan {} defined in assembly {} not found in plans tree", name, assembly_name);
             }
         }
         Ok(paths)
     }
 
-    fn collect_assembly_members(
-        &self,
-        name: &str,
-        members: &mut std::collections::HashSet<String>,
-    ) {
+    fn collect_assembly_members(&self, name: &str, members: &mut std::collections::HashSet<String>) {
         if let Some(assembly) = self.assemblies.assemblies.get(name) {
             for plan in &assembly.plans {
                 members.insert(plan.clone());
@@ -219,9 +209,7 @@ impl LocalResolver {
             for entry in walkdir::WalkDir::new(root) {
                 let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
                 if entry.file_name() == "plan.toml" {
-                    if let Ok(manifest) =
-                        crate::plan::manifest::PlanManifest::from_file(entry.path())
-                    {
+                    if let Ok(manifest) = crate::plan::manifest::PlanManifest::from_file(entry.path()) {
                         map.insert(manifest.plan.name, entry.path().to_path_buf());
                     }
                 }

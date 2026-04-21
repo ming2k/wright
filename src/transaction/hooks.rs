@@ -56,14 +56,14 @@ pub(super) fn log_running_hook(part_name: &str, hook_name: &str) {
     tracing::info!("Running hook [{}] for {}", hook_name, part_name);
 }
 
-pub(super) fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {
+pub(super) async fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {
     let use_chroot = root_dir != Path::new("/") && nix::unistd::geteuid().is_root();
     let mut command = if use_chroot {
-        let mut command = std::process::Command::new("/usr/bin/chroot");
+        let mut command = tokio::process::Command::new("/usr/bin/chroot");
         command.arg(root_dir).arg("/bin/sh");
         command
     } else {
-        std::process::Command::new("/bin/sh")
+        tokio::process::Command::new("/bin/sh")
     };
 
     let root_env = if use_chroot { Path::new("/") } else { root_dir };
@@ -76,6 +76,7 @@ pub(super) fn run_install_script(script: &str, root_dir: &Path) -> Result<()> {
         .env("ROOT", root_env)
         .current_dir(current_dir)
         .status()
+        .await
         .map_err(|e| WrightError::ScriptError(format!("failed to execute script: {}", e)))?;
 
     if !status.success() {

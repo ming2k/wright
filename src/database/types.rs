@@ -1,9 +1,11 @@
 use crate::error::{Result, WrightError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "lowercase")]
 pub enum FileType {
     File,
     Symlink,
+    #[sqlx(rename = "dir")]
     Directory,
 }
 
@@ -33,15 +35,8 @@ impl TryFrom<&str> for FileType {
     }
 }
 
-impl rusqlite::ToSql for FileType {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Borrowed(
-            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
-        ))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, sqlx::Type)]
+#[sqlx(rename_all = "lowercase")]
 pub enum Origin {
     Dependency,
     Build,
@@ -81,15 +76,8 @@ impl TryFrom<&str> for Origin {
     }
 }
 
-impl rusqlite::ToSql for Origin {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Borrowed(
-            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
-        ))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "lowercase")]
 pub enum DepType {
     Runtime,
     Link,
@@ -122,40 +110,32 @@ impl TryFrom<&str> for DepType {
     }
 }
 
-impl rusqlite::ToSql for DepType {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Borrowed(
-            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
-        ))
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct InstalledPart {
     pub id: i64,
     pub name: String,
     pub version: String,
-    pub release: u32,
-    pub epoch: u32,
-    pub description: String,
+    pub release: i64, // SQLite INTEGER is i64
+    pub epoch: i64,
+    pub description: Option<String>,
     pub arch: String,
-    pub license: String,
+    pub license: Option<String>,
     pub url: Option<String>,
-    pub installed_at: String,
-    pub install_size: u64,
+    pub installed_at: Option<String>,
+    pub install_size: Option<i64>,
     pub part_hash: Option<String>,
     pub install_scripts: Option<String>,
     pub assumed: bool,
     pub origin: Origin,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct FileEntry {
     pub path: String,
     pub file_hash: Option<String>,
     pub file_type: FileType,
-    pub file_mode: Option<u32>,
-    pub file_size: Option<u64>,
+    pub file_mode: Option<i64>,
+    pub file_size: Option<i64>,
     pub is_config: bool,
 }
 
@@ -194,16 +174,17 @@ impl<'a> Default for NewPart<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Dependency {
+    #[sqlx(rename = "depends_on")]
     pub name: String,
-    pub constraint: Option<String>,
+    pub version_constraint: Option<String>,
     pub dep_type: DepType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TransactionRecord {
-    pub timestamp: String,
+    pub timestamp: Option<String>,
     pub operation: String,
     pub part_name: String,
     pub old_version: Option<String>,

@@ -1,5 +1,4 @@
 use std::io::BufRead;
-
 use anyhow::{Context, Result};
 
 use crate::builder::orchestrator::{self, BuildOptions};
@@ -7,7 +6,7 @@ use crate::cli::build::BuildArgs;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 
-pub fn execute_build(
+pub async fn execute_build(
     args: BuildArgs,
     config: &GlobalConfig,
     verbose: u8,
@@ -21,9 +20,9 @@ pub fn execute_build(
     .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
-        let db = InstalledDb::open(&config.general.installed_db_path)
+        let db = InstalledDb::open(&config.general.installed_db_path).await
             .context("failed to open database")?;
-        let count = db.clear_all_sessions()?;
+        let count = db.clear_all_sessions().await?;
         tracing::info!("Cleared {} build session(s)", count);
         return Ok(());
     }
@@ -60,6 +59,6 @@ pub fn execute_build(
             print_parts: args.print_parts,
             nproc_per_isolation: config.build.nproc_per_isolation,
         },
-    )?;
+    ).await?;
     Ok(())
 }

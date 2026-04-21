@@ -1,13 +1,11 @@
 use std::path::Path;
-
 use anyhow::Result;
-
 use crate::archive::resolver::LocalResolver;
 use crate::database::InstalledDb;
 use crate::transaction;
 use super::apply::{collect_install_args, resolve_install_paths};
 
-pub fn execute_install(
+pub async fn execute_install(
     db: &InstalledDb,
     parts: Vec<String>,
     force: bool,
@@ -25,9 +23,9 @@ pub fn execute_install(
             "no parts specified (pass part names/paths as arguments or via stdin)"
         );
     }
-    let part_paths = resolve_install_paths(resolver, &parts)?;
+    let part_paths = resolve_install_paths(resolver, &parts).await?;
 
-    match transaction::install_parts(db, &part_paths, root_dir, resolver, force, nodeps) {
+    match transaction::install_parts(db, &part_paths, root_dir, resolver, force, nodeps).await {
         Ok(()) => println!("installation completed successfully"),
         Err(e) => {
             eprintln!("error: {:#}", e);

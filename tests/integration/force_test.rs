@@ -2,12 +2,12 @@ use wright::builder::orchestrator::{resolve_build_set, ResolveOptions, MatchPoli
 use wright::config::GlobalConfig;
 use wright::database::{InstalledDb, NewPart, Origin};
 
-#[test]
-fn test_apply_force_always_includes_explicit_targets() {
+#[tokio::test]
+async fn test_apply_force_always_includes_explicit_targets() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("state").join("installed.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let db = InstalledDb::open(&db_path).unwrap();
+    let db = InstalledDb::open(&db_path).await.unwrap();
 
     // 1. Simulate a part 'a' already installed
     db.insert_part(NewPart {
@@ -23,7 +23,7 @@ fn test_apply_force_always_includes_explicit_targets() {
         part_hash: Some("oldhash"),
         install_scripts: None,
         origin: Origin::Manual,
-    }).unwrap();
+    }).await.unwrap();
     drop(db);
 
     // 2. Setup a plan directory for 'a'
@@ -52,7 +52,7 @@ arch = "x86_64"
         preserve_targets: false,
         ..Default::default()
     };
-    let build_set_1 = resolve_build_set(&config, vec!["a".to_string()], opts_no_force).unwrap();
+    let build_set_1 = resolve_build_set(&config, vec!["a".to_string()], opts_no_force).await.unwrap();
     assert!(build_set_1.is_empty(), "Without force, converged target should be skipped");
 
     // 4. Resolve WITH force (preserve_targets: true)
@@ -63,7 +63,7 @@ arch = "x86_64"
         preserve_targets: true,
         ..Default::default()
     };
-    let build_set_2 = resolve_build_set(&config, vec!["a".to_string()], opts_force).unwrap();
+    let build_set_2 = resolve_build_set(&config, vec!["a".to_string()], opts_force).await.unwrap();
     assert_eq!(build_set_2.len(), 1, "With force/preserve_targets, target MUST be included");
     assert_eq!(build_set_2[0], "a");
 }

@@ -16,7 +16,7 @@ use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
 
-pub fn install_parts(
+pub async fn install_parts(
     db: &InstalledDb,
     parts: &[PathBuf],
     root_dir: &Path,
@@ -40,9 +40,10 @@ pub fn install_parts(
         force,
         nodeps,
     )
+    .await
 }
 
-pub fn install_parts_with_explicit_targets(
+pub async fn install_parts_with_explicit_targets(
     db: &InstalledDb,
     parts: &[PathBuf],
     explicit_targets: &HashSet<String>,
@@ -81,7 +82,7 @@ pub fn install_parts_with_explicit_targets(
 
                 #[allow(clippy::map_entry)]
                 if !resolved_map.contains_key(&dep_name) {
-                    if let Some(installed) = db.get_part(&dep_name)? {
+                    if let Some(installed) = db.get_part(&dep_name).await? {
                         if let Some(ref c) = constraint {
                             let installed_ver = Version::parse(&installed.version)?;
                             if !c.satisfies(&installed_ver) {
@@ -94,11 +95,11 @@ pub fn install_parts_with_explicit_targets(
                         continue;
                     }
 
-                    if !db.find_providers(&dep_name)?.is_empty() {
+                    if !db.find_providers(&dep_name).await?.is_empty() {
                         continue;
                     }
 
-                    if let Some(resolved) = resolver.resolve(&dep_name)? {
+                    if let Some(resolved) = resolver.resolve(&dep_name).await? {
                         queue.push(dep_name.clone());
                         resolved_map.insert(dep_name, resolved);
                     } else {
@@ -122,9 +123,9 @@ pub fn install_parts_with_explicit_targets(
     for name in sorted_names {
         let explicit_target = explicit_targets.contains(&name);
 
-        if let Some(installed) = db.get_part(&name)? {
+        if let Some(installed) = db.get_part(&name).await? {
             if explicit_target {
-                db.set_origin(&name, Origin::Manual)?;
+                db.set_origin(&name, Origin::Manual).await?;
             }
 
             let incoming_hash = if let Some(hash) = archive_hashes.get(&name) {
@@ -140,7 +141,7 @@ pub fn install_parts_with_explicit_targets(
             if force || incoming_hash.as_deref() != installed.part_hash.as_deref() {
                 info!("Upgrading installed part {} from the current archive", name);
                 let part = resolved_map.get(&name).expect("resolved part exists");
-                upgrade_part(db, &part.path, root_dir, true, true)?;
+                upgrade_part(db, &part.path, root_dir, true, true).await?;
             }
             continue;
         }
@@ -152,22 +153,22 @@ pub fn install_parts_with_explicit_targets(
         };
         let part = resolved_map.get(&name).expect("resolved part exists");
         info!("Installing part {} (origin: {})", name, origin);
-        install_part_with_origin(db, &part.path, root_dir, force, origin, true)?;
+        install_part_with_origin(db, &part.path, root_dir, force, origin, true).await?;
     }
 
     Ok(())
 }
 
-pub fn install_part(
+pub async fn install_part(
     db: &InstalledDb,
     part_path: &Path,
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true)
+    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true).await
 }
 
-pub fn install_part_with_origin(
+pub async fn install_part_with_origin(
     db: &InstalledDb,
     part_path: &Path,
     root_dir: &Path,
@@ -178,7 +179,7 @@ pub fn install_part_with_origin(
     let overall_start = Instant::now();
 
     let staging_dir = std::path::Path::new("/var/lib/wright/staging");
-    let _ = std::fs::create_dir_all(staging_dir);
+    let _ = tokio::fs::create_dir_all(staging_dir).await;
     let temp_dir = tempfile::tempdir_in(staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
@@ -193,22 +194,22 @@ pub fn install_part_with_origin(
     );
 
     for replaced_name in &partinfo.replaces {
-        if db.get_part(replaced_name)?.is_some() {
+        if db.get_part(replaced_name).await?.is_some() {
             info!("Replacing {} with {}", replaced_name, partinfo.name);
-            remove_part(db, replaced_name, root_dir, true)?;
+            remove_part(db, replaced_name, root_dir, true).await?;
         }
     }
 
     if !force {
         for conflict_name in &partinfo.conflicts {
-            if db.get_part(conflict_name)?.is_some() {
+            if db.get_part(conflict_name).await?.is_some() {
                 return Err(WrightError::DependencyError(format!(
                     "part conflict detected: '{}' conflicts with installed part '{}'. \
                      Please remove it first or use --force.",
                     partinfo.name, conflict_name
                 )));
             }
-            let providers = db.find_providers(conflict_name)?;
+            let providers = db.find_providers(conflict_name).await?;
             if !providers.is_empty() {
                 return Err(WrightError::DependencyError(format!(
                     "part conflict detected: '{}' conflicts with '{}' (provided by {}). \
@@ -220,7 +221,7 @@ pub fn install_part_with_origin(
             }
         }
 
-        let reverse_conflicts = db.find_conflicting_parts(&partinfo.name)?;
+        let reverse_conflicts = db.find_conflicting_parts(&partinfo.name).await?;
         if !reverse_conflicts.is_empty() {
             return Err(WrightError::DependencyError(format!(
                 "part conflict detected: installed part(s) {} conflict with '{}'. \
@@ -231,7 +232,7 @@ pub fn install_part_with_origin(
         }
 
         for prov in &partinfo.provides {
-            let reverse = db.find_conflicting_parts(prov)?;
+            let reverse = db.find_conflicting_parts(prov).await?;
             if !reverse.is_empty() {
                 return Err(WrightError::DependencyError(format!(
                     "part conflict detected: installed part(s) {} conflict with '{}' (provided by '{}'). \
@@ -244,13 +245,13 @@ pub fn install_part_with_origin(
         }
     }
 
-    if db.get_part(&partinfo.name)?.is_some() {
+    if db.get_part(&partinfo.name).await?.is_some() {
         if force {
             debug!(
                 "Part {} already installed, attempting upgrade/reinstall",
                 partinfo.name
             );
-            return upgrade_part(db, part_path, root_dir, true, run_hooks);
+            return upgrade_part(db, part_path, root_dir, true, run_hooks).await;
         }
         return Err(WrightError::PartAlreadyInstalled(partinfo.name.clone()));
     }
@@ -273,7 +274,7 @@ pub fn install_part_with_origin(
         .filter(|e| e.file_type == FileType::File)
         .map(|e| e.path.as_str())
         .collect();
-    let owners = db.find_owners_batch(&file_paths)?;
+    let owners = db.find_owners_batch(&file_paths).await?;
 
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
@@ -307,7 +308,7 @@ pub fn install_part_with_origin(
         Some(&partinfo.version),
         "pending",
         None,
-    )?;
+    ).await?;
 
     let mut rollback_state = match journal_path_from_db(db) {
         Some(jp) => RollbackState::with_journal(jp),
@@ -321,7 +322,7 @@ pub fn install_part_with_origin(
         if let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir) {
+            if let Err(e) = run_install_script(script, root_dir).await {
                 warn!("pre_install script failed: {}", e);
             }
             log_debug_timing(
@@ -342,12 +343,12 @@ pub fn install_part_with_origin(
         Some(backup_dir.path()),
         &HashSet::new(),
         &divert_paths,
-    ) {
+    ).await {
         Ok(_) => {}
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, "rolled_back")?;
+            db.update_transaction_status(tx_id, "rolled_back").await?;
             return Err(e);
         }
     }
@@ -372,10 +373,10 @@ pub fn install_part_with_origin(
         part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         origin,
-    })?;
+    }).await?;
 
     for (path, owner_name) in shadows {
-        if let Some(owner_part) = db.get_part(&owner_name)? {
+        if let Some(owner_part) = db.get_part(&owner_name).await? {
             let diverted_to = if divert_paths.contains(&path) {
                 let mut p = PathBuf::from(&path);
                 let mut os = p.file_name().unwrap().to_os_string();
@@ -385,41 +386,41 @@ pub fn install_part_with_origin(
             } else {
                 None
             };
-            let _ = db.record_shadowed_file(&path, owner_part.id, part_id, diverted_to.as_deref());
+            let _ = db.record_shadowed_file(&path, owner_part.id, part_id, diverted_to.as_deref()).await;
         }
     }
 
-    db.insert_files(part_id, &file_entries)?;
+    db.insert_files(part_id, &file_entries).await?;
 
     let mut deps = Vec::new();
     for d in &partinfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
         deps.push(Dependency {
             name,
-            constraint: constraint.map(|c| c.to_string()),
+            version_constraint: constraint.map(|c| c.to_string()),
             dep_type: DepType::Runtime,
         });
     }
 
     if !deps.is_empty() {
-        db.insert_dependencies(part_id, &deps)?;
+        db.insert_dependencies(part_id, &deps).await?;
     }
 
     if !partinfo.optional_deps.is_empty() {
-        db.insert_optional_dependencies(part_id, &partinfo.optional_deps)?;
+        db.insert_optional_dependencies(part_id, &partinfo.optional_deps).await?;
     }
 
     if !partinfo.provides.is_empty() {
-        db.insert_provides(part_id, &partinfo.provides)?;
+        db.insert_provides(part_id, &partinfo.provides).await?;
     }
     if !partinfo.conflicts.is_empty() {
-        db.insert_conflicts(part_id, &partinfo.conflicts)?;
+        db.insert_conflicts(part_id, &partinfo.conflicts).await?;
     }
     if !partinfo.replaces.is_empty() {
-        db.insert_replaces(part_id, &partinfo.replaces)?;
+        db.insert_replaces(part_id, &partinfo.replaces).await?;
     }
 
-    db.update_transaction_status(tx_id, "completed")?;
+    db.update_transaction_status(tx_id, "completed").await?;
     log_debug_timing(
         "install",
         &partinfo.name,
@@ -431,7 +432,7 @@ pub fn install_part_with_origin(
         if let Some(ref script) = hooks.post_install {
             log_running_hook(&partinfo.name, "post_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir) {
+            if let Err(e) = run_install_script(script, root_dir).await {
                 warn!("post_install script failed: {}", e);
             }
             log_debug_timing(

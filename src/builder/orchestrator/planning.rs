@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-
 use tracing::info;
 
 use crate::builder::mvp::{collect_phase_deps, PlanGraph};
@@ -28,7 +27,7 @@ pub(super) fn compute_session_hash(build_set: &HashSet<String>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub(super) fn expand_missing_dependencies(
+pub(super) async fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
@@ -85,13 +84,13 @@ pub(super) fn expand_missing_dependencies(
             }
 
             if !build_set.contains(&dep_name)
-                && dependency_matches_policy(&dep_name, all_plans, db, policies)?
+                && dependency_matches_policy(&dep_name, all_plans, db, policies).await?
             {
                 if let Some(plan_path) = all_plans.get(&dep_name) {
                     info!(
                         "Scheduling dependency (depth {}, reason: {}): {}",
                         dep_depth,
-                        dependency_reason_label(&dep_name, all_plans, db, policies)?,
+                        dependency_reason_label(&dep_name, all_plans, db, policies).await?,
                         dep_name,
                     );
                     plans_to_build.insert(plan_path.clone());
@@ -144,14 +143,14 @@ pub(super) fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_name)
-                            && dependency_matches_policy(&rdep_name, all_plans, db, policies)?
+                            && dependency_matches_policy(&rdep_name, all_plans, db, policies).await?
                         {
                             if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
                                 info!(
                                     "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
                                     build_dep_name,
                                     rdep_depth,
-                                    dependency_reason_label(&rdep_name, all_plans, db, policies)?,
+                                    dependency_reason_label(&rdep_name, all_plans, db, policies).await?,
                                     rdep_name,
                                 );
                                 plans_to_build.insert(rdep_plan_path.clone());
@@ -169,7 +168,7 @@ pub(super) fn expand_missing_dependencies(
     Ok(())
 }
 
-fn dependency_reason_label(
+async fn dependency_reason_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
@@ -180,7 +179,7 @@ fn dependency_reason_label(
     } else if policies.contains(&MatchPolicy::Missing) {
         Ok("missing")
     } else if policies.contains(&MatchPolicy::Outdated) {
-        if dependency_plan_differs(dep_name, all_plans, db)? {
+        if dependency_plan_differs(dep_name, all_plans, db).await? {
             Ok("outdated")
         } else {
             Ok("missing")
@@ -190,25 +189,25 @@ fn dependency_reason_label(
     }
 }
 
-pub(super) fn dependency_matches_policy(
+pub(super) async fn dependency_matches_policy(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
-    let installed = db.get_part(dep_name)?;
+    let installed = db.get_part(dep_name).await?;
     for policy in policies {
         let matched = match policy {
             MatchPolicy::All => true,
             MatchPolicy::Missing => installed.is_none(),
             MatchPolicy::Installed => {
-                installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db)?
+                installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db).await?
             }
             MatchPolicy::Outdated => {
                 if installed.is_none() {
                     true
                 } else {
-                    dependency_plan_differs(dep_name, all_plans, db)?
+                    dependency_plan_differs(dep_name, all_plans, db).await?
                 }
             }
         };
@@ -219,12 +218,12 @@ pub(super) fn dependency_matches_policy(
     Ok(false)
 }
 
-fn dependency_plan_differs(
+async fn dependency_plan_differs(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
 ) -> Result<bool> {
-    let Some(installed) = db.get_part(dep_name)? else {
+    let Some(installed) = db.get_part(dep_name).await? else {
         return Ok(true);
     };
     let Some(plan_path) = all_plans.get(dep_name) else {
@@ -238,86 +237,9 @@ pub(super) fn installed_matches_manifest(
     installed: &InstalledPart,
     manifest: &PlanManifest,
 ) -> bool {
-    installed.epoch == manifest.plan.epoch
+    installed.epoch == manifest.plan.epoch as i64
         && installed.version == manifest.plan.version
-        && installed.release == manifest.plan.release
-}
-
-#[cfg(test)]
-pub(super) fn construction_plan_order(
-    build_set: &HashSet<String>,
-    deps_map: &HashMap<String, Vec<String>>,
-) -> Vec<(String, usize)> {
-    let mut indegree: HashMap<String, usize> = build_set
-        .iter()
-        .map(|name| (name.clone(), 0usize))
-        .collect();
-    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
-
-    for name in build_set {
-        let deps = deps_map.get(name).map(Vec::as_slice).unwrap_or(&[]);
-        for dep in deps {
-            if !build_set.contains(dep) {
-                continue;
-            }
-            *indegree.get_mut(name).expect("build node exists") += 1;
-            dependents
-                .entry(dep.clone())
-                .or_default()
-                .push(name.clone());
-        }
-    }
-
-    let mut depth_map: HashMap<String, usize> = HashMap::new();
-    let mut ready = VecDeque::from({
-        let mut nodes: Vec<_> = indegree
-            .iter()
-            .filter_map(|(name, degree)| (*degree == 0).then_some(name.clone()))
-            .collect();
-        nodes.sort();
-        for n in &nodes {
-            depth_map.insert(n.clone(), 0);
-        }
-        nodes
-    });
-    let mut ordered = Vec::with_capacity(build_set.len());
-
-    while let Some(name) = ready.pop_front() {
-        let my_depth = depth_map[&name];
-        ordered.push((name.clone(), my_depth));
-
-        let mut next_ready = Vec::new();
-        if let Some(children) = dependents.get(&name) {
-            for child in children {
-                let child_depth = depth_map.entry(child.clone()).or_insert(0);
-                *child_depth = (*child_depth).max(my_depth + 1);
-                let degree = indegree.get_mut(child).expect("dependent exists");
-                *degree -= 1;
-                if *degree == 0 {
-                    next_ready.push(child.clone());
-                }
-            }
-        }
-        next_ready.sort();
-        for child in next_ready {
-            ready.push_back(child);
-        }
-    }
-
-    if ordered.len() != build_set.len() {
-        let ordered_set: HashSet<_> = ordered.iter().map(|(n, _)| n.clone()).collect();
-        let mut remaining: Vec<_> = build_set
-            .iter()
-            .filter(|name| !ordered_set.contains(*name))
-            .cloned()
-            .collect();
-        remaining.sort();
-        for name in remaining {
-            ordered.push((name, 0));
-        }
-    }
-
-    ordered
+        && installed.release == manifest.plan.release as i64
 }
 
 pub(super) fn construction_plan_batches(
@@ -419,7 +341,7 @@ pub(super) fn construction_plan_label(
     }
 }
 
-pub(super) fn expand_rebuild_deps(
+pub(super) async fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     all_plans: &HashMap<String, PathBuf>,
     mode: DependentsMode,

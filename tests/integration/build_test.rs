@@ -21,8 +21,8 @@ fn load_manifest_without_isolation(name: &str) -> (PlanManifest, PathBuf) {
     (manifest, manifest_path.parent().unwrap().to_path_buf())
 }
 
-#[test]
-fn test_build_hello_fixture() {
+#[tokio::test]
+async fn test_build_hello_fixture() {
     let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
@@ -43,15 +43,14 @@ fn test_build_hello_fixture() {
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     // Verify the binary was built
     assert!(result.output_dir.join("usr/bin/hello").exists());
 }
 
-#[test]
-fn test_build_and_archive_hello() {
+#[tokio::test]
+async fn test_build_and_archive_hello() {
     let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
@@ -72,8 +71,7 @@ fn test_build_and_archive_hello() {
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -98,8 +96,8 @@ fn test_build_and_archive_hello() {
     assert!(extract_dir.path().join(".FILELIST").exists());
 }
 
-#[test]
-fn test_archive_records_runtime_but_not_link_dependencies() {
+#[tokio::test]
+async fn test_archive_records_runtime_but_not_link_dependencies() {
     let manifest = PlanManifest::parse(
         r#"
 name = "runtime-link-overlap"
@@ -142,8 +140,7 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
@@ -158,8 +155,8 @@ install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
     assert!(!partinfo.contains("link ="));
 }
 
-#[test]
-fn test_canonical_and_split_build_variables_are_available() {
+#[tokio::test]
+async fn test_canonical_and_split_build_variables_are_available() {
     let manifest = PlanManifest::parse(
         r#"
 name = "split-vars"
@@ -210,8 +207,7 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(result.split_part_dirs["split-vars-doc"]
@@ -219,16 +215,16 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
         .exists());
 }
 
-#[test]
-fn test_lint_hello_fixture() {
+#[tokio::test]
+async fn test_lint_hello_fixture() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "hello");
     assert_eq!(manifest.plan.version, "1.0.0");
 }
 
-#[test]
-fn test_lint_nginx_fixture() {
+#[tokio::test]
+async fn test_lint_nginx_fixture() {
     let manifest_path = fixture_path("nginx").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "nginx");
@@ -246,8 +242,8 @@ fn test_lint_nginx_fixture() {
     }
 }
 
-#[test]
-fn test_build_single_stage() {
+#[tokio::test]
+async fn test_build_single_stage() {
     let (manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     let mut config = GlobalConfig::default();
@@ -270,7 +266,7 @@ fn test_build_single_stage() {
             None,
             None,
             None,
-        )
+        ).await
         .unwrap();
 
     // Now run a single stage on the existing build tree
@@ -287,8 +283,7 @@ fn test_build_single_stage() {
             None,
             None,
             None,
-        )
-        .unwrap();
+        ).await.unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not
     // (output_dir is recreated fresh for single-stage runs)
@@ -296,8 +291,8 @@ fn test_build_single_stage() {
     assert!(!result.output_dir.join("usr/bin/hello").exists());
 }
 
-#[test]
-fn test_print_parts_keeps_verbose_build_output_off_stdout() {
+#[tokio::test]
+async fn test_print_parts_keeps_verbose_build_output_off_stdout() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("components");

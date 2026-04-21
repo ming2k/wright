@@ -1,7 +1,6 @@
 use std::io::BufRead;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-
 use anyhow::{Context, Result};
 
 use crate::archive::resolver::LocalResolver;
@@ -24,7 +23,7 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     Ok(args)
 }
 
-pub fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Vec<PathBuf>> {
+pub async fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Result<Vec<PathBuf>> {
     let mut part_paths = Vec::new();
     for arg in args {
         let path = PathBuf::from(arg);
@@ -33,7 +32,7 @@ pub fn resolve_install_paths(resolver: &LocalResolver, args: &[String]) -> Resul
             continue;
         }
 
-        match resolver.resolve(arg)? {
+        match resolver.resolve(arg).await? {
             Some(resolved) => part_paths.push(resolved.path),
             None => anyhow::bail!(
                 "'{}' is not a file and could not be resolved from the local archive catalogue",
@@ -78,9 +77,6 @@ struct ApplyContext<'a> {
 
 fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::BuildOptions {
     crate::builder::orchestrator::BuildOptions {
-        // `apply --force` is a whole-pipeline override for the build/install
-        // flow. Keep downloaded sources cached, but clear the per-plan
-        // workspace and build cache so the build side really rebuilds.
         clean: ctx.force,
         force: ctx.force,
         verbose: ctx.verbose,
@@ -144,20 +140,14 @@ fn resolve_options_for_apply(
         deps: Some(deps),
         rdeps,
         match_policies,
-        // `apply` is a smart convergence command: when the user does not bound
-        // traversal depth, follow the full upstream chain so missing or
-        // outdated dependencies can be materialized end-to-end.
         depth: Some(depth.unwrap_or(0)),
         include_targets: true,
-        // `apply --force` must still rebuild the user's requested targets even
-        // when the default `missing` policy would otherwise filter them out as
-        // already installed.
         preserve_targets: force,
     }
 }
 
-fn apply_targets(
-    ctx: ApplyContext,
+async fn apply_targets(
+    ctx: ApplyContext<'_>,
     targets: Vec<String>,
     resolve_opts: crate::builder::orchestrator::ResolveOptions,
 ) -> Result<()> {
@@ -166,15 +156,13 @@ fn apply_targets(
         describe_batch_actions, describe_build_resources, BuildExecutionPlan,
     };
 
-    // Single resolution pass to determine which targets were explicitly requested.
-    // This drives install-origin tracking (explicit vs. dependency install).
     let explicit_plan_names =
         crate::builder::orchestrator::resolve_explicit_plan_names(ctx.resolver, &targets)?;
 
     let install_nodeps = resolve_opts.deps.is_none();
 
-    let build_set =
-        crate::builder::orchestrator::resolve_build_set(ctx.config, targets, resolve_opts)?;
+    let build_set: Vec<String> =
+        crate::builder::orchestrator::resolve_build_set(ctx.config, targets, resolve_opts).await?;
 
     if build_set.is_empty() {
         if ctx.dry_run {
@@ -214,7 +202,6 @@ fn apply_targets(
         return Ok(());
     }
 
-    // Track successfully installed parts so we can report partial-apply state on failure.
     let mut applied_parts: Vec<String> = Vec::new();
 
     if !ctx.quiet {
@@ -235,7 +222,7 @@ fn apply_targets(
             );
         }
 
-        plan.execute_batch(ctx.config, batch_idx, &build_opts)
+        plan.execute_batch(ctx.config, batch_idx, &build_opts).await
             .inspect_err(|_| {
                 emit_partial_apply_note(&applied_parts);
             })?;
@@ -243,8 +230,6 @@ fn apply_targets(
         let mut parts = Vec::new();
         let mut explicit_targets = HashSet::new();
         let mut batch_part_names = Vec::new();
-        // Deduplicate part paths within a batch; multi-fabricate plans produce
-        // multiple sub-parts from the same part file.
         let mut seen_paths = HashSet::new();
 
         for task in tasks {
@@ -269,7 +254,7 @@ fn apply_targets(
             }
         }
 
-        let db = InstalledDb::open(ctx.installed_db_path)
+        let db = InstalledDb::open(ctx.installed_db_path).await
             .context("failed to open database for install")?;
 
         transaction::install_parts_with_explicit_targets(
@@ -280,7 +265,7 @@ fn apply_targets(
             ctx.resolver,
             ctx.force,
             install_nodeps,
-        )
+        ).await
         .inspect_err(|_| {
             emit_partial_apply_note(&applied_parts);
         })?;
@@ -299,8 +284,7 @@ fn emit_partial_apply_note(applied_parts: &[String]) {
     }
 }
 
-
-pub fn execute_apply(
+pub async fn execute_apply(
     targets: Vec<String>,
     deps: Option<DomainArg>,
     rdeps: Option<DomainArg>,
@@ -315,10 +299,10 @@ pub fn execute_apply(
     quiet: bool,
     resolver: &LocalResolver,
 ) -> Result<()> {
-    use std::io::IsTerminal;
     let targets = collect_install_args(targets)?;
 
     if targets.is_empty() {
+        use std::io::IsTerminal;
         if !std::io::stdin().is_terminal() {
             anyhow::bail!("no targets received from stdin; did the resolve succeed?");
         }
@@ -340,7 +324,7 @@ pub fn execute_apply(
         },
         targets,
         resolve_opts,
-    ) {
+    ).await {
         Ok(()) => {
             if !dry_run {
                 println!("apply completed successfully");

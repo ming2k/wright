@@ -1,8 +1,8 @@
 use std::fs;
 use wright::config::AssembliesConfig;
 
-#[test]
-fn test_assembly_loading_valid() {
+#[tokio::test]
+async fn test_assembly_loading_valid() {
     let temp = tempfile::tempdir().unwrap();
     let assemblies_dir = temp.path().join("assemblies");
     fs::create_dir_all(&assemblies_dir).unwrap();
@@ -26,8 +26,8 @@ plans = ["glibc", "bash"]
     assert_eq!(base.plans, vec!["glibc", "bash"]);
 }
 
-#[test]
-fn test_assembly_loading_mismatched_name() {
+#[tokio::test]
+async fn test_assembly_loading_mismatched_name() {
     let temp = tempfile::tempdir().unwrap();
     let assemblies_dir = temp.path().join("assemblies");
     fs::create_dir_all(&assemblies_dir).unwrap();
@@ -48,8 +48,8 @@ plans = ["glibc"]
     assert!(err.contains("does not match file name 'wrong'"));
 }
 
-#[test]
-fn test_assembly_loading_legacy_format_fails() {
+#[tokio::test]
+async fn test_assembly_loading_legacy_format_fails() {
     let temp = tempfile::tempdir().unwrap();
     let assemblies_dir = temp.path().join("assemblies");
     fs::create_dir_all(&assemblies_dir).unwrap();
@@ -71,8 +71,8 @@ plans = ["old"]
     // but finds an 'assembly' array instead (or just missing 'name' if it's strict).
 }
 
-#[test]
-fn test_assembly_lint_logic() {
+#[tokio::test]
+async fn test_assembly_lint_logic() {
     use wright::commands::lint;
     use wright::config::GlobalConfig;
 
@@ -106,11 +106,11 @@ fn test_assembly_lint_logic() {
     config.general.assemblies_dir = assemblies_dir;
 
     // Linting valid assembly should succeed
-    let result = lint::execute_lint(vec!["@valid".to_string()], false, &config);
+    let result = lint::execute_lint(vec!["@valid".to_string()], false, &config).await;
     assert!(result.is_ok());
 
     // Linting invalid assembly should fail
-    let result = lint::execute_lint(vec!["@invalid".to_string()], false, &config);
+    let result = lint::execute_lint(vec!["@invalid".to_string()], false, &config).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Lint failed"));
 }

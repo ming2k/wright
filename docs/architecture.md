@@ -20,12 +20,12 @@ plan.toml -> wright build -> .wright.tar.zst -> archives.db -> wright install/up
 ```text
 src/
 ├── bin/
-├── archive/   # local archive catalogue DB + resolver
+├── archive/   # archive pruning and resolution logic
 ├── builder/   # build orchestration and lifecycle execution
 ├── cli/       # clap schemas grouped by subcommand
 ├── commands/  # command handlers grouped by subcommand
 ├── config.rs  # global config and assembly definitions
-├── database/  # installed-system DB
+├── database/  # unified database layer (installed system + archive catalogue)
 ├── isolation/  # sandbox isolation
 ├── part/      # archive format, versions, FHS validation
 ├── plan/      # plan parsing and validation
