@@ -125,7 +125,7 @@ impl Builder {
                     hasher.update(b"git");
                     hasher.update(git.url.as_bytes());
                     if let Some(ref r#ref) = git.r#ref {
-                        hasher.update(r#ref.as_bytes());
+                        hasher.update(self.process_uri(r#ref, manifest).as_bytes());
                     }
                     if let Some(depth) = git.depth {
                         hasher.update(&depth.to_le_bytes());
@@ -543,7 +543,11 @@ impl Builder {
                     let processed_url = self.process_uri(&git.url, manifest);
                     let git_dir_name = git_cache_dir_name(&processed_url);
                     let cache_path = cache_dir.join("git").join(&git_dir_name);
-                    let git_ref = git.r#ref.as_deref().unwrap_or("HEAD");
+                    let git_ref = git
+                        .r#ref
+                        .as_deref()
+                        .map(|r| self.process_uri(r, manifest))
+                        .unwrap_or_else(|| "HEAD".to_string());
                     let final_dest = if let Some(ref sub) = git.extract_to {
                         let p = dest_dir.join(sub);
                         tokio::fs::create_dir_all(&p)
@@ -568,7 +572,7 @@ impl Builder {
                         WrightError::BuildError(format!("local git clone failed: {}", e))
                     })?;
                     let (object, reference) = repo
-                        .revparse_ext(git_ref)
+                        .revparse_ext(&git_ref)
                         .or_else(|_| repo.revparse_ext(&format!("origin/{}", git_ref)))
                         .map_err(|e| {
                             WrightError::BuildError(format!(
@@ -840,10 +844,11 @@ impl Builder {
                         tokio::fs::create_dir_all(&git_cache_dir).await.ok();
                     }
                     let dest = git_cache_dir.join(&git_dir_name);
+                    let processed_ref = git.r#ref.as_deref().map(|r| self.process_uri(r, manifest));
                     let commit_id = self
                         .fetch_git_repo(
                             &processed_url,
-                            git.r#ref.as_deref(),
+                            processed_ref.as_deref(),
                             &dest,
                             &manifest.plan.name,
                         )

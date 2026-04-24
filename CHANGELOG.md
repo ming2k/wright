@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.4] - 2026-04-24
+
+### Fixed
+- **Git Source `ref` Variable Substitution**: Git `[[sources]]` `ref` values (e.g. `ref = "v${VERSION}"`) are now correctly expanded during fetch and extract, instead of being passed literally to git.
+
 ## [3.0.3] - 2026-04-21
 
 ### Added

@@ -130,7 +130,7 @@ Used for cloning Git repositories. Git sources are automatically extracted (chec
 | Field   | Type   | Default  | Description                                                                 |
 |-----------|--------|----------|-----------------------------------------------------------------------------|
 | `url`     | string | required | Git repository URL                                                         |
-| `ref`     | string | `"HEAD"` | Branch, tag, or commit hash to check out.                                   |
+| `ref`     | string | `"HEAD"` | Branch, tag, or commit hash to check out. Supports variable substitution.   |
 | `depth`   | integer| optional | Shallow clone depth.                                                        |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to check out the repository into.         |
 
@@ -141,6 +141,8 @@ url = "https://github.com/example/repo.git"
 ref = "v1.2.3"
 depth = 1
 ```
+
+You can also use variable substitution in `ref` (e.g. `ref = "v${VERSION}"`) to tie the checkout tag to the plan version.
 
 #### `type = "local"`
 
