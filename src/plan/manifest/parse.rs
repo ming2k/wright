@@ -244,6 +244,7 @@ impl PlanManifest {
             WrightError::ParseError(format!("failed to read {}: {}", path.display(), e))
         })?;
         let mut manifest = Self::parse(&content)?;
+        manifest.validate()?;
 
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");

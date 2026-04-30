@@ -77,8 +77,16 @@ pub async fn install_parts_with_explicit_targets(
             };
 
             for dep in &dependencies {
+                let dep = dep.trim();
+                if dep.is_empty() {
+                    return Err(WrightError::DependencyError(format!(
+                        "part '{}' declares an empty dependency. Check its recipe file",
+                        name
+                    )));
+                }
+
                 let (dep_name, constraint) =
-                    version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
+                    version::parse_dependency(dep).unwrap_or_else(|_| (dep.to_string(), None));
 
                 #[allow(clippy::map_entry)]
                 if !resolved_map.contains_key(&dep_name) {
@@ -104,8 +112,8 @@ pub async fn install_parts_with_explicit_targets(
                         resolved_map.insert(dep_name, resolved);
                     } else {
                         return Err(WrightError::DependencyError(format!(
-                            "could not resolve dependency: {}",
-                            dep_name
+                            "could not resolve dependency '{}' required by '{}'",
+                            dep_name, name
                         )));
                     }
                 } else {

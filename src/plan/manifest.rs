@@ -435,6 +435,32 @@ impl PlanManifest {
             }
         }
 
+        // Validate dependencies: no empty strings, no duplicates
+        let dep_kinds = [
+            ("runtime", &self.dependencies.runtime),
+            ("build", &self.dependencies.build),
+            ("link", &self.dependencies.link),
+            ("optional", &self.dependencies.optional),
+        ];
+        for (kind, deps) in &dep_kinds {
+            let mut seen = std::collections::HashSet::new();
+            for dep in *deps {
+                let trimmed = dep.trim();
+                if trimmed.is_empty() {
+                    return Err(WrightError::ValidationError(format!(
+                        "dependencies.{} contains an empty entry",
+                        kind
+                    )));
+                }
+                if !seen.insert(trimmed) {
+                    return Err(WrightError::ValidationError(format!(
+                        "dependencies.{} contains duplicate entry '{}'",
+                        kind, trimmed
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 
