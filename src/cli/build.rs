@@ -62,14 +62,10 @@ pub struct BuildArgs {
     pub clear_sessions: bool,
 
     /// Download sources only; do not build
-    #[arg(long, conflicts_with_all = ["checksum", "lint"])]
+    #[arg(long, conflicts_with = "checksum")]
     pub fetch: bool,
 
     /// Compute and update SHA256 checksums in plan.toml
-    #[arg(long, conflicts_with_all = ["fetch", "lint"])]
+    #[arg(long, conflicts_with = "fetch")]
     pub checksum: bool,
-
-    /// Validate plan.toml files for syntax and logic errors
-    #[arg(long, conflicts_with_all = ["fetch", "checksum"])]
-    pub lint: bool,
 }

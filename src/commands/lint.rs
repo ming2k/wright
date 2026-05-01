@@ -1,4 +1,4 @@
-use crate::builder::orchestrator::setup_resolver;
+use crate::builder::orchestrator::{self, setup_resolver};
 use crate::config::{AssembliesConfig, GlobalConfig};
 use crate::error::Result;
 use crate::plan::manifest::PlanManifest;
@@ -46,6 +46,8 @@ pub async fn execute_lint(
     }
 
     let mut failed = 0;
+
+    // 1. Lint individual plan manifests
     for path in &plan_targets {
         match PlanManifest::from_file(path) {
             Ok(m) => {
@@ -58,6 +60,24 @@ pub async fn execute_lint(
         }
     }
 
+    // 2. Lint dependency graph when targets are specified
+    let plan_names: Vec<String> = plan_targets
+        .iter()
+        .filter_map(|p| {
+            PlanManifest::from_file(p)
+                .ok()
+                .map(|m| m.plan.name)
+        })
+        .collect();
+
+    if !plan_names.is_empty() {
+        if let Err(e) = orchestrator::lint_dependency_graph_for_targets(config, &plan_names) {
+            error!("Dependency graph analysis failed: {}", e);
+            failed += 1;
+        }
+    }
+
+    // 3. Lint assemblies
     for name in &assembly_targets {
         let assembly = assemblies_cfg.assemblies.get(name).unwrap();
         let mut assembly_failed = false;

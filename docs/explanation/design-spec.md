@@ -1,4 +1,4 @@
-# Current Design Summary
+# Design Specification
 
 This document replaces the older historical spec. Wright is now a
 source-first, local-first system with one primary CLI, distinct build/system
@@ -18,9 +18,9 @@ model beyond assemblies.
 ## Tool Boundaries
 
 - `wright build` builds parts from plans and records successful outputs in the
- local inventory
+  local inventory
 - `wright` installs, upgrades, removes, verifies, and applies those locally
- available parts to the live system
+  available parts to the live system
 
 The main workflows are:
 
@@ -40,7 +40,7 @@ Wright is optimized for self-hosted maintenance:
 - plans are the source of truth
 - built archives exist mainly for rollback, recovery, and local reuse
 - `wright apply` is the preferred command when you want the system to match
- current plans or assemblies
+  current plans or assemblies
 - `wright prune` cleans stale or stray archives from the local store
 
 ## Data Layout
@@ -70,6 +70,8 @@ available for reuse or installation.
 - published binary distribution is out of scope for the default architecture
 
 ## No Magic Behavior
+
+For the rationale behind explicit over implicit behavior, see [ADR-0004: No Magic Behavior](../adr/0004-no-magic-behavior.md).
 
 Wright does not perform implicit actions on behalf of the plan author. If the
 tool does something, it must be because the plan explicitly asked for it.
@@ -104,4 +106,4 @@ When evaluating a feature request, ask: does this save meaningful work, or
 does it only save the user from writing something explicit and readable? If the
 latter, prefer keeping behavior explicit.
 
-For command details and current examples, use the rest of `docs/`.
+For command details and current examples, use the rest of the documentation.

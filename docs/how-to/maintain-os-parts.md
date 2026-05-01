@@ -1,4 +1,4 @@
-# OS Maintenance Guide (User View)
+# How to Maintain OS Parts
 
 This guide defines a conservative maintenance policy for operating system part sets managed with Wright. The goal is stable systems over minimal rebuild cost.
 

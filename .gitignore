@@ -14,5 +14,8 @@ dev.toml
 wright.toml
 
 # AI assistants
+.codex/
 .gemini/
+.kimi/
+.opencode/
 *.pyc

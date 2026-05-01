@@ -2,7 +2,7 @@
 
 This page explains where Wright writes logs, how to control verbosity, and which
 settings affect log locations. For the operator-facing log style and message
-constraints, see [logging-design.md](logging-design.md).
+constraints, see [logging-design.md](../dev/logging-design.md).
 
 ## What Gets Logged
 

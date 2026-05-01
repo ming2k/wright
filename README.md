@@ -32,6 +32,19 @@ wright prune --untracked --latest --apply
 wright list
 ```
 
+## Documentation
+
+Wright's documentation follows the [Diátaxis](https://diataxis.fr/) framework.
+
+| Section | Description |
+|---------|-------------|
+| [Tutorials](docs/tutorials/) | Step-by-step guides to learn Wright |
+| [How-to Guides](docs/how-to/) | Task-oriented recipes for specific problems |
+| [Reference](docs/reference/) | Lookup tables for config, API, and CLI values |
+| [Explanation](docs/explanation/) | Discussions of why things work as they do |
+| [ADR](docs/adr/) | Architecture Decision Records |
+| [Developer Docs](docs/dev/) | Contributing, module layout, logging design |
+
 ## Terms
 
 - **Plan**: the `plan.toml` blueprint for building one part
@@ -39,20 +52,6 @@ wright list
 - **Assembly**: a build-time grouping of plans
 - **Inventory**: the local database of built parts on this machine
 - **System**: the live machine being maintained
-
-## Documentation
-
-- [Getting Started](docs/getting-started.md)
-- [Usage Guide](docs/usage.md)
-- [Terminology](docs/terminology.md)
-- [Writing Plans](docs/writing-plans.md)
-- [Writing Assemblies](docs/writing-assemblies.md)
-- [CLI Reference](docs/cli-reference.md)
-- [Configuration](docs/configuration.md)
-- [Architecture](docs/architecture.md)
-- [Apply Design](docs/apply-design.md)
-- [Dependencies](docs/dependencies.md)
-- [Cookbook](docs/cookbook.md)
 
 ## License
 

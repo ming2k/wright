@@ -53,7 +53,6 @@ pub async fn execute_build(
                 .resume
                 .map(|h| if h.is_empty() { None } else { Some(h) }),
             checksum: args.checksum,
-            lint: args.lint,
             skip_check: args.skip_check,
             verbose: verbose > 0,
             quiet,

@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.5] - 2026-05-02
+
+### Changed
+- **Removed `build --lint`**: the `--lint` flag has been removed from `wright build` in favor of the dedicated `wright lint` command. This enforces functional atomicity: `build` builds, `lint` validates.
+- **Enhanced `wright lint`**: when targets are specified, `wright lint` now automatically performs full dependency graph analysis including cycle detection and MVP candidate identification.
+- **Documentation restructured to Diátaxis**: all documentation has been reorganized into the Diátaxis framework (tutorials, how-to guides, reference, explanation, ADRs, and developer docs).
+- **Extracted ADRs**: 8 Architecture Decision Records have been extracted from existing prose and placed under `docs/adr/`.
+
+### Fixed
+- Various documentation cross-references updated to match the new structure.
+
 ## [3.0.4] - 2026-04-24
 
 ### Fixed

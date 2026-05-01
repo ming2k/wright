@@ -58,6 +58,12 @@ Useful `wright build` flags:
 - `--fetch`
 - `--checksum`
 
+## Lint commands
+
+- `wright lint [TARGET...]`
+  validates plan syntax, logical integrity, and dependency graph cycles for
+  specified plans (or all plans if omitted)
+
 Useful `wright lint` flags:
 
 - `-r`, `--recursive`

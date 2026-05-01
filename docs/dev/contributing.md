@@ -31,7 +31,7 @@ tests/
 └── fixtures/    # Test plan data
 ```
 
-See [architecture.md](architecture.md) for module details.
+See [architecture.md](../explanation/architecture.md) for module details.
 
 ## Conventions
 

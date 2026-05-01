@@ -97,7 +97,6 @@ coordinated plan-to-system command.
 
 This consolidates the previous separate flags into a single control for situations where you want to ensure the system is completely refreshed from the plan state.
 
-
 ## Execution Model
 
 The implementation in `src/commands/system.rs` follows this pipeline.
@@ -166,28 +165,7 @@ For every batch:
 
 This wave-by-wave installation model is the defining behavior of `apply`.
 
-It means later waves observe the system as updated by earlier waves. That is
-important for self-hosting and rolling maintenance workflows where newly built
-toolchain or library parts should be visible before building their dependents.
-
-## Why Wave-by-Wave Install Instead of One Big Install
-
-This command is specifically designed for organic system evolution, not only for
-archive production.
-
-The wave model gives Wright several useful properties:
-
-- dependency order remains explicit and inspectable
-- earlier rebuilt foundations can affect later builds
-- the live system is updated progressively rather than only at the very end
-- the command maps naturally onto assemblies and source-first maintenance
-
-The tradeoff is that `apply` is not a single global transaction across every
-wave. Each install batch succeeds or fails in sequence.
-
-That tradeoff is intentional. For this command, correctness of staged system
-convergence is more important than pretending the entire multi-wave operation is
-one atomic install.
+For the rationale behind this design, see [ADR-0002: Wave-by-Wave Install](../adr/0002-wave-by-wave-install.md).
 
 ## Failure Model
 
@@ -240,7 +218,7 @@ Use this rule of thumb:
 - use `wright resolve` when you want to shape rebuild scope
 - use `wright install` when you already know which archives to apply
 - use `wright apply` when you want the live system to converge toward the
- current plans with Wright's default install/upgrade/dependency combo policy
+  current plans with Wright's default install/upgrade/dependency combo policy
 
 That last item is the key design point. `apply` is not merely a convenience
 command. It is the policy-bearing command in Wright's source-first workflow.

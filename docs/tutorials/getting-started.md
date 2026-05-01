@@ -84,8 +84,8 @@ wright remove hello
 
 ## Next
 
-- [Usage Guide](usage.md)
-- [CLI Reference](cli-reference.md)
-- [Configuration](configuration.md)
-- [Writing Plans](writing-plans.md)
-- [Writing Assemblies](writing-assemblies.md)
+- [Usage Guide](../tutorials/first-steps.md)
+- [CLI Reference](../reference/cli-reference.md)
+- [Configuration](../reference/configuration.md)
+- [Writing Plans](../reference/writing-plans.md)
+- [Writing Assemblies](../reference/writing-assemblies.md)

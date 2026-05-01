@@ -282,18 +282,9 @@ async fn complete_build_task(
     }
 }
 
-pub(super) fn lint_dependency_graph(
-    plans_to_build: &HashSet<PathBuf>,
-    all_plans: &HashMap<String, PathBuf>,
-    build_dep_map: impl FnOnce(
-        &HashSet<PathBuf>,
-        bool,
-        bool,
-        HashMap<String, super::RebuildReason>,
-        &HashMap<String, PathBuf>,
-    ) -> Result<crate::builder::mvp::PlanGraph>,
+pub fn lint_dependency_graph(
+    graph: &crate::builder::mvp::PlanGraph,
 ) -> Result<()> {
-    let graph = build_dep_map(plans_to_build, false, false, HashMap::new(), all_plans)?;
     let cycles = find_cycles(&graph.deps_map);
 
     println!("Dependency Analysis Report");
@@ -363,21 +354,6 @@ async fn build_one(
             .await
             .context("failed to update hashes")?;
         info!("Updated source hashes in plan {}", manifest.plan.name);
-        return Ok(());
-    }
-
-    if opts.lint {
-        println!(
-            "valid plan: {} {}-{}",
-            manifest.plan.name, manifest.plan.version, manifest.plan.release
-        );
-        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-            for sub_name in parts.keys() {
-                if sub_name != &manifest.plan.name {
-                    println!("  sub-part: {}", sub_name);
-                }
-            }
-        }
         return Ok(());
     }
 

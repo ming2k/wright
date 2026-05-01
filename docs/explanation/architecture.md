@@ -15,35 +15,6 @@ Wright is a single CLI binary backed by one core library.
 plan.toml -> wright build -> .wright.tar.zst -> archives.db -> wright install/upgrade/apply
 ```
 
-## Entry Points and Layers
-
-```text
-src/
-├── bin/
-├── archive/   # archive pruning and resolution logic
-├── builder/   # build orchestration and lifecycle execution
-├── cli/       # clap schemas grouped by subcommand
-├── commands/  # command handlers grouped by subcommand
-├── config.rs  # global config and assembly definitions
-├── database/  # unified database layer (installed system + archive catalogue)
-├── isolation/  # sandbox isolation
-├── part/      # archive format, versions, FHS validation
-├── plan/      # plan parsing and validation
-├── query/     # system analysis
-├── transaction/ # install / upgrade / remove / verify
-└── util/      # helpers
-```
-
-The execution path is intentionally thin at the top:
-
-```text
-src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
-```
-
-- `src/bin/wright.rs` parses args, initializes logging, loads config, and dispatches.
-- `src/cli/` owns clap-facing argument and help-text definitions only.
-- `src/commands/` turns parsed args into calls into `builder`, `archive`, `transaction`, and `query`.
-
 ## Responsibilities
 
 ### `wright build` / `wright resolve` / `wright prune`
@@ -62,11 +33,11 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 - remove parts and cascade orphan cleanup
 - verify and inspect the live system
 - run `apply` as the high-level orchestrator:
- resolve targets, execute build waves, and install each wave before advancing
+  resolve targets, execute build waves, and install each wave before advancing
 
 ## Shared State
 
-Detailed database schemas and their roles are documented in [Database Design](database.md).
+Detailed database schemas and their roles are documented in [Database Design](../reference/database-design.md).
 
 | Artifact | Written by | Read by |
 |----------|-----------|---------|
@@ -75,3 +46,4 @@ Detailed database schemas and their roles are documented in [Database Design](da
 | `installed.db` | `wright` | `wright`, `wright resolve` |
 | `archives.db` | `wright build` | `wright build`, `wright`, `wright apply` |
 
+For module-level code organization, see [Module Layout](../dev/module-layout.md).

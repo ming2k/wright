@@ -555,7 +555,7 @@ fragile shell conditionals.
 
 ### Dependency Graph Analysis
 
-`wright build --lint` validates each plan and prints a dependency graph report:
+`wright lint` validates each plan and prints a dependency graph report:
 
 - Whether the graph is acyclic
 - Each detected cycle (if any)

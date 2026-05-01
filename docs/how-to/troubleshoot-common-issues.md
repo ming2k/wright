@@ -1,6 +1,4 @@
-# Troubleshooting
-
-Common problems and how to diagnose them.
+# How to Troubleshoot Common Issues
 
 ## Build Stage Failed
 
@@ -32,9 +30,7 @@ wright build <part> --stage=compile
 wright build -v <part>
 ```
 
-Note: when Wright is building multiple tasks in parallel, `-v` still captures
-output per task to avoid interleaving. For fully live output, build a single
-target or narrow the build set.
+Note: when Wright is building multiple tasks in parallel, `-v` still captures output per task to avoid interleaving.
 
 ---
 
@@ -46,8 +42,7 @@ target or narrow the build set.
 ERROR isolation setup failed: unshare: Operation not permitted
 ```
 
-Wright requires Linux user namespaces to run the strict isolation. This can fail
-inside containers or on kernels with namespace restrictions.
+Wright requires Linux user namespaces to run the strict isolation. This can fail inside containers or on kernels with namespace restrictions.
 
 **Cause 1: unprivileged namespaces disabled**
 
@@ -60,8 +55,7 @@ sysctl -w kernel.unprivileged_userns_clone=1
 
 **Cause 2: running inside Docker/Podman without `--privileged`**
 
-Re-run with `--privileged`, or use the `relaxed` or `none` isolation level in
-your plan while developing:
+Re-run with `--privileged`, or use the `relaxed` or `none` isolation level in your plan while developing:
 
 ```toml
 # plan.toml — per-stage isolation override for local dev
@@ -72,8 +66,7 @@ script = "make"
 
 **Cause 3: seccomp or AppArmor blocking `unshare`**
 
-Wright automatically falls back to direct execution if namespace creation is
-blocked, with a warning:
+Wright automatically falls back to direct execution if namespace creation is blocked, with a warning:
 
 ```
 WARN Namespace isolation unavailable; falling back to direct execution
@@ -91,8 +84,7 @@ If you see this but the build still fails, the issue is elsewhere.
 ERROR Target not found: mypart
 ```
 
-Wright searched all configured `plans_dir` directories and the current working
-directory but could not find a `plan.toml` for `mypart`.
+Wright searched all configured `plans_dir` directories and the current working directory but could not find a `plan.toml` for `mypart`.
 
 **Check:**
 
@@ -117,21 +109,16 @@ wright build mypart  # looks for plans_dir/mypart/plan.toml
 ERROR Target not found: libfoo
 ```
 
-Triggered during automatic dependency expansion when a dependency declared in
-`plan.toml` does not have a corresponding plan in any known plans directory.
+Triggered during automatic dependency expansion when a dependency declared in `plan.toml` does not have a corresponding plan in any known plans directory.
 
 **Options:**
 
 1. Add the missing plan to your plans directory.
-2. If the dependency is already installed on the system and you don't want to
-  build it, mark it as a runtime-only dep or remove it from `build`/`link`
-  dependencies if it is genuinely not needed at build time.
-  If it is needed both at runtime and for ABI-sensitive rebuild tracking,
-  declare it in both `runtime` and `link`.
+2. If the dependency is already installed on the system and you don't want to build it, mark it as a runtime-only dep or remove it from `build`/`link` dependencies if it is genuinely not needed at build time.
 3. Skip dependency expansion and build only the target:
-  ```bash
-  wright build mypart
-  ```
+   ```bash
+   wright build mypart
+   ```
 
 ---
 
@@ -147,16 +134,12 @@ ERROR Deadlock detected or dependency missing from plan set:
 
 A circular dependency exists and Wright could not resolve it automatically.
 
-**Resolution:** Add an inline `[mvp.dependencies]` section or a sibling
-`mvp.toml` file to one of the parts in the cycle to declare an acyclic
-minimal dependency set for its first build pass. See [writing-plans.md —
-Phase-Based Cycles](writing-plans.md#phase-based-cycles-mvp--full) for the
-full pattern.
+**Resolution:** Add an inline `[mvp.dependencies]` section or a sibling `mvp.toml` file to one of the parts in the cycle to declare an acyclic minimal dependency set for its first build pass. See [How to Handle Circular Dependencies](handle-circular-dependencies.md) for the full pattern.
 
 To inspect which cycles exist without triggering a build:
 
 ```bash
-wright build partA partB --lint
+wright lint partA partB
 ```
 
 ---
@@ -175,8 +158,7 @@ The downloaded file does not match the hash in `plan.toml`.
 
 **Possible causes:**
 
-- Dependency changed the tarball without bumping the version (uncommon but
- happens with "rolling" release tarballs).
+- Dependency changed the tarball without bumping the version.
 - A partial download is in the source cache.
 - The hash in `plan.toml` is wrong.
 
@@ -197,16 +179,13 @@ wright build <part> --checksum
 
 ## Archive Already Exists but is Wrong
 
-**Symptom:** Build appears to succeed but the installed part is stale or
-incorrect. The build log shows:
+**Symptom:** Build appears to succeed but the installed part is stale or incorrect.
 
 ```
 INFO skipping batch 0: zlib (completed in previous run)
 ```
 
-Wright found an existing archive in `parts_dir` and skipped the build.
-This happens after a plan edit if the version and release number were not
-bumped.
+Wright found an existing archive in `parts_dir` and skipped the build. This happens after a plan edit if the version and release number were not bumped.
 
 **Fix:**
 
@@ -214,17 +193,14 @@ bumped.
 # Force rebuild regardless of existing archives
 wright build <part> --force
 
-# Or bump the top-level release in plan.toml to invalidate the archive
-# skip check
+# Or bump the top-level release in plan.toml to invalidate the archive skip check
 ```
 
 ---
 
 ## Build Directory Left in Bad State
 
-If a build is interrupted (Ctrl-C, OOM kill, system crash), the build
-directory may be partially written. On the next run Wright recreates it from
-scratch, but if you hit issues:
+If a build is interrupted (Ctrl-C, OOM kill, system crash), the build directory may be partially written.
 
 ```bash
 # Manually clean the working directory for one part
@@ -255,13 +231,12 @@ The stage exceeded the `timeout` setting in `wright.toml` or `plan.toml`.
 **Options:**
 
 1. Raise `timeout` globally or for the specific part:
-  ```toml
-  # plan.toml
-  [options]
-  timeout = 14400  # 4 hours
-  ```
-2. Investigate why the build is slow — a hung configure script or infinite
-  loop is a more likely culprit than a genuinely slow build.
+   ```toml
+   # plan.toml
+   [options]
+   timeout = 14400  # 4 hours
+   ```
+2. Investigate why the build is slow — a hung configure script or infinite loop is a more likely culprit than a genuinely slow build.
 
 ---
 
@@ -273,7 +248,7 @@ The stage exceeded the `timeout` setting in `wright.toml` or `plan.toml`.
 WARN Installation failed, rolling back: install error: failed to remove existing file /usr/share/texmf: Is a directory
 ```
 
-**Cause:** The part contains a path as a symlink (e.g. `ln -sfn texmf-dist texmf`), but the same path already exists on the system as a real directory from a previous install or manual action.
+**Cause:** The part contains a path as a symlink, but the same path already exists on the system as a real directory from a previous install or manual action.
 
 **Fix:** This is handled automatically as of wright 1.11.8. If you see it on an older version, remove the directory manually before installing:
 
@@ -307,16 +282,13 @@ sudo fmtutil-sys --byfmt xelatex
 
 ## Slow Install for Very Large Parts
 
-**Symptom:** `wright install` appears to sit for a long time
-on a message such as:
+**Symptom:** `wright install` appears to sit for a long time on a message such as:
 
 ```text
 INFO Installing texlive-texmf: 252553 files
 ```
 
-Parts with hundreds of thousands of files are dominated by filesystem
-metadata work and SQLite bookkeeping rather than raw CPU throughput. On SSDs,
-they can still take many minutes.
+Parts with hundreds of thousands of files are dominated by filesystem metadata work and SQLite bookkeeping rather than raw CPU throughput.
 
 **To see where time is going:**
 
@@ -333,30 +305,19 @@ At `-v`, Wright prints `DEBUG` timings for:
 - database update
 - total time
 
-If filesystem copy dominates, the bottleneck is usually the target filesystem's
-metadata performance. If database update dominates, the package simply contains
-an unusually large number of tracked files.
+If filesystem copy dominates, the bottleneck is usually the target filesystem's metadata performance. If database update dominates, the package simply contains an unusually large number of tracked files.
 
 ---
 
 ## Lock File Remains After Interrupt
 
-**Symptom:** After interrupting `wright`, you still see
-files such as:
+**Symptom:** After interrupting `wright`, you still see files such as:
 
 ```text
 /var/lib/wright/lock/installed.db.lock
 /var/lib/wright/lock/archives.db.lock
 ```
 
-This is normal.
+This is normal. Wright uses fixed lock files as anchors for `flock(2)`. The presence of the file alone does **not** mean the database is still locked. The actual lock is held by the live process; once that process exits, the kernel releases the lock automatically even if the `.lock` file remains on disk.
 
-Wright uses fixed lock files as anchors for `flock(2)`. The presence of the
-file alone does **not** mean the database is still locked. The actual lock is
-held by the live process; once that process exits, the kernel releases the
-lock automatically even if the `.lock` file remains on disk.
-
-If a later command succeeds, the lock is not stale. Only investigate further if
-new commands fail with a lock timeout while no Wright process is still running.
-ill running.
-ill running.
+If a later command succeeds, the lock is not stale. Only investigate further if new commands fail with a lock timeout while no Wright process is still running.

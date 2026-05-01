@@ -17,7 +17,7 @@ mod execute;
 mod planning;
 mod resolver;
 
-use execute::{execute_builds, lint_dependency_graph};
+use execute::execute_builds;
 use planning::{
     build_dep_map, construction_plan_batches, construction_plan_label, expand_missing_dependencies,
     expand_rebuild_deps,
@@ -81,7 +81,6 @@ pub struct BuildOptions {
     pub until_stage: Option<String>,
     pub fetch_only: bool,
     pub clean: bool,
-    pub lint: bool,
     pub force: bool,
     pub resume: Option<Option<String>>,
     pub checksum: bool,
@@ -95,7 +94,7 @@ pub struct BuildOptions {
 
 impl BuildOptions {
     fn is_build_op(&self) -> bool {
-        !self.checksum && !self.lint && !self.fetch_only
+        !self.checksum && !self.fetch_only
     }
 }
 
@@ -485,18 +484,34 @@ pub fn describe_batch_actions(
     actions.join(", ")
 }
 
+pub fn lint_dependency_graph_for_targets(
+    config: &GlobalConfig,
+    targets: &[String],
+) -> Result<()> {
+    let resolver = setup_resolver(config)?;
+    let all_plans = resolver.get_all_plans()?;
+    let plans_to_build = resolve_targets(targets, &all_plans, &resolver)?;
+
+    if plans_to_build.is_empty() {
+        return Ok(());
+    }
+
+    let graph = planning::build_dep_map(
+        &plans_to_build,
+        false,
+        false,
+        HashMap::new(),
+        &all_plans,
+    )?;
+
+    execute::lint_dependency_graph(&graph)
+}
+
 pub async fn run_build(
     config: &GlobalConfig,
     targets: Vec<String>,
     opts: BuildOptions,
 ) -> Result<()> {
-    if opts.lint {
-        let resolver = setup_resolver(config)?;
-        let all_plans = resolver.get_all_plans()?;
-        let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
-        return lint_dependency_graph(&plans_to_build, &all_plans, build_dep_map);
-    }
-
     let plan = create_execution_plan(config, targets, &opts)?;
 
     let session_hash = if opts.resume.is_some() || opts.is_build_op() {
