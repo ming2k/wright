@@ -91,7 +91,7 @@
 - **Architecture**: Internal Rust structs (e.g. `BuildResult`) have been updated to align with the new naming scheme.
 
 ### Added
-- **Source Autoflattening**: Enhanced `extract_to` with an automatic "flattening" logic. If an archive contains only a single top-level directory (like most GitHub tarballs), its contents are automatically moved up to the root of the specified `extract_to` directory. This ensures that `cd source` (or similar) is always deterministic regardless of the archive's internal folder name.
+- **`extract_to` field**: Added `extract_to` to `[[sources]]` to force extraction/copying into a specific subdirectory under `${WORKDIR}`. **Note:** This does **not** strip or normalize any internal directory structure of the archive. If a tarball extracts into `project-1.0/`, using `extract_to = "source"` results in `source/project-1.0/`. Plan authors must still account for the archive's internal layout when writing `cd` commands in lifecycle scripts.
 
 ## [2.5.1] - 2026-04-20
 

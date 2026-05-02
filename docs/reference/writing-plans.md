@@ -1031,22 +1031,27 @@ To keep your plans clean and robust across version updates, follow these organiz
 ### Source Organization Style
 
 #### 1. Single Main Archive (Recommended)
-For plans with one primary source code archive, always extract it to a directory named `source`.
-- **Convention**: Use `extract_to = "source"`.
-- **Benefit**: You get a predictable entry point. All your lifecycle scripts start from the same known location.
+For plans with one primary source code archive, **always** use `extract_to = "source"`. This is a **mandatory defensive convention**, not an optional convenience.
+
+- **Why**: Wright does not normalize or strip the internal directory structure of archives. Some upstream tarballs have a single top-level folder (e.g., `bash-completion-2.11/`), while others are "flat" and extract files directly into the current directory. Without `extract_to`, a flat tarball would pollute the root of `${WORKDIR}`, scattering files and causing cross-contamination when multiple sources are present. The `source/` directory acts as a mandatory containment boundary.
+- **Benefit**: Every plan has a single, predictable root for its main source tree. Scripts always start from a known location.
+- **Lifecycle scripts must descend further**: After extraction, your build scripts must navigate into the actual source directory inside `source/`. Most archives include a top-level folder, so the correct pattern is `cd source/<project>-${VERSION}`, **not** merely `cd source`.
 
 ```toml
 [[sources]]
 type = "http"
-url = "https://example.com/myapp-v${VERSION}.tar.gz"
+url = "https://example.com/bash-completion-${VERSION}.tar.gz"
 sha256 = "..."
 extract_to = "source"
 
-[lifecycle.compile]
-script = "cd source && make"
+[lifecycle.configure]
+script = """
+cd source/bash-completion-${VERSION}
+./configure --prefix=/usr
+"""
 ```
 
-**Important**: `extract_to = "source"` only controls where Wright places the extracted archive. It does **not** strip or normalize any top-level directory that may exist inside the tarball itself. If the archive extracts into `myapp-1.0/`, your script must still `cd` into that subdirectory (e.g., `cd source/myapp-${VERSION}`). See the [Archive Directory Structure Warning](#archive-directory-structure-warning) above for details.
+**Never** omit the inner directory in your `cd` command unless you have verified that the archive is genuinely flat. See the [Archive Directory Structure Warning](#archive-directory-structure-warning) above for details on how to inspect a tarball.
 
 #### 2. Patches and Single Files
 Do **not** use `extract_to` for individual files like patches or configuration templates.
