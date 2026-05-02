@@ -658,6 +658,59 @@ cd src
 """
 ```
 
+#### Archive Directory Structure Warning
+
+**Wright does not inspect or normalize the internal directory structure of archives.** Tarballs vary in how they organize their contents:
+
+- **Most archives** extract into a single top-level directory named after the project and version (e.g., `nginx-1.25.3/`).
+- **Some archives** are "flat" and extract their files directly into the current directory without any enclosing folder.
+- **A few archives** may use a different naming convention or contain multiple top-level directories.
+
+When you use `extract_to = "source"`, Wright extracts the archive contents **into** that directory, preserving whatever internal structure the archive originally had. This means:
+
+- If the tarball contains `nginx-1.25.3/README`, after extraction you will have `source/nginx-1.25.3/README`.
+- If the tarball is flat, after extraction you will have `source/README` directly.
+
+**This is a common source of plan errors.** Authors often write `cd source` when they actually need `cd source/<project>-${VERSION}`. Because different upstream projects package their releases differently, **always verify the actual structure of the tarball** before writing your `cd` commands. This defensive check prevents build failures when upstream changes their packaging format or when switching between source mirrors.
+
+To inspect a tarball's structure:
+
+```bash
+tar tzf foo-1.0.tar.gz | head -n 20
+```
+
+Then write your lifecycle scripts accordingly:
+
+```toml
+# Correct: tarball has a top-level directory
+[[sources]]
+type = "http"
+url = "https://example.com/bash-completion-${VERSION}.tar.gz"
+sha256 = "..."
+extract_to = "source"
+
+[lifecycle.configure]
+script = """
+cd source/bash-completion-${VERSION}
+./configure --prefix=/usr
+"""
+```
+
+```toml
+# Correct: flat tarball with no top-level directory
+[[sources]]
+type = "http"
+url = "https://example.com/foo-${VERSION}.tar.gz"
+sha256 = "..."
+extract_to = "source"
+
+[lifecycle.configure]
+script = """
+cd source
+make
+"""
+```
+
 
 Additionally, the following host environment variables are passed through to the build if set: `CC`, `CXX`, `AR`, `AS`, `LD`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY`, `OBJDUMP`, `CFLAGS`, `CXXFLAGS`, `CPPFLAGS`, `LDFLAGS`, `C_INCLUDE_PATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `PKG_CONFIG_PATH`, `PKG_CONFIG_SYSROOT_DIR`, `MAKEFLAGS`, `JOBS`.
 
@@ -980,7 +1033,7 @@ To keep your plans clean and robust across version updates, follow these organiz
 #### 1. Single Main Archive (Recommended)
 For plans with one primary source code archive, always extract it to a directory named `source`.
 - **Convention**: Use `extract_to = "source"`.
-- **Benefit**: You can hardcode `cd source` in your scripts. It works regardless of whether the dependency folder is named `app-1.0` or `app-v2.0-final`.
+- **Benefit**: You get a predictable entry point. All your lifecycle scripts start from the same known location.
 
 ```toml
 [[sources]]
@@ -992,6 +1045,8 @@ extract_to = "source"
 [lifecycle.compile]
 script = "cd source && make"
 ```
+
+**Important**: `extract_to = "source"` only controls where Wright places the extracted archive. It does **not** strip or normalize any top-level directory that may exist inside the tarball itself. If the archive extracts into `myapp-1.0/`, your script must still `cd` into that subdirectory (e.g., `cd source/myapp-${VERSION}`). See the [Archive Directory Structure Warning](#archive-directory-structure-warning) above for details.
 
 #### 2. Patches and Single Files
 Do **not** use `extract_to` for individual files like patches or configuration templates.

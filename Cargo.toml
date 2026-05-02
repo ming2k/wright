@@ -1,6 +1,6 @@
 [package]
 name = "wright"
-version = "3.0.5"
+version = "3.0.6"
 edition = "2021"
 description = "Declarative, extensible, sandboxed Linux package manager"
 license = "MIT"
@@ -46,3 +46,4 @@ futures-util = "0.3.32"
 [build-dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_mangen = "0.2"
+clap_complete = "4"

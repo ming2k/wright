@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.0.6] - 2026-05-02
+
+### Added
+- **Shell completions**: `build.rs` now generates bash, zsh, and fish completion scripts into `target/completions/` during build via `clap_complete`.
+
 ## [3.0.5] - 2026-05-02
 
 ### Changed
