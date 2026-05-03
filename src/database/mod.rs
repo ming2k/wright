@@ -5,6 +5,7 @@ mod files;
 mod meta;
 mod migrations;
 mod parts;
+mod plans;
 pub mod schema;
 mod sessions;
 mod types;
@@ -12,6 +13,7 @@ mod types;
 pub use archive::{ArchiveDb, ArchivePart};
 pub use core::InstalledDb;
 use core::PART_COLUMNS;
+pub use plans::PlanRecord;
 pub use sessions::ExecutionSession;
 pub use types::{
     DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, Origin, TransactionRecord,

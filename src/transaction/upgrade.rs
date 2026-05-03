@@ -326,6 +326,7 @@ pub async fn upgrade_part(
         install_scripts: hooks_content.as_deref(),
         origin: old_part.origin, // Preserve origin
         plan_name: old_part.plan_name.as_deref(), // Preserve plan_name
+        plan_id: old_part.plan_id, // Preserve plan_id
     })
     .await?;
 

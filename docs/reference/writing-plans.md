@@ -72,43 +72,56 @@ You may omit `version` entirely for rolling-release or VCS-driven builds where t
 
 This makes the absence of a version an explicit signal: **this build has no clear static version**.
 
-### `[dependencies]`
+### `[dependencies]` — Plan level (build and link)
+
+Plan-level dependencies drive the **build orchestrator** and `wright resolve`. They do not affect runtime installation checks.
 
 All fields default to empty lists if omitted.
 
 | Field    | Type              | Description             |
 |-------------|---------------------------------|--------------------------------------|
-| `runtime`  | list of strings         | Must be installed at runtime (e.g. bash, python) |
 | `build`   | list of strings         | Required only during build (e.g. gcc, cmake) |
 | `link`   | list of strings         | ABI-sensitive linked dependencies. Triggers rebuild on update. |
-| `optional` | list of strings         | Optional runtime dependencies    |
 
-#### `link` dependencies vs `runtime`
+#### `link` dependencies
 
-- **`link`**: Use this for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wright resolve` concept, not an implicit install-time dependency.
-- **`runtime`**: Use this for anything that must exist after installation for the part to work.
-
-These lists may overlap, and overlap is often correct for shared libraries. If a library is both linked and required at runtime, declare it in both `link` and `runtime`.
-
-`wright resolve` uses `link` for reverse rebuild expansion. `wright install` uses `runtime` from `.PARTINFO`. Do not rely on `link` alone to pull in runtime requirements.
-
-#### Version constraints
-
-Runtime, build, link entries can include a version constraint:
+Use `link` for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wright resolve` concept, not an install-time dependency.
 
 ```toml
+[dependencies]
 link = ["openssl >= 3.0"]
-runtime = ["python >= 3.10"]
+build = ["gcc", "make"]
 ```
 
-Supported operators: `>=`, `<=`, `>`, `<`, `=`.
+Supported constraint operators: `>=`, `<=`, `>`, `<`, `=`.
+
+#### Runtime deps belong at the output level
+
+For **single-output plans**, runtime dependencies are declared inside the `[output]` block (or at the plan level as a backward-compatible fallback).
+
+For **multi-output plans**, each `[[output]]` entry declares its own `runtime_deps`:
+
+```toml
+[[output]]
+name = "gcc"
+# gcc binary has no runtime deps
+
+[[output]]
+name = "libstdc++"
+runtime_deps = ["libgcc"]
+include = ["/usr/lib/libstdc.*"]
+```
+
+If an output does not declare `runtime_deps`, the system falls back to the plan-level `dependencies.runtime` (deprecated, will be removed in v4.0).
 
 #### Optional dependencies
 
-Optional dependencies are simple string lists, like other dependency types:
+Optional dependencies are also output-level:
 
 ```toml
-optional = ["geoip", "nghttp2"]
+[[output]]
+name = "nginx"
+optional_deps = ["geoip", "nghttp2"]
 ```
 
 ### `[[sources]]`

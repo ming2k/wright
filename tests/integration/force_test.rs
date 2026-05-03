@@ -24,6 +24,7 @@ async fn test_apply_force_always_includes_explicit_targets() {
         install_scripts: None,
         origin: Origin::Manual,
         plan_name: None,
+        plan_id: None,
     })
     .await
     .unwrap();

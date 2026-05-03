@@ -10,3 +10,4 @@
 | [ADR-0006](0006-mvp-two-pass-build.md) | MVP two-pass build for dependency cycles | Accepted |
 | [ADR-0007](0007-usrmerge-and-sbin-merge.md) | usrmerge and sbin merged into bin | Accepted |
 | [ADR-0008](0008-no-dev-splitting.md) | No -dev splitting for personal distributions | Accepted |
+| [ADR-0009](0009-separate-plan-output-dependencies.md) | Separate plan-level and output-level dependencies | Accepted |

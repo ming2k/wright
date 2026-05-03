@@ -426,6 +426,7 @@ pub async fn install_part_with_origin(
             install_scripts: hooks_content.as_deref(),
             origin,
             plan_name,
+            plan_id: None,
         })
         .await?;
 

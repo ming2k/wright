@@ -32,8 +32,8 @@ impl InstalledDb {
         }
 
         let res = query(
-            "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin, plan_name)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin, plan_name, plan_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(part.name)
             .bind(part.version)
             .bind(part.release as i64)
@@ -47,6 +47,7 @@ impl InstalledDb {
             .bind(part.install_scripts)
             .bind(part.origin)
             .bind(part.plan_name)
+            .bind(part.plan_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -89,7 +90,7 @@ impl InstalledDb {
 
     pub async fn update_part(&self, part: NewPart<'_>) -> Result<()> {
         let res = query(
-            "UPDATE parts SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?, plan_name = ?
+            "UPDATE parts SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?, plan_name = ?, plan_id = ?
              WHERE name = ?")
             .bind(part.version)
             .bind(part.release as i64)
@@ -102,6 +103,7 @@ impl InstalledDb {
             .bind(part.part_hash)
             .bind(part.install_scripts)
             .bind(part.plan_name)
+            .bind(part.plan_id)
             .bind(part.name)
         .execute(&self.pool)
         .await

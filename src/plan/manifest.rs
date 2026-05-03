@@ -47,6 +47,15 @@ pub struct SubFabricateOutput {
     pub license: Option<String>,
     #[serde(default)]
     pub dependencies: Dependencies,
+    /// Runtime dependencies for this specific output. If present, overrides
+    /// `dependencies.runtime`. This is the preferred way to declare runtime deps
+    /// at the output level.
+    #[serde(default)]
+    pub runtime_deps: Vec<String>,
+    /// Optional dependencies for this specific output. If present, overrides
+    /// `dependencies.optional`.
+    #[serde(default)]
+    pub optional_deps: Vec<String>,
     /// Parts that this output replaces (automatic uninstall on install).
     #[serde(default)]
     pub replaces: Vec<String>,
@@ -207,19 +216,38 @@ pub struct PlanMetadata {
     pub maintainer: Option<String>,
 }
 
+/// Plan-level dependencies: build and link edges used for build planning.
+/// Runtime deps belong at the output level; see `OutputDependencies`.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PlanDependencies {
+    #[serde(default)]
+    pub build: Vec<String>,
+    #[serde(default)]
+    pub link: Vec<String>,
+}
+
+/// Output-level dependencies: runtime and optional deps recorded in the
+/// binary part metadata and enforced at install time.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct OutputDependencies {
+    #[serde(default)]
+    pub runtime: Vec<String>,
+    #[serde(default)]
+    pub optional: Vec<String>,
+}
+
+/// Unified dependency bag used for backward compatibility.
+/// New plans should use `PlanDependencies` at the plan level and
+/// `OutputDependencies` inside `[[output]]` entries.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Dependencies {
-    /// Runtime dependencies recorded in binary part metadata and used by
-    /// install/remove operations. If a dependency is required at runtime, it
-    /// must be listed here even if it also appears in `link`.
     #[serde(default)]
     pub runtime: Vec<String>,
     #[serde(default)]
     pub build: Vec<String>,
-    /// ABI-sensitive build edges used by `wright resolve` to drive reverse rebuilds.
-    /// Entries may overlap with `runtime`; overlap is expected for shared
-    /// libraries that are both linked and needed after installation.
     #[serde(default)]
     pub link: Vec<String>,
     #[serde(default)]
