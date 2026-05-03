@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+use indicatif::HumanBytes;
 
 use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
@@ -777,12 +778,29 @@ impl Builder {
         &self,
         git_url: &str,
         git_ref: Option<&str>,
+        depth: Option<u32>,
         dest: &Path,
         scope: &str,
     ) -> Result<String> {
         let actual_ref = git_ref.unwrap_or("HEAD");
+
+        // Detect arbitrary commit hashes (40-char hex) and disable shallow clone
+        // since --depth may not reach them.
+        let is_commit_hash = actual_ref.len() == 40
+            && actual_ref.chars().all(|c| c.is_ascii_hexdigit());
+        let effective_depth = if is_commit_hash {
+            tracing::debug!(
+                "[{}] ref '{}' looks like a commit hash; disabling shallow clone",
+                scope,
+                actual_ref
+            );
+            None
+        } else {
+            depth
+        };
         let label = progress::source_label(git_url);
-        let repo = if !tokio::fs::metadata(dest).await.is_ok() {
+        let is_fresh_clone = !tokio::fs::metadata(dest).await.is_ok();
+        let repo = if is_fresh_clone {
             info!("[{}] Cloning Git repository: {}", scope, git_url);
             git2::Repository::init_bare(dest)
                 .map_err(|e| WrightError::BuildError(format!("git init failed: {}", e)))?
@@ -790,6 +808,21 @@ impl Builder {
             git2::Repository::open_bare(dest)
                 .map_err(|e| WrightError::BuildError(format!("git open failed: {}", e)))?
         };
+
+        // If the repository already exists and the ref resolves locally,
+        // skip the network fetch entirely. This avoids redundant fetches
+        // when the plan.toml has not changed.
+        if !is_fresh_clone {
+            if let Ok(obj) = repo.revparse_single(actual_ref) {
+                tracing::debug!(
+                    "[{}] git ref '{}' already available locally; skipping fetch",
+                    scope,
+                    actual_ref
+                );
+                return Ok(obj.id().to_string());
+            }
+        }
+
         let mut remote = repo
             .remote_anonymous(git_url)
             .map_err(|e| WrightError::BuildError(format!("git remote setup failed: {}", e)))?;
@@ -798,21 +831,67 @@ impl Builder {
         let pb_clone = pb.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.transfer_progress(move |stats| {
-            let total = stats.total_objects() as u64;
-            if total == 0 {
+            let total_objects = stats.total_objects() as u64;
+            if total_objects == 0 {
                 return true;
             }
-            progress::set_source_git_objects(
-                &pb_clone,
-                stats.received_objects() as u64,
-                total,
-                stats.received_bytes() as u64,
-            );
+            let received = stats.received_objects() as u64;
+            let indexed = stats.indexed_objects() as u64;
+            let total_deltas = stats.total_deltas() as u64;
+            let indexed_deltas = stats.indexed_deltas() as u64;
+            let received_bytes = stats.received_bytes() as u64;
+
+            // Calculate bar position/length to include all phases
+            let (position, length, msg) = if received < total_objects {
+                let pct = if total_objects > 0 {
+                    received * 100 / total_objects
+                } else {
+                    0
+                };
+                (
+                    received,
+                    total_objects,
+                    format!("receiving objects {}/{} ({}%)", received, total_objects, pct),
+                )
+            } else if indexed < total_objects {
+                let pct = if total_objects > 0 {
+                    indexed * 100 / total_objects
+                } else {
+                    0
+                };
+                (
+                    indexed,
+                    total_objects,
+                    format!("indexing objects {}/{} ({}%)", indexed, total_objects, pct),
+                )
+            } else if total_deltas > 0 && indexed_deltas < total_deltas {
+                let pct = if total_deltas > 0 {
+                    indexed_deltas * 100 / total_deltas
+                } else {
+                    0
+                };
+                (
+                    indexed_deltas,
+                    total_deltas,
+                    format!("resolving deltas {}/{} ({}%)", indexed_deltas, total_deltas, pct),
+                )
+            } else {
+                (total_objects, total_objects, format!("done ({}, {} objects)", HumanBytes(received_bytes), total_objects))
+            };
+
+            pb_clone.set_length(length);
+            pb_clone.set_position(position);
+            pb_clone.set_message(msg);
             true
         });
         let mut fetch_opts = git2::FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
         fetch_opts.download_tags(git2::AutotagOption::All);
+        if let Some(d) = effective_depth {
+            if d > 0 {
+                fetch_opts.depth(d as i32);
+            }
+        }
         let fetch_result = remote.fetch(
             &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
             Some(&mut fetch_opts),
@@ -824,7 +903,6 @@ impl Builder {
                 fetch_result.unwrap_err()
             )));
         }
-        pb.set_message("indexing");
         progress::finish_source(&pb, scope, dest);
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
             WrightError::BuildError(format!("failed to resolve git ref '{}': {}", actual_ref, e))
@@ -854,6 +932,7 @@ impl Builder {
                         .fetch_git_repo(
                             &processed_url,
                             processed_ref.as_deref(),
+                            git.depth,
                             &dest,
                             &manifest.plan.name,
                         )

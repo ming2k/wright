@@ -146,7 +146,9 @@ pub struct HttpSource {
 pub struct GitSource {
     pub url: String,
     pub r#ref: Option<String>,
-    /// Optional Git fetch depth (defaults to full clone).
+    /// Git fetch depth. Defaults to 1 (shallow clone). Set to `null` or omit
+    /// to use full clone when needed (e.g. for arbitrary commit hashes).
+    #[serde(default = "default_git_depth")]
     pub depth: Option<u32>,
     /// Optional subdirectory under WORKDIR to extract/copy this source into.
     pub extract_to: Option<String>,
@@ -161,6 +163,10 @@ pub struct LocalSource {
 
 fn default_skip() -> String {
     "SKIP".to_string()
+}
+
+fn default_git_depth() -> Option<u32> {
+    Some(1)
 }
 
 #[derive(Debug, Clone)]

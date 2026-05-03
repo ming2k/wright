@@ -143,7 +143,7 @@ Used for cloning Git repositories. Git sources are automatically extracted (chec
 |-----------|--------|----------|-----------------------------------------------------------------------------|
 | `url`     | string | required | Git repository URL                                                         |
 | `ref`     | string | `"HEAD"` | Branch, tag, or commit hash to check out. Supports variable substitution.   |
-| `depth`   | integer| optional | Shallow clone depth.                                                        |
+| `depth`   | integer| optional | Shallow clone depth. Defaults to `1` (shallow clone). Set to `null` or omit to use full clone. Automatically disabled for 40-character commit hashes. |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to check out the repository into.         |
 
 ```toml

@@ -29,7 +29,7 @@ pub fn new_source_transfer_bar(label: &str, total: u64) -> ProgressBar {
     let pb = MULTI.add(ProgressBar::new(total));
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {msg}")
+            .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:>3}% {msg}")
             .expect("valid source transfer template")
             .progress_chars("#>-"),
     );
