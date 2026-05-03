@@ -230,11 +230,15 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         String::new()
     };
 
+    let version_line = match manifest.plan.version.as_deref() {
+        Some(v) if !v.is_empty() => format!("version = \"{}\"\n", v),
+        _ => String::new(),
+    };
+
     format!(
         r#"[part]
 name = "{name}"
-version = "{version}"
-release = {release}
+{version}release = {release}
 {epoch}description = "{description}"
 arch = "{arch}"
 license = "{license}"
@@ -244,7 +248,7 @@ packager = "wright {wright_version}"
 {deps}{relations}{backup}
 "#,
         name = manifest.plan.name,
-        version = manifest.plan.version,
+        version = version_line,
         release = manifest.plan.release,
         epoch = epoch_line,
         description = manifest.plan.description,
@@ -355,6 +359,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
     struct PartInfoMeta {
         name: String,
+        #[serde(default)]
         version: String,
         release: u32,
         #[serde(default)]

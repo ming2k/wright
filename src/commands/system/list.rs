@@ -27,13 +27,16 @@ pub async fn execute_list(
             }
 
             if long {
+                let ver = if part.version.is_empty() { "-" } else { &part.version };
                 if part.assumed {
-                    println!("{:<12} {:<24} {}", "external", part.name, part.version);
+                    println!("{:<12} {:<24} {}", "external", part.name, ver);
                 } else {
-                    println!(
-                        "{:<12} {:<24} {}-{}-{}",
-                        part.origin, part.name, part.version, part.release, part.arch
-                    );
+                    let ver_rel_arch = if part.version.is_empty() {
+                        format!("{}-{}", part.release, part.arch)
+                    } else {
+                        format!("{}-{}-{}", ver, part.release, part.arch)
+                    };
+                    println!("{:<12} {:<24} {}", part.origin, part.name, ver_rel_arch);
                 }
             } else {
                 println!("{}", part.name);

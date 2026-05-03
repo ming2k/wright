@@ -226,8 +226,9 @@ pub(super) fn installed_matches_manifest(
     installed: &InstalledPart,
     manifest: &PlanManifest,
 ) -> bool {
+    let manifest_ver = manifest.plan.version.as_deref().unwrap_or("");
     installed.epoch == manifest.plan.epoch as i64
-        && installed.version == manifest.plan.version
+        && installed.version == manifest_ver
         && installed.release == manifest.plan.release as i64
 }
 

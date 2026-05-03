@@ -167,10 +167,14 @@ pub async fn execute(
                 )
                 .await
                 {
-                    Ok(()) => println!(
-                        "upgraded: {} -> {}-{}",
-                        arg, selected.version, selected.release
-                    ),
+                    Ok(()) => {
+                        let ver_rel = if selected.version.is_empty() {
+                            format!("{}", selected.release)
+                        } else {
+                            format!("{}-{}", selected.version, selected.release)
+                        };
+                        println!("upgraded: {} -> {}", arg, ver_rel);
+                    }
                     Err(e) => {
                         eprintln!("error upgrading {}: {}", arg, e);
                         std::process::exit(1);
@@ -371,7 +375,7 @@ pub async fn execute(
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);
-                    println!("Version     : {}", info.version);
+                    println!("Version     : {}", if info.version.is_empty() { "-" } else { &info.version });
                     println!("Release     : {}", info.release);
                     println!("Description : {}", info.description.unwrap_or_default());
                     println!("Architecture: {}", info.arch);
@@ -411,11 +415,15 @@ pub async fn execute(
                 println!("no parts found matching '{}'", keyword);
             } else {
                 for installed_part in &results {
+                    let ver_rel = if installed_part.version.is_empty() {
+                        format!("{}", installed_part.release)
+                    } else {
+                        format!("{}-{}", installed_part.version, installed_part.release)
+                    };
                     println!(
-                        "{} {}-{} - {}",
+                        "{} {} - {}",
                         installed_part.name,
-                        installed_part.version,
-                        installed_part.release,
+                        ver_rel,
                         installed_part.description.as_deref().unwrap_or_default()
                     );
                 }
@@ -509,13 +517,21 @@ pub async fn execute(
                             };
 
                             if is_newer {
+                                let old_ver_rel = if part.version.is_empty() {
+                                    format!("{}", part.release)
+                                } else {
+                                    format!("{}-{}", part.version, part.release)
+                                };
+                                let new_ver_rel = if latest.version.is_empty() {
+                                    format!("{}", latest.release)
+                                } else {
+                                    format!("{}-{}", latest.version, latest.release)
+                                };
                                 println!(
-                                    "upgrade: {} {}-{} -> {}-{}",
+                                    "upgrade: {} {} -> {}",
                                     part.name,
-                                    part.version,
-                                    part.release,
-                                    latest.version,
-                                    latest.release
+                                    old_ver_rel,
+                                    new_ver_rel
                                 );
                                 if !dry_run {
                                     if let Err(e) = transaction::upgrade_part(

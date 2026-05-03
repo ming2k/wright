@@ -232,7 +232,7 @@ async fn test_lint_hello_fixture() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "hello");
-    assert_eq!(manifest.plan.version, "1.0.0");
+    assert_eq!(manifest.plan.version.as_deref(), Some("1.0.0"));
 }
 
 #[tokio::test]

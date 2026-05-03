@@ -1,9 +1,17 @@
 # Changelog
 
-## [3.0.6] - 2026-05-02
+## [3.0.6] - 2026-05-03
 
 ### Added
 - **Shell completions**: `build.rs` now generates bash, zsh, and fish completion scripts into `target/completions/` during build via `clap_complete`.
+- **Optional version field**: `version` in `[plan]` metadata is now optional. Omitting it signals that the build has no clear static version (e.g. rolling releases or VCS builds). When absent, archive filenames omit the version segment (`name-release-arch.wright.tar.zst`).
+
+### Changed
+- **`wright list --long`**: now displays `-` for missing versions instead of malformed `name--release-arch` strings.
+- **Version display formatting**: all version-release strings across install, upgrade, search, and prune output now format cleanly when version is absent (e.g. `name release` instead of `name -release`).
+
+### Fixed
+- **Dependency constraint handling**: empty versions now satisfy all dependency constraints instead of causing parse errors.
 
 ## [3.0.5] - 2026-05-02
 

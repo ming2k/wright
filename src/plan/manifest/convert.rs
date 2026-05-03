@@ -48,7 +48,7 @@ impl SubFabricateOutput {
                 version: self
                     .version
                     .clone()
-                    .unwrap_or_else(|| parent.plan.version.clone()),
+                    .or_else(|| parent.plan.version.clone()),
                 release: self.release.unwrap_or(parent.plan.release),
                 epoch: parent.plan.epoch,
                 description,

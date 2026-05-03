@@ -66,12 +66,16 @@ async fn prune_parts(
         println!("prune untracked: {}", path.display());
     }
     for stale in &report.stale_tracked {
+        let ver_rel = if stale.version.is_empty() {
+            format!("{}", stale.release)
+        } else {
+            format!("{}-{}", stale.version, stale.release)
+        };
         println!(
-            "prune tracked: {} ({} {}-{})",
+            "prune tracked: {} ({} {})",
             stale.path.display(),
             stale.name,
-            stale.version,
-            stale.release
+            ver_rel
         );
     }
 

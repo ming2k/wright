@@ -183,7 +183,8 @@ pub struct PlanManifest {
 #[derive(Debug, Deserialize, Clone)]
 pub struct PlanMetadata {
     pub name: String,
-    pub version: String,
+    #[serde(default)]
+    pub version: Option<String>,
     pub release: u32,
     #[serde(default)]
     pub epoch: u32,
@@ -332,8 +333,10 @@ impl PlanManifest {
             ));
         }
 
-        // Validate version parses
-        crate::part::version::Version::parse(&self.plan.version)?;
+        // Validate version parses if present
+        if let Some(ref ver) = self.plan.version {
+            crate::part::version::Version::parse(ver)?;
+        }
 
         if self.plan.release == 0 {
             return Err(WrightError::ValidationError(
@@ -466,20 +469,30 @@ impl PlanManifest {
 
     /// Get the archive filename for this part.
     /// Includes epoch only when > 0: `name-epoch:version-release-arch.wright.tar.zst`
+    /// When version is absent, omits the version segment: `name-release-arch.wright.tar.zst`
     pub fn part_filename(&self) -> String {
+        let ver = self.plan.version.as_deref().unwrap_or("");
         if self.plan.epoch > 0 {
+            if ver.is_empty() {
+                format!(
+                    "{}-{}:{}-{}.wright.tar.zst",
+                    self.plan.name, self.plan.epoch, self.plan.release, self.plan.arch
+                )
+            } else {
+                format!(
+                    "{}-{}:{}-{}-{}.wright.tar.zst",
+                    self.plan.name, self.plan.epoch, ver, self.plan.release, self.plan.arch
+                )
+            }
+        } else if ver.is_empty() {
             format!(
-                "{}-{}:{}-{}-{}.wright.tar.zst",
-                self.plan.name,
-                self.plan.epoch,
-                self.plan.version,
-                self.plan.release,
-                self.plan.arch
+                "{}-{}-{}.wright.tar.zst",
+                self.plan.name, self.plan.release, self.plan.arch
             )
         } else {
             format!(
                 "{}-{}-{}-{}.wright.tar.zst",
-                self.plan.name, self.plan.version, self.plan.release, self.plan.arch
+                self.plan.name, ver, self.plan.release, self.plan.arch
             )
         }
     }
@@ -562,7 +575,7 @@ install -Dm755 hello ${PART_DIR}/usr/bin/hello
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.name, "hello");
-        assert_eq!(manifest.plan.version, "1.0.0");
+        assert_eq!(manifest.plan.version.as_deref(), Some("1.0.0"));
         assert_eq!(manifest.plan.release, 1);
         assert_eq!(manifest.plan.arch, "x86_64");
         assert_eq!(manifest.plan.epoch, 0);
@@ -778,7 +791,7 @@ runtime = ["libgcc"]
                 // Test to_manifest
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
                 assert_eq!(sub_manifest.plan.name, "libstdc++");
-                assert_eq!(sub_manifest.plan.version, "14.2.0");
+                assert_eq!(sub_manifest.plan.version.as_deref(), Some("14.2.0"));
                 assert_eq!(sub_manifest.plan.release, 1);
                 assert_eq!(sub_manifest.plan.arch, "x86_64");
                 assert_eq!(sub_manifest.plan.license, "GPL-3.0-or-later");
@@ -862,7 +875,7 @@ script = "true"
             Some(OutputConfig::Multi(ref parts)) => {
                 let doc = parts.get("test-doc").unwrap();
                 let doc_manifest = doc.to_manifest("test-doc", &manifest);
-                assert_eq!(doc_manifest.plan.version, "1.0.0-doc");
+                assert_eq!(doc_manifest.plan.version.as_deref(), Some("1.0.0-doc"));
                 assert_eq!(doc_manifest.plan.arch, "any");
                 assert_eq!(doc_manifest.plan.license, "MIT"); // inherited
             }

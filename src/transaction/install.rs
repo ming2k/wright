@@ -92,13 +92,21 @@ pub async fn install_parts_with_explicit_targets(
                 if !resolved_map.contains_key(&dep_name) {
                     if let Some(installed) = db.get_part(&dep_name).await? {
                         if let Some(ref c) = constraint {
-                            let installed_ver = Version::parse(&installed.version)?;
-                            if !c.satisfies(&installed_ver) {
+                            if let Ok(installed_ver) = Version::parse(&installed.version) {
+                                if !c.satisfies(&installed_ver) {
+                                    let ver_display = if installed.version.is_empty() { "(no version)".to_string() } else { installed.version.clone() };
+                                    return Err(WrightError::DependencyError(format!(
+                                        "installed {} {} does not satisfy constraint {}",
+                                        dep_name, ver_display, c
+                                    )));
+                                }
+                            } else if !installed.version.is_empty() {
                                 return Err(WrightError::DependencyError(format!(
                                     "installed {} {} does not satisfy constraint {}",
                                     dep_name, installed.version, c
                                 )));
                             }
+                            // Empty version always satisfies constraints
                         }
                         continue;
                     }
@@ -464,9 +472,14 @@ pub async fn install_part_with_origin(
     rollback_state.commit();
 
     log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
+    let ver_rel = if partinfo.version.is_empty() {
+        format!("{}", partinfo.release)
+    } else {
+        format!("{}-{}", partinfo.version, partinfo.release)
+    };
     info!(
-        "Installed {}: {}-{}",
-        partinfo.name, partinfo.version, partinfo.release
+        "Installed {}: {}",
+        partinfo.name, ver_rel
     );
     Ok(())
 }

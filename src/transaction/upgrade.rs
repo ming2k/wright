@@ -47,26 +47,48 @@ pub async fn upgrade_part(
         ))
     })?;
 
-    let old_ver = Version::parse(&old_part.version)?;
-    let new_ver = Version::parse(&partinfo.version)?;
     let old_epoch = old_part.epoch as u32;
     let new_epoch = partinfo.epoch;
     if !force {
         let is_newer = if new_epoch != old_epoch {
             new_epoch > old_epoch
-        } else if new_ver != old_ver {
-            new_ver > old_ver
         } else {
-            partinfo.release > old_part.release as u32
+            match (Version::parse(&old_part.version).ok(), Version::parse(&partinfo.version).ok()) {
+                (Some(old_v), Some(new_v)) => {
+                    if new_v != old_v {
+                        new_v > old_v
+                    } else {
+                        partinfo.release > old_part.release as u32
+                    }
+                }
+                _ => {
+                    // Fallback to string comparison when versions can't be parsed
+                    // (e.g., empty versions)
+                    let ord = partinfo.version.cmp(&old_part.version);
+                    if ord != std::cmp::Ordering::Equal {
+                        ord == std::cmp::Ordering::Greater
+                    } else {
+                        partinfo.release > old_part.release as u32
+                    }
+                }
+            }
         };
         if !is_newer {
+            let old_ver_rel = if old_part.version.is_empty() {
+                format!("{}", old_part.release)
+            } else {
+                format!("{}-{}", old_part.version, old_part.release)
+            };
+            let new_ver_rel = if partinfo.version.is_empty() {
+                format!("{}", partinfo.release)
+            } else {
+                format!("{}-{}", partinfo.version, partinfo.release)
+            };
             return Err(WrightError::UpgradeError(format!(
-                "{} {}-{} is not newer than installed {}-{}",
+                "{} {} is not newer than installed {}",
                 partinfo.name,
-                partinfo.version,
-                partinfo.release,
-                old_part.version,
-                old_part.release,
+                new_ver_rel,
+                old_ver_rel,
             )));
         }
     }
@@ -377,9 +399,19 @@ pub async fn upgrade_part(
     rollback_state.commit();
 
     log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
+    let old_ver_rel = if old_part.version.is_empty() {
+        format!("{}", old_part.release)
+    } else {
+        format!("{}-{}", old_part.version, old_part.release)
+    };
+    let new_ver_rel = if partinfo.version.is_empty() {
+        format!("{}", partinfo.release)
+    } else {
+        format!("{}-{}", partinfo.version, partinfo.release)
+    };
     info!(
-        "Upgraded {}: {}-{} -> {}-{}",
-        partinfo.name, old_part.version, old_part.release, partinfo.version, partinfo.release,
+        "Upgraded {}: {} -> {}",
+        partinfo.name, old_ver_rel, new_ver_rel,
     );
     Ok(())
 }

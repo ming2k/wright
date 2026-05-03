@@ -106,7 +106,7 @@ impl Builder {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(manifest.plan.name.as_bytes());
-        hasher.update(manifest.plan.version.as_bytes());
+        hasher.update(manifest.plan.version.as_deref().unwrap_or("").as_bytes());
         hasher.update(manifest.plan.release.to_string().as_bytes());
         for source in &manifest.sources.entries {
             match source {
@@ -160,7 +160,7 @@ impl Builder {
         variables::insert_metadata_variables(
             &mut vars,
             &manifest.plan.name,
-            &manifest.plan.version,
+            manifest.plan.version.as_deref().unwrap_or(""),
             manifest.plan.release,
             &manifest.plan.arch,
         );
@@ -175,7 +175,12 @@ impl Builder {
                 .map_err(|e| WrightError::BuildError(format!("failed to get cwd: {}", e)))?
                 .join(&self.config.build.build_dir)
         };
-        Ok(build_dir.join(format!("{}-{}", manifest.plan.name, manifest.plan.version)))
+        let ver = manifest.plan.version.as_deref().unwrap_or("");
+        if ver.is_empty() {
+            Ok(build_dir.join(format!("{}-noversion", manifest.plan.name)))
+        } else {
+            Ok(build_dir.join(format!("{}-{}", manifest.plan.name, ver)))
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -329,7 +334,7 @@ impl Builder {
 
         let mut vars = variables::standard_variables(variables::VariableContext {
             name: &manifest.plan.name,
-            version: &manifest.plan.version,
+            version: manifest.plan.version.as_deref().unwrap_or(""),
             release: manifest.plan.release,
             arch: &manifest.plan.arch,
             workdir: &work_dir.to_string_lossy(),
