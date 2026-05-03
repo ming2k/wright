@@ -25,32 +25,22 @@ impl SubFabricateOutput {
             files: files.clone(),
         });
 
-        // Build the output-level dependency set.
-        // Plan-level build/link are NOT inherited into the output manifest
-        // because they are build-planning metadata, not install-time metadata.
-        let output_runtime = if !self.runtime_deps.is_empty() {
-            &self.runtime_deps
+        // Runtime deps: output-level overrides plan-level.
+        let runtime = if self.runtime_deps.is_empty() {
+            parent.dependencies.runtime.clone()
         } else {
-            &self.dependencies.runtime
+            self.runtime_deps.clone()
         };
-        let output_optional = if !self.optional_deps.is_empty() {
-            &self.optional_deps
+        // Optional deps: output-level overrides plan-level.
+        let optional = if self.optional_deps.is_empty() {
+            parent.dependencies.optional.clone()
         } else {
-            &self.dependencies.optional
+            self.optional_deps.clone()
         };
 
-        let mut merged_deps = parent.dependencies.clone();
-        // Output-level runtime overrides plan-level runtime
-        if !output_runtime.is_empty() {
-            merged_deps.runtime = output_runtime.clone();
-        }
-        // Output-level optional overrides plan-level optional
-        if !output_optional.is_empty() {
-            merged_deps.optional = output_optional.clone();
-        }
-        // Do NOT inherit build/link from parent into the output manifest
-        merged_deps.build.clear();
-        merged_deps.link.clear();
+        let mut deps = parent.dependencies.clone();
+        deps.runtime = runtime;
+        deps.optional = optional;
 
         PlanManifest {
             plan: PlanMetadata {
@@ -73,7 +63,7 @@ impl SubFabricateOutput {
                 url: parent.plan.url.clone(),
                 maintainer: parent.plan.maintainer.clone(),
             },
-            dependencies: merged_deps,
+            dependencies: deps,
             relations: Relations {
                 replaces: self.replaces.clone(),
                 conflicts: self.conflicts.clone(),

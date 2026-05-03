@@ -45,15 +45,12 @@ pub struct SubFabricateOutput {
     pub release: Option<u32>,
     pub arch: Option<String>,
     pub license: Option<String>,
-    #[serde(default)]
-    pub dependencies: Dependencies,
-    /// Runtime dependencies for this specific output. If present, overrides
-    /// `dependencies.runtime`. This is the preferred way to declare runtime deps
-    /// at the output level.
+    /// Runtime dependencies for this specific output. Overrides the plan-level
+    /// `dependencies.runtime` when non-empty.
     #[serde(default)]
     pub runtime_deps: Vec<String>,
-    /// Optional dependencies for this specific output. If present, overrides
-    /// `dependencies.optional`.
+    /// Optional dependencies for this specific output. Overrides the plan-level
+    /// `dependencies.optional` when non-empty.
     #[serde(default)]
     pub optional_deps: Vec<String>,
     /// Parts that this output replaces (automatic uninstall on install).
@@ -216,31 +213,15 @@ pub struct PlanMetadata {
     pub maintainer: Option<String>,
 }
 
-/// Plan-level dependencies: build and link edges used for build planning.
-/// Runtime deps belong at the output level; see `OutputDependencies`.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct PlanDependencies {
-    #[serde(default)]
-    pub build: Vec<String>,
-    #[serde(default)]
-    pub link: Vec<String>,
-}
-
-/// Output-level dependencies: runtime and optional deps recorded in the
-/// binary part metadata and enforced at install time.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct OutputDependencies {
-    #[serde(default)]
-    pub runtime: Vec<String>,
-    #[serde(default)]
-    pub optional: Vec<String>,
-}
-
-/// Unified dependency bag used for backward compatibility.
-/// New plans should use `PlanDependencies` at the plan level and
-/// `OutputDependencies` inside `[[output]]` entries.
+/// Plan-level dependencies. All four kinds are declared at the plan level.
+///
+/// - `build`: tools needed during compilation (e.g. gcc, cmake)
+/// - `link`: ABI-sensitive libraries that trigger reverse rebuilds
+/// - `runtime`: libraries/tools required after installation
+/// - `optional`: optional runtime dependencies
+///
+/// For multi-output plans, each `[[output]]` may declare `runtime_deps` to
+/// override the plan-level `runtime` for that specific output.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Dependencies {
@@ -838,7 +819,7 @@ name = "gcc"
 name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
-dependencies = { runtime = ["libgcc"] }
+runtime_deps = ["libgcc"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -849,7 +830,7 @@ dependencies = { runtime = ["libgcc"] }
                     libstdcpp.description.as_deref(),
                     Some("GNU C++ standard library")
                 );
-                assert_eq!(libstdcpp.dependencies.runtime, vec!["libgcc"]);
+                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc"]);
 
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
                 assert_eq!(sub_manifest.plan.name, "libstdc++");
