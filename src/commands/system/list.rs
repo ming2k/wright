@@ -7,8 +7,13 @@ pub async fn execute_list(
     roots: bool,
     assumed: bool,
     orphans: bool,
+    plan: Option<&str>,
 ) -> Result<()> {
-    let parts = if orphans {
+    let parts = if let Some(plan_name) = plan {
+        db.get_parts_by_plan(plan_name).await?
+    } else if assumed {
+        db.get_assumed_parts().await?
+    } else if orphans {
         db.get_orphan_parts().await?
     } else if roots {
         db.get_root_parts().await?
@@ -22,10 +27,6 @@ pub async fn execute_list(
         }
     } else {
         for part in &parts {
-            if assumed && !part.assumed {
-                continue;
-            }
-
             if long {
                 let ver = if part.version.is_empty() { "-" } else { &part.version };
                 if part.assumed {
@@ -36,7 +37,8 @@ pub async fn execute_list(
                     } else {
                         format!("{}-{}-{}", ver, part.release, part.arch)
                     };
-                    println!("{:<12} {:<24} {}", part.origin, part.name, ver_rel_arch);
+                    let plan_info = part.plan_name.as_deref().unwrap_or("-");
+                    println!("{:<12} {:<24} {:<20} {}", part.origin, part.name, ver_rel_arch, plan_info);
                 }
             } else {
                 println!("{}", part.name);

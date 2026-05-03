@@ -4,19 +4,15 @@ pub mod install;
 pub mod list;
 
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
-use tracing::info;
 
 use crate::archive::resolver::{pick_latest, pick_version};
-use crate::cli::system::{Commands as SystemCommands, PrefixModeArg};
+use crate::cli::system::Commands as SystemCommands;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
-use crate::query;
-use crate::query::PrefixMode;
 use crate::transaction;
 
 pub async fn execute(
@@ -65,31 +61,12 @@ pub async fn execute(
         .await;
     }
 
-    if let SystemCommands::SystemInit = command {
-        info!("Initializing system databases...");
-
-        info!("  -> {}...", installed_db_path.display());
-        let _db = InstalledDb::open(installed_db_path)
-            .await
-            .context("failed to initialize system database")?;
-
-        let archive_db_path = &config.general.archive_db_path;
-        info!("  -> {}...", archive_db_path.display());
-        let _adb = crate::database::ArchiveDb::open(archive_db_path)
-            .await
-            .context("failed to initialize archive database")?;
-
-        info!("Databases are up-to-date.");
-        return Ok(());
-    }
-
     let db = InstalledDb::open(installed_db_path)
         .await
         .context("failed to open database")?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
-        SystemCommands::SystemInit => unreachable!(),
         SystemCommands::Install {
             parts,
             force,
@@ -102,8 +79,9 @@ pub async fn execute(
             roots,
             assumed,
             orphans,
+            plan,
         } => {
-            list::execute_list(&db, long, roots, assumed, orphans).await?;
+            list::execute_list(&db, long, roots, assumed, orphans, plan.as_deref()).await?;
         }
         SystemCommands::Doctor => {
             doctor::execute_doctor(&db).await?;
@@ -187,188 +165,142 @@ pub async fn execute(
             force,
             recursive,
             cascade,
+            plan: remove_by_plan,
         } => {
-            let batch_targets: HashSet<String> = if recursive {
-                HashSet::new()
-            } else {
-                parts.iter().cloned().collect()
-            };
-            let removal_order = if recursive {
-                parts.clone()
-            } else {
-                transaction::order_removal_batch(&db, &parts)
-                    .await
-                    .context("failed to plan removal order")?
-            };
-
-            for name in &removal_order {
-                if recursive {
-                    let dependents = db
-                        .get_recursive_dependents(name)
-                        .await
-                        .context(format!("failed to resolve dependents of {}", name))?;
-
-                    if !dependents.is_empty() {
-                        println!(
-                            "will also remove (depends on {}): {}",
-                            name,
-                            dependents.join(", ")
-                        );
+            if remove_by_plan {
+                // Remove all parts from the specified plans
+                for plan_name in &parts {
+                    let plan_parts = db.get_parts_by_plan(plan_name).await
+                        .context(format!("failed to get parts for plan {}", plan_name))?;
+                    if plan_parts.is_empty() {
+                        println!("no parts found for plan '{}'", plan_name);
+                        continue;
                     }
-
-                    for dep in &dependents {
-                        match transaction::remove_part(&db, dep, root_dir, true).await {
-                            Ok(()) => println!("removed: {}", dep),
+                    println!("removing {} part(s) from plan '{}'", plan_parts.len(), plan_name);
+                    for part in &plan_parts {
+                        match transaction::remove_part(&db, &part.name, root_dir, force
+                        ).await {
+                            Ok(()) => println!("removed: {}", part.name),
                             Err(e) => {
-                                eprintln!("error removing {}: {}", dep, e);
+                                eprintln!("error removing {}: {}", part.name, e);
                                 std::process::exit(1);
                             }
                         }
                     }
                 }
-
-                // Compute cascade list before removing the target
-                let cascade_list = if cascade {
-                    let list = transaction::cascade_remove_list(&db, name)
-                        .await
-                        .context(format!("failed to compute cascade list for {}", name))?;
-                    if !list.is_empty() {
-                        println!(
-                            "will also remove orphan dependencies of {}: {}",
-                            name,
-                            list.join(", ")
-                        );
-                    }
-                    list
-                } else {
-                    Vec::new()
-                };
-
-                let result = if recursive {
-                    transaction::remove_part(&db, name, root_dir, force || recursive).await
-                } else {
-                    let ignored_dependents: HashSet<String> = batch_targets
-                        .iter()
-                        .filter(|candidate| candidate.as_str() != name)
-                        .cloned()
-                        .collect();
-                    transaction::remove_part_with_ignored_dependents(
-                        &db,
-                        name,
-                        root_dir,
-                        force,
-                        &ignored_dependents,
-                    )
-                    .await
-                };
-
-                match result {
-                    Ok(()) => println!("removed: {}", name),
-                    Err(e) => {
-                        eprintln!("error removing {}: {}", name, e);
-                        std::process::exit(1);
-                    }
-                }
-
-                // Remove orphan dependencies (leaf-first order)
-                for orphan in &cascade_list {
-                    match transaction::remove_part(&db, orphan, root_dir, true).await {
-                        Ok(()) => println!("removed: {}", orphan),
-                        Err(e) => {
-                            eprintln!("error removing {}: {}", orphan, e);
+            } else {
+                // Check for assumed parts before attempting removal
+                for name in &parts {
+                    if let Some(part) = db.get_part(name).await? {
+                        if part.assumed {
+                            eprintln!("'{}' is externally provided (assumed). Use 'wright unassume {}' instead of 'remove'.", name, name);
                             std::process::exit(1);
                         }
                     }
                 }
+
+                let batch_targets: HashSet<String> = if recursive {
+                    HashSet::new()
+                } else {
+                    parts.iter().cloned().collect()
+                };
+                let removal_order = if recursive {
+                    parts.clone()
+                } else {
+                    transaction::order_removal_batch(&db, &parts)
+                        .await
+                        .context("failed to plan removal order")?
+                };
+
+                for name in &removal_order {
+                    if recursive {
+                        let dependents = db
+                            .get_recursive_dependents(name)
+                            .await
+                            .context(format!("failed to resolve dependents of {}", name))?;
+
+                        if !dependents.is_empty() {
+                            println!(
+                                "will also remove (depends on {}): {}",
+                                name,
+                                dependents.join(", ")
+                            );
+                        }
+
+                        for dep in &dependents {
+                            match transaction::remove_part(
+                                &db, dep, root_dir, true
+                            ).await {
+                                Ok(()) => println!("removed: {}", dep),
+                                Err(e) => {
+                                    eprintln!("error removing {}: {}", dep, e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                    }
+
+                    // Compute cascade list before removing the target
+                    let cascade_list = if cascade {
+                        let list = transaction::cascade_remove_list(
+                            &db, name
+                        )
+                        .await
+                        .context(format!("failed to compute cascade list for {}", name))?;
+                        if !list.is_empty() {
+                            println!(
+                                "will also remove orphan dependencies of {}: {}",
+                                name,
+                                list.join(", ")
+                            );
+                        }
+                        list
+                    } else {
+                        Vec::new()
+                    };
+
+                    let result = if recursive {
+                        transaction::remove_part(
+                            &db, name, root_dir, force || recursive
+                        ).await
+                    } else {
+                        let ignored_dependents: HashSet<String> = batch_targets
+                            .iter()
+                            .filter(|candidate| candidate.as_str() != name)
+                            .cloned()
+                            .collect();
+                        transaction::remove_part_with_ignored_dependents(
+                            &db,
+                            name,
+                            root_dir,
+                            force,
+                            &ignored_dependents,
+                        )
+                        .await
+                    };
+
+                    match result {
+                        Ok(()) => println!("removed: {}", name),
+                        Err(e) => {
+                            eprintln!("error removing {}: {}", name, e);
+                            std::process::exit(1);
+                        }
+                    }
+
+                    // Remove orphan dependencies (leaf-first order)
+                    for orphan in &cascade_list {
+                        match transaction::remove_part(
+                            &db, orphan, root_dir, true
+                        ).await {
+                            Ok(()) => println!("removed: {}", orphan),
+                            Err(e) => {
+                                eprintln!("error removing {}: {}", orphan, e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
             }
-        }
-        SystemCommands::Deps {
-            part,
-            reverse,
-            depth,
-            filter,
-            all,
-            prefix: prefix_mode,
-            prune,
-        } => {
-            use std::io::IsTerminal;
-            let color = std::io::stdout().is_terminal();
-            let mut buf = Vec::new();
-            let prefix_mode = parse_prefix_mode(prefix_mode);
-
-            let max_depth = if depth == 0 { usize::MAX } else { depth };
-            let opts = query::TreeOptions {
-                max_depth,
-                filter: filter.as_deref(),
-                prefix_mode,
-                prune: &prune,
-                color,
-            };
-
-            let stats = if all {
-                if reverse {
-                    writeln!(
-                        buf,
-                        "Installed reverse dependency tree for all parts (source: local part database):"
-                    )?;
-                } else {
-                    writeln!(
-                        buf,
-                        "Installed dependency tree for all parts (source: local part database):"
-                    )?;
-                }
-                writeln!(buf)?;
-                query::write_system_tree(&db, &opts, &mut buf).await?
-            } else {
-                let part_name = part
-                    .ok_or_else(|| anyhow::anyhow!("part name is required unless using --all"))?;
-
-                let part = db
-                    .get_part(&part_name)
-                    .await
-                    .context("failed to query part")?;
-                if part.is_none() {
-                    eprintln!("part '{}' is not installed", part_name);
-                    std::process::exit(1);
-                }
-
-                if reverse {
-                    writeln!(
-                        buf,
-                        "Installed reverse dependency tree for: {} (source: local part database)",
-                        part_name
-                    )?;
-                } else {
-                    writeln!(
-                        buf,
-                        "Installed dependency tree for: {} (source: local part database)",
-                        part_name
-                    )?;
-                }
-                writeln!(buf, "{}", part_name)?;
-                if reverse {
-                    query::write_reverse_dep_tree(&db, &part_name, &opts, &mut buf).await?
-                } else {
-                    query::write_dep_tree(&db, &part_name, &opts, &mut buf).await?
-                }
-            };
-
-            stats.write_summary(&mut buf, color).ok();
-            if color {
-                writeln!(
-                    buf,
-                    "{}",
-                    "Source: local part database (.PARTINFO-derived metadata)".dimmed()
-                )
-                .ok();
-            } else {
-                writeln!(
-                    buf,
-                    "Source: local part database (.PARTINFO-derived metadata)"
-                )
-                .ok();
-            }
-            print_paged(&String::from_utf8_lossy(&buf));
         }
         SystemCommands::Query { part } => {
             let installed_part = db.get_part(&part).await.context("failed to query part")?;
@@ -385,6 +317,9 @@ pub async fn execute(
                     }
                     println!("Install Size: {} bytes", info.install_size.unwrap_or(0));
                     println!("Origin      : {}", info.origin);
+                    if let Some(ref plan) = info.plan_name {
+                        println!("Plan        : {}", plan);
+                    }
                     println!("Installed At: {}", info.installed_at.unwrap_or_default());
                     if let Some(ref hash) = info.part_hash {
                         println!("Part Hash   : {}", hash);
@@ -574,13 +509,52 @@ pub async fn execute(
                 );
             }
         }
-        SystemCommands::Assume { name, version } => match db.assume_part(&name, &version).await {
-            Ok(()) => println!("assumed: {} {}", name, version),
-            Err(e) => {
-                eprintln!("error: {:#}", e);
+        SystemCommands::Assume { name, version, file } => {
+            let mut entries: Vec<(String, String)> = Vec::new();
+
+            if let Some(path) = file {
+                let content = std::fs::read_to_string(&path)
+                    .context(format!("failed to read {}", path.display()))?;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    let mut parts = trimmed.split_whitespace();
+                    let n = parts.next().context(format!("missing name in line: {}", trimmed))?;
+                    let v = parts.next().context(format!("missing version in line: {}", trimmed))?;
+                    entries.push((n.to_string(), v.to_string()));
+                }
+            } else if let (Some(n), Some(v)) = (name, version) {
+                entries.push((n, v));
+            } else if !std::io::stdin().is_terminal() {
+                use std::io::BufRead;
+                for line in std::io::stdin().lock().lines() {
+                    let line = line.context("failed to read from stdin")?;
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    let mut parts = trimmed.split_whitespace();
+                    let n = parts.next().context(format!("missing name in line: {}", trimmed))?;
+                    let v = parts.next().context(format!("missing version in line: {}", trimmed))?;
+                    entries.push((n.to_string(), v.to_string()));
+                }
+            } else {
+                eprintln!("error: provide name and version as arguments, use --file, or pipe input");
                 std::process::exit(1);
             }
-        },
+
+            for (n, v) in entries {
+                match db.assume_part(&n, &v).await {
+                    Ok(()) => println!("assumed: {} {}", n, v),
+                    Err(e) => {
+                        eprintln!("error assuming {}: {:#}", n, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
         SystemCommands::Unassume { name } => match db.unassume_part(&name).await {
             Ok(()) => println!("unassumed: {}", name),
             Err(e) => {
@@ -646,31 +620,4 @@ pub async fn execute(
     Ok(())
 }
 
-fn print_paged(content: &str) {
-    use std::io::IsTerminal;
-    if std::io::stdout().is_terminal() {
-        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".to_string());
-        let parts: Vec<&str> = pager.split_whitespace().collect();
-        let (cmd, args) = parts.split_first().unwrap_or((&"less", &[][..]));
-        if let Ok(mut child) = std::process::Command::new(cmd)
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(content.as_bytes());
-            }
-            let _ = child.wait();
-            return;
-        }
-    }
-    print!("{}", content);
-}
 
-fn parse_prefix_mode(mode: PrefixModeArg) -> PrefixMode {
-    match mode {
-        PrefixModeArg::Indent => PrefixMode::Indent,
-        PrefixModeArg::Depth => PrefixMode::Depth,
-        PrefixModeArg::None => PrefixMode::None,
-    }
-}

@@ -465,10 +465,8 @@ pub(super) fn build_dep_map(
         part_to_plan.insert(plan_name.clone(), plan_name.clone());
         if let Ok(m) = PlanManifest::from_file(path) {
             if let Some(OutputConfig::Multi(ref parts)) = m.outputs {
-                for sub_name in parts.keys() {
-                    if sub_name != &m.plan.name {
-                        part_to_plan.insert(sub_name.clone(), plan_name.clone());
-                    }
+                for (sub_name, _) in parts {
+                    part_to_plan.insert(sub_name.clone(), plan_name.clone());
                 }
             }
         }

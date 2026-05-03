@@ -542,12 +542,157 @@ mod tests {
             Err(ref e) => {
                 let err_msg = format!("{}", e);
                 assert!(
-                    err_msg.contains("locked") || err_msg.contains("holding"),
+                    err_msg.contains("another wright process is already running"),
                     "Expected lock error, got: {}",
                     err_msg
                 );
             }
             Ok(_) => panic!("Expected lock error, but open succeeded"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_plan_name_field() {
+        let db = test_db().await;
+        let id = db
+            .insert_part(NewPart {
+                name: "hello",
+                version: "1.0.0",
+                release: 1,
+                description: "test",
+                arch: "x86_64",
+                license: "MIT",
+                plan_name: Some("hello-plan"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let part = db.get_part("hello").await.unwrap().unwrap();
+        assert_eq!(part.plan_name.as_deref(), Some("hello-plan"));
+
+        // update_part should preserve plan_name
+        db.update_part(NewPart {
+            name: "hello",
+            version: "1.0.1",
+            release: 2,
+            description: "updated",
+            arch: "x86_64",
+            license: "MIT",
+            plan_name: Some("hello-plan-v2"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let updated = db.get_part("hello").await.unwrap().unwrap();
+        assert_eq!(updated.plan_name.as_deref(), Some("hello-plan-v2"));
+
+        let _ = id;
+    }
+
+    #[tokio::test]
+    async fn test_get_parts_by_plan() {
+        let db = test_db().await;
+        db.insert_part(NewPart {
+            name: "gcc",
+            version: "14.2.0",
+            release: 1,
+            description: "compiler",
+            arch: "x86_64",
+            license: "GPL",
+            plan_name: Some("toolchain"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        db.insert_part(NewPart {
+            name: "binutils",
+            version: "2.42",
+            release: 1,
+            description: "binutils",
+            arch: "x86_64",
+            license: "GPL",
+            plan_name: Some("toolchain"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        db.insert_part(NewPart {
+            name: "nginx",
+            version: "1.25.0",
+            release: 1,
+            description: "server",
+            arch: "x86_64",
+            license: "BSD",
+            plan_name: Some("webstack"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let toolchain_parts = db.get_parts_by_plan("toolchain").await.unwrap();
+        assert_eq!(toolchain_parts.len(), 2);
+        assert!(toolchain_parts.iter().any(|p| p.name == "gcc"));
+        assert!(toolchain_parts.iter().any(|p| p.name == "binutils"));
+
+        let webstack_parts = db.get_parts_by_plan("webstack").await.unwrap();
+        assert_eq!(webstack_parts.len(), 1);
+        assert_eq!(webstack_parts[0].name, "nginx");
+
+        let empty = db.get_parts_by_plan("nonexistent").await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_remove_parts_by_plan() {
+        let db = test_db().await;
+        db.insert_part(NewPart {
+            name: "gcc",
+            version: "14.2.0",
+            release: 1,
+            description: "compiler",
+            arch: "x86_64",
+            license: "GPL",
+            plan_name: Some("toolchain"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        db.insert_part(NewPart {
+            name: "binutils",
+            version: "2.42",
+            release: 1,
+            description: "binutils",
+            arch: "x86_64",
+            license: "GPL",
+            plan_name: Some("toolchain"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        db.insert_part(NewPart {
+            name: "nginx",
+            version: "1.25.0",
+            release: 1,
+            description: "server",
+            arch: "x86_64",
+            license: "BSD",
+            plan_name: Some("webstack"),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let removed = db.remove_parts_by_plan("toolchain").await.unwrap();
+        assert_eq!(removed, 2);
+
+        let remaining = db.list_parts().await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].name, "nginx");
     }
 }

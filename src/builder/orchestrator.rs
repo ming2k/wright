@@ -182,17 +182,16 @@ pub fn compute_build_session_hash(
 
 fn expected_task_artifacts(parts_dir: &Path, plan_path: &Path) -> Result<Vec<PathBuf>> {
     let manifest = PlanManifest::from_file(plan_path)?;
-    let mut artifacts = vec![parts_dir.join(manifest.part_filename())];
-    if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-        for (sub_name, sub_part) in parts {
-            if sub_name == &manifest.plan.name {
-                continue;
-            }
-            let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
-            artifacts.push(parts_dir.join(sub_manifest.part_filename()));
-        }
+    match manifest.outputs {
+        Some(OutputConfig::Multi(ref parts)) => Ok(parts
+            .iter()
+            .map(|(sub_name, sub_part)| {
+                let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
+                parts_dir.join(sub_manifest.part_filename())
+            })
+            .collect()),
+        _ => Ok(vec![parts_dir.join(manifest.part_filename())]),
     }
-    Ok(artifacts)
 }
 
 pub async fn load_completed_build_tasks(

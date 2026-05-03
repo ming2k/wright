@@ -12,7 +12,7 @@ pub struct InstalledDb {
 }
 
 pub(super) const PART_COLUMNS: &str =
-    "id, name, version, release, epoch, description, arch, license, url, installed_at, install_size, part_hash, install_scripts, assumed, origin";
+    "id, name, version, release, epoch, description, arch, license, url, installed_at, install_size, part_hash, install_scripts, assumed, origin, plan_name";
 
 fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     let file_name = db_path

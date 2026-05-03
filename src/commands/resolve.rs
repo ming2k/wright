@@ -1,21 +1,173 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use std::collections::{HashMap, HashSet};
-use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 
 use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
+use crate::database::InstalledDb;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
+use crate::query::{self, PrefixMode, TreeOptions};
 
-pub async fn execute_resolve(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
+pub async fn execute_resolve(
+    args: ResolveArgs,
+    config: &GlobalConfig,
+    installed_db_path: &Path,
+) -> Result<()> {
+    if args.tree {
+        render_installed_tree(&args, installed_db_path).await
+    } else if args.installed {
+        render_installed_list(&args, installed_db_path).await
+    } else {
+        render_build_view(args, config).await
+    }
+}
+
+// ─── Installed-side tree rendering ───────────────────────────────────────────
+
+async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()> {
+    let db = InstalledDb::open(db_path)
+        .await
+        .context("failed to open installed database")?;
+    let color = std::io::stdout().is_terminal();
+    let mut buf = Vec::new();
+
+    let max_depth = match args.depth {
+        Some(0) => usize::MAX,
+        Some(d) => d,
+        None => usize::MAX,
+    };
+
+    let opts = TreeOptions {
+        max_depth,
+        filter: None,
+        prefix_mode: PrefixMode::Indent,
+        prune: &[],
+        color,
+    };
+
+    for (idx, target) in args.targets.iter().enumerate() {
+        if idx > 0 {
+            writeln!(buf)?;
+        }
+
+        let part = db
+            .get_part(target)
+            .await
+            .context("failed to query part")?;
+        if part.is_none() {
+            eprintln!("part '{}' is not installed", target);
+            std::process::exit(1);
+        }
+
+        let show_deps = (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
+        let show_rdeps = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
+
+        if show_deps {
+            writeln!(buf, "{}", "Dependencies:".bold().cyan())?;
+            writeln!(buf, "{}", target.bold().green())?;
+            let stats = query::write_dep_tree(&db, target, &opts, &mut buf).await?;
+            stats.write_summary(&mut buf, color).ok();
+        }
+
+        if show_rdeps {
+            if show_deps {
+                writeln!(buf)?;
+            }
+            writeln!(buf, "{}", "Dependents:".bold().cyan())?;
+            writeln!(buf, "{}", target.bold().green())?;
+            let stats = query::write_reverse_dep_tree(&db, target, &opts, &mut buf).await?;
+            stats.write_summary(&mut buf, color).ok();
+        }
+    }
+
+    if color {
+        writeln!(
+            buf,
+            "{}",
+            "\nSource: local part database (.PARTINFO-derived metadata)"
+                .dimmed()
+        )
+        .ok();
+    } else {
+        writeln!(buf, "\nSource: local part database (.PARTINFO-derived metadata)").ok();
+    }
+
+    print!("{}", String::from_utf8_lossy(&buf));
+    Ok(())
+}
+
+// ─── Installed-side list rendering ───────────────────────────────────────────
+
+async fn render_installed_list(args: &ResolveArgs, db_path: &Path) -> Result<()> {
+    let db = InstalledDb::open(db_path)
+        .await
+        .context("failed to open installed database")?;
+
+    for target in &args.targets {
+        let part = db
+            .get_part(target)
+            .await
+            .context("failed to query part")?;
+        if part.is_none() {
+            continue;
+        }
+
+        if args.deps.is_none() && args.rdeps.is_none() {
+            println!("{}", target);
+            continue;
+        }
+
+        if let Some(domain) = args.deps {
+            let deps = db
+                .get_dependencies_by_name(target)
+                .await
+                .context("failed to get dependencies")?;
+            for dep in deps {
+                if domain == DomainArg::All {
+                    println!("{}", dep.name);
+                } else if domain == DomainArg::Link && dep.dep_type == crate::database::DepType::Link
+                {
+                    println!("{}", dep.name);
+                } else if domain == DomainArg::Runtime
+                    && dep.dep_type == crate::database::DepType::Runtime
+                {
+                    println!("{}", dep.name);
+                }
+            }
+        }
+
+        if let Some(domain) = args.rdeps {
+            let rdeps = db
+                .get_dependents(target)
+                .await
+                .context("failed to get dependents")?;
+            for (name, kind) in rdeps {
+                if domain == DomainArg::All {
+                    println!("{}", name);
+                } else if domain == DomainArg::Link && kind == "link" {
+                    println!("{}", name);
+                } else if domain == DomainArg::Runtime && kind == "runtime" {
+                    println!("{}", name);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ─── Build-side rendering (unchanged) ────────────────────────────────────────
+
+async fn render_build_view(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let is_tty = std::io::stdout().is_terminal();
 
     if is_tty
         && !args.exclude_targets
-        && (args.tree || (args.deps.is_none() && args.rdeps.is_none()))
+        && (args.deps.is_none() && args.rdeps.is_none())
     {
         render_interactive_trees(&args, config).await?;
         return Ok(());

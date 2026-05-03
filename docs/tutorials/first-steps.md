@@ -78,7 +78,7 @@ wright sysupgrade
 wright remove nginx
 wright remove --cascade nginx
 wright list --orphans
-wright deps nginx --reverse
+wright resolve nginx --tree --rdeps
 wright query nginx
 wright files nginx
 wright verify

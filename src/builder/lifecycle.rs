@@ -21,6 +21,7 @@ pub const DEFAULT_STAGES: &[&str] = &[
     "compile",
     "check",
     "staging",
+    "fabricate",
 ];
 
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];

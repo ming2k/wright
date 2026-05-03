@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::{
-    BackupConfig, BuildOptions, Dependencies, FabricateHooks, InstallScripts, PlanManifest,
-    PlanMetadata, Relations, Sources, SubFabricateOutput,
+    BackupConfig, BuildOptions, InstallScripts, PlanManifest, PlanMetadata,
+    Relations, Sources, SubFabricateOutput,
 };
 
 impl SubFabricateOutput {
@@ -95,28 +95,4 @@ pub(super) fn fabricate_backup(output: &super::FabricateOutput) -> Option<Backup
     output.backup.as_ref().map(|files| BackupConfig {
         files: files.clone(),
     })
-}
-
-pub(super) fn empty_sub_fabricate_output(
-    hooks: Option<FabricateHooks>,
-    backup: Option<Vec<String>>,
-    replaces: Vec<String>,
-    conflicts: Vec<String>,
-    provides: Vec<String>,
-) -> SubFabricateOutput {
-    SubFabricateOutput {
-        description: None,
-        version: None,
-        release: None,
-        arch: None,
-        license: None,
-        dependencies: Dependencies::default(),
-        replaces,
-        conflicts,
-        provides,
-        include: None,
-        exclude: None,
-        hooks,
-        backup,
-    }
 }

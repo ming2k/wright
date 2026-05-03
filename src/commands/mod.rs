@@ -32,7 +32,9 @@ pub async fn dispatch(
         crate::cli::Commands::Build(args) => {
             build::execute_build(args, config, cli.verbose, cli.quiet).await
         }
-        crate::cli::Commands::Resolve(args) => resolve::execute_resolve(args, config).await,
+        crate::cli::Commands::Resolve(args) => {
+            resolve::execute_resolve(args, config, &installed_db_path).await
+        }
         crate::cli::Commands::Lint { targets, recursive } => {
             lint::execute_lint(targets, recursive, config)
                 .await

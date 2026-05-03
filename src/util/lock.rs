@@ -200,7 +200,7 @@ mod tests {
             Duration::from_millis(100),
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("already holding"));
+        assert!(format!("{err}").contains("another wright process is already running"));
     }
 
     #[test]
@@ -245,6 +245,6 @@ mod tests {
             Duration::from_millis(100),
         )
         .unwrap_err();
-        assert!(format!("{err}").contains("already holding"));
+        assert!(format!("{err}").contains("another wright process is already running"));
     }
 }

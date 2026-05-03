@@ -127,6 +127,7 @@ pub struct InstalledPart {
     pub install_scripts: Option<String>,
     pub assumed: bool,
     pub origin: Origin,
+    pub plan_name: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -153,6 +154,7 @@ pub struct NewPart<'a> {
     pub part_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
     pub origin: Origin,
+    pub plan_name: Option<&'a str>,
 }
 
 impl<'a> Default for NewPart<'a> {
@@ -170,6 +172,7 @@ impl<'a> Default for NewPart<'a> {
             part_hash: None,
             install_scripts: None,
             origin: Origin::Manual,
+            plan_name: None,
         }
     }
 }

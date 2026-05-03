@@ -32,8 +32,8 @@ impl InstalledDb {
         }
 
         let res = query(
-            "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin, plan_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(part.name)
             .bind(part.version)
             .bind(part.release as i64)
@@ -46,6 +46,7 @@ impl InstalledDb {
             .bind(part.part_hash)
             .bind(part.install_scripts)
             .bind(part.origin)
+            .bind(part.plan_name)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -88,7 +89,7 @@ impl InstalledDb {
 
     pub async fn update_part(&self, part: NewPart<'_>) -> Result<()> {
         let res = query(
-            "UPDATE parts SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?
+            "UPDATE parts SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?, plan_name = ?
              WHERE name = ?")
             .bind(part.version)
             .bind(part.release as i64)
@@ -100,6 +101,7 @@ impl InstalledDb {
             .bind(part.install_size as i64)
             .bind(part.part_hash)
             .bind(part.install_scripts)
+            .bind(part.plan_name)
             .bind(part.name)
         .execute(&self.pool)
         .await
@@ -206,5 +208,31 @@ impl InstalledDb {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan parts: {}", e)))
+    }
+
+    pub async fn get_assumed_parts(&self) -> Result<Vec<InstalledPart>> {
+        let sql = format!("SELECT {} FROM parts WHERE assumed = 1 ORDER BY name", PART_COLUMNS);
+        query_as::<_, InstalledPart>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get assumed parts: {}", e)))
+    }
+
+    pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<InstalledPart>> {
+        let sql = format!("SELECT {} FROM parts WHERE plan_name = ? ORDER BY name", PART_COLUMNS);
+        query_as::<_, InstalledPart>(&sql)
+            .bind(plan_name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get parts by plan: {}", e)))
+    }
+
+    pub async fn remove_parts_by_plan(&self, plan_name: &str) -> Result<u64> {
+        let res = query("DELETE FROM parts WHERE plan_name = ?")
+            .bind(plan_name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to remove parts by plan: {}", e)))?;
+        Ok(res.rows_affected())
     }
 }

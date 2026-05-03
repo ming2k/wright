@@ -92,7 +92,7 @@ impl InstalledDb {
 
     pub async fn get_dependencies(&self, part_id: i64) -> Result<Vec<Dependency>> {
         query_as::<_, Dependency>(
-            "SELECT depends_on as \"name\", version_constraint, dep_type as \"dep_type\" FROM dependencies WHERE part_id = ?")
+            "SELECT depends_on as \"depends_on\", version_constraint, dep_type FROM dependencies WHERE part_id = ?")
             .bind(part_id)
         .fetch_all(&self.pool)
         .await
@@ -101,10 +101,7 @@ impl InstalledDb {
 
     pub async fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<Dependency>> {
         query_as::<_, Dependency>(
-            "SELECT d.depends_on as \"name\", d.version_constraint, d.dep_type as \"dep_type\"
-             FROM dependencies d
-             JOIN parts p ON d.part_id = p.id
-             WHERE p.name = ?",
+            "SELECT d.depends_on as \"depends_on\", d.version_constraint, d.dep_type\n             FROM dependencies d\n             JOIN parts p ON d.part_id = p.id\n             WHERE p.name = ?",
         )
         .bind(name)
         .fetch_all(&self.pool)

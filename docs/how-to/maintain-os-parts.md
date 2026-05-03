@@ -66,7 +66,7 @@ wright resolve <changed-part> --deps=all --rdeps=all --depth=0 | wright build --
 
 ```bash
 wright doctor
-wright deps <changed-part> --reverse
+wright resolve <changed-part> --tree --rdeps
 ```
 
 ## 5. Tradeoff

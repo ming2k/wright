@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::error::{Result, WrightError};
 
 use super::{
-    convert::{empty_sub_fabricate_output, fabricate_backup, fabricate_install_scripts},
+    convert::{fabricate_backup, fabricate_install_scripts},
     BackupConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder, LifecycleStage,
     OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
@@ -29,6 +29,7 @@ pub(super) struct RawManifest {
     pub lifecycle_order: Option<LifecycleOrder>,
     #[serde(default)]
     pub mvp: Option<PhaseConfig>,
+    /// Top-level [hooks] — only valid for single-output plans.
     #[serde(default)]
     pub hooks: Option<FabricateHooks>,
     #[serde(default)]
@@ -63,99 +64,187 @@ struct OutputSection {
 }
 
 fn parse_output_section(
-    plan_name: &str,
     output_val: Option<toml::Value>,
     main_hooks: Option<FabricateHooks>,
 ) -> Result<OutputSection> {
-    let mut table = match output_val {
-        Some(toml::Value::Table(table)) => table,
-        Some(_) => {
-            return Err(WrightError::ParseError(
-                "[output] must be a table".to_string(),
-            ));
-        }
-        None => toml::value::Table::new(),
-    };
-
-    let hooks = match table.remove("hooks") {
-        Some(value) => {
+    match output_val {
+        // --- Multi-output mode: [[output]] array-of-tables ---
+        // Declaration order is preserved by TOML arrays.
+        Some(toml::Value::Array(arr)) => {
             if main_hooks.is_some() {
+                return Err(WrightError::ParseError(
+                    "top-level [hooks] cannot be used with multi-output plans; \
+                     use [[output]] hooks fields"
+                        .to_string(),
+                ));
+            }
+            if arr.len() < 2 {
+                return Err(WrightError::ParseError(
+                    "multi-output plans must declare at least two [[output]] entries".to_string(),
+                ));
+            }
+
+            let mut parts: Vec<(String, super::SubFabricateOutput)> = Vec::new();
+            for (i, entry) in arr.into_iter().enumerate() {
+                let mut table = match entry {
+                    toml::Value::Table(t) => t,
+                    _ => {
+                        return Err(WrightError::ParseError(format!(
+                            "[[output]] entry {} must be a table",
+                            i
+                        )))
+                    }
+                };
+                let name = match table.remove("name") {
+                    Some(toml::Value::String(s)) => s,
+                    Some(_) => {
+                        return Err(WrightError::ParseError(format!(
+                            "[[output]] entry {}: 'name' must be a string",
+                            i
+                        )))
+                    }
+                    None => {
+                        return Err(WrightError::ParseError(format!(
+                            "[[output]] entry {}: 'name' is required",
+                            i
+                        )))
+                    }
+                };
+                let sub: super::SubFabricateOutput =
+                    toml::Value::Table(table).try_into().map_err(|e: toml::de::Error| {
+                        WrightError::ParseError(format!(
+                            "failed to parse [[output]] entry '{}': {}",
+                            name, e
+                        ))
+                    })?;
+                if matches!(&sub.include, Some(v) if v.is_empty()) {
+                    return Err(WrightError::ParseError(format!(
+                        "output '{}': include = [] is invalid; \
+                         list patterns or omit include entirely for the catch-all",
+                        name
+                    )));
+                }
+                parts.push((name, sub));
+            }
+
+            let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
+            match catchall_count {
+                0 => {
+                    return Err(WrightError::ParseError(
+                        "multi-output plans need exactly one catch-all output \
+                         (a [[output]] entry with no 'include')"
+                            .to_string(),
+                    ))
+                }
+                1 => {}
+                _ => {
+                    return Err(WrightError::ParseError(
+                        "multiple [[output]] entries have no 'include'; \
+                         exactly one catch-all is allowed"
+                            .to_string(),
+                    ))
+                }
+            }
+
+            let (_, catchall) = parts.iter().find(|(_, s)| s.include.is_none()).unwrap();
+            let relations = Relations {
+                replaces: catchall.replaces.clone(),
+                conflicts: catchall.conflicts.clone(),
+                provides: catchall.provides.clone(),
+            };
+            let install_scripts = catchall.hooks.as_ref().map(|h| InstallScripts {
+                pre_install: h.pre_install.clone(),
+                post_install: h.post_install.clone(),
+                post_upgrade: h.post_upgrade.clone(),
+                pre_remove: h.pre_remove.clone(),
+                post_remove: h.post_remove.clone(),
+            });
+            let backup_cfg = catchall
+                .backup
+                .as_ref()
+                .map(|files| BackupConfig { files: files.clone() });
+
+            Ok(OutputSection {
+                outputs: Some(OutputConfig::Multi(parts)),
+                install_scripts,
+                backup: backup_cfg,
+                relations,
+            })
+        }
+
+        // --- Single-output mode: [output] table ---
+        Some(toml::Value::Table(mut table)) => {
+            if main_hooks.is_some() && table.contains_key("hooks") {
                 return Err(WrightError::ParseError(
                     "main part hooks must be declared only once (prefer top-level [hooks])"
                         .to_string(),
                 ));
             }
-            Some(value.try_into().map_err(|e: toml::de::Error| {
-                WrightError::ParseError(format!("failed to parse [output].hooks: {}", e))
-            })?)
+
+            let hooks = match table.remove("hooks") {
+                Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
+                    WrightError::ParseError(format!("failed to parse [output].hooks: {}", e))
+                })?),
+                None => main_hooks,
+            };
+
+            let backup = match table.remove("backup") {
+                Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
+                    WrightError::ParseError(format!("failed to parse [output].backup: {}", e))
+                })?),
+                None => None,
+            };
+
+            let replaces = extract_output_string_list(&mut table, "replaces")?;
+            let conflicts = extract_output_string_list(&mut table, "conflicts")?;
+            let provides = extract_output_string_list(&mut table, "provides")?;
+
+            if !table.is_empty() {
+                let unexpected: Vec<_> = table.keys().collect();
+                return Err(WrightError::ParseError(format!(
+                    "[output] has unexpected fields: {}. \
+                     For multi-output plans use [[output]] array-of-tables.",
+                    unexpected
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+
+            let main_relations = Relations {
+                replaces,
+                conflicts,
+                provides,
+            };
+            let main_output = FabricateOutput { hooks, backup };
+            let install_scripts = fabricate_install_scripts(&main_output);
+            let backup_cfg = fabricate_backup(&main_output);
+
+            let outputs = if main_output.hooks.is_some() || main_output.backup.is_some() {
+                Some(OutputConfig::Single(main_output))
+            } else {
+                None
+            };
+            Ok(OutputSection {
+                outputs,
+                install_scripts,
+                backup: backup_cfg,
+                relations: main_relations,
+            })
         }
-        None => main_hooks,
-    };
 
-    let backup = match table.remove("backup") {
-        Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
-            WrightError::ParseError(format!("failed to parse [output].backup: {}", e))
-        })?),
-        None => None,
-    };
+        None => Ok(OutputSection {
+            outputs: None,
+            install_scripts: None,
+            backup: None,
+            relations: Relations::default(),
+        }),
 
-    let replaces = extract_output_string_list(&mut table, "replaces")?;
-    let conflicts = extract_output_string_list(&mut table, "conflicts")?;
-    let provides = extract_output_string_list(&mut table, "provides")?;
-    let main_relations = Relations {
-        replaces: replaces.clone(),
-        conflicts: conflicts.clone(),
-        provides: provides.clone(),
-    };
-
-    let main_output = FabricateOutput { hooks, backup };
-    let install_scripts = fabricate_install_scripts(&main_output);
-    let backup_cfg = fabricate_backup(&main_output);
-
-    if table.is_empty() {
-        let outputs = if main_output.hooks.is_some() || main_output.backup.is_some() {
-            Some(OutputConfig::Single(main_output))
-        } else {
-            None
-        };
-        return Ok(OutputSection {
-            outputs,
-            install_scripts,
-            backup: backup_cfg,
-            relations: main_relations,
-        });
+        Some(_) => Err(WrightError::ParseError(
+            "[output] must be a table or [[output]] array-of-tables".to_string(),
+        )),
     }
-
-    let table_value = toml::Value::Table(table);
-    let mut outputs: HashMap<String, super::SubFabricateOutput> =
-        table_value.try_into().map_err(|e: toml::de::Error| {
-            WrightError::ParseError(format!("failed to parse [output.<name>]: {}", e))
-        })?;
-
-    if outputs.contains_key(plan_name) {
-        return Err(WrightError::ParseError(format!(
-            "main output '{}' must use [output], not [output.{}]",
-            plan_name, plan_name
-        )));
-    }
-
-    outputs.insert(
-        plan_name.to_string(),
-        empty_sub_fabricate_output(
-            main_output.hooks.clone(),
-            main_output.backup.clone(),
-            replaces,
-            conflicts,
-            provides,
-        ),
-    );
-
-    Ok(OutputSection {
-        outputs: Some(OutputConfig::Multi(outputs)),
-        install_scripts,
-        backup: backup_cfg,
-        relations: main_relations,
-    })
 }
 
 impl PlanManifest {
@@ -209,11 +298,17 @@ impl PlanManifest {
                         key, e
                     ))
                 })?;
-                lifecycle_stages.insert(key, stage);
+                // "outputs" is the user-facing alias for the internal "fabricate" stage
+                let canonical_key = if key == "outputs" {
+                    "fabricate".to_string()
+                } else {
+                    key
+                };
+                lifecycle_stages.insert(canonical_key, stage);
             }
         }
 
-        let output_section = parse_output_section(&plan.name, output, hooks)?;
+        let output_section = parse_output_section(output, hooks)?;
         let OutputSection {
             outputs,
             install_scripts,

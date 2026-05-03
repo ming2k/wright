@@ -156,7 +156,7 @@ For Wright's target users (personal or small team maintained custom distribution
 
 ### 2.6 Multi-Part Practice
 
-Use `[output.<name>]` sub-tables in `plan.toml` to define sub-parts. See [Writing Plans](../reference/writing-plans.md) for details.
+Use `[[output]]` array-of-tables in `plan.toml` to define sub-parts. See [Writing Plans](../reference/writing-plans.md) for details.
 
 ### 2.7 Decision Summary Table
 

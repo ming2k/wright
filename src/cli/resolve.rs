@@ -7,6 +7,8 @@ Examples:
   wright resolve openssl --rdeps
   wright resolve glibc --rdeps=all --depth=0
   wright resolve zlib --deps=link --match=outdated
+  wright resolve gcc --tree --installed
+  wright resolve gcc --tree --installed --rdeps
 
 Pipe into wright build:
   wright resolve openssl --rdeps | wright build";
@@ -83,9 +85,15 @@ pub struct ResolveArgs {
     #[arg(long)]
     pub depth: Option<usize>,
 
-    /// Show a visual dependency tree from hold-tree plan.toml files.
-    /// This is a static analysis mode — it does not read the installed
-    /// part database.
-    #[arg(long, short = 't', conflicts_with_all = ["deps", "rdeps", "match_policies", "exclude_targets"])]
+    /// Use the installed part database instead of plan.toml files.
+    /// When combined with --tree, shows the installed dependency tree.
+    /// When combined with --deps or --rdeps, filters based on installed state.
+    #[arg(long)]
+    pub installed: bool,
+
+    /// Show a visual dependency tree.
+    /// Without --installed, shows the plan dependency tree.
+    /// With --installed, shows the installed dependency tree.
+    #[arg(long, short = 't', conflicts_with_all = ["match_policies", "exclude_targets"])]
     pub tree: bool,
 }

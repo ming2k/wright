@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.1.0] - 2026-05-03
+
+### Added
+- **Plan-level lifecycle tracking**: `parts` table now records `plan_name` for every installed part. This enables plan-scoped cleanup: `wright apply` automatically removes old parts from the same plan before installing new ones, so a plan split into multiple sub-parts is replaced atomically.
+- **Plan-scoped CLI operations**:
+  - `wright list --plan <NAME>` lists all parts belonging to a specific plan.
+  - `wright remove --plan <NAME...>` removes all parts from the given plans in one shot.
+- **Bulk assume support**: `wright assume` now accepts `--file <PATH>` for bulk import and reads `name version` lines from stdin when piped. This simplifies bootstrap workflows that need to register dozens of externally-provided system packages.
+- **Dedicated assumed-parts query**: `wright list --assumed` now uses a filtered SQL query instead of loading the entire part list into memory.
+- **Security update guide**: new how-to document `docs/how-to/perform-security-updates.md` documents the required rebuild order for toolchain updates (binutils → gcc → glibc → linux-api-headers → linux → userland).
+
+### Changed
+- **Multi-output plan syntax**: the old `[output.xxx]` inline-table syntax is no longer supported. Multi-output plans must use `[[output]]` array-of-tables with explicit `name` fields. All tests and fixtures have been migrated.
+- **Removed `wright system init`**: this command is redundant because every system command automatically runs pending database migrations on open. Keeping it caused confusion.
+- **`remove` guards against assumed parts**: attempting to `wright remove` an externally-provided (assumed) part now prints a clear error message directing the user to `wright unassume` instead.
+
+### Fixed
+- **16 broken tests restored**:
+  - Lock tests updated to match current error message wording (`"another wright process is already running"`).
+  - `get_dependencies` SQL column alias corrected (`"name"` → `"depends_on"`).
+  - 11 manifest tests migrated from `[output.xxx]` to `[[output]]` syntax.
+  - Integration tests for nginx fixture and split build variables updated to the new output format.
+- **`wright query` output**: now displays the `Plan` field when a part belongs to a plan.
+- **`wright list --long`**: origin/version/plan columns are now properly aligned.
+
 ## [3.0.6] - 2026-05-03
 
 ### Added

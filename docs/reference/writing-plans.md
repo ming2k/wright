@@ -361,7 +361,7 @@ texlinks 2>/dev/null || true
 ### `[output]` — Output Metadata & Part Relations
 
 `[output]` defines install-time metadata for the main part, and
-`[output.<name>]` declares additional split outputs.
+`[[output]]` array-of-tables declares additional split outputs.
 
 Each output carries its own **part relations** — install-time metadata
 describing how a part interacts with other parts in the system.
@@ -373,7 +373,8 @@ provides = ["http-server"]
 replaces = ["old-nginx"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
-[output."nginx-doc"]
+[[output]]
+name = "nginx-doc"
 description = "Nginx documentation"
 provides = ["nginx-documentation"]
 include = ["/usr/share/doc/.*", "/usr/share/man/.*"]
@@ -391,12 +392,27 @@ include = ["/usr/share/doc/.*", "/usr/share/man/.*"]
 | `hooks.*`   | table/fields  | Transaction hooks for a sub-part   |
 | `dependencies` | table      | Additional sub-part dependencies (sub-parts automatically inherit all dependencies from the parent) |
 
+#### `output` vs `outputs`
+
+`output` (singular) is the TOML field for output configuration (`[output]` or `[[output]]`).
+`outputs` (plural) is a user-facing lifecycle stage alias that maps to the internal
+`fabricate` stage. They are **not** duplicated — they serve completely different
+purposes.
+
 #### Implicit Slicing (Declarative Outputs)
 
-Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. 
+Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture.
 Instead of writing explicit scripts to move files between packages, all files should be installed to the default `${PART_DIR}` during the `staging` lifecycle phase.
 
-After `staging` is complete, an implicit slicing engine processes the files based on the `[output.<name>]` definitions. The engine evaluates files in `${PART_DIR}` against the `include` and `exclude` regular expressions. Files that match are automatically moved out of `${PART_DIR}` into the respective sub-part directories. The main `[output]` implicitly contains whatever remains after all sub-parts have been sliced out.
+After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions. The engine evaluates files in `${PART_DIR}` against the `include` and `exclude` regular expressions.
+
+**Output processing order:**
+
+1. Non-catch-all outputs (those with explicit `include` patterns) are processed in their declared order.
+2. For each non-catch-all output, files matching its `include` patterns are moved out of `${PART_DIR}` into the respective sub-part directories.
+3. The catch-all output (the one with no `include`) keeps whatever remains in `${PART_DIR}`.
+
+This means later outputs in the declaration only see files not claimed by earlier outputs. The catch-all is always last and receives the leftovers.
 
 #### Part Relations
 
@@ -611,7 +627,7 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 
 | Variable    | Description                |
 |-----------------|--------------------------------------------|
-| `${NAME}`  | Current output name from `name` / `[output.<name>]` |
+| `${NAME}`  | Current output name from `name` / `[[output]].name` |
 | `${VERSION}`| Version from `version` (absent if `version` is omitted)     |
 | `${RELEASE}`| Release number as a string         |
 | `${ARCH}`  | Target architecture            |
@@ -943,7 +959,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 A single plan can produce multiple output parts. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main part.
 
 In multi-output mode, the main part uses `[output]`, and extra outputs are
-declared as subtables of `[output]`.
+declared as `[[output]]` array-of-tables.
 
 ```toml
 name = "gcc"
@@ -964,34 +980,33 @@ make DESTDIR=${PART_DIR} install
 [hooks]
 post_install = "..."
 
-[output."libstdc++"]
+[[output]]
+name = "libstdc++"
 description = "GNU C++ standard library"
-script = "install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so"
+include = ["/usr/lib/libstdc.*"]
 hooks.post_install = "ldconfig"
 dependencies.runtime = ["libgcc"]
 ```
 
 Sub-parts inherit `version`, `release`, `arch`, and `license` from the
-parent manifest unless overridden. Each sub-part can have a `description`, a
-`script` to select/install files, `hooks.*` fields, `backup`, and a
-`dependencies` table. Names containing `+` or `.` must be quoted in TOML table
-headers (e.g. `[output."libstdc++"]`).
+parent manifest unless overridden. Each sub-part can have a `description`,
+`include`/`exclude` patterns, `hooks.*` fields, `backup`, and a
+`dependencies` table.
 
 During sub-part staging, the main part's output is mounted read-only at
 `/main-part` (and available via `${MAIN_PART_DIR}`).
 
 Sub-part dependencies use dotted keys (`dependencies.runtime`) or a sub-table
-(`[output.<name>.dependencies]`) for parts that must be installed when this
+(`[[output]].dependencies`) for parts that must be installed when this
 sub-part is installed independently.
 
 ```toml
 [lifecycle.staging]
 
-[output."libfoo-dev"]
+[[output]]
+name = "libfoo-dev"
 description = "Development headers for libfoo"
-script = """
-mv ${MAIN_PART_DIR}/usr/include ${PART_DIR}/usr/
-"""
+include = ["/usr/include/.*"]
 ```
 
 Sub-parts are independent archives — installing the parent does **not** automatically install its sub-parts. To create a meta-part that pulls in all sub-parts, list them as `runtime` dependencies on the parent:
@@ -1003,9 +1018,10 @@ name = "linux-firmware"
 [dependencies]
 runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
-[output."linux-firmware-amd"]
+[[output]]
+name = "linux-firmware-amd"
 description = "AMD GPU/CPU firmware"
-# ...
+include = ["/usr/lib/firmware/amdgpu/.*", "/usr/lib/firmware/radeon/.*"]
 ```
 
 In this pattern the parent part itself may contain no files — it exists only to group the sub-parts.
@@ -1013,12 +1029,11 @@ In this pattern the parent part itself may contain no files — it exists only t
 For a `-doc` sub-part that overrides the architecture:
 
 ```toml
-[output."mypart-doc"]
+[[output]]
+name = "mypart-doc"
 description = "Documentation for mypart"
 arch = "any"
-script = """
-mv ${MAIN_PART_DIR}/usr/share/doc ${PART_DIR}/usr/share/
-"""
+include = ["/usr/share/doc/.*"]
 ```
 
 ## Validation Rules
@@ -1027,7 +1042,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 
 | Rule | Detail |
 |------|--------|
-| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[output."libstdc++"]`). |
+| **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. |
 | **version** | Optional. If present, must be a non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`). |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -55,23 +55,19 @@ pub async fn resolve_install_paths(
 
 fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
     let manifest = crate::plan::manifest::PlanManifest::from_file(plan_path)?;
-    let mut parts = vec![(
-        manifest.plan.name.clone(),
-        parts_dir.join(manifest.part_filename()),
-    )];
-    if let Some(crate::plan::manifest::OutputConfig::Multi(ref sub_outputs)) = manifest.outputs {
-        for (sub_name, sub_part) in sub_outputs {
-            if sub_name == &manifest.plan.name {
-                continue;
-            }
-            let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
-            parts.push((
-                sub_name.clone(),
-                parts_dir.join(sub_manifest.part_filename()),
-            ));
-        }
+    match manifest.outputs {
+        Some(crate::plan::manifest::OutputConfig::Multi(ref parts)) => Ok(parts
+            .iter()
+            .map(|(sub_name, sub_part)| {
+                let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
+                (sub_name.clone(), parts_dir.join(sub_manifest.part_filename()))
+            })
+            .collect()),
+        _ => Ok(vec![(
+            manifest.plan.name.clone(),
+            parts_dir.join(manifest.part_filename()),
+        )]),
     }
-    Ok(parts)
 }
 
 struct ApplyContext<'a> {
@@ -453,6 +449,7 @@ async fn apply_targets(
         let mut explicit_targets = HashSet::new();
         let mut batch_part_names = Vec::new();
         let mut seen_paths = HashSet::new();
+        let mut plan_map = HashMap::new();
 
         for task in tasks {
             let base = BuildExecutionPlan::task_base_name(task);
@@ -472,11 +469,27 @@ async fn apply_targets(
                 if explicit_plan_names.contains(base) {
                     explicit_targets.insert(part_name.clone());
                 }
-                batch_part_names.push(part_name);
+                batch_part_names.push(part_name.clone());
+                plan_map.insert(part_name, base.to_string());
             }
         }
 
-        transaction::install_parts_with_explicit_targets(
+        // Remove old parts from the same plans before installing new ones
+        let plans_in_batch: HashSet<String> = plan_map.values().cloned().collect();
+        for plan_name in &plans_in_batch {
+            let old_parts = db.get_parts_by_plan(plan_name).await?;
+            for old_part in old_parts {
+                if !batch_part_names.contains(&old_part.name) {
+                    tracing::info!("Removing old part {} from plan {}", old_part.name, plan_name);
+                    if let Err(e) = transaction::remove_part(&db, &old_part.name, ctx.root_dir, true,
+                    ).await {
+                        tracing::warn!("Failed to remove old part {}: {}", old_part.name, e);
+                    }
+                }
+            }
+        }
+
+        transaction::install_parts_with_explicit_targets_and_plan_map(
             &db,
             &parts,
             &explicit_targets,
@@ -484,6 +497,7 @@ async fn apply_targets(
             ctx.resolver,
             ctx.force,
             install_nodeps,
+            &plan_map,
         )
         .await
         .inspect_err(|_| {

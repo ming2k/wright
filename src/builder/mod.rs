@@ -373,51 +373,56 @@ impl Builder {
 
         let mut split_part_dirs = std::collections::HashMap::new();
         if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-            let mut sub_rules = Vec::new();
+            // Build rules only for non-catch-all outputs (those with explicit include patterns).
+            // The catch-all keeps whatever remains in output_dir — no move needed.
+            let mut sub_rules: Vec<(&str, PathBuf, Vec<regex::Regex>, Vec<regex::Regex>)> =
+                Vec::new();
             for (sub_name, sub_part) in parts {
-                if sub_name == &manifest.plan.name {
-                    continue;
-                }
+                let incs = match &sub_part.include {
+                    Some(v) => v,
+                    None => continue, // catch-all stays in output_dir
+                };
                 let sub_output_dir = build_root.join(format!("output-{}", sub_name));
                 tokio::fs::create_dir_all(&sub_output_dir)
                     .await
                     .map_err(|e| {
                         WrightError::BuildError(format!(
-                            "failed to create sub-part directory {}: {}",
+                            "failed to create output directory {}: {}",
                             sub_output_dir.display(),
                             e
                         ))
                     })?;
-                let mut includes = Vec::new();
-                if let Some(ref incs) = sub_part.include {
-                    for pat in incs {
-                        let re = regex::Regex::new(pat).map_err(|e| {
+                let includes = incs
+                    .iter()
+                    .map(|pat| {
+                        regex::Regex::new(pat).map_err(|e| {
                             WrightError::BuildError(format!(
                                 "invalid include regex '{}' for {}: {}",
                                 pat, sub_name, e
                             ))
-                        })?;
-                        includes.push(re);
-                    }
-                }
-                let mut excludes = Vec::new();
-                if let Some(ref excs) = sub_part.exclude {
-                    for pat in excs {
-                        let re = regex::Regex::new(pat).map_err(|e| {
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let excludes = sub_part
+                    .exclude
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|pat| {
+                        regex::Regex::new(pat).map_err(|e| {
                             WrightError::BuildError(format!(
                                 "invalid exclude regex '{}' for {}: {}",
                                 pat, sub_name, e
                             ))
-                        })?;
-                        excludes.push(re);
-                    }
-                }
-                sub_rules.push((sub_name, sub_output_dir.clone(), includes, excludes));
-                split_part_dirs.insert(sub_name.clone(), sub_output_dir);
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                split_part_dirs.insert(sub_name.clone(), sub_output_dir.clone());
+                sub_rules.push((sub_name.as_str(), sub_output_dir, includes, excludes));
             }
 
             if !sub_rules.is_empty() {
-                debug!("Running implicit fabricate splitting for sub-parts");
+                debug!("Splitting staging dir into {} non-catch-all outputs", sub_rules.len());
                 let mut all_entries = Vec::new();
                 let mut dirs_to_visit = vec![output_dir.clone()];
                 while let Some(dir) = dirs_to_visit.pop() {
@@ -441,12 +446,8 @@ impl Builder {
                     if let Ok(rel_path) = file_path.strip_prefix(&output_dir) {
                         let rel_str = format!("/{}", rel_path.display());
                         for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
-                            let mut matched = false;
-                            if !includes.is_empty() {
-                                if includes.iter().any(|re| re.is_match(&rel_str)) {
-                                    matched = true;
-                                }
-                            }
+                            // includes is guaranteed non-empty (catch-all not in sub_rules)
+                            let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
                             if matched && !excludes.is_empty() {
                                 if excludes.iter().any(|re| re.is_match(&rel_str)) {
                                     matched = false;

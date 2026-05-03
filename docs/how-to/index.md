@@ -22,6 +22,7 @@ Task-oriented guides for specific problems.
 - [Inspect dependency trees](inspect-dependency-tree.md)
 - [Maintain OS parts](maintain-os-parts.md)
 - [Perform recursive updates](perform-recursive-updates.md)
+- [Perform security updates](perform-security-updates.md)
 
 ## Troubleshooting
 

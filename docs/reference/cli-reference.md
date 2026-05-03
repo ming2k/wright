@@ -22,7 +22,6 @@ build-side and system-side workflows.
 - `wright sysupgrade`
  upgrades everything to the newest locally registered parts
 - `wright remove <PART...>`
-- `wright deps [PART]`
 - `wright list`
 - `wright query <PART>`
 - `wright search <KEYWORD>`
@@ -32,7 +31,13 @@ build-side and system-side workflows.
 - `wright doctor`
 - `wright history [PART]`
 - `wright assume <NAME> <VERSION>`
+  mark an external part as satisfied (useful for bootstrap)
+- `wright assume --file <FILE>`
+  bulk assume from a file with `name version` lines
+- `echo "name version" | wright assume`
+  pipe multiple parts to assume
 - `wright unassume <NAME>`
+  remove an assumed record
 - `wright mark <PART...> --as-dependency|--as-manual`
 
 ## Build commands
@@ -77,6 +82,7 @@ Useful `wright resolve` flags:
 - `--match [missing|outdated|installed|all]`
 - `--depth <N>`
 - `--tree`
+- `--installed`
 
 Useful `wright apply` flags:
 

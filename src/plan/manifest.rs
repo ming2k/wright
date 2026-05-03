@@ -69,7 +69,11 @@ pub struct SubFabricateOutput {
 #[derive(Debug, Clone)]
 pub enum OutputConfig {
     Single(FabricateOutput),
-    Multi(HashMap<String, SubFabricateOutput>),
+    /// Ordered list of outputs. Exactly one has `include = None` (the catch-all);
+    /// all others carry explicit `include` patterns. Non-catch-all outputs are
+    /// processed in declared order, moving matching files out of the staging dir.
+    /// The catch-all keeps whatever remains — no move needed.
+    Multi(Vec<(String, SubFabricateOutput)>),
 }
 
 // ---------------------------------------------------------------------------
@@ -401,17 +405,34 @@ impl PlanManifest {
         if let Some(ref part) = self.outputs {
             match part {
                 OutputConfig::Multi(ref parts) => {
+                    let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
+                    if catchall_count == 0 {
+                        return Err(WrightError::ValidationError(
+                            "multi-output plans must have exactly one catch-all output (an [output.<name>] with no 'include')".to_string(),
+                        ));
+                    }
+                    if catchall_count > 1 {
+                        return Err(WrightError::ValidationError(
+                            "multiple outputs have no 'include'; exactly one catch-all is allowed".to_string(),
+                        ));
+                    }
                     for (sub_name, sub_part) in parts {
                         if !name_re.is_match(sub_name) {
                             return Err(WrightError::ValidationError(format!(
-                                "invalid sub-part name '{}': must match [a-z0-9][a-z0-9_+.-]*",
+                                "invalid output name '{}': must match [a-z0-9][a-z0-9_+.-]*",
                                 sub_name
                             )));
                         }
-                        // Non-main sub-parts must have description
-                        if sub_name != &self.plan.name && sub_part.description.is_none() {
+                        if matches!(&sub_part.include, Some(v) if v.is_empty()) {
                             return Err(WrightError::ValidationError(format!(
-                                "sub-part '{}': description is required for non-main parts",
+                                "output '{}': include = [] is invalid; list patterns or omit include for the catch-all",
+                                sub_name
+                            )));
+                        }
+                        // Non-catch-all outputs must have a description
+                        if sub_part.include.is_some() && sub_part.description.is_none() {
+                            return Err(WrightError::ValidationError(format!(
+                                "output '{}': description is required for non-catch-all outputs",
                                 sub_name
                             )));
                         }
@@ -421,16 +442,14 @@ impl PlanManifest {
                         if let Some(ref rel) = sub_part.release {
                             if *rel == 0 {
                                 return Err(WrightError::ValidationError(format!(
-                                    "sub-part '{}': release must be >= 1",
+                                    "output '{}': release must be >= 1",
                                     sub_name
                                 )));
                             }
                         }
                     }
                 }
-                OutputConfig::Single(_) => {
-                    // Main output uses default isolation from lifecycle stages
-                }
+                OutputConfig::Single(_) => {}
             }
         }
 
@@ -503,22 +522,31 @@ impl PlanManifest {
         }
     }
 
-    /// Iterate over sub-parts (multi-part mode).
-    /// Returns an empty iterator for Single or None.
-    pub fn sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
+    /// Iterate over all outputs in declared order (multi-output mode only).
+    pub fn output_parts(&self) -> impl Iterator<Item = (&str, &SubFabricateOutput)> {
         match self.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
-                Box::new(parts.iter()) as Box<dyn Iterator<Item = _>>
+                Box::new(parts.iter().map(|(n, p)| (n.as_str(), p)))
+                    as Box<dyn Iterator<Item = _>>
             }
             _ => Box::new(std::iter::empty()),
         }
     }
 
-    /// Iterate over sub-parts that are not the main part (need their own script/PART_DIR).
-    pub fn extra_sub_parts(&self) -> impl Iterator<Item = (&String, &SubFabricateOutput)> {
-        let main_name = self.plan.name.clone();
-        self.sub_parts()
-            .filter(move |(name, _)| *name != &main_name)
+    /// Iterate over non-catch-all outputs (those with explicit `include` patterns).
+    pub fn non_catchall_parts(&self) -> impl Iterator<Item = (&str, &SubFabricateOutput)> {
+        self.output_parts().filter(|(_, p)| p.include.is_some())
+    }
+
+    /// Return the catch-all output (the one with no `include`), if in multi-output mode.
+    pub fn catchall_part(&self) -> Option<(&str, &SubFabricateOutput)> {
+        match self.outputs {
+            Some(OutputConfig::Multi(ref parts)) => parts
+                .iter()
+                .find(|(_, p)| p.include.is_none())
+                .map(|(n, p)| (n.as_str(), p)),
+            _ => None,
+        }
     }
 
     /// Get all dependencies (build, link, runtime) with their type labels.
@@ -768,33 +796,33 @@ description = "The GNU Compiler Collection"
 license = "GPL-3.0-or-later"
 arch = "x86_64"
 
+
 [lifecycle.compile]
 script = "make -j4"
 
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[output."libstdc++"]
-description = "GNU C++ standard library"
-script = """
-install -Dm755 libstdc++.so ${PART_DIR}/usr/lib/libstdc++.so
-"""
+[[output]]
+name = "gcc"
 
-[output."libstdc++".dependencies]
-runtime = ["libgcc"]
+[[output]]
+name = "libstdc++"
+description = "GNU C++ standard library"
+include = ["/usr/lib/libstdc.*"]
+dependencies = { runtime = ["libgcc"] }
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
                 assert_eq!(parts.len(), 2);
-                let libstdcpp = parts.get("libstdc++").unwrap();
+                let (_, libstdcpp) = parts.iter().find(|(n, _)| n == "libstdc++").unwrap();
                 assert_eq!(
                     libstdcpp.description.as_deref(),
                     Some("GNU C++ standard library")
                 );
                 assert_eq!(libstdcpp.dependencies.runtime, vec!["libgcc"]);
 
-                // Test to_manifest
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
                 assert_eq!(sub_manifest.plan.name, "libstdc++");
                 assert_eq!(sub_manifest.plan.version.as_deref(), Some("14.2.0"));
@@ -822,33 +850,33 @@ description = "High performance HTTP server"
 license = "BSD-2-Clause"
 arch = "x86_64"
 
+
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[output]
+[[output]]
+name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
 
-[output.nginx-doc]
+[[output]]
+name = "nginx-doc"
 description = "Nginx documentation files"
 provides = ["nginx-documentation"]
-script = "true"
+include = ["/usr/share/doc/.*"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        // Main output relations
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
 
         match manifest.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
-                // Main part carries the relations
-                let main = parts.get("nginx").unwrap();
+                let (_, main) = parts.iter().find(|(n, _)| n == "nginx").unwrap();
                 let main_manifest = main.to_manifest("nginx", &manifest);
                 assert_eq!(main_manifest.relations.conflicts, vec!["apache"]);
                 assert_eq!(main_manifest.relations.provides, vec!["http-server"]);
 
-                // Sub-part has its own relations
-                let doc = parts.get("nginx-doc").unwrap();
+                let (_, doc) = parts.iter().find(|(n, _)| n == "nginx-doc").unwrap();
                 let doc_manifest = doc.to_manifest("nginx-doc", &manifest);
                 assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
                 assert!(doc_manifest.relations.conflicts.is_empty());
@@ -867,19 +895,24 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
+
 [lifecycle.staging]
 script = "true"
 
-[output.test-doc]
+[[output]]
+name = "test"
+
+[[output]]
+name = "test-doc"
 description = "Documentation for test"
 version = "1.0.0-doc"
 arch = "any"
-script = "true"
+include = ["/usr/share/doc/.*"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
-                let doc = parts.get("test-doc").unwrap();
+                let (_, doc) = parts.iter().find(|(n, _)| n == "test-doc").unwrap();
                 let doc_manifest = doc.to_manifest("test-doc", &manifest);
                 assert_eq!(doc_manifest.plan.version.as_deref(), Some("1.0.0-doc"));
                 assert_eq!(doc_manifest.plan.arch, "any");
@@ -899,8 +932,13 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[output.test-lib]
-script = "true"
+
+[[output]]
+name = "test"
+
+[[output]]
+name = "test-lib"
+include = ["/usr/lib/.*"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("description is required"));
@@ -916,12 +954,143 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[output.BadName]
+
+[[output]]
+name = "test"
+
+[[output]]
+name = "BadName"
 description = "bad"
-script = "true"
+include = ["/usr/bin/.*"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("invalid sub-part name"));
+        assert!(err.to_string().contains("invalid output name"));
+    }
+
+    #[test]
+    fn test_multi_output_include_empty_error() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+
+[[output]]
+name = "test"
+
+[[output]]
+name = "test-lib"
+description = "test lib"
+include = []
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("include = []"));
+    }
+
+    #[test]
+    fn test_multi_output_no_catchall_error() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+
+[[output]]
+name = "test"
+include = ["/usr/bin/.*"]
+
+[[output]]
+name = "test-lib"
+description = "test lib"
+include = ["/usr/lib/.*"]
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("catch-all"));
+    }
+
+    #[test]
+    fn test_multi_output_multiple_catchall_error() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+
+[[output]]
+name = "test"
+
+[[output]]
+name = "test-lib"
+description = "test lib"
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("catch-all"));
+    }
+
+    #[test]
+    fn test_multi_output_single_section_error() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "test-lib"
+description = "test lib"
+include = ["/usr/lib/.*"]
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("at least two"));
+    }
+
+    #[test]
+    fn test_multi_output_order_preserved() {
+        let toml_str = r#"
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+
+[[output]]
+name = "gcc-libs"
+description = "GCC runtime libraries"
+include = ["/usr/lib/.*\\.so.*"]
+
+[[output]]
+name = "gcc-dev"
+description = "GCC development files"
+include = ["/usr/include/.*", "/usr/lib/.*\\.a"]
+
+[[output]]
+name = "gcc"
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                assert_eq!(parts.len(), 3);
+                assert_eq!(parts[0].0, "gcc-libs");
+                assert_eq!(parts[1].0, "gcc-dev");
+                assert_eq!(parts[2].0, "gcc");
+                // gcc is the catch-all
+                assert!(parts[2].1.include.is_none());
+            }
+            _ => panic!("expected Multi"),
+        }
     }
 
     #[test]
@@ -970,21 +1139,22 @@ description = "The GNU Compiler Collection"
 license = "GPL-3.0-or-later"
 arch = "x86_64"
 
+
 [lifecycle.staging]
 script = "make DESTDIR=${PART_DIR} install"
 
-[hooks]
-post_install = "ldconfig"
+[[output]]
+name = "gcc"
 
-[output."gcc-doc"]
+[[output]]
+name = "gcc-doc"
 description = "GCC documentation"
-script = "true"
+include = ["/usr/share/doc/.*"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
-                let main = parts.get("gcc").unwrap();
-                // Main part description is None — to_manifest will use parent's
+                let (_, main) = parts.iter().find(|(n, _)| n == "gcc").unwrap();
                 let main_manifest = main.to_manifest("gcc", &manifest);
                 assert_eq!(
                     main_manifest.plan.description,
@@ -1264,6 +1434,8 @@ arch = "x86_64"
 [hooks]
 pre_install = "echo preparing"
 post_install = "ldconfig"
+
+[output]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {

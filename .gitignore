@@ -13,9 +13,12 @@
 dev.toml
 wright.toml
 
+*.pyc
+
 # AI assistants
 .codex/
 .gemini/
 .kimi/
 .opencode/
-*.pyc
+CLAUDE.md
+AGENTS.md

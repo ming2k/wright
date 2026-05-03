@@ -82,8 +82,16 @@ cd ${WORKDIR}
 make DESTDIR=${PART_DIR} install
 install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
 """
+[[output]]
+name = "nginx"
+conflicts = ["apache"]
+provides = ["http-server"]
+backup = [
+    "/etc/nginx/nginx.conf",
+    "/etc/nginx/mime.types",
+]
 
-[hooks]
+[output.hooks]
 pre_install = """
 echo "Preparing nginx installation..."
 """
@@ -97,16 +105,9 @@ pre_remove = """
 systemctl stop nginx 2>/dev/null || true
 """
 
-[output]
-conflicts = ["apache"]
-provides = ["http-server"]
-backup = [
-    "/etc/nginx/nginx.conf",
-    "/etc/nginx/mime.types",
-]
-
-[output.nginx-doc]
+[[output]]
+name = "nginx-doc"
 description = "Nginx documentation files"
 include = [
-    "/usr/share/doc/.*"
+    "/usr/share/doc/.*",
 ]

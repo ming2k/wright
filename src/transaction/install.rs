@@ -24,6 +24,18 @@ pub async fn install_parts(
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
+    install_parts_with_plan_map(db, parts, root_dir, resolver, force, nodeps, &HashMap::new()).await
+}
+
+pub async fn install_parts_with_plan_map(
+    db: &InstalledDb,
+    parts: &[PathBuf],
+    root_dir: &Path,
+    resolver: &LocalResolver,
+    force: bool,
+    nodeps: bool,
+    plan_map: &HashMap<String, String>,
+) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
         .iter()
         .map(|path| resolver.read_part(path))
@@ -31,7 +43,7 @@ pub async fn install_parts(
         .into_iter()
         .map(|resolved| resolved.name)
         .collect();
-    install_parts_with_explicit_targets(
+    install_parts_with_explicit_targets_and_plan_map(
         db,
         parts,
         &explicit_targets,
@@ -39,6 +51,7 @@ pub async fn install_parts(
         resolver,
         force,
         nodeps,
+        plan_map,
     )
     .await
 }
@@ -51,6 +64,22 @@ pub async fn install_parts_with_explicit_targets(
     resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
+) -> Result<()> {
+    install_parts_with_explicit_targets_and_plan_map(
+        db, parts, explicit_targets, root_dir, resolver, force, nodeps, &HashMap::new(),
+    )
+    .await
+}
+
+pub async fn install_parts_with_explicit_targets_and_plan_map(
+    db: &InstalledDb,
+    parts: &[PathBuf],
+    explicit_targets: &HashSet<String>,
+    root_dir: &Path,
+    resolver: &LocalResolver,
+    force: bool,
+    nodeps: bool,
+    plan_map: &HashMap<String, String>,
 ) -> Result<()> {
     let mut resolved_map = HashMap::new();
     let mut targets = Vec::new();
@@ -167,9 +196,10 @@ pub async fn install_parts_with_explicit_targets(
         } else {
             Origin::Dependency
         };
+        let plan_name = plan_map.get(&name).map(|s| s.as_str());
         let part = resolved_map.get(&name).expect("resolved part exists");
-        info!("Installing part {} (origin: {})", name, origin);
-        install_part_with_origin(db, &part.path, root_dir, force, origin, true).await?;
+        info!("Installing part {} (origin: {}, plan: {})", name, origin, plan_name.unwrap_or("none"));
+        install_part_with_origin(db, &part.path, root_dir, force, origin, true, plan_name).await?;
     }
 
     Ok(())
@@ -181,7 +211,7 @@ pub async fn install_part(
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true).await
+    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true, None).await
 }
 
 pub async fn install_part_with_origin(
@@ -191,6 +221,7 @@ pub async fn install_part_with_origin(
     force: bool,
     origin: Origin,
     run_hooks: bool,
+    plan_name: Option<&str>,
 ) -> Result<()> {
     let overall_start = Instant::now();
 
@@ -394,6 +425,7 @@ pub async fn install_part_with_origin(
             part_hash: Some(part_hash.as_str()),
             install_scripts: hooks_content.as_deref(),
             origin,
+            plan_name,
         })
         .await?;
 

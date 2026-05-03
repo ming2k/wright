@@ -184,15 +184,16 @@ executor = "shell"
 isolation = "none"
 script = """
 install -Dm755 /bin/sh ${PART_DIR}/usr/bin/${NAME}-${VERSION}
-"""
-
-[output."split-vars-doc"]
-description = "doc output"
-isolation = "none"
-script = """
-test -f ${MAIN_PART_DIR}/usr/bin/${MAIN_PART_NAME}-${VERSION}
 install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
 """
+
+[[output]]
+name = "split-vars"
+
+[[output]]
+name = "split-vars-doc"
+description = "doc output"
+include = ["/usr/share/doc/.*"]
 "#,
     )
     .unwrap();
@@ -223,7 +224,7 @@ install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(result.split_part_dirs["split-vars-doc"]
-        .join("usr/share/doc/split-vars-doc")
+        .join("usr/share/doc/split-vars")
         .exists());
 }
 
@@ -244,9 +245,9 @@ async fn test_lint_nginx_fixture() {
     // Nginx uses output metadata on the main output plus an extra doc output.
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
-            assert!(parts.contains_key("nginx"));
-            assert!(parts.contains_key("nginx-doc"));
-            let main = parts.get("nginx").unwrap();
+            assert!(parts.iter().any(|(n, _)| n == "nginx"));
+            assert!(parts.iter().any(|(n, _)| n == "nginx-doc"));
+            let (_, main) = parts.iter().find(|(n, _)| n == "nginx").unwrap();
             assert!(main.hooks.is_some());
             assert!(main.backup.is_some());
         }

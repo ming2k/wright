@@ -201,8 +201,21 @@ Use `--force` to override this and rebuild regardless.
 
 The part is created from the staged root (`output/`) after the final
 output slicing phase and records the full part metadata (name, version,
-dependencies, file list) for the installer. Sub-parts each get their own
-part produced by their `script`.
+dependencies, file list) for the installer.
+
+#### Output slicing order
+
+When multi-output plans declare `[[output]]` entries:
+
+1. Non-catch-all outputs (those with explicit `include` patterns) are processed
+   in their declared order.
+2. For each output, files matching its `include` patterns are moved out of
+   `output/` into `output-<name>/`.
+3. The catch-all output (the one with no `include`) keeps whatever remains
+   in `output/`.
+
+Later outputs only see files not claimed by earlier outputs. Order matters
+when `include` patterns overlap.
 
 ## Flag Quick Reference
 

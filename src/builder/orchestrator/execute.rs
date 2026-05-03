@@ -380,20 +380,14 @@ async fn build_one(
         && opts.until_stage.is_none()
         && !opts.fetch_only
     {
-        let part_name = manifest.part_filename();
-        let existing = output_dir.join(&part_name);
-        let all_exist = existing.exists()
-            && match manifest.outputs {
-                Some(OutputConfig::Multi(ref parts)) => parts
-                    .iter()
-                    .filter(|(name, _)| *name != &manifest.plan.name)
-                    .all(|(sub_name, sub_part)| {
-                        let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                        output_dir.join(sub_manifest.part_filename()).exists()
-                    }),
-                _ => true,
-            };
-        if all_exist && existing.exists() {
+        let all_exist = match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => parts.iter().all(|(sub_name, sub_part)| {
+                let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                output_dir.join(sub_manifest.part_filename()).exists()
+            }),
+            _ => output_dir.join(manifest.part_filename()).exists(),
+        };
+        if all_exist {
             info!("{}", logging::plan_skipped_existing(&manifest.plan.name));
             return Ok(());
         }
@@ -450,39 +444,44 @@ async fn build_one(
 
     let has_fabricate_stage = manifest.outputs.is_some();
     let produces_output =
-        opts.until_stage.is_none() && (opts.stages.is_empty() || has_fabricate_stage); // Simplified for now
+        opts.until_stage.is_none() && (opts.stages.is_empty() || has_fabricate_stage);
     if produces_output && !opts.fetch_only {
-        if !manifest.options.skip_fhs_check {
-            fhs::validate(&result.output_dir, &manifest.plan.name)?;
-        }
-        let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
-        info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
-        if opts.print_parts {
-            println!("{}", part_path.display());
-        }
-        register_in_archive_db(&config.general.archive_db_path, &part_path).await;
-
-        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-            for (sub_name, sub_part) in parts {
-                if sub_name == &manifest.plan.name {
-                    continue;
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                for (sub_name, sub_part) in parts {
+                    let part_dir = if sub_part.include.is_none() {
+                        // catch-all: files remain in the staging dir
+                        &result.output_dir
+                    } else {
+                        result.split_part_dirs.get(sub_name).ok_or_else(|| {
+                            WrightError::BuildError(format!(
+                                "missing output dir for '{}'",
+                                sub_name
+                            ))
+                        })?
+                    };
+                    if !manifest.options.skip_fhs_check {
+                        fhs::validate(part_dir, sub_name)?;
+                    }
+                    let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                    let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir)?;
+                    info!("{}", logging::plan_packed(sub_name, &sub_part_path));
+                    if opts.print_parts {
+                        println!("{}", sub_part_path.display());
+                    }
+                    register_in_archive_db(&config.general.archive_db_path, &sub_part_path).await;
                 }
-                let sub_part_dir = result.split_part_dirs.get(sub_name).ok_or_else(|| {
-                    WrightError::BuildError(format!(
-                        "missing sub-part output_dir for '{}'",
-                        sub_name
-                    ))
-                })?;
+            }
+            _ => {
                 if !manifest.options.skip_fhs_check {
-                    fhs::validate(sub_part_dir, sub_name)?;
+                    fhs::validate(&result.output_dir, &manifest.plan.name)?;
                 }
-                let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                let sub_part_path = part::create_part(sub_part_dir, &sub_manifest, &output_dir)?;
-                info!("{}", logging::plan_packed(sub_name, &sub_part_path));
+                let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
+                info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
                 if opts.print_parts {
-                    println!("{}", sub_part_path.display());
+                    println!("{}", part_path.display());
                 }
-                register_in_archive_db(&config.general.archive_db_path, &sub_part_path).await;
+                register_in_archive_db(&config.general.archive_db_path, &part_path).await;
             }
         }
     }

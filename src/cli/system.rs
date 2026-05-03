@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand};
 
 const WRIGHT_AFTER_HELP: &str = "\
 Workflows:
@@ -8,7 +8,7 @@ Workflows:
   Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Apply an assembly:        wright apply @base
   Upgrade everything:       wright sysupgrade
-  Inspect dependencies:     wright deps zlib --reverse
+  Inspect dependencies:     wright resolve zlib --tree
   Change install reason:    wright mark zlib --as-dependency
 
 Use `wright build` to build parts from plans.";
@@ -34,16 +34,6 @@ Examples:
   wright remove zlib
   wright remove zlib --recursive
   wright remove zlib --cascade";
-const WRIGHT_DEPS_AFTER_HELP: &str = "\
-Examples:
-  wright deps zlib
-  wright deps zlib --reverse
-  wright deps --all --depth=2
-  wright deps zlib --prefix=depth
-
-This command reads installed dependency metadata from the local part database,
-which is populated from archive `.PARTINFO` metadata during install/upgrade.
-It does not inspect `plan.toml` files.";
 const WRIGHT_SYSUPGRADE_AFTER_HELP: &str = "\
 Examples:
   wright sysupgrade
@@ -93,13 +83,6 @@ const WRIGHT_HISTORY_AFTER_HELP: &str = "\
 Examples:
   wright history
   wright history zlib";
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub enum PrefixModeArg {
-    Indent,
-    Depth,
-    None,
-}
 
 #[derive(Parser)]
 #[command(
@@ -238,11 +221,11 @@ pub enum Commands {
     },
     /// Remove installed parts
     #[command(
-        long_about = "Remove installed parts by name.\n\nBy default, removal is blocked when another installed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
+        long_about = "Remove installed parts by name or plan.\n\nBy default, removal is blocked when another installed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
         after_help = WRIGHT_REMOVE_AFTER_HELP
     )]
     Remove {
-        /// Part names to remove
+        /// Part names to remove (or plan names when using --plan)
         #[arg(required = true, value_name = "PART")]
         parts: Vec<String>,
 
@@ -257,44 +240,14 @@ pub enum Commands {
         /// Also remove orphan dependencies (auto-installed deps no longer needed)
         #[arg(long, short = 'c')]
         cascade: bool,
-    },
-    /// Analyze installed part dependency relationships from the local part database
-    #[command(
-        long_about = "Analyze dependency relationships among installed parts.\n\nThis command reads the local installed-part database, which is populated from archive `.PARTINFO` metadata during install and upgrade. By default it shows forward dependencies. Use `--reverse` to see what depends on a part, or `--all` to inspect the whole installed graph. It does not read `plan.toml` files.",
-        after_help = WRIGHT_DEPS_AFTER_HELP
-    )]
-    Deps {
-        /// Part name
-        #[arg(value_name = "PART")]
-        part: Option<String>,
 
-        /// Show reverse dependencies (what depends on this part)
-        #[arg(long, short)]
-        reverse: bool,
-
-        /// Maximum depth to display (0 = unlimited)
-        #[arg(long, short, default_value = "0")]
-        depth: usize,
-
-        /// Filter output to only show matching part names
-        #[arg(long, short)]
-        filter: Option<String>,
-
-        /// Show dependency tree for all installed parts
-        #[arg(long, short)]
-        all: bool,
-
-        /// Output prefix style: indent (tree), depth (flat + depth number), none (bare names)
-        #[arg(long, value_enum, default_value_t = PrefixModeArg::Indent)]
-        prefix: PrefixModeArg,
-
-        /// Hide the subtree of the named part (can be repeated)
-        #[arg(long, action = ArgAction::Append)]
-        prune: Vec<String>,
+        /// Treat arguments as plan names and remove all parts from those plans
+        #[arg(long)]
+        plan: bool,
     },
     /// List installed parts
     #[command(
-        long_about = "List installed parts.\n\nUse filters to narrow the output to root parts, assumed external parts, or orphaned dependency installs.",
+        long_about = "List installed parts.\n\nUse filters to narrow the output to root parts, assumed external parts, orphaned dependency installs, or parts from a specific plan.",
         after_help = WRIGHT_LIST_AFTER_HELP
     )]
     List {
@@ -310,6 +263,9 @@ pub enum Commands {
         /// Show only orphan parts (auto-installed deps no longer needed)
         #[arg(long, short)]
         orphans: bool,
+        /// Show only parts from a specific plan
+        #[arg(long, short)]
+        plan: Option<String>,
     },
     /// Show detailed part information
     #[command(
@@ -363,15 +319,18 @@ pub enum Commands {
     Doctor,
     /// Mark a part as externally provided to satisfy dependency checks
     #[command(
-        long_about = "Mark a part as externally provided so dependency checks consider it satisfied.\n\nThis is useful when bootstrapping a system that already contains core parts not installed through `wright`.",
+        long_about = "Mark a part as externally provided so dependency checks consider it satisfied.\n\nPass a name and version as arguments, pipe 'name version' lines, or use --file for bulk bootstrap.",
         after_help = WRIGHT_ASSUME_AFTER_HELP
     )]
     Assume {
-        /// Part name
+        /// Part name (omit if piping or using --file)
         #[arg(value_name = "PART")]
-        name: String,
-        /// Part version
-        version: String,
+        name: Option<String>,
+        /// Part version (omit if piping or using --file)
+        version: Option<String>,
+        /// Read 'name version' pairs from a file (one per line)
+        #[arg(long, value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
     },
     /// Remove an assumed (externally provided) part record
     #[command(
@@ -409,11 +368,6 @@ pub enum Commands {
         #[arg(value_name = "PART")]
         part: Option<String>,
     },
-    /// Initialize or upgrade the local part database
-    #[command(
-        long_about = "Proactively initialize or upgrade the local part database schemas and run any pending migrations."
-    )]
-    SystemInit,
     /// Upgrade all installed parts to latest available versions
     #[command(
         long_about = "Upgrade all installed parts to the latest versions available in the local archive catalogue.\n\nUse `--dry-run` to preview the transaction without making any changes.",
