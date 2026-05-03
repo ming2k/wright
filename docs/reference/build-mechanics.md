@@ -16,12 +16,12 @@ when work is skipped or repeated.
 
 ### How the two layers relate
 
-- `build_dir/<name>-<version>/work/` decides whether Wright can reuse the previous unpacked source tree.
+- `build_dir/<name>-<version>/work/` (or `build_dir/<name>-noversion/work/` when `version` is omitted) decides whether Wright can reuse the previous unpacked source tree.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check whether `build_dir/<name>-<version>/work/` is reusable (build key match)
+1. Check whether `build_dir/<name>-<version>/work/` (or `build_dir/<name>-noversion/work/` when version is omitted) is reusable (build key match)
 2. If not reusable, fetch/extract from `source cache`
 
 ## Build Directory Layout
@@ -30,11 +30,13 @@ Each part gets its own working directory under `build_dir`
 (default `/var/tmp/wright/workshop`):
 
 ```
-<build_dir>/<name>-<version>/
+<build_dir>/<name>-<version>/¹
 ├── work/     # The source tree (mounted at /build in isolation)
 ├── output/   # Main output staging root ($PART_DIR / $MAIN_PART_DIR, mounted at /output)
 ├── logs/     # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
+
+¹ When `version` is omitted from `plan.toml`, the directory uses `<name>-noversion`.
 ```
 
 `work/` is the isolation's `/build` mount. `output/` is `/output`. By default,
@@ -49,9 +51,11 @@ If multiple outputs are defined in `plan.toml` (split-parts), additional
 staging directories are created:
 
 ```
-<build_dir>/<name>-<version>/
+<build_dir>/<name>-<version>/¹
 ├── output/          # Main part output
 ├── output-<name>/   # Sub-part output (e.g. output-dev)
+
+¹ Uses `<name>-noversion` when `version` is omitted.
 └── ...
 ```
 
@@ -183,7 +187,9 @@ After a successful build the part is packed into a part file and placed in
 └── ...
 ```
 
-part filename format: `<name>-<version>-<release>-<arch>.wright.tar.zst`
+part filename format:
+- With version: `<name>-<version>-<release>-<arch>.wright.tar.zst`
+- Without version: `<name>-<release>-<arch>.wright.tar.zst`
 
 ### Skip condition
 

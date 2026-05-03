@@ -35,7 +35,7 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 | Field     | Type   | Required | Default | Description            |
 |---------------|----------|----------|---------|------------------------------------|
 | `name`    | string  | yes   | —    | Part name             |
-| `version`   | string  | yes   | —    | Dependency version (free-form)    |
+| `version`   | string  | no    | —    | Part version (free-form). Omit for rolling/VCS builds with no static version.    |
 | `release`   | integer | yes   | —    | Build revision (must be >= 1)   |
 | `epoch`    | integer | no    | `0`   | Version epoch — overrides version comparison (see below) |
 | `description` | string  | yes   | —    | Short description (must not be empty) |
@@ -59,6 +59,18 @@ epoch = 1    # This will upgrade over any epoch=0 part, even "9999.0"
 ```
 
 Epoch defaults to `0` and is omitted from archive filenames and `.PARTINFO` when zero. When non-zero, the archive filename includes it: `name-epoch:version-release-arch.wright.tar.zst`.
+
+### Omitting `version`
+
+You may omit `version` entirely for rolling-release or VCS-driven builds where there is no meaningful static version string. When omitted:
+
+- The `version` field is absent from `.PARTINFO`.
+- Archive filenames omit the version segment: `name-release-arch.wright.tar.zst`.
+- The build directory uses a `noversion` suffix: `/var/tmp/wright/workshop/<name>-noversion/work`.
+- Dependency version constraints automatically treat the part as satisfying all constraints.
+- `wright list --long` displays `-` in place of the version.
+
+This makes the absence of a version an explicit signal: **this build has no clear static version**.
 
 ### `[dependencies]`
 
@@ -600,7 +612,7 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | Variable    | Description                |
 |-----------------|--------------------------------------------|
 | `${NAME}`  | Current output name from `name` / `[output.<name>]` |
-| `${VERSION}`| Version from `version`     |
+| `${VERSION}`| Version from `version` (absent if `version` is omitted)     |
 | `${RELEASE}`| Release number as a string         |
 | `${ARCH}`  | Target architecture            |
 | `${WORKDIR}`  | Extraction root directory         |
@@ -616,8 +628,10 @@ Wright uses standard variables to refer to build directories. When running insid
 
 | Variable    | Host value (Default) | Isolation value | Description |
 |-------------|----------------------|-----------------|-------------|
-| `${WORKDIR}` | `/var/tmp/wright/workshop/<name>-<version>/work` | `/build` | The root container for all sources. |
-| `${PART_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output` | `/output` | The installation target directory (DESTDIR). |
+| `${WORKDIR}` | `/var/tmp/wright/workshop/<name>-<version>/work`¹ | `/build` | The root container for all sources. |
+| `${PART_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output`¹ | `/output` | The installation target directory (DESTDIR). |
+
+¹ When `version` is omitted, the directory uses `<name>-noversion` instead of `<name>-<version>`.
 
 ### Path Mapping Note
 Inside the **isolation environment**, the filesystem is restricted:
@@ -1014,7 +1028,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 | Rule | Detail |
 |------|--------|
 | **name** | Must match `[a-z0-9][a-z0-9_+.-]*`, max 64 characters. Names containing `+` or `.` must be quoted in TOML table headers (e.g. `[output."libstdc++"]`). |
-| **version** | Any non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`) |
+| **version** | Optional. If present, must be a non-empty string containing alphanumeric characters (e.g. `1.25.3`, `6.5-20250809`, `2024a`). |
 | **release** | Must be >= 1 |
 | **epoch** | Must be >= 0 (default 0) |
 | **description** | Must not be empty |
@@ -1022,7 +1036,7 @@ Wright validates `plan.toml` on parse. A plan that fails validation cannot be bu
 | **arch** | Must not be empty |
 | **sha256** | Each `[[sources]]` entry has its own `sha256` (use `"SKIP"` for local paths and git sources) |
 
-The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst`. When `epoch` > 0, the filename includes it: `{name}-{epoch}:{version}-{release}-{arch}.wright.tar.zst`.
+The output archive is named `{name}-{version}-{release}-{arch}.wright.tar.zst` by default. When `version` is omitted, the archive is `{name}-{release}-{arch}.wright.tar.zst`. When `epoch` > 0, the filename includes it: `{name}-{epoch}:{version}-{release}-{arch}.wright.tar.zst` (or `{name}-{epoch}:{release}-{arch}.wright.tar.zst` if version is absent).
 
 ## Best Practices & Conventions
 
