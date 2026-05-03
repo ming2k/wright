@@ -25,23 +25,6 @@ impl SubFabricateOutput {
             files: files.clone(),
         });
 
-        // Runtime deps: output-level overrides plan-level.
-        let runtime = if self.runtime_deps.is_empty() {
-            parent.dependencies.runtime.clone()
-        } else {
-            self.runtime_deps.clone()
-        };
-        // Optional deps: output-level overrides plan-level.
-        let optional = if self.optional_deps.is_empty() {
-            parent.dependencies.optional.clone()
-        } else {
-            self.optional_deps.clone()
-        };
-
-        let mut deps = parent.dependencies.clone();
-        deps.runtime = runtime;
-        deps.optional = optional;
-
         PlanManifest {
             plan: PlanMetadata {
                 name: name.to_string(),
@@ -63,7 +46,9 @@ impl SubFabricateOutput {
                 url: parent.plan.url.clone(),
                 maintainer: parent.plan.maintainer.clone(),
             },
-            dependencies: deps,
+            build_deps: Vec::new(),
+            link_deps: Vec::new(),
+            runtime_deps: self.runtime_deps.clone(),
             relations: Relations {
                 replaces: self.replaces.clone(),
                 conflicts: self.conflicts.clone(),

@@ -10,7 +10,7 @@ use super::{
     BackupConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder, LifecycleStage,
     OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
-use super::{BuildOptions, Dependencies};
+use super::BuildOptions;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +18,9 @@ pub(super) struct RawManifest {
     #[serde(flatten)]
     pub plan: PlanMetadata,
     #[serde(default)]
-    pub dependencies: Dependencies,
+    pub build: Vec<String>,
+    #[serde(default)]
+    pub link: Vec<String>,
     #[serde(default)]
     pub sources: Option<toml::Value>,
     #[serde(default)]
@@ -27,8 +29,6 @@ pub(super) struct RawManifest {
     pub lifecycle: Option<HashMap<String, toml::Value>>,
     #[serde(default)]
     pub lifecycle_order: Option<LifecycleOrder>,
-    #[serde(default)]
-    pub mvp: Option<PhaseConfig>,
     /// Top-level [hooks] — only valid for single-output plans.
     #[serde(default)]
     pub hooks: Option<FabricateHooks>,
@@ -78,12 +78,6 @@ fn parse_output_section(
                         .to_string(),
                 ));
             }
-            if arr.len() < 2 {
-                return Err(WrightError::ParseError(
-                    "multi-output plans must declare at least two [[output]] entries".to_string(),
-                ));
-            }
-
             let mut parts: Vec<(String, super::SubFabricateOutput)> = Vec::new();
             for (i, entry) in arr.into_iter().enumerate() {
                 let mut table = match entry {
@@ -252,12 +246,12 @@ impl PlanManifest {
         let raw: RawManifest = toml::from_str(content)?;
         let RawManifest {
             plan,
-            dependencies,
+            build,
+            link,
             sources: raw_sources,
             options,
             lifecycle: raw_lifecycle,
             lifecycle_order,
-            mvp,
             hooks,
             output,
         } = raw;
@@ -316,15 +310,33 @@ impl PlanManifest {
             relations,
         } = output_section;
 
+        // Aggregate runtime deps from outputs so plan-level dependency
+        // resolution (e.g. `wright apply --deps`) sees them.
+        let mut runtime_deps = Vec::new();
+        if let Some(ref outputs) = outputs {
+            match outputs {
+                super::OutputConfig::Single(_) => {}
+                super::OutputConfig::Multi(parts) => {
+                    for (_, sub) in parts {
+                        runtime_deps.extend(sub.runtime_deps.iter().cloned());
+                    }
+                }
+            }
+        }
+        runtime_deps.sort();
+        runtime_deps.dedup();
+
         let manifest = PlanManifest {
             plan,
-            dependencies,
+            build_deps: build,
+            link_deps: link,
+            runtime_deps,
             relations,
             sources,
             options,
             lifecycle: lifecycle_stages,
             lifecycle_order,
-            mvp,
+            mvp: None,
             outputs,
             install_scripts,
             backup,
@@ -344,14 +356,6 @@ impl PlanManifest {
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");
             if mvp_path.exists() {
-                if manifest.mvp.is_some() {
-                    return Err(WrightError::ParseError(format!(
-                        "do not mix inline [mvp] in {} with sibling {}",
-                        path.display(),
-                        mvp_path.display()
-                    )));
-                }
-
                 let mvp_content = std::fs::read_to_string(&mvp_path).map_err(|e| {
                     WrightError::ParseError(format!("failed to read {}: {}", mvp_path.display(), e))
                 })?;

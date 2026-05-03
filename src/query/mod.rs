@@ -2,7 +2,7 @@
 
 use crate::error::{Result, WrightError};
 
-use crate::database::{DepType, InstalledDb};
+use crate::database::InstalledDb;
 
 use owo_colors::OwoColorize;
 
@@ -72,14 +72,6 @@ fn write_version_constraint(
         write!(out, " {}", format!("({})", c).green())
     } else {
         write!(out, " ({})", c)
-    }
-}
-
-fn write_link_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
-    if color {
-        write!(out, " {}", "[link]".blue())
-    } else {
-        write!(out, " [link]")
     }
 }
 
@@ -193,9 +185,6 @@ async fn write_dep_tree_inner(
             if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
-            if dep.dep_type == DepType::Link {
-                write_link_tag(out, opts.color)?;
-            }
             write_pruned_tag(out, opts.color)?;
             writeln!(out)?;
             continue;
@@ -212,9 +201,6 @@ async fn write_dep_tree_inner(
             write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
-            }
-            if dep.dep_type == DepType::Link {
-                write_link_tag(out, opts.color)?;
             }
             write_cycle_tag(out, opts.color)?;
             writeln!(out)?;
@@ -234,9 +220,6 @@ async fn write_dep_tree_inner(
             if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
             }
-            if dep.dep_type == DepType::Link {
-                write_link_tag(out, opts.color)?;
-            }
             if !installed {
                 write_not_installed(out, opts.color)?;
                 stats.not_installed += 1;
@@ -254,9 +237,6 @@ async fn write_dep_tree_inner(
             write_part_name(out, &dep.name, opts.color)?;
             if let Some(c) = &dep.version_constraint {
                 write_version_constraint(out, c, opts.color)?;
-            }
-            if dep.dep_type == DepType::Link {
-                write_link_tag(out, opts.color)?;
             }
             if !installed {
                 write_not_installed(out, opts.color)?;
@@ -378,18 +358,14 @@ async fn write_reverse_dep_tree_inner(
         dependents.iter().collect()
     };
 
-    for (i, (dep_name, dep_type)) in children.iter().enumerate() {
+    for (i, (dep_name, _dep_type)) in children.iter().enumerate() {
         let is_last_child = i == children.len() - 1;
-        let is_link = *dep_type == "link";
 
         // Check prune
         if opts.prune.iter().any(|p| p == dep_name) {
             stats.total += 1;
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, dep_name, opts.color)?;
-            if is_link {
-                write_link_tag(out, opts.color)?;
-            }
             write_pruned_tag(out, opts.color)?;
             writeln!(out)?;
             continue;
@@ -403,9 +379,6 @@ async fn write_reverse_dep_tree_inner(
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, dep_name, opts.color)?;
-            if is_link {
-                write_link_tag(out, opts.color)?;
-            }
             write_cycle_tag(out, opts.color)?;
             writeln!(out)?;
         } else if visited.contains(dep_name.as_str()) {
@@ -418,9 +391,6 @@ async fn write_reverse_dep_tree_inner(
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, dep_name, opts.color)?;
-            if is_link {
-                write_link_tag(out, opts.color)?;
-            }
             write_dup_tag(out, opts.color)?;
             writeln!(out)?;
         } else {
@@ -430,9 +400,6 @@ async fn write_reverse_dep_tree_inner(
             }
             write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
             write_part_name(out, dep_name, opts.color)?;
-            if is_link {
-                write_link_tag(out, opts.color)?;
-            }
             writeln!(out)?;
 
             visited.insert(dep_name.clone());

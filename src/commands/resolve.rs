@@ -127,14 +127,9 @@ async fn render_installed_list(args: &ResolveArgs, db_path: &Path) -> Result<()>
                 .await
                 .context("failed to get dependencies")?;
             for dep in deps {
-                if domain == DomainArg::All {
-                    println!("{}", dep.name);
-                } else if domain == DomainArg::Link && dep.dep_type == crate::database::DepType::Link
-                {
-                    println!("{}", dep.name);
-                } else if domain == DomainArg::Runtime
-                    && dep.dep_type == crate::database::DepType::Runtime
-                {
+                // Database only stores runtime dependencies.
+                // Build/link deps live in the plan table and are resolved at build time.
+                if matches!(domain, DomainArg::All | DomainArg::Runtime) {
                     println!("{}", dep.name);
                 }
             }
@@ -145,12 +140,9 @@ async fn render_installed_list(args: &ResolveArgs, db_path: &Path) -> Result<()>
                 .get_dependents(target)
                 .await
                 .context("failed to get dependents")?;
-            for (name, kind) in rdeps {
-                if domain == DomainArg::All {
-                    println!("{}", name);
-                } else if domain == DomainArg::Link && kind == "link" {
-                    println!("{}", name);
-                } else if domain == DomainArg::Runtime && kind == "runtime" {
+            for (name, _kind) in rdeps {
+                // Database only tracks runtime dependents.
+                if matches!(domain, DomainArg::All | DomainArg::Runtime) {
                     println!("{}", name);
                 }
             }

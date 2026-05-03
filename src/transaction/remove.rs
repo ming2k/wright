@@ -35,19 +35,7 @@ pub async fn remove_part_with_ignored_dependents(
     }
 
     if !dependents.is_empty() {
-        let mut link_dependents = Vec::new();
-        let mut other_dependents = Vec::new();
-
-        for (dep_name, dep_type) in &dependents {
-            if dep_type == "link" {
-                link_dependents.push(dep_name.clone());
-            } else {
-                other_dependents.push(dep_name.clone());
-            }
-        }
-
-        let all_deps_names: Vec<String> = dependents.iter().map(|(n, _)| n.clone()).collect();
-        let deps_str = all_deps_names.join(", ");
+        let deps_str: String = dependents.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", ");
 
         if force {
             warn!(
@@ -55,14 +43,6 @@ pub async fn remove_part_with_ignored_dependents(
                 name, deps_str
             );
         } else {
-            if !link_dependents.is_empty() {
-                return Err(WrightError::DependencyError(format!(
-                    "CRITICAL: Cannot remove '{}' because it is a LINK dependency of: {}. \
-                     Removing it will cause these parts to CRASH. Use --force to override.",
-                    name,
-                    link_dependents.join(", ")
-                )));
-            }
             return Err(WrightError::DependencyError(format!(
                 "cannot remove '{}': required by {}",
                 name, deps_str

@@ -463,11 +463,6 @@ pub async fn install_part_with_origin(
         db.insert_dependencies(part_id, &deps).await?;
     }
 
-    if !partinfo.optional_deps.is_empty() {
-        db.insert_optional_dependencies(part_id, &partinfo.optional_deps)
-            .await?;
-    }
-
     if !partinfo.provides.is_empty() {
         db.insert_provides(part_id, &partinfo.provides).await?;
     }

@@ -134,7 +134,7 @@ ERROR Deadlock detected or dependency missing from plan set:
 
 A circular dependency exists and Wright could not resolve it automatically.
 
-**Resolution:** Add an inline `[mvp.dependencies]` section or a sibling `mvp.toml` file to one of the parts in the cycle to declare an acyclic minimal dependency set for its first build pass. See [How to Handle Circular Dependencies](handle-circular-dependencies.md) for the full pattern.
+**Resolution:** Add a `mvp.toml` file next to one of the parts in the cycle to declare an acyclic minimal dependency set for its first build pass. See [How to Handle Circular Dependencies](handle-circular-dependencies.md) for the full pattern.
 
 To inspect which cycles exist without triggering a build:
 

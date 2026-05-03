@@ -28,7 +28,6 @@ pub struct PartInfo {
     pub conflicts: Vec<String>,
     pub provides: Vec<String>,
     pub backup_files: Vec<String>,
-    pub optional_deps: Vec<String>,
 }
 
 /// Files that should never be included in a part archive.
@@ -148,28 +147,16 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     let mut deps_toml = String::new();
-    if !manifest.dependencies.runtime.is_empty() || !manifest.dependencies.optional.is_empty() {
+    if !manifest.runtime_deps.is_empty() {
         deps_toml.push_str("\n[dependencies]\n");
-        if !manifest.dependencies.runtime.is_empty() {
-            deps_toml.push_str("runtime = [");
-            for (i, dep) in manifest.dependencies.runtime.iter().enumerate() {
-                if i > 0 {
-                    deps_toml.push_str(", ");
-                }
-                deps_toml.push_str(&format!("\"{}\"", dep));
+        deps_toml.push_str("runtime = [");
+        for (i, dep) in manifest.runtime_deps.iter().enumerate() {
+            if i > 0 {
+                deps_toml.push_str(", ");
             }
-            deps_toml.push_str("]\n");
+            deps_toml.push_str(&format!("\"{}\"", dep));
         }
-        if !manifest.dependencies.optional.is_empty() {
-            deps_toml.push_str("optional = [");
-            for (i, dep) in manifest.dependencies.optional.iter().enumerate() {
-                if i > 0 {
-                    deps_toml.push_str(", ");
-                }
-                deps_toml.push_str(&format!("\"{}\"", dep));
-            }
-            deps_toml.push_str("]\n");
-        }
+        deps_toml.push_str("]\n");
     }
 
     let mut relations_toml = String::new();
@@ -378,8 +365,6 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     struct PartInfoDeps {
         #[serde(default)]
         runtime: Vec<String>,
-        #[serde(default)]
-        optional: Vec<String>,
     }
 
     #[derive(serde::Deserialize, Default)]
@@ -401,9 +386,9 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     let parsed: PartInfoToml = toml::from_str(content)
         .map_err(|e| WrightError::PartError(format!("failed to parse .PARTINFO: {}", e)))?;
 
-    let (runtime_deps, optional_deps) = parsed
+    let runtime_deps = parsed
         .dependencies
-        .map(|d| (d.runtime, d.optional))
+        .map(|d| d.runtime)
         .unwrap_or_default();
 
     let relations = parsed.relations.unwrap_or_default();
@@ -423,7 +408,6 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         conflicts: relations.conflicts,
         provides: relations.provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
-        optional_deps,
     })
 }
 
@@ -432,7 +416,7 @@ mod tests {
     use super::parse_partinfo_str;
 
     #[test]
-    fn parse_partinfo_accepts_runtime_and_optional_dependencies() {
+    fn parse_partinfo_accepts_runtime_dependencies() {
         let info = parse_partinfo_str(
             r#"
 [part]
@@ -445,12 +429,10 @@ license = "MIT"
 
 [dependencies]
 runtime = ["bash"]
-optional = ["python"]
 "#,
         )
         .unwrap();
 
         assert_eq!(info.runtime_deps, vec!["bash"]);
-        assert_eq!(info.optional_deps, vec!["python"]);
     }
 }

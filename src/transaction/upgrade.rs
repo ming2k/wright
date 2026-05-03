@@ -369,8 +369,6 @@ pub async fn upgrade_part(
         });
     }
     db.replace_dependencies(updated_part.id, &deps).await?;
-    db.replace_optional_dependencies(updated_part.id, &partinfo.optional_deps)
-        .await?;
 
     self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 

@@ -5,7 +5,7 @@ use tracing::{debug, info};
 
 use crate::error::{Result, WrightError};
 use crate::part::version;
-use crate::plan::manifest::{PhaseDependencies, PlanManifest};
+use crate::plan::manifest::PlanManifest;
 
 #[derive(Debug)]
 pub(crate) struct PlanGraph {
@@ -31,27 +31,31 @@ pub(crate) fn collect_phase_deps(
     is_mvp: bool,
     all_plans: Option<&HashMap<String, PathBuf>>,
 ) -> Vec<String> {
-    let base = &manifest.dependencies;
-    let overrides: Option<&PhaseDependencies> = if is_mvp {
-        manifest.mvp.as_ref().and_then(|p| p.dependencies.as_ref())
+    let (build, link) = if is_mvp {
+        if let Some(ref mvp) = manifest.mvp {
+            (
+                if mvp.build.is_empty() {
+                    manifest.build_deps.clone()
+                } else {
+                    mvp.build.clone()
+                },
+                if mvp.link.is_empty() {
+                    manifest.link_deps.clone()
+                } else {
+                    mvp.link.clone()
+                },
+            )
+        } else {
+            (manifest.build_deps.clone(), manifest.link_deps.clone())
+        }
     } else {
-        None
+        (manifest.build_deps.clone(), manifest.link_deps.clone())
     };
-
-    let build = overrides
-        .and_then(|o| o.build.clone())
-        .unwrap_or_else(|| base.build.clone());
-    let runtime = overrides
-        .and_then(|o| o.runtime.clone())
-        .unwrap_or_else(|| base.runtime.clone());
-    let link = overrides
-        .and_then(|o| o.link.clone())
-        .unwrap_or_else(|| base.link.clone());
 
     let mut deps = Vec::new();
     let mut raw_deps = Vec::new();
     raw_deps.extend(build.clone());
-    raw_deps.extend(runtime);
+    raw_deps.extend(manifest.runtime_deps.clone());
     raw_deps.extend(link);
 
     for dep in &raw_deps {
@@ -90,7 +94,7 @@ pub(crate) fn collect_phase_deps(
                 }
                 if let Some(plan_path) = plans.get(&cur) {
                     if let Ok(dep_manifest) = PlanManifest::from_file(plan_path) {
-                        for rdep in &dep_manifest.dependencies.runtime {
+                        for rdep in &dep_manifest.runtime_deps {
                             let rdep_name = version::parse_dependency(rdep)
                                 .unwrap_or_else(|_| (rdep.clone(), None))
                                 .0;
@@ -123,11 +127,7 @@ pub(crate) fn cycle_candidates_for(cycle: &[String], graph: &PlanGraph) -> Vec<C
             Ok(m) => m,
             Err(_) => continue,
         };
-        let has_mvp = manifest
-            .mvp
-            .as_ref()
-            .and_then(|p| p.dependencies.as_ref())
-            .is_some();
+        let has_mvp = manifest.mvp.is_some();
         if !has_mvp {
             continue;
         }

@@ -72,57 +72,50 @@ You may omit `version` entirely for rolling-release or VCS-driven builds where t
 
 This makes the absence of a version an explicit signal: **this build has no clear static version**.
 
-### `[dependencies]` — Plan level (build and link)
+### Plan-Level Dependencies
 
-Plan-level dependencies drive the **build orchestrator** and `wright resolve`. They do not affect runtime installation checks.
-
-All fields default to empty lists if omitted.
+Plan-level dependencies affect **build planning** and `wright resolve`.
+Declare them as top-level fields in `plan.toml`:
 
 | Field    | Type              | Description             |
 |-------------|---------------------------------|--------------------------------------|
 | `build`   | list of strings         | Required only during build (e.g. gcc, cmake) |
 | `link`   | list of strings         | ABI-sensitive linked dependencies. Triggers rebuild on update. |
 
-#### `link` dependencies
-
-Use `link` for ABI-sensitive edges that should trigger rebuilds when the dependency changes. This is a `wright resolve` concept, not an install-time dependency.
-
 ```toml
-[dependencies]
-link = ["openssl >= 3.0"]
 build = ["gcc", "make"]
+link = ["openssl", "zlib"]
 ```
 
 Supported constraint operators: `>=`, `<=`, `>`, `<`, `=`.
 
-#### Runtime deps belong at the output level
+### Output-Level Dependencies
 
-For **single-output plans**, runtime dependencies are declared inside the `[output]` block (or at the plan level as a backward-compatible fallback).
-
-For **multi-output plans**, each `[[output]]` entry declares its own `runtime_deps`:
-
-```toml
-[[output]]
-name = "gcc"
-# gcc binary has no runtime deps
-
-[[output]]
-name = "libstdc++"
-runtime_deps = ["libgcc"]
-include = ["/usr/lib/libstdc.*"]
-```
-
-If an output does not declare `runtime_deps`, the system falls back to the plan-level `dependencies.runtime` (deprecated, will be removed in v4.0).
-
-#### Optional dependencies
-
-Optional dependencies are also output-level:
+**Runtime** dependencies are declared per-output, because they describe what a specific installed part needs at run time. Use `runtime_deps` directly inside each `[[output]]` entry:
 
 ```toml
 [[output]]
 name = "nginx"
-optional_deps = ["geoip", "nghttp2"]
+# This output needs openssl and zlib at run time
+runtime_deps = ["openssl", "zlib"]
+
+[[output]]
+name = "nginx-minimal"
+# This output only needs openssl
+runtime_deps = ["openssl"]
+include = ["/usr/sbin/nginx", "/etc/nginx/nginx.conf"]
+
+[[output]]
+name = "nginx-modules"
+# Modules need extra runtime deps
+runtime_deps = ["openssl", "zlib", "pcre2"]
+include = ["/usr/lib/nginx/modules/.*"]
 ```
+
+Rules:
+- `runtime_deps` is **output-level only** — there is no plan-level fallback.
+- Each output declares exactly what it needs. Outputs are independent; one output's deps do not affect another.
+- `build` and `link` are **plan-level only** — they drive the build orchestrator and have no meaning inside `[[output]]`.
 
 ### `[[sources]]`
 
@@ -282,35 +275,10 @@ Override the default pipeline order:
 stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 ```
 
-### `[mvp]` — MVP Phase Overrides
+### `mvp.toml` — MVP Phase Overrides
 
-The `[mvp]` section defines alternative dependencies and lifecycle scripts for the
-MVP build pass, which is used to break dependency cycles.
-
-```toml
-[mvp.dependencies]
-link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
-
-[mvp.lifecycle.configure]
-script = """
-meson setup build \
- --prefix=/usr \
- -Dpixbuf=disabled
-"""
-```
-
-MVP dependencies override the top-level `[dependencies]`. Any field omitted in
-`[mvp.dependencies]` falls back to the corresponding top-level list.
-
-Resolution order during the MVP pass:
-
-1. If `[mvp.lifecycle.<stage>]` exists, it is used.
-2. Otherwise, it falls back to `[lifecycle.<stage>]`.
-
-#### Recommended: `mvp.toml`
-
-For small plans, inline `[mvp]` is fine. When the MVP path becomes large or
-substantially different, prefer a sibling `mvp.toml` file:
+Place a `mvp.toml` file next to `plan.toml` to define alternative dependencies
+and lifecycle scripts for the MVP build pass, which breaks dependency cycles.
 
 ```text
 foo/
@@ -318,25 +286,32 @@ foo/
 └── mvp.toml
 ```
 
-`mvp.toml` is a **restricted overlay**. It accepts the same fields as the body
-of `[mvp]`, but without the wrapper:
+The syntax inside `mvp.toml` is identical to the top-level plan syntax — flat
+`build` and `link` fields plus `lifecycle`:
 
 ```toml
-[dependencies]
 build = ["binutils", "glibc"]
 
 [lifecycle.configure]
 script = "..."
 ```
 
+MVP `build` and `link` override the top-level `build` and `link` fields. Any
+field omitted in `mvp.toml` falls back to the corresponding top-level field.
+
+Resolution order during the MVP pass:
+
+1. If `[lifecycle.<stage>]` exists in `mvp.toml`, it is used.
+2. Otherwise, it falls back to `[lifecycle.<stage>]` in `plan.toml`.
+
 Allowed top-level fields in `mvp.toml`:
 
-- `dependencies`
+- `build`
+- `link`
 - `lifecycle`
 - `lifecycle_order`
 
-Do not duplicate part metadata, sources, outputs, or hooks there. Also do
-not mix inline `[mvp]` in `plan.toml` with a sibling `mvp.toml`; choose one.
+Do not duplicate part metadata, sources, outputs, or hooks there.
 
 ### `[hooks]` — Install / Upgrade / Remove Hooks
 
@@ -523,11 +498,11 @@ Wright resolves them automatically using a **two-pass build**:
 Define MVP-specific dependencies so the graph becomes acyclic:
 
 ```toml
-[mvp.dependencies]
+# mvp.toml
 link = ["freetype"] # omit harfbuzz in MVP
 ```
 
-Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[mvp.dependencies]` that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
+Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[mvp]` overrides that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
 
 The MVP phase can also be triggered **manually** without a cycle being present, using the `--mvp` flag:
 
@@ -535,7 +510,7 @@ The MVP phase can also be triggered **manually** without a cycle being present, 
 wright build freetype --mvp
 ```
 
-This builds using `[mvp.dependencies]` and sets the same `WRIGHT_BUILD_PHASE=mvp` environment variables as an automatic cycle-breaking pass. It is useful for testing that a plan's MVP configuration is correct before it is needed in a real cycle.
+This builds using `[mvp]` overrides and sets the same `WRIGHT_BUILD_PHASE=mvp` environment variables as an automatic cycle-breaking pass. It is useful for testing that a plan's MVP configuration is correct before it is needed in a real cycle.
 
 ### Phase environment variables
 
@@ -549,7 +524,7 @@ During the MVP pass, Wright injects these variables into every lifecycle stage:
 The plan script can still use these variables to disable the relevant feature:
 
 ```toml
-[mvp.dependencies]
+# mvp.toml
 link = ["freetype"]
 
 [lifecycle.configure]
@@ -563,21 +538,26 @@ cmake -B build \
 ### MVP lifecycle overrides (recommended)
 
 For complex parts, it is safer to provide **dedicated MVP scripts** instead of
-embedding conditionals. Wright supports a `[mvp.lifecycle]` section that overrides
-`[lifecycle]` **only during the MVP pass**.
+embedding conditionals. Place the override lifecycle stages inside `mvp.toml`;
+they are used **only during the MVP pass**.
+
+`plan.toml`:
 
 ```toml
-[mvp.dependencies]
-link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
-
 [lifecycle.configure]
 script = """
 meson setup build \
  --prefix=/usr \
  -Dpixbuf=enabled
 """
+```
 
-[mvp.lifecycle.configure]
+`mvp.toml`:
+
+```toml
+link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
+
+[lifecycle.configure]
 script = """
 meson setup build \
  --prefix=/usr \
@@ -588,8 +568,8 @@ meson setup build \
 
 Resolution order for the MVP pass:
 
-1. If `[mvp.lifecycle.<stage>]` exists, it is used.
-2. Otherwise, it falls back to `[lifecycle.<stage>]`.
+1. If `[lifecycle.<stage>]` exists in `mvp.toml`, it is used.
+2. Otherwise, it falls back to `[lifecycle.<stage>]` in `plan.toml`.
 
 This keeps the **MVP build** separate from the **full build**, and avoids
 fragile shell conditionals.
@@ -875,7 +855,6 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
 build = ["gcc"]
 
 [lifecycle.prepare]
@@ -909,10 +888,8 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Example Maintainer <maintainer@example.com>"
 
-[dependencies]
-runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 build = ["perl", "gcc", "make"]
-optional = ["geoip"]
+link = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -961,10 +938,17 @@ post_install = "useradd -r nginx 2>/dev/null || true"
 post_upgrade = "systemctl reload nginx 2>/dev/null || true"
 pre_remove = "systemctl stop nginx 2>/dev/null || true"
 
-[output]
+[[output]]
+name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
+runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+
+[[output]]
+name = "nginx-doc"
+description = "Nginx documentation files"
+include = ["/usr/share/doc/.*"]
 ```
 
 ### Multi-Output Mode
@@ -998,20 +982,18 @@ name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
 hooks.post_install = "ldconfig"
-dependencies.runtime = ["libgcc"]
+runtime_deps = ["libgcc"]
 ```
 
 Sub-parts inherit `version`, `release`, `arch`, and `license` from the
 parent manifest unless overridden. Each sub-part can have a `description`,
-`include`/`exclude` patterns, `hooks.*` fields, `backup`, and a
-`dependencies` table.
+`include`/`exclude` patterns, `hooks.*` fields, `backup`, and
+`runtime_deps`.
 
 During sub-part staging, the main part's output is mounted read-only at
 `/main-part` (and available via `${MAIN_PART_DIR}`).
 
-Sub-part dependencies use dotted keys (`dependencies.runtime`) or a sub-table
-(`[[output]].dependencies`) for parts that must be installed when this
-sub-part is installed independently.
+Sub-part dependencies are declared directly on the `[[output]]` entry:
 
 ```toml
 [lifecycle.staging]
@@ -1022,14 +1004,16 @@ description = "Development headers for libfoo"
 include = ["/usr/include/.*"]
 ```
 
-Sub-parts are independent archives — installing the parent does **not** automatically install its sub-parts. To create a meta-part that pulls in all sub-parts, list them as `runtime` dependencies on the parent:
+Sub-parts are independent archives — installing the parent does **not** automatically install its sub-parts. To create a meta-part that pulls in all sub-parts, add a parent output with `runtime_deps`:
 
 ```toml
 name = "linux-firmware"
 # ...
 
-[dependencies]
-runtime = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
+[[output]]
+name = "linux-firmware"
+# Meta-part that depends on all sub-parts
+runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
 [[output]]
 name = "linux-firmware-amd"
@@ -1037,7 +1021,7 @@ description = "AMD GPU/CPU firmware"
 include = ["/usr/lib/firmware/amdgpu/.*", "/usr/lib/firmware/radeon/.*"]
 ```
 
-In this pattern the parent part itself may contain no files — it exists only to group the sub-parts.
+In this pattern the parent output itself may contain no files — it exists only to group the sub-parts.
 
 For a `-doc` sub-part that overrides the architecture:
 

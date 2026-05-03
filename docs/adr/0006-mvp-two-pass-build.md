@@ -20,7 +20,7 @@ Use a two-pass build:
 1. **MVP pass**: Build the part with a reduced dependency set (no cyclic dep).
 2. **Full pass**: After the rest of the cycle is built, rebuild the part with all dependencies.
 
-Wright uses Tarjan's SCC algorithm to detect cycles. If a plan in the cycle has `[mvp.dependencies]` that remove at least one edge, the two-pass schedule is inserted automatically.
+Wright uses Tarjan's SCC algorithm to detect cycles. If a plan in the cycle has a sibling `mvp.toml` that removes at least one edge, the two-pass schedule is inserted automatically.
 
 ## Consequences
 

@@ -12,13 +12,12 @@ Wright uses three dependency types, each with a different purpose.
 `link` and `runtime` are allowed to overlap. If something is needed after installation, it must be listed in `runtime` even if it also appears in `link`.
 
 **Where Dependencies Come From**
-Dependencies are declared in `plan.toml`:
+Dependencies are declared in `plan.toml` at two levels:
 
-- `dependencies.build`
-- `dependencies.link`
-- `dependencies.runtime`
+- **Plan level**: `build` and `link` are top-level fields that drive the build orchestrator.
+- **Output level**: `runtime_deps` is declared inside each `[[output]]` entry. It describes what a specific installed part needs at run time.
 
-Only `runtime` and part relations are serialized into binary part metadata used by `wright install`. `link` remains a build-graph concept used by `wright resolve`.
+Only `runtime_deps` and part relations are serialized into binary part metadata used by `wright install`. `link` remains a build-graph concept used by `wright resolve`.
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
@@ -67,8 +66,8 @@ action label and its depth in the dependency graph:
 **Dependency Cycles and MVP Builds**
 If Wright detects a dependency cycle, it tries to resolve it in a user-friendly way.
 
-- If the part declares `mvp.dependencies` inline in `plan.toml` or via a
- sibling `mvp.toml`, Wright performs a two-pass build.
+- If the part declares `[mvp]` overrides via a sibling `mvp.toml`,
+  Wright performs a two-pass build.
 - The first pass is an **MVP build** (labeled `build:mvp` in the scheduling log).
  It excludes the dependencies listed in that MVP override.
 - The second pass is a full build, forced to rebuild even if a partial archive exists.

@@ -45,14 +45,10 @@ pub struct SubFabricateOutput {
     pub release: Option<u32>,
     pub arch: Option<String>,
     pub license: Option<String>,
-    /// Runtime dependencies for this specific output. Overrides the plan-level
-    /// `dependencies.runtime` when non-empty.
+    /// Runtime dependencies for this specific output. Recorded in the binary
+    /// part and enforced at install time.
     #[serde(default)]
     pub runtime_deps: Vec<String>,
-    /// Optional dependencies for this specific output. Overrides the plan-level
-    /// `dependencies.optional` when non-empty.
-    #[serde(default)]
-    pub optional_deps: Vec<String>,
     /// Parts that this output replaces (automatic uninstall on install).
     #[serde(default)]
     pub replaces: Vec<String>,
@@ -182,7 +178,13 @@ fn default_git_depth() -> Option<u32> {
 #[derive(Debug, Clone)]
 pub struct PlanManifest {
     pub plan: PlanMetadata,
-    pub dependencies: Dependencies,
+    /// Build dependencies — tools needed during compilation.
+    pub build_deps: Vec<String>,
+    /// Link dependencies — ABI-sensitive libraries that trigger reverse rebuilds.
+    pub link_deps: Vec<String>,
+    /// Runtime dependencies — libraries/tools required after installation.
+    /// Aggregated from all [[output]] entries at parse time.
+    pub runtime_deps: Vec<String>,
     pub relations: Relations,
     pub sources: Sources,
     pub options: BuildOptions,
@@ -213,27 +215,6 @@ pub struct PlanMetadata {
     pub maintainer: Option<String>,
 }
 
-/// Plan-level dependencies. All four kinds are declared at the plan level.
-///
-/// - `build`: tools needed during compilation (e.g. gcc, cmake)
-/// - `link`: ABI-sensitive libraries that trigger reverse rebuilds
-/// - `runtime`: libraries/tools required after installation
-/// - `optional`: optional runtime dependencies
-///
-/// For multi-output plans, each `[[output]]` may declare `runtime_deps` to
-/// override the plan-level `runtime` for that specific output.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct Dependencies {
-    #[serde(default)]
-    pub runtime: Vec<String>,
-    #[serde(default)]
-    pub build: Vec<String>,
-    #[serde(default)]
-    pub link: Vec<String>,
-    #[serde(default)]
-    pub optional: Vec<String>,
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct Sources {
@@ -317,24 +298,18 @@ pub struct LifecycleOrder {
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct PhaseConfig {
-    /// Phase-specific dependency overrides. Any field omitted falls back
-    /// to the top-level [dependencies].
+    /// Phase-specific build dependency overrides. Falls back to the top-level
+    /// `build` field when omitted.
     #[serde(default)]
-    pub dependencies: Option<PhaseDependencies>,
+    pub build: Vec<String>,
+    /// Phase-specific link dependency overrides. Falls back to the top-level
+    /// `link` field when omitted.
+    #[serde(default)]
+    pub link: Vec<String>,
     #[serde(default)]
     pub lifecycle: HashMap<String, LifecycleStage>,
     #[serde(default)]
     pub lifecycle_order: Option<LifecycleOrder>,
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct PhaseDependencies {
-    #[serde(default)]
-    pub runtime: Option<Vec<String>>,
-    #[serde(default)]
-    pub build: Option<Vec<String>>,
-    #[serde(default)]
-    pub link: Option<Vec<String>>,
 }
 
 impl PlanManifest {
@@ -472,12 +447,10 @@ impl PlanManifest {
             }
         }
 
-        // Validate dependencies: no empty strings, no duplicates
+        // Validate plan-level deps (build/link): no empty strings, no duplicates
         let dep_kinds = [
-            ("runtime", &self.dependencies.runtime),
-            ("build", &self.dependencies.build),
-            ("link", &self.dependencies.link),
-            ("optional", &self.dependencies.optional),
+            ("build", &self.build_deps),
+            ("link", &self.link_deps),
         ];
         for (kind, deps) in &dep_kinds {
             let mut seen = std::collections::HashSet::new();
@@ -485,13 +458,13 @@ impl PlanManifest {
                 let trimmed = dep.trim();
                 if trimmed.is_empty() {
                     return Err(WrightError::ValidationError(format!(
-                        "dependencies.{} contains an empty entry",
+                        "{} contains an empty entry",
                         kind
                     )));
                 }
                 if !seen.insert(trimmed) {
                     return Err(WrightError::ValidationError(format!(
-                        "dependencies.{} contains duplicate entry '{}'",
+                        "{} contains duplicate entry '{}'",
                         kind, trimmed
                     )));
                 }
@@ -558,17 +531,14 @@ impl PlanManifest {
         }
     }
 
-    /// Get all dependencies (build, link, runtime) with their type labels.
+    /// Get all plan-level dependencies (build, link) with their type labels.
     pub fn all_dependencies(&self) -> Vec<(String, String)> {
         let mut all = Vec::new();
-        for dep in &self.dependencies.build {
+        for dep in &self.build_deps {
             all.push((dep.clone(), "build".to_string()));
         }
-        for dep in &self.dependencies.link {
+        for dep in &self.link_deps {
             all.push((dep.clone(), "link".to_string()));
-        }
-        for dep in &self.dependencies.runtime {
-            all.push((dep.clone(), "runtime".to_string()));
         }
         all
     }
@@ -588,8 +558,6 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
-runtime = []
 build = ["gcc"]
 
 [lifecycle.prepare]
@@ -622,7 +590,7 @@ install -Dm755 hello ${PART_DIR}/usr/bin/hello
         assert_eq!(manifest.plan.release, 1);
         assert_eq!(manifest.plan.arch, "x86_64");
         assert_eq!(manifest.plan.epoch, 0);
-        assert_eq!(manifest.dependencies.build, vec!["gcc"]);
+        assert_eq!(manifest.build_deps, vec!["gcc"]);
         assert!(manifest.lifecycle.contains_key("prepare"));
         assert!(manifest.lifecycle.contains_key("compile"));
         assert!(manifest.lifecycle.contains_key("staging"));
@@ -640,10 +608,8 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test <test@test.com>"
 
-[dependencies]
-runtime = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 build = ["perl", "gcc", "make"]
-optional = ["geoip"]
+link = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -714,7 +680,7 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.name, "nginx");
         assert_eq!(manifest.plan.url.as_deref(), Some("https://nginx.org"));
-        assert_eq!(manifest.dependencies.runtime.len(), 3);
+        assert!(manifest.runtime_deps.is_empty());
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
         assert_eq!(manifest.sources.entries.len(), 2);
@@ -839,7 +805,7 @@ runtime_deps = ["libgcc"]
                 assert_eq!(sub_manifest.plan.arch, "x86_64");
                 assert_eq!(sub_manifest.plan.license, "GPL-3.0-or-later");
                 assert_eq!(sub_manifest.plan.description, "GNU C++ standard library");
-                assert_eq!(sub_manifest.dependencies.runtime, vec!["libgcc"]);
+                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc"]);
                 assert_eq!(
                     sub_manifest.part_filename(),
                     "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
@@ -1046,7 +1012,7 @@ description = "test lib"
     }
 
     #[test]
-    fn test_multi_output_single_section_error() {
+    fn test_single_output_with_output_section_ok() {
         let toml_str = r#"
 name = "test"
 version = "1.0.0"
@@ -1058,10 +1024,19 @@ arch = "x86_64"
 [[output]]
 name = "test-lib"
 description = "test lib"
-include = ["/usr/lib/.*"]
+runtime_deps = ["openssl"]
 "#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("at least two"));
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.plan.name, "test");
+        assert_eq!(manifest.runtime_deps, vec!["openssl"]);
+        match manifest.outputs {
+            Some(OutputConfig::Multi(parts)) => {
+                assert_eq!(parts.len(), 1);
+                assert_eq!(parts[0].0, "test-lib");
+                assert_eq!(parts[0].1.runtime_deps, vec!["openssl"]);
+            }
+            _ => panic!("expected Multi output config"),
+        }
     }
 
     #[test]
@@ -1175,37 +1150,6 @@ include = ["/usr/share/doc/.*"]
     }
 
     #[test]
-    fn test_parse_mvp_section() {
-        let toml_str = r#"
-name = "harfbuzz"
-version = "8.0.0"
-release = 1
-description = "Text shaping library"
-license = "MIT"
-arch = "x86_64"
-
-[dependencies]
-link = ["freetype", "cairo", "glib"]
-
-[mvp.dependencies]
-link = ["freetype"]
-
-[mvp.lifecycle.configure]
-script = "meson setup build -Dglib=disabled"
-"#;
-        let manifest = PlanManifest::parse(toml_str).unwrap();
-        let mvp = manifest.mvp.as_ref().unwrap();
-        let mvp_deps = mvp.dependencies.as_ref().unwrap();
-        assert_eq!(
-            mvp_deps.link.as_deref(),
-            Some(&["freetype".to_string()][..])
-        );
-        assert!(mvp.lifecycle.contains_key("configure"));
-        // Full deps unaffected
-        assert_eq!(manifest.dependencies.link.len(), 3);
-    }
-
-    #[test]
     fn test_from_file_loads_sibling_mvp_toml() {
         let dir = tempfile::tempdir().unwrap();
         let plan_path = dir.path().join("plan.toml");
@@ -1227,7 +1171,6 @@ arch = "x86_64"
         std::fs::write(
             &mvp_path,
             r#"
-[dependencies]
 build = ["gcc", "make"]
 
 [lifecycle.configure]
@@ -1238,51 +1181,13 @@ script = "echo mvp"
 
         let manifest = PlanManifest::from_file(&plan_path).unwrap();
         let mvp = manifest.mvp.as_ref().unwrap();
-        let deps = mvp.dependencies.as_ref().unwrap();
-        assert_eq!(
-            deps.build.as_deref(),
-            Some(&["gcc".to_string(), "make".to_string()][..])
-        );
+        assert_eq!(mvp.build, vec!["gcc", "make"]);
         assert_eq!(
             mvp.lifecycle
                 .get("configure")
                 .map(|stage| stage.script.as_str()),
             Some("echo mvp")
         );
-    }
-
-    #[test]
-    fn test_from_file_rejects_inline_mvp_and_sibling_mvp_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let plan_path = dir.path().join("plan.toml");
-        let mvp_path = dir.path().join("mvp.toml");
-
-        std::fs::write(
-            &plan_path,
-            r#"
-name = "test"
-version = "1.0.0"
-release = 1
-description = "test"
-license = "MIT"
-arch = "x86_64"
-
-[mvp.dependencies]
-build = ["gcc"]
-"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            &mvp_path,
-            r#"
-[dependencies]
-build = ["make"]
-"#,
-        )
-        .unwrap();
-
-        assert!(PlanManifest::from_file(&plan_path).is_err());
     }
 
     #[test]
@@ -1296,8 +1201,8 @@ license = "MIT"
 arch = "x86_64"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert!(manifest.dependencies.runtime.is_empty());
-        assert!(manifest.dependencies.build.is_empty());
+        assert!(manifest.runtime_deps.is_empty());
+        assert!(manifest.build_deps.is_empty());
         assert!(manifest.sources.entries.is_empty());
         assert!(manifest.lifecycle.is_empty());
         assert!(manifest.install_scripts.is_none());

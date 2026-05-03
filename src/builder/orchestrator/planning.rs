@@ -43,13 +43,13 @@ pub(super) async fn expand_missing_dependencies(
 
         let mut deps_to_check = Vec::new();
         if matches!(domain, DependentsMode::All | DependentsMode::Build) {
-            deps_to_check.extend(manifest.dependencies.build.iter());
+            deps_to_check.extend(manifest.build_deps.iter());
         }
         if matches!(domain, DependentsMode::All | DependentsMode::Link) {
-            deps_to_check.extend(manifest.dependencies.link.iter());
+            deps_to_check.extend(manifest.link_deps.iter());
         }
         if matches!(domain, DependentsMode::All | DependentsMode::Runtime) {
-            deps_to_check.extend(manifest.dependencies.runtime.iter());
+            deps_to_check.extend(manifest.runtime_deps.iter());
         }
 
         for dep in deps_to_check {
@@ -90,7 +90,7 @@ pub(super) async fn expand_missing_dependencies(
         if !policies.contains(&MatchPolicy::All)
             && matches!(domain, DependentsMode::All | DependentsMode::Build)
         {
-            for build_dep in &manifest.dependencies.build {
+            for build_dep in &manifest.build_deps {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
                     .0;
@@ -113,7 +113,7 @@ pub(super) async fn expand_missing_dependencies(
                         Err(_) => continue,
                     };
 
-                    for rdep in &cur_manifest.dependencies.runtime {
+                    for rdep in &cur_manifest.runtime_deps {
                         let rdep_name = version::parse_dependency(rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
@@ -348,32 +348,29 @@ pub(super) async fn expand_rebuild_deps(
     for (plan_name, plan_path) in all_plans {
         if let Ok(m) = PlanManifest::from_file(plan_path) {
             let r_deps: Vec<String> = m
-                .dependencies
-                .runtime
+                .runtime_deps
                 .iter()
                 .map(|d| {
                     version::parse_dependency(d)
-                        .unwrap_or_else(|_| (d.clone(), None))
+                        .unwrap_or_else(|_| (d.to_string(), None))
                         .0
                 })
                 .collect();
             let b_deps: Vec<String> = m
-                .dependencies
-                .build
+                .build_deps
                 .iter()
                 .map(|d| {
                     version::parse_dependency(d)
-                        .unwrap_or_else(|_| (d.clone(), None))
+                        .unwrap_or_else(|_| (d.to_string(), None))
                         .0
                 })
                 .collect();
             let l_deps: Vec<String> = m
-                .dependencies
-                .link
+                .link_deps
                 .iter()
                 .map(|d| {
                     version::parse_dependency(d)
-                        .unwrap_or_else(|_| (d.clone(), None))
+                        .unwrap_or_else(|_| (d.to_string(), None))
                         .0
                 })
                 .collect();

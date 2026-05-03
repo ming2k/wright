@@ -80,16 +80,12 @@ impl TryFrom<&str> for Origin {
 #[sqlx(rename_all = "lowercase")]
 pub enum DepType {
     Runtime,
-    Link,
-    Build,
 }
 
 impl DepType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Runtime => "runtime",
-            Self::Link => "link",
-            Self::Build => "build",
         }
     }
 }
@@ -100,8 +96,6 @@ impl TryFrom<&str> for DepType {
     fn try_from(s: &str) -> Result<Self> {
         match s {
             "runtime" => Ok(Self::Runtime),
-            "link" => Ok(Self::Link),
-            "build" => Ok(Self::Build),
             _ => Err(WrightError::DatabaseError(format!(
                 "unknown dep type: {}",
                 s

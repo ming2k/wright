@@ -170,52 +170,6 @@ impl InstalledDb {
         Ok(result)
     }
 
-    pub async fn insert_optional_dependencies(&self, part_id: i64, deps: &[String]) -> Result<()> {
-        for name in deps {
-            query("INSERT INTO optional_dependencies (part_id, name) VALUES (?, ?)")
-                .bind(part_id)
-                .bind(name)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to insert optional dep: {}", e))
-                })?;
-        }
-        Ok(())
-    }
-
-    pub async fn replace_optional_dependencies(&self, part_id: i64, deps: &[String]) -> Result<()> {
-        query("DELETE FROM optional_dependencies WHERE part_id = ?")
-            .bind(part_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to delete old optional deps: {}", e))
-            })?;
-
-        self.insert_optional_dependencies(part_id, deps).await
-    }
-
-    pub async fn get_optional_dependencies(&self, part_id: i64) -> Result<Vec<String>> {
-        let rows = query("SELECT name FROM optional_dependencies WHERE part_id = ? ORDER BY name")
-            .bind(part_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get optional deps: {}", e))
-            })?;
-
-        let mut result = Vec::new();
-        for row in rows {
-            use sqlx::Row;
-            result.push(
-                row.try_get(0)
-                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
-            );
-        }
-        Ok(result)
-    }
-
     pub async fn insert_provides(&self, part_id: i64, names: &[String]) -> Result<()> {
         for name in names {
             query("INSERT INTO provides (part_id, name) VALUES (?, ?)")

@@ -37,7 +37,6 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
 build = ["gcc"]
 
 [lifecycle.prepare]

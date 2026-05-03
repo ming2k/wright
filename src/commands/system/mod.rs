@@ -324,16 +324,6 @@ pub async fn execute(
                     if let Some(ref hash) = info.part_hash {
                         println!("Part Hash   : {}", hash);
                     }
-                    let opt_deps = db
-                        .get_optional_dependencies(info.id)
-                        .await
-                        .context("failed to get optional dependencies")?;
-                    if !opt_deps.is_empty() {
-                        println!("Optional    :");
-                        for name in &opt_deps {
-                            println!("  {}", name);
-                        }
-                    }
                 }
                 None => {
                     eprintln!("part '{}' is not installed", part);

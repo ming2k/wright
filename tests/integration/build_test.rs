@@ -113,9 +113,12 @@ description = "test part"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
-runtime = ["openssl", "zlib"]
+build = []
 link = ["zlib", "libffi"]
+
+[[output]]
+name = "runtime-link-overlap"
+runtime_deps = ["openssl", "zlib"]
 
 [lifecycle.staging]
 executor = "shell"
@@ -175,9 +178,8 @@ description = "test canonical plan variables"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
-runtime = []
 build = []
+link = []
 
 [lifecycle.staging]
 executor = "shell"
@@ -241,7 +243,6 @@ async fn test_lint_nginx_fixture() {
     let manifest_path = fixture_path("nginx").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
     assert_eq!(manifest.plan.name, "nginx");
-    assert_eq!(manifest.dependencies.runtime.len(), 3);
     // Nginx uses output metadata on the main output plus an extra doc output.
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
@@ -250,6 +251,7 @@ async fn test_lint_nginx_fixture() {
             let (_, main) = parts.iter().find(|(n, _)| n == "nginx").unwrap();
             assert!(main.hooks.is_some());
             assert!(main.backup.is_some());
+            assert_eq!(main.runtime_deps.len(), 3);
         }
         _ => panic!("expected Multi output config for nginx"),
     }
@@ -371,9 +373,8 @@ description = "verify stdout/stderr split for --print-parts"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
-runtime = []
 build = []
+link = []
 
 [lifecycle.staging]
 executor = "shell"
@@ -489,9 +490,8 @@ description = "verify --until-stage"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
-runtime = []
 build = []
+link = []
 
 [lifecycle.prepare]
 executor = "shell"
@@ -643,8 +643,8 @@ description = "main"
 license = "MIT"
 arch = "x86_64"
 
-[dependencies]
 build = ["resume-dep"]
+link = []
 
 [lifecycle.staging]
 executor = "shell"

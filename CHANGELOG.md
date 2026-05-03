@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.2] - 2026-05-04
+
+### Changed
+- **Flat dependency model**: `build` and `link` are now top-level fields in `plan.toml`. The `[dependencies]` section is removed entirely. `runtime_deps` is output-level only. Optional dependencies removed entirely.
+- **Removed `optional_dependencies` table**: the database no longer tracks optional dependencies.
+- **Documentation updates**: ADRs and all dependency-related documentation updated to reflect the flat model.
+- **Code cleanup**: removed `Dependencies`, `PhaseDependencies`, and `OutputDependencies` structs; simplified manifest parsing and dependency collection across the codebase.
+
 ## [3.1.1] - 2026-05-03
 
 ### Changed
