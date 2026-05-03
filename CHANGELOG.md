@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1] - 2026-05-03
+
+### Changed
+- **Multi-output plan syntax migration**: all multi-output plans in `/var/lib/wright/plans` migrated from `[output.xxx]` inline tables to `[[output]]` array-of-tables with explicit `name` fields.
+- **Dependency separation in real plans**: `dbus`, `gcc`, `llvm`, `rust` plans updated to use output-level `runtime_deps` instead of plan-level `dependencies.runtime`.
+- **Plan-level link consolidation**: `link` dependencies from individual outputs merged into the plan-level `[dependencies]` section.
+
 ## [3.1.0] - 2026-05-03
 
 ### Added
