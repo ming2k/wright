@@ -79,7 +79,7 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
     resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
-    plan_map: &HashMap<String, String>,
+    _plan_map: &HashMap<String, String>,
 ) -> Result<()> {
     let mut resolved_map = HashMap::new();
     let mut targets = Vec::new();
@@ -116,23 +116,29 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
 
                 let (dep_name, constraint) =
                     version::parse_dependency(dep).unwrap_or_else(|_| (dep.to_string(), None));
+                let (dep_plan_name, dep_output_name) = version::parse_dep_ref(&dep_name);
+                let output_name = if dep_output_name == dep_plan_name {
+                    &dep_plan_name
+                } else {
+                    &dep_output_name
+                };
 
                 #[allow(clippy::map_entry)]
-                if !resolved_map.contains_key(&dep_name) {
-                    if let Some(installed) = db.get_part(&dep_name).await? {
+                if !resolved_map.contains_key(output_name) {
+                    if let Some(installed) = db.get_part(output_name).await? {
                         if let Some(ref c) = constraint {
                             if let Ok(installed_ver) = Version::parse(&installed.version) {
                                 if !c.satisfies(&installed_ver) {
                                     let ver_display = if installed.version.is_empty() { "(no version)".to_string() } else { installed.version.clone() };
                                     return Err(WrightError::DependencyError(format!(
                                         "installed {} {} does not satisfy constraint {}",
-                                        dep_name, ver_display, c
+                                        output_name, ver_display, c
                                     )));
                                 }
                             } else if !installed.version.is_empty() {
                                 return Err(WrightError::DependencyError(format!(
                                     "installed {} {} does not satisfy constraint {}",
-                                    dep_name, installed.version, c
+                                    output_name, installed.version, c
                                 )));
                             }
                             // Empty version always satisfies constraints
@@ -140,21 +146,21 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
                         continue;
                     }
 
-                    if !db.find_providers(&dep_name).await?.is_empty() {
+                    if !db.find_providers(output_name).await?.is_empty() {
                         continue;
                     }
 
-                    if let Some(resolved) = resolver.resolve(&dep_name).await? {
-                        queue.push(dep_name.clone());
-                        resolved_map.insert(dep_name, resolved);
+                    if let Some(resolved) = resolver.resolve(output_name).await? {
+                        queue.push(output_name.to_string());
+                        resolved_map.insert(output_name.to_string(), resolved);
                     } else {
                         return Err(WrightError::DependencyError(format!(
                             "could not resolve dependency '{}' required by '{}'",
-                            dep_name, name
+                            output_name, name
                         )));
                     }
                 } else {
-                    queue.push(dep_name);
+                    queue.push(output_name.to_string());
                 }
             }
             processed.insert(name);
@@ -196,10 +202,9 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
         } else {
             Origin::Dependency
         };
-        let plan_name = plan_map.get(&name).map(|s| s.as_str());
         let part = resolved_map.get(&name).expect("resolved part exists");
-        info!("Installing part {} (origin: {}, plan: {})", name, origin, plan_name.unwrap_or("none"));
-        install_part_with_origin(db, &part.path, root_dir, force, origin, true, plan_name).await?;
+        info!("Installing part {} (origin: {})", name, origin);
+        install_part_with_origin(db, &part.path, root_dir, force, origin, true).await?;
     }
 
     Ok(())
@@ -211,7 +216,7 @@ pub async fn install_part(
     root_dir: &Path,
     force: bool,
 ) -> Result<()> {
-    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true, None).await
+    install_part_with_origin(db, part_path, root_dir, force, Origin::Manual, true).await
 }
 
 pub async fn install_part_with_origin(
@@ -221,7 +226,6 @@ pub async fn install_part_with_origin(
     force: bool,
     origin: Origin,
     run_hooks: bool,
-    plan_name: Option<&str>,
 ) -> Result<()> {
     let overall_start = Instant::now();
 
@@ -411,9 +415,11 @@ pub async fn install_part_with_origin(
     );
 
     phase_start = Instant::now();
+    let plan_id = db.ensure_plan_registered(&partinfo).await?;
     let part_id = db
         .insert_part(NewPart {
             name: &partinfo.name,
+            plan_id,
             version: &partinfo.version,
             release: partinfo.release,
             epoch: partinfo.epoch,
@@ -425,8 +431,6 @@ pub async fn install_part_with_origin(
             part_hash: Some(part_hash.as_str()),
             install_scripts: hooks_content.as_deref(),
             origin,
-            plan_name,
-            plan_id: None,
         })
         .await?;
 
@@ -497,17 +501,13 @@ pub async fn install_part_with_origin(
         }
     }
 
-    rollback_state.commit();
-
-    log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
-    let ver_rel = if partinfo.version.is_empty() {
-        format!("{}", partinfo.release)
-    } else {
-        format!("{}-{}", partinfo.version, partinfo.release)
-    };
-    info!(
-        "Installed {}: {}",
-        partinfo.name, ver_rel
+    log_debug_timing(
+        "install",
+        &partinfo.name,
+        "total",
+        overall_start.elapsed(),
     );
+
     Ok(())
 }
+

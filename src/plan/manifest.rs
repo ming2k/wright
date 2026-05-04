@@ -179,7 +179,8 @@ fn default_git_depth() -> Option<u32> {
 #[derive(Debug, Clone)]
 pub struct PlanManifest {
     pub plan: PlanMetadata,
-    /// Build dependencies — tools needed during compilation.
+    /// Build dependencies — outputs that must be built and mounted into the
+    /// isolation environment.
     pub build_deps: Vec<String>,
     /// Link dependencies — ABI-sensitive libraries that trigger reverse rebuilds.
     pub link_deps: Vec<String>,
@@ -197,6 +198,9 @@ pub struct PlanManifest {
     /// Derived archive metadata populated from `fabricate`.
     pub install_scripts: Option<InstallScripts>,
     pub backup: Option<BackupConfig>,
+    /// For sub-outputs, the original plan name. Used to write plan-level
+    /// metadata into the pack archive.
+    pub source_plan: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -300,13 +304,13 @@ pub struct LifecycleOrder {
 #[serde(deny_unknown_fields)]
 pub struct PhaseConfig {
     /// Phase-specific build dependency overrides. Falls back to the top-level
-    /// `build` field when omitted.
+    /// `build_deps` field when omitted.
     #[serde(default)]
-    pub build: Vec<String>,
+    pub build_deps: Vec<String>,
     /// Phase-specific link dependency overrides. Falls back to the top-level
-    /// `link` field when omitted.
+    /// `link_deps` field when omitted.
     #[serde(default)]
-    pub link: Vec<String>,
+    pub link_deps: Vec<String>,
     #[serde(default)]
     pub lifecycle: HashMap<String, LifecycleStage>,
     #[serde(default)]
@@ -443,10 +447,11 @@ impl PlanManifest {
             }
         }
 
-        // Validate plan-level deps (build/link): no empty strings, no duplicates
+        // Validate deps: plan:output syntax, no empty strings, no duplicates
         let dep_kinds = [
-            ("build", &self.build_deps),
-            ("link", &self.link_deps),
+            ("build_deps", &self.build_deps),
+            ("link_deps", &self.link_deps),
+            ("runtime_deps", &self.runtime_deps),
         ];
         for (kind, deps) in &dep_kinds {
             let mut seen = std::collections::HashSet::new();
@@ -456,6 +461,12 @@ impl PlanManifest {
                     return Err(WrightError::ValidationError(format!(
                         "{} contains an empty entry",
                         kind
+                    )));
+                }
+                if !trimmed.contains(':') {
+                    return Err(WrightError::ValidationError(format!(
+                        "{} entry '{}' must use 'plan:output' syntax",
+                        kind, trimmed
                     )));
                 }
                 if !seen.insert(trimmed) {
@@ -554,8 +565,6 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-build = ["gcc"]
-
 [lifecycle.prepare]
 executor = "shell"
 isolation = "none"
@@ -586,7 +595,6 @@ install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
         assert_eq!(manifest.plan.release, 1);
         assert_eq!(manifest.plan.arch, "x86_64");
         assert_eq!(manifest.plan.epoch, 0);
-        assert_eq!(manifest.build_deps, vec!["gcc"]);
         assert!(manifest.lifecycle.contains_key("prepare"));
         assert!(manifest.lifecycle.contains_key("compile"));
         assert!(manifest.lifecycle.contains_key("staging"));
@@ -604,8 +612,7 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test <test@test.com>"
 
-build = ["perl", "gcc", "make"]
-link = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
+link_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -781,7 +788,7 @@ name = "gcc"
 name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
-runtime_deps = ["libgcc"]
+runtime_deps = ["libgcc:default"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -792,7 +799,7 @@ runtime_deps = ["libgcc"]
                     libstdcpp.description.as_deref(),
                     Some("GNU C++ standard library")
                 );
-                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc"]);
+                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc:default"]);
 
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
                 assert_eq!(sub_manifest.plan.name, "libstdc++");
@@ -801,7 +808,7 @@ runtime_deps = ["libgcc"]
                 assert_eq!(sub_manifest.plan.arch, "x86_64");
                 assert_eq!(sub_manifest.plan.license, "GPL-3.0-or-later");
                 assert_eq!(sub_manifest.plan.description, "GNU C++ standard library");
-                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc"]);
+                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc:default"]);
                 assert_eq!(
                     sub_manifest.part_filename(),
                     "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
@@ -1028,16 +1035,16 @@ arch = "x86_64"
 [[output]]
 name = "test-lib"
 description = "test lib"
-runtime_deps = ["openssl"]
+runtime_deps = ["openssl:default"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.plan.name, "test");
-        assert_eq!(manifest.runtime_deps, vec!["openssl"]);
+        assert_eq!(manifest.runtime_deps, vec!["openssl:default"]);
         match manifest.outputs {
             Some(OutputConfig::Multi(parts)) => {
                 assert_eq!(parts.len(), 1);
                 assert_eq!(parts[0].0, "test-lib");
-                assert_eq!(parts[0].1.runtime_deps, vec!["openssl"]);
+                assert_eq!(parts[0].1.runtime_deps, vec!["openssl:default"]);
             }
             _ => panic!("expected Multi output config"),
         }
@@ -1175,7 +1182,7 @@ arch = "x86_64"
         std::fs::write(
             &mvp_path,
             r#"
-build = ["gcc", "make"]
+build_deps = ["gcc:default"]
 
 [lifecycle.configure]
 script = "echo mvp"
@@ -1185,7 +1192,7 @@ script = "echo mvp"
 
         let manifest = PlanManifest::from_file(&plan_path).unwrap();
         let mvp = manifest.mvp.as_ref().unwrap();
-        assert_eq!(mvp.build, vec!["gcc", "make"]);
+        assert_eq!(mvp.build_deps, vec!["gcc:default"]);
         assert_eq!(
             mvp.lifecycle
                 .get("configure")

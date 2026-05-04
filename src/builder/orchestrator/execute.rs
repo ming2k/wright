@@ -523,7 +523,7 @@ pub async fn package_outputs(
                     fhs::validate(part_dir, sub_name)?;
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir)?;
+                let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
                 if print_parts {
                     println!("{}", sub_part_path.display());
@@ -535,7 +535,7 @@ pub async fn package_outputs(
             if !manifest.options.skip_fhs_check {
                 fhs::validate(&result.output_dir, &manifest.plan.name)?;
             }
-            let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
+            let part_path = part::create_part(&result.output_dir, manifest, &output_dir, None)?;
             info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
             if print_parts {
                 println!("{}", part_path.display());
@@ -548,46 +548,52 @@ pub async fn package_outputs(
 }
 
 /// Package a plan from its existing staging directories.
-/// This is the entry point for the `wright package` command.
+///
+/// When `force` is true, or when `outputs/` is missing / stale, the staging
+/// directory is re-sliced according to the current plan manifest before
+/// packaging.  This lets users tweak `[[output]]` patterns and re-package
+/// without running a full rebuild.
 pub async fn package_manifest(
     manifest: &PlanManifest,
     config: &GlobalConfig,
     print_parts: bool,
+    force: bool,
 ) -> Result<()> {
     let builder = crate::builder::Builder::new(config.clone());
     let build_root = builder.build_root(manifest)?;
     let output_dir = build_root.join("outputs").join("default");
 
-    if !output_dir.exists() {
-        return Err(WrightError::BuildError(format!(
-            "output directory does not exist: {}. Run `wright build {}` first.",
-            output_dir.display(),
-            manifest.plan.name
-        )));
-    }
+    let need_slice = force
+        || !output_dir.exists()
+        || manifest.outputs.as_ref().map_or(false, |cfg| match cfg {
+            OutputConfig::Multi(parts) => parts.iter().any(|(sub_name, sub_part)| {
+                sub_part.include.is_some()
+                    && !build_root.join("outputs").join(sub_name).exists()
+            }),
+            OutputConfig::Single(_) => false,
+        });
 
-    let mut split_part_dirs = std::collections::HashMap::new();
-    if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-        for (sub_name, sub_part) in parts {
-            if sub_part.include.is_none() {
-                continue;
+    let result = if need_slice {
+        builder.slice_outputs(manifest, &build_root).await?
+    } else {
+        let mut split_part_dirs = std::collections::HashMap::new();
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            for (sub_name, sub_part) in parts {
+                if sub_part.include.is_none() {
+                    continue;
+                }
+                split_part_dirs.insert(
+                    sub_name.clone(),
+                    build_root.join("outputs").join(sub_name),
+                );
             }
-            let sub_dir = build_root.join("outputs").join(sub_name);
-            if !sub_dir.exists() {
-                return Err(WrightError::BuildError(format!(
-                    "output directory for '{}' does not exist: {}. Run `wright build {}` first.",
-                    sub_name, sub_dir.display(), manifest.plan.name
-                )));
-            }
-            split_part_dirs.insert(sub_name.clone(), sub_dir);
         }
-    }
-
-    let result = crate::builder::BuildResult {
-        output_dir,
-        work_dir: build_root.join("work"),
-        logs_dir: build_root.join("logs"),
-        split_part_dirs,
+        crate::builder::BuildResult {
+            output_dir,
+            work_dir: build_root.join("work"),
+            logs_dir: build_root.join("logs"),
+            split_part_dirs,
+        }
     };
 
     package_outputs(manifest, config, &result, print_parts).await

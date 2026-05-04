@@ -7,7 +7,7 @@ This tutorial walks you through the core Wright workflows after you have complet
 Wright is source-first:
 
 - `wright build` manufactures local `.wright.tar.zst` parts from plans.
-- `wright package` creates archives from staging directories.
+- `wright package` slices staging into output directories and creates archives.
 - `wright install` applies archives to the live system.
 
 ## Build Your First Part
@@ -24,7 +24,7 @@ This builds the `hello` plan into a staging directory.
 wright package hello
 ```
 
-This creates a `.wright.tar.zst` archive from the staging directory.
+This re-slices `staging/` into `outputs/` according to the plan's `[[output]]` rules (if any) and creates `.wright.tar.zst` archives. Use `--force` to re-slice even when `outputs/` already exists.
 
 ## Resolve and Build
 

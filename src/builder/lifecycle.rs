@@ -277,6 +277,7 @@ impl<'a> LifecyclePipeline<'a> {
             verbose: self.verbose,
             cpu_count: Some(cpu_count),
             log_stdout: stdout_log_file,
+            dep_mounts: Vec::new(),
         };
 
         let t0 = std::time::Instant::now();

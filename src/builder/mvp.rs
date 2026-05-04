@@ -34,15 +34,15 @@ pub(crate) fn collect_phase_deps(
     let (build, link) = if is_mvp {
         if let Some(ref mvp) = manifest.mvp {
             (
-                if mvp.build.is_empty() {
+                if mvp.build_deps.is_empty() {
                     manifest.build_deps.clone()
                 } else {
-                    mvp.build.clone()
+                    mvp.build_deps.clone()
                 },
-                if mvp.link.is_empty() {
+                if mvp.link_deps.is_empty() {
                     manifest.link_deps.clone()
                 } else {
-                    mvp.link.clone()
+                    mvp.link_deps.clone()
                 },
             )
         } else {
@@ -59,16 +59,17 @@ pub(crate) fn collect_phase_deps(
     raw_deps.extend(link);
 
     for dep in &raw_deps {
-        let dep_part_name = version::parse_dependency(dep)
+        let dep_name = version::parse_dependency(dep)
             .unwrap_or_else(|_| (dep.clone(), None))
             .0;
+        let (dep_plan_name, _) = version::parse_dep_ref(&dep_name);
 
-        if let Some(parent_plan) = part_to_plan.get(&dep_part_name) {
+        if let Some(parent_plan) = part_to_plan.get(&dep_plan_name) {
             if parent_plan != &manifest.plan.name {
                 deps.push(parent_plan.clone());
             }
         } else {
-            deps.push(dep_part_name);
+            deps.push(dep_plan_name);
         }
     }
 
@@ -79,10 +80,11 @@ pub(crate) fn collect_phase_deps(
             let build_dep_name = version::parse_dependency(build_dep)
                 .unwrap_or_else(|_| (build_dep.clone(), None))
                 .0;
+            let (build_dep_plan_name, _) = version::parse_dep_ref(&build_dep_name);
             let build_dep_plan = part_to_plan
-                .get(&build_dep_name)
+                .get(&build_dep_plan_name)
                 .cloned()
-                .unwrap_or(build_dep_name);
+                .unwrap_or(build_dep_plan_name);
 
             let mut queue = VecDeque::new();
             queue.push_back(build_dep_plan);
@@ -98,8 +100,9 @@ pub(crate) fn collect_phase_deps(
                             let rdep_name = version::parse_dependency(rdep)
                                 .unwrap_or_else(|_| (rdep.clone(), None))
                                 .0;
+                            let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
                             let rdep_plan =
-                                part_to_plan.get(&rdep_name).cloned().unwrap_or(rdep_name);
+                                part_to_plan.get(&rdep_plan_name).cloned().unwrap_or(rdep_plan_name);
                             if rdep_plan != manifest.plan.name {
                                 deps.push(rdep_plan.clone());
                             }

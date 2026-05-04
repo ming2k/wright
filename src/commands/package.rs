@@ -90,12 +90,9 @@ pub async fn execute_package(
             }
         }
 
-        orchestrator::package_manifest(&manifest,
-            config,
-            args.print_parts,
-        )
-        .await
-        .with_context(|| format!("failed to package {}", manifest.plan.name))?;
+        orchestrator::package_manifest(&manifest, config, args.print_parts, args.force)
+            .await
+            .with_context(|| format!("failed to package {}", manifest.plan.name))?;
     }
 
     Ok(())

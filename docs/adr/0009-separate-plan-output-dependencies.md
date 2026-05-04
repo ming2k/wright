@@ -8,14 +8,14 @@ Accepted
 
 Previously, `PlanManifest` used a single nested `[dependencies]` table containing three kinds of dependencies:
 
-- `build`: tools needed to compile the plan
-- `link`: ABI-sensitive libraries that trigger reverse rebuilds
+- `tools`: tools needed to compile the plan
+- `link_deps`: ABI-sensitive libraries that trigger reverse rebuilds
 - `runtime`: libraries/tools needed at install time
 
 All three were declared at the plan level. This created several problems:
 
 1. **Granularity mismatch**: a plan that produces multiple outputs (e.g. `gcc` → `gcc` + `libstdc++`) may have different runtime requirements per output. `libstdc++` needs `libgcc` at runtime, but the `gcc` compiler binary does not.
-2. **Semantic confusion**: `build` and `link` affect the build planner; `runtime` affects the installer. Mixing them in one table makes it unclear which tool consumes which field.
+2. **Semantic confusion**: `tools` and `link_deps` affect the build planner; `runtime` affects the installer. Mixing them in one table makes it unclear which tool consumes which field.
 3. **Parsing complexity**: the nested `[dependencies]` section required extra deserialization logic and was error-prone.
 4. **Optional ambiguity**: "optional dependencies" are not dependencies at all — they are features. Declaring them alongside real dependencies creates confusion about what the installer should enforce.
 
@@ -23,7 +23,7 @@ All three were declared at the plan level. This created several problems:
 
 We will flatten and separate dependencies into two distinct levels with no overlap:
 
-### Plan level: `build` and `link`
+### Plan level: `tools` and `link_deps`
 
 Declared as **top-level fields** in `plan.toml`. These drive the build orchestrator and dependency resolver. They are never serialized into binary parts.
 
@@ -33,8 +33,8 @@ version = "14.2.0"
 release = 1
 # ...
 
-build = ["gcc", "make"]
-link = ["freetype", "cairo"]
+tools = ["gcc", "make"]
+link_deps = ["freetype:default", "cairo:default"]
 ```
 
 ### Output level: `runtime_deps`
@@ -44,7 +44,7 @@ Declared **per-output** inside `[[output]]` entries. These are recorded in binar
 ```toml
 [[output]]
 name = "libstdc++"
-runtime_deps = ["libgcc"]
+runtime_deps = ["libgcc:default"]
 include = ["/usr/lib/libstdc.*"]
 ```
 
@@ -69,12 +69,12 @@ Even single-output plans use `[[output]]` to declare runtime dependencies:
 name = "nginx"
 # ...
 
-build = ["perl", "gcc", "make"]
-link = ["openssl", "zlib"]
+tools = ["perl", "gcc", "make"]
+link_deps = ["openssl:default", "zlib:default"]
 
 [[output]]
 name = "nginx"
-runtime_deps = ["openssl", "zlib"]
+runtime_deps = ["openssl:default", "zlib:default"]
 ```
 
 ## Consequences
@@ -82,9 +82,9 @@ runtime_deps = ["openssl", "zlib"]
 ### Positive
 
 - **Correct granularity**: each output declares only the runtime deps it actually needs.
-- **Clearer semantics**: build planner reads plan-level `build`/`link`; installer reads output-level `runtime_deps`.
+- **Clearer semantics**: build planner reads plan-level `tools`/`link_deps`; installer reads output-level `runtime_deps`.
 - **Simpler TOML**: flat top-level fields are easier to read and write than nested tables.
-- **No optional ambiguity**: every dependency is either required at build time (`build`/`link`) or required at runtime (`runtime_deps`). There is no "maybe" category.
+- **No optional ambiguity**: every dependency is either required at build time (`tools`/`link_deps`) or required at runtime (`runtime_deps`). There is no "maybe" category.
 - **Plan tracking**: the `plans` table enables plan-scoped operations (list/remove by plan).
 
 ### Negative

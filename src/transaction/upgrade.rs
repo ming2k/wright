@@ -312,8 +312,10 @@ pub async fn upgrade_part(
     }
 
     phase_start = Instant::now();
+    let plan_id = db.ensure_plan_registered(&partinfo).await?;
     db.update_part(NewPart {
         name: &partinfo.name,
+        plan_id,
         version: &partinfo.version,
         release: partinfo.release,
         epoch: partinfo.epoch,
@@ -325,8 +327,6 @@ pub async fn upgrade_part(
         part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
         origin: old_part.origin, // Preserve origin
-        plan_name: old_part.plan_name.as_deref(), // Preserve plan_name
-        plan_id: old_part.plan_id, // Preserve plan_id
     })
     .await?;
 

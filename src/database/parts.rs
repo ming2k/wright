@@ -32,9 +32,10 @@ impl InstalledDb {
         }
 
         let res = query(
-            "INSERT INTO parts (name, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin, plan_name, plan_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            "INSERT INTO parts (name, plan_id, version, release, epoch, description, arch, license, url, install_size, part_hash, install_scripts, origin)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(part.name)
+            .bind(part.plan_id)
             .bind(part.version)
             .bind(part.release as i64)
             .bind(part.epoch as i64)
@@ -46,8 +47,6 @@ impl InstalledDb {
             .bind(part.part_hash)
             .bind(part.install_scripts)
             .bind(part.origin)
-            .bind(part.plan_name)
-            .bind(part.plan_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -63,10 +62,11 @@ impl InstalledDb {
     }
 
     pub async fn assume_part(&self, name: &str, version: &str) -> Result<()> {
+        // Assumed parts have no associated plan; plan_id = 0 is reserved.
         query(
-            "INSERT INTO parts (name, version, release, description, arch, license, install_size, assumed)
-             VALUES (?, ?, 0, 'externally provided', 'any', 'unknown', 0, 1)
-             ON CONFLICT(name) DO UPDATE SET version=excluded.version, assumed=1")
+            "INSERT INTO parts (name, plan_id, version, release, description, arch, license, install_size, assumed)
+             VALUES (?, 0, ?, 0, 'externally provided', 'any', 'unknown', 0, 1)
+             ON CONFLICT DO UPDATE SET version=excluded.version, assumed=1")
             .bind(name)
             .bind(version)
         .execute(&self.pool)
@@ -90,8 +90,9 @@ impl InstalledDb {
 
     pub async fn update_part(&self, part: NewPart<'_>) -> Result<()> {
         let res = query(
-            "UPDATE parts SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?, plan_name = ?, plan_id = ?
+            "UPDATE parts SET plan_id = ?, version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, url = ?, install_size = ?, part_hash = ?, install_scripts = ?, origin = ?
              WHERE name = ?")
+            .bind(part.plan_id)
             .bind(part.version)
             .bind(part.release as i64)
             .bind(part.epoch as i64)
@@ -102,8 +103,7 @@ impl InstalledDb {
             .bind(part.install_size as i64)
             .bind(part.part_hash)
             .bind(part.install_scripts)
-            .bind(part.plan_name)
-            .bind(part.plan_id)
+            .bind(part.origin)
             .bind(part.name)
         .execute(&self.pool)
         .await
@@ -221,8 +221,8 @@ impl InstalledDb {
     }
 
     pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<InstalledPart>> {
-        let sql = format!("SELECT {} FROM parts WHERE plan_name = ? ORDER BY name", PART_COLUMNS);
-        query_as::<_, InstalledPart>(&sql)
+        let sql = "SELECT parts.id, parts.name, parts.plan_id, parts.version, parts.release, parts.epoch, parts.description, parts.arch, parts.license, parts.url, parts.installed_at, parts.install_size, parts.part_hash, parts.install_scripts, parts.assumed, parts.origin FROM parts INNER JOIN plans ON parts.plan_id = plans.id WHERE plans.name = ? ORDER BY parts.name";
+        query_as::<_, InstalledPart>(sql)
             .bind(plan_name)
             .fetch_all(&self.pool)
             .await
@@ -230,11 +230,26 @@ impl InstalledDb {
     }
 
     pub async fn remove_parts_by_plan(&self, plan_name: &str) -> Result<u64> {
-        let res = query("DELETE FROM parts WHERE plan_name = ?")
+        // Count parts before deleting the plan (cascade will remove them)
+        let count_row = query(
+            "SELECT COUNT(*) FROM parts INNER JOIN plans ON parts.plan_id = plans.id WHERE plans.name = ?"
+        )
+        .bind(plan_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to count parts by plan: {}", e)))?;
+
+        use sqlx::Row;
+        let count: i64 = count_row
+            .try_get(0)
+            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+
+        query("DELETE FROM plans WHERE name = ?")
             .bind(plan_name)
             .execute(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to remove parts by plan: {}", e)))?;
-        Ok(res.rows_affected())
+
+        Ok(count as u64)
     }
 }

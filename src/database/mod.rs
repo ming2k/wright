@@ -14,7 +14,8 @@ use core::PART_COLUMNS;
 pub use plans::PlanRecord;
 pub use sessions::ExecutionSession;
 pub use types::{
-    DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, Origin, TransactionRecord,
+    DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, NewPlan, Origin,
+    TransactionRecord,
 };
 
 #[cfg(test)]
@@ -552,41 +553,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_plan_name_field() {
+    async fn test_plan_id_field() {
         let db = test_db().await;
+        let plan_id = db
+            .insert_plan("hello-plan", "1.0.0", 1, 0, "test plan", "x86_64", "MIT", None, None, None)
+            .await
+            .unwrap();
         let id = db
             .insert_part(NewPart {
                 name: "hello",
+                plan_id,
                 version: "1.0.0",
                 release: 1,
                 description: "test",
                 arch: "x86_64",
                 license: "MIT",
-                plan_name: Some("hello-plan"),
                 ..Default::default()
             })
             .await
             .unwrap();
 
         let part = db.get_part("hello").await.unwrap().unwrap();
-        assert_eq!(part.plan_name.as_deref(), Some("hello-plan"));
+        assert_eq!(part.plan_id, plan_id);
 
-        // update_part should preserve plan_name
+        // update_part should preserve plan_id
+        let new_plan_id = db
+            .insert_plan("hello-plan-v2", "1.0.1", 2, 0, "updated plan", "x86_64", "MIT", None, None, None)
+            .await
+            .unwrap();
         db.update_part(NewPart {
             name: "hello",
+            plan_id: new_plan_id,
             version: "1.0.1",
             release: 2,
             description: "updated",
             arch: "x86_64",
             license: "MIT",
-            plan_name: Some("hello-plan-v2"),
             ..Default::default()
         })
         .await
         .unwrap();
 
         let updated = db.get_part("hello").await.unwrap().unwrap();
-        assert_eq!(updated.plan_name.as_deref(), Some("hello-plan-v2"));
+        assert_eq!(updated.plan_id, new_plan_id);
 
         let _ = id;
     }
@@ -594,14 +603,23 @@ mod tests {
     #[tokio::test]
     async fn test_get_parts_by_plan() {
         let db = test_db().await;
+        let toolchain_id = db
+            .insert_plan("toolchain", "1.0.0", 1, 0, "toolchain", "x86_64", "GPL", None, None, None)
+            .await
+            .unwrap();
+        let webstack_id = db
+            .insert_plan("webstack", "1.0.0", 1, 0, "webstack", "x86_64", "BSD", None, None, None)
+            .await
+            .unwrap();
+
         db.insert_part(NewPart {
             name: "gcc",
+            plan_id: toolchain_id,
             version: "14.2.0",
             release: 1,
             description: "compiler",
             arch: "x86_64",
             license: "GPL",
-            plan_name: Some("toolchain"),
             ..Default::default()
         })
         .await
@@ -609,12 +627,12 @@ mod tests {
 
         db.insert_part(NewPart {
             name: "binutils",
+            plan_id: toolchain_id,
             version: "2.42",
             release: 1,
             description: "binutils",
             arch: "x86_64",
             license: "GPL",
-            plan_name: Some("toolchain"),
             ..Default::default()
         })
         .await
@@ -622,12 +640,12 @@ mod tests {
 
         db.insert_part(NewPart {
             name: "nginx",
+            plan_id: webstack_id,
             version: "1.25.0",
             release: 1,
             description: "server",
             arch: "x86_64",
             license: "BSD",
-            plan_name: Some("webstack"),
             ..Default::default()
         })
         .await
@@ -649,14 +667,23 @@ mod tests {
     #[tokio::test]
     async fn test_remove_parts_by_plan() {
         let db = test_db().await;
+        let toolchain_id = db
+            .insert_plan("toolchain", "1.0.0", 1, 0, "toolchain", "x86_64", "GPL", None, None, None)
+            .await
+            .unwrap();
+        let webstack_id = db
+            .insert_plan("webstack", "1.0.0", 1, 0, "webstack", "x86_64", "BSD", None, None, None)
+            .await
+            .unwrap();
+
         db.insert_part(NewPart {
             name: "gcc",
+            plan_id: toolchain_id,
             version: "14.2.0",
             release: 1,
             description: "compiler",
             arch: "x86_64",
             license: "GPL",
-            plan_name: Some("toolchain"),
             ..Default::default()
         })
         .await
@@ -664,12 +691,12 @@ mod tests {
 
         db.insert_part(NewPart {
             name: "binutils",
+            plan_id: toolchain_id,
             version: "2.42",
             release: 1,
             description: "binutils",
             arch: "x86_64",
             license: "GPL",
-            plan_name: Some("toolchain"),
             ..Default::default()
         })
         .await
@@ -677,12 +704,12 @@ mod tests {
 
         db.insert_part(NewPart {
             name: "nginx",
+            plan_id: webstack_id,
             version: "1.25.0",
             release: 1,
             description: "server",
             arch: "x86_64",
             license: "BSD",
-            plan_name: Some("webstack"),
             ..Default::default()
         })
         .await

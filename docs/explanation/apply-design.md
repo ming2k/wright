@@ -133,7 +133,7 @@ tasks that can be built before the next dependency level begins.
 
 The same machinery also carries build labels such as:
 
-- `build`
+- `tools`
 - `relink`
 - `build:mvp`
 - `build:full`

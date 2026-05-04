@@ -56,33 +56,34 @@ pub(super) async fn expand_missing_dependencies(
             let dep_name = version::parse_dependency(dep)
                 .unwrap_or_else(|_| (dep.clone(), None))
                 .0;
+            let (dep_plan_name, _) = version::parse_dep_ref(&dep_name);
             let dep_depth = depth + 1;
 
             if dep_depth > max_depth {
                 continue;
             }
 
-            if traversal_seen.insert(dep_name.clone()) {
-                queue.push_back((dep_name.clone(), dep_depth));
+            if traversal_seen.insert(dep_plan_name.clone()) {
+                queue.push_back((dep_plan_name.clone(), dep_depth));
             }
 
-            if policies.contains(&MatchPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_name.as_str())
+            if policies.contains(&MatchPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_plan_name.as_str())
             {
                 continue;
             }
 
-            if !build_set.contains(&dep_name)
-                && dependency_matches_policy(&dep_name, all_plans, db, policies).await?
+            if !build_set.contains(&dep_plan_name)
+                && dependency_matches_policy(&dep_plan_name, all_plans, db, policies).await?
             {
-                if let Some(plan_path) = all_plans.get(&dep_name) {
+                if let Some(plan_path) = all_plans.get(&dep_plan_name) {
                     info!(
                         "Scheduling dependency (depth {}, reason: {}): {}",
                         dep_depth,
-                        dependency_reason_label(&dep_name, all_plans, db, policies).await?,
-                        dep_name,
+                        dependency_reason_label(&dep_plan_name, all_plans, db, policies).await?,
+                        dep_plan_name,
                     );
                     plans_to_build.insert(plan_path.clone());
-                    build_set.insert(dep_name.clone());
+                    build_set.insert(dep_plan_name.clone());
                 }
             }
         }
@@ -94,15 +95,16 @@ pub(super) async fn expand_missing_dependencies(
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
                     .0;
+                let (build_dep_plan_name, _) = version::parse_dep_ref(&build_dep_name);
                 let build_dep_depth = depth + 1;
                 if build_dep_depth >= max_depth {
                     continue;
                 }
 
                 let mut runtime_queue = VecDeque::new();
-                runtime_queue.push_back((build_dep_name.clone(), build_dep_depth));
+                runtime_queue.push_back((build_dep_plan_name.clone(), build_dep_depth));
                 let mut runtime_seen = HashSet::new();
-                runtime_seen.insert(build_dep_name.clone());
+                runtime_seen.insert(build_dep_plan_name.clone());
 
                 while let Some((cur, cur_depth)) = runtime_queue.pop_front() {
                     let Some(cur_plan_path) = all_plans.get(&cur) else {
@@ -117,7 +119,8 @@ pub(super) async fn expand_missing_dependencies(
                         let rdep_name = version::parse_dependency(rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
-                        if !runtime_seen.insert(rdep_name.clone()) {
+                        let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
+                        if !runtime_seen.insert(rdep_plan_name.clone()) {
                             continue;
                         }
 
@@ -126,28 +129,28 @@ pub(super) async fn expand_missing_dependencies(
                             continue;
                         }
 
-                        if traversal_seen.insert(rdep_name.clone()) {
-                            queue.push_back((rdep_name.clone(), rdep_depth));
+                        if traversal_seen.insert(rdep_plan_name.clone()) {
+                            queue.push_back((rdep_plan_name.clone(), rdep_depth));
                         }
 
-                        if !build_set.contains(&rdep_name)
-                            && dependency_matches_policy(&rdep_name, all_plans, db, policies)
+                        if !build_set.contains(&rdep_plan_name)
+                            && dependency_matches_policy(&rdep_plan_name, all_plans, db, policies)
                                 .await?
                         {
-                            if let Some(rdep_plan_path) = all_plans.get(&rdep_name) {
+                            if let Some(rdep_plan_path) = all_plans.get(&rdep_plan_name) {
                                 info!(
                                     "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
-                                    build_dep_name,
+                                    build_dep_plan_name,
                                     rdep_depth,
-                                    dependency_reason_label(&rdep_name, all_plans, db, policies).await?,
-                                    rdep_name,
+                                    dependency_reason_label(&rdep_plan_name, all_plans, db, policies).await?,
+                                    rdep_plan_name,
                                 );
                                 plans_to_build.insert(rdep_plan_path.clone());
-                                build_set.insert(rdep_name.clone());
+                                build_set.insert(rdep_plan_name.clone());
                             }
                         }
 
-                        runtime_queue.push_back((rdep_name, rdep_depth));
+                        runtime_queue.push_back((rdep_plan_name, rdep_depth));
                     }
                 }
             }
@@ -351,27 +354,30 @@ pub(super) async fn expand_rebuild_deps(
                 .runtime_deps
                 .iter()
                 .map(|d| {
-                    version::parse_dependency(d)
+                    let name = version::parse_dependency(d)
                         .unwrap_or_else(|_| (d.to_string(), None))
-                        .0
+                        .0;
+                    version::parse_dep_ref(&name).0
                 })
                 .collect();
             let b_deps: Vec<String> = m
                 .build_deps
                 .iter()
                 .map(|d| {
-                    version::parse_dependency(d)
+                    let name = version::parse_dependency(d)
                         .unwrap_or_else(|_| (d.to_string(), None))
-                        .0
+                        .0;
+                    version::parse_dep_ref(&name).0
                 })
                 .collect();
             let l_deps: Vec<String> = m
                 .link_deps
                 .iter()
                 .map(|d| {
-                    version::parse_dependency(d)
+                    let name = version::parse_dependency(d)
                         .unwrap_or_else(|_| (d.to_string(), None))
-                        .0
+                        .0;
+                    version::parse_dep_ref(&name).0
                 })
                 .collect();
 

@@ -37,7 +37,7 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 | `name`    | string  | yes   | —    | Part name             |
 | `version`   | string  | no    | —    | Part version (free-form). Omit for rolling/VCS builds with no static version.    |
 | `release`   | integer | yes   | —    | Build revision (must be >= 1)   |
-| `epoch`    | integer | no    | `0`   | Version epoch — overrides version comparison (see below) |
+| `epoch`    | integer | no    | `0`   | Version epoch — overrides version comparison when upstream changes versioning scheme (see below) |
 | `description` | string  | yes   | —    | Short description (must not be empty) |
 | `license`   | string  | yes   | —    | SPDX license identifier      |
 | `arch`    | string  | yes   | —    | Target architecture (e.g. `x86_64`) |
@@ -46,7 +46,9 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling
 
 #### Epoch
 
-The `epoch` field forces a part to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when dependency changes their versioning scheme in a way that makes the new version sort lower (e.g. a rename from `2024.1` to `1.0.0`).
+The `epoch` field forces a part to be considered newer than any version with a lower epoch, regardless of the version string. This is needed when upstream changes their versioning scheme in a way that makes the new version sort lower — for example, renaming from `2024.1` to `1.0.0`. Without epoch, `1.0.0` would be considered a downgrade from `2024.1`.
+
+**When to use:** Only when upstream makes a breaking versioning scheme change. Leave at `0` (or omit entirely) for normal releases.
 
 ```toml
 name = "example"
@@ -79,12 +81,10 @@ Declare them as top-level fields in `plan.toml`:
 
 | Field    | Type              | Description             |
 |-------------|---------------------------------|--------------------------------------|
-| `build`   | list of strings         | Required only during build (e.g. gcc, cmake) |
-| `link`   | list of strings         | ABI-sensitive linked dependencies. Triggers rebuild on update. |
+| `link_deps`   | list of strings         | ABI-sensitive linked dependencies. Triggers rebuild on update. |
 
 ```toml
-build = ["gcc", "make"]
-link = ["openssl", "zlib"]
+link_deps = ["openssl:default", "zlib:default"]
 ```
 
 Supported constraint operators: `>=`, `<=`, `>`, `<`, `=`.
@@ -97,25 +97,25 @@ Supported constraint operators: `>=`, `<=`, `>`, `<`, `=`.
 [[output]]
 name = "nginx"
 # This output needs openssl and zlib at run time
-runtime_deps = ["openssl", "zlib"]
+runtime_deps = ["openssl:default", "zlib:default"]
 
 [[output]]
 name = "nginx-minimal"
 # This output only needs openssl
-runtime_deps = ["openssl"]
+runtime_deps = ["openssl:default"]
 include = ["/usr/sbin/nginx", "/etc/nginx/nginx.conf"]
 
 [[output]]
 name = "nginx-modules"
 # Modules need extra runtime deps
-runtime_deps = ["openssl", "zlib", "pcre2"]
+runtime_deps = ["openssl:default", "zlib:default", "pcre2:default"]
 include = ["/usr/lib/nginx/modules/.*"]
 ```
 
 Rules:
 - `runtime_deps` is **output-level only** — there is no plan-level fallback.
 - Each output declares exactly what it needs. Outputs are independent; one output's deps do not affect another.
-- `build` and `link` are **plan-level only** — they drive the build orchestrator and have no meaning inside `[[output]]`.
+- `link_deps` is **plan-level only** — it drives the build orchestrator and has no meaning inside `[[output]]`.
 
 ### `[[sources]]`
 
@@ -287,16 +287,16 @@ foo/
 ```
 
 The syntax inside `mvp.toml` is identical to the top-level plan syntax — flat
-`build` and `link` fields plus `lifecycle`:
+`tools` and `link_deps` fields plus `lifecycle`:
 
 ```toml
-build = ["binutils", "glibc"]
+tools = ["binutils", "glibc"]
 
 [lifecycle.configure]
 script = "..."
 ```
 
-MVP `build` and `link` override the top-level `build` and `link` fields. Any
+MVP `tools` and `link_deps` override the top-level `tools` and `link_deps` fields. Any
 field omitted in `mvp.toml` falls back to the corresponding top-level field.
 
 Resolution order during the MVP pass:
@@ -306,8 +306,8 @@ Resolution order during the MVP pass:
 
 Allowed top-level fields in `mvp.toml`:
 
-- `build`
-- `link`
+- `tools`
+- `link_deps`
 - `lifecycle`
 - `lifecycle_order`
 
@@ -415,7 +415,7 @@ name = "gcc"
 name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
-runtime_deps = ["libgcc"]
+runtime_deps = ["libgcc:default"]
 ```
 
 **Rules for `[[output]]`:**
@@ -554,7 +554,7 @@ Define MVP-specific dependencies so the graph becomes acyclic:
 
 ```toml
 # mvp.toml
-link = ["freetype"] # omit harfbuzz in MVP
+link_deps = ["freetype:default"] # omit harfbuzz in MVP
 ```
 
 Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has `[mvp]` overrides that remove at least one edge of the cycle, it automatically inserts the two-pass schedule. If no plan provides an acyclic MVP dependency set, the build fails with a clear error identifying the cycle.
@@ -580,7 +580,7 @@ The plan script can still use these variables to disable the relevant feature:
 
 ```toml
 # mvp.toml
-link = ["freetype"]
+link_deps = ["freetype:default"]
 
 [lifecycle.configure]
 script = """
@@ -610,7 +610,7 @@ meson setup build \
 `mvp.toml`:
 
 ```toml
-link = ["cairo", "pango", "glib", "libxml2", "harfbuzz", "freetype", "fribidi"]
+link_deps = ["cairo:default", "pango:default", "glib:default", "libxml2:default", "harfbuzz:default", "freetype:default", "fribidi:default"]
 
 [lifecycle.configure]
 script = """
@@ -662,10 +662,10 @@ INFO Build batch 1/1: bootstrap freetype.
 
 Most apparent cycles are caused by incorrect dependency classification. Before defining phase-specific dependencies, verify that:
 
-- **`link`** is only used for shared libraries your binary actually links against at build time.
+- **`link_deps`** is only used for shared libraries your binary actually links against at build time.
 - **`runtime`** is used for plugins, loaders, and tools called at runtime.
 
-For example, `gdk-pixbuf` using glycin (an image loader plugin) as a `link` dependency creates a false cycle. The correct fix is `runtime = ["glycin"]`, not a phase override.
+For example, `gdk-pixbuf` using glycin (an image loader plugin) as a `link_deps` dependency creates a false cycle. The correct fix is `runtime = ["glycin"]`, not a phase override.
 
 Reserve phase-specific dependencies for cycles that remain after dependency types are correct.
 
@@ -910,7 +910,7 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-build = ["gcc"]
+tools = ["gcc"]
 
 [lifecycle.prepare]
 script = """
@@ -943,8 +943,8 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Example Maintainer <maintainer@example.com>"
 
-build = ["perl", "gcc", "make"]
-link = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
+tools = ["perl", "gcc", "make"]
+link_deps = ["openssl:default", "pcre2 >= 10.42:default", "zlib >= 1.2:default"]
 
 [[sources]]
 type = "http"
@@ -997,7 +997,7 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
-runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
+runtime_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 [[output]]
@@ -1029,7 +1029,7 @@ make DESTDIR=${STAGING_DIR} install
 name = "libfoo"
 description = "Foo runtime libraries"
 include = ["/usr/lib/libfoo\\.so.*"]
-runtime_deps = ["glibc"]
+runtime_deps = ["glibc:default"]
 
 [[output]]
 name = "libfoo-dev"
@@ -1055,7 +1055,7 @@ arch = "x86_64"
 name = "linux-firmware"
 # Meta-part that depends on all sub-parts; no include = catch-all, but it won't
 # contain any files because all files are claimed by sub-parts above it.
-runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
+runtime_deps = ["linux-firmware-amd:default", "linux-firmware-intel:default", "linux-firmware-nvidia:default"]
 
 [[output]]
 name = "linux-firmware-amd"
@@ -1138,7 +1138,7 @@ name = "linux-firmware"
 [[output]]
 name = "linux-firmware"
 # Meta-part that depends on all sub-parts
-runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
+runtime_deps = ["linux-firmware-amd:default", "linux-firmware-intel:default", "linux-firmware-nvidia:default"]
 
 [[output]]
 name = "linux-firmware-amd"

@@ -13,7 +13,7 @@ subcommands, and a single state database.
 ## Tool Boundaries
 
 - `wright build` builds parts from plans and creates `.wright.tar.zst` archives
-- `wright package` packages existing staging directories into archives
+- `wright package` slices staging directories into output directories (`outputs/`) and packages them into `.wright.tar.zst` archives
 - `wright install` installs locally available archives to the live system
 - `wright apply` resolves, builds, and installs plans in dependency waves
 
@@ -54,7 +54,7 @@ can have multiple outputs (e.g. `gcc` and `gcc-libs`) defined by `[[output]]` ta
 
 ```
 wright build   →  build plans
-wright package →  package staging directories
+wright package →  slice staging into outputs and package
 wright apply   →  resolve + build + install
 wright install →  install archives
 wright upgrade →  upgrade installed parts

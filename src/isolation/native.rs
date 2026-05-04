@@ -579,6 +579,14 @@ pub fn run_in_isolation(
                             }
                         }
                     }
+                    // Build dependency mounts (read-only).
+                    for (host, dest) in &config.dep_mounts {
+                        if host.exists() {
+                            if let Err(e) = bind(host, &dest.to_string_lossy(), true) {
+                                die(e);
+                            }
+                        }
+                    }
                     // /dev: try devtmpfs, fall back to tmpfs + bind-mounted devices.
                     let dev = newroot.join("dev");
                     std::fs::create_dir_all(&dev).ok();

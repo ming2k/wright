@@ -114,7 +114,7 @@ Triggered during automatic dependency expansion when a dependency declared in `p
 **Options:**
 
 1. Add the missing plan to your plans directory.
-2. If the dependency is already installed on the system and you don't want to build it, mark it as a runtime-only dep or remove it from `build`/`link` dependencies if it is genuinely not needed at build time.
+2. If the dependency is already installed on the system and you don't want to build it, mark it as a runtime-only dep or remove it from `tools`/`link_deps` dependencies if it is genuinely not needed at build time.
 3. Skip dependency expansion and build only the target:
    ```bash
    wright build mypart

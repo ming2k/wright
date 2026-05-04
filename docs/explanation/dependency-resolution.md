@@ -3,21 +3,20 @@
 This document explains how Wright resolves and acts on dependencies from a user perspective. It focuses on what happens when you build and install parts, and how to interpret the output.
 
 **Dependency Types**
-Wright uses three dependency types, each with a different purpose.
+Wright uses two dependency types, each with a different purpose.
 
-- `build`: Required to compile a part but not necessarily needed at runtime.
-- `link`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes.
+- `link_deps`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes.
 - `runtime`: Required for the part to run after installation.
 
-`link` and `runtime` are allowed to overlap. If something is needed after installation, it must be listed in `runtime` even if it also appears in `link`.
+`link_deps` and `runtime` are allowed to overlap. If something is needed after installation, it must be listed in `runtime` even if it also appears in `link_deps`.
 
 **Where Dependencies Come From**
 Dependencies are declared in `plan.toml` at two levels:
 
-- **Plan level**: `build` and `link` are top-level fields that drive the build orchestrator.
+- **Plan level**: `link_deps` is a top-level field that drives the build orchestrator.
 - **Output level**: `runtime_deps` is declared inside each `[[output]]` entry. It describes what a specific installed part needs at run time.
 
-Only `runtime_deps` and part relations are serialized into binary part metadata used by `wright install`. `link` remains a build-graph concept used by `wright resolve`.
+Only `runtime_deps` and part relations are serialized into binary part metadata used by `wright install`. `link_deps` remains a build-graph concept used by `wright resolve`.
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
@@ -40,25 +39,25 @@ hold tree before building.
 
 With `--deps=all`, Wright expands more aggressively:
 
-- `build`, `link`, and `runtime` dependencies are added to the resolved target set.
+- `link_deps` and `runtime` dependencies are added to the resolved target set.
 - This is useful for deep rebuilds when you want a clean, consistent dependency chain.
 
 **Downward Expansion: Reverse Rebuilds**
 When a dependency changes, other parts may need to be rebuilt.
 
-- `link` dependencies always trigger reverse rebuilds via `wright resolve --rdeps`.
-- `build` and `runtime` dependencies only trigger reverse rebuilds with `--rdeps=all`.
+- `link_deps` dependencies always trigger reverse rebuilds via `wright resolve --rdeps`.
+- `runtime` dependencies only trigger reverse rebuilds with `--rdeps=all`.
 
 This behavior keeps ABI-sensitive chains correct without forcing expensive rebuilds by default.
 
-This rebuild behavior does not make `link` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
+This rebuild behavior does not make `link_deps` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
 
 **Scheduling Labels**
 `wright build` logs a scheduling plan before building. Each entry includes an
 action label and its depth in the dependency graph:
 
 - `build`: Normal build for an explicitly requested target or an added dependency.
-- `relink`: Rebuilt because a `link` dependency changed.
+- `relink`: Rebuilt because a `link_deps` dependency changed.
 - `rebuild`: Rebuilt because of `--rdeps=all` transitive expansion (via `wright resolve`).
 - `build:mvp`: Bootstrap build used to break a dependency cycle.
 - `build:full`: Full build after an MVP bootstrap.

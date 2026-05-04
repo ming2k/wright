@@ -189,6 +189,25 @@ impl fmt::Display for VersionConstraint {
     }
 }
 
+/// Parse a `plan:output` reference into (plan_name, output_name).
+///
+/// - `llvm:clang` → (`llvm`, `clang`)
+/// - `glibc:default` → (`glibc`, `glibc`)  // `:default` is a placeholder for the plan's sole output
+/// - Missing colon is rejected by the caller (validate stage enforces `plan:output`).
+pub fn parse_dep_ref(dep: &str) -> (String, String) {
+    if let Some((plan, output)) = dep.split_once(':') {
+        let plan = plan.to_string();
+        let output = if output == "default" {
+            plan.clone()
+        } else {
+            output.to_string()
+        };
+        (plan, output)
+    } else {
+        (dep.to_string(), dep.to_string())
+    }
+}
+
 /// Parse a dependency string like "openssl >= 3.0" into (name, optional constraint)
 pub fn parse_dependency(dep: &str) -> Result<(String, Option<VersionConstraint>)> {
     let dep = dep.trim();

@@ -12,7 +12,7 @@ pub struct PackageArgs {
     /// Paths to plan directories, part names, or @assemblies
     pub targets: Vec<String>,
 
-    /// Force repackaging: overwrite existing archives
+    /// Force repackaging: re-slice outputs from staging and overwrite existing archives
     #[arg(long, short)]
     pub force: bool,
 

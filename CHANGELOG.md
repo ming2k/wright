@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+## [4.0.0] - 2026-05-04
+
+### Breaking Changes
+- **Removed `tools` dependency type**: plan-level `tools` field is removed entirely. Build-time toolchain dependencies are no longer explicitly declared — they are assumed to be present in the build environment. `mvp.toml` phase overrides no longer support `tools`.
+- **Removed `tools` from database schema**: the `tools` column is dropped from the `plans` table and `.PARTINFO` serialization.
+
+### Changed
+- **`wright package` now re-slices outputs from staging**: when `outputs/` is missing, incomplete, or `--force` is passed, `wright package` regenerates `outputs/` from `staging/` using the current plan's `[[output]]` configuration before creating archives. This lets users tweak output patterns and re-package without a full rebuild. The fast path (reusing existing `outputs/`) still applies when everything is up-to-date.
+- **Extracted `slice_outputs` from `build`**: the staging-to-outputs slicing logic is now a standalone `Builder::slice_outputs` method, eliminating duplication between `build` and `package`.
+- **Improved `epoch` documentation**: added clear usage guidance — only needed when upstream changes versioning scheme (e.g. `2024.1` → `1.0.0`). Defaults to `0` and can be omitted for normal releases.
+
 ## [3.1.7] - 2026-05-04
 
 ### Changed

@@ -28,6 +28,13 @@ pub struct PartInfo {
     pub conflicts: Vec<String>,
     pub provides: Vec<String>,
     pub backup_files: Vec<String>,
+    /// Plan-level metadata (all outputs of a plan share these)
+    pub plan_name: String,
+    pub plan_version: String,
+    pub plan_release: u32,
+    pub plan_epoch: u32,
+    pub build_deps: Vec<String>,
+    pub link_deps: Vec<String>,
 }
 
 /// Files that should never be included in a part archive.
@@ -50,6 +57,7 @@ pub fn create_part(
     part_dir: &Path,
     manifest: &PlanManifest,
     output_path: &Path,
+    source_plan: Option<&PlanManifest>,
 ) -> Result<PathBuf> {
     purge_excluded_files(part_dir);
 
@@ -57,7 +65,7 @@ pub fn create_part(
     let install_size = calculate_dir_size(part_dir)?;
 
     // Generate .PARTINFO
-    let partinfo = generate_partinfo(manifest, install_size);
+    let partinfo = generate_partinfo(manifest, install_size, source_plan);
 
     // Generate .FILELIST
     let filelist = generate_filelist(part_dir)?;
@@ -143,8 +151,20 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
     ))
 }
 
-fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
+fn generate_partinfo(
+    manifest: &PlanManifest,
+    install_size: u64,
+    source_plan: Option<&PlanManifest>,
+) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    // Determine plan-level metadata: either from the original plan manifest
+    // or from the current manifest itself (single-output plans).
+    let plan = source_plan.unwrap_or(manifest);
+    let plan_name = &plan.plan.name;
+    let plan_version = plan.plan.version.as_deref().unwrap_or("");
+    let _plan_release = plan.plan.release;
+    let plan_epoch = plan.plan.epoch;
 
     let mut deps_toml = String::new();
     if !manifest.runtime_deps.is_empty() {
@@ -222,9 +242,47 @@ fn generate_partinfo(manifest: &PlanManifest, install_size: u64) -> String {
         _ => String::new(),
     };
 
+    let plan_epoch_line = if plan_epoch > 0 {
+        format!("plan_epoch = {}\n", plan_epoch)
+    } else {
+        String::new()
+    };
+
+    let plan_version_line = if !plan_version.is_empty() {
+        format!("plan_version = \"{}\"\n", plan_version)
+    } else {
+        String::new()
+    };
+
+    let mut plan_deps_toml = String::new();
+    if !plan.build_deps.is_empty() || !plan.link_deps.is_empty() {
+        plan_deps_toml.push_str("\n[plan]\n");
+        if !plan.build_deps.is_empty() {
+            plan_deps_toml.push_str("build_deps = [");
+            for (i, d) in plan.build_deps.iter().enumerate() {
+                if i > 0 {
+                    plan_deps_toml.push_str(", ");
+                }
+                plan_deps_toml.push_str(&format!("\"{}\"", d));
+            }
+            plan_deps_toml.push_str("]\n");
+        }
+        if !plan.link_deps.is_empty() {
+            plan_deps_toml.push_str("link_deps = [");
+            for (i, d) in plan.link_deps.iter().enumerate() {
+                if i > 0 {
+                    plan_deps_toml.push_str(", ");
+                }
+                plan_deps_toml.push_str(&format!("\"{}\"", d));
+            }
+            plan_deps_toml.push_str("]\n");
+        }
+    }
+
     format!(
         r#"[part]
 name = "{name}"
+plan_name = "{plan_name}"
 {version}release = {release}
 {epoch}description = "{description}"
 arch = "{arch}"
@@ -232,9 +290,10 @@ license = "{license}"
 install_size = {install_size}
 build_date = "{build_date}"
 packager = "wright {wright_version}"
-{deps}{relations}{backup}
+{plan_version}{plan_epoch}{deps}{relations}{backup}{plan_deps}
 "#,
         name = manifest.plan.name,
+        plan_name = plan_name,
         version = version_line,
         release = manifest.plan.release,
         epoch = epoch_line,
@@ -244,9 +303,12 @@ packager = "wright {wright_version}"
         install_size = install_size,
         build_date = build_date,
         wright_version = env!("CARGO_PKG_VERSION"),
+        plan_version = plan_version_line,
+        plan_epoch = plan_epoch_line,
         deps = deps_toml,
         relations = relations_toml,
         backup = backup_toml,
+        plan_deps = plan_deps_toml,
     )
 }
 
@@ -336,6 +398,8 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     struct PartInfoToml {
         part: PartInfoMeta,
         #[serde(default)]
+        plan: Option<PartInfoPlan>,
+        #[serde(default)]
         dependencies: Option<PartInfoDeps>,
         #[serde(default)]
         relations: Option<PartInfoRelations>,
@@ -346,6 +410,13 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
     struct PartInfoMeta {
         name: String,
+        plan_name: String,
+        #[serde(default)]
+        plan_version: String,
+        #[serde(default)]
+        plan_release: u32,
+        #[serde(default)]
+        plan_epoch: u32,
         #[serde(default)]
         version: String,
         release: u32,
@@ -358,6 +429,14 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         install_size: u64,
         #[serde(default)]
         build_date: String,
+    }
+
+    #[derive(serde::Deserialize, Default)]
+    struct PartInfoPlan {
+        #[serde(default)]
+        build_deps: Vec<String>,
+        #[serde(default)]
+        link_deps: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -392,6 +471,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         .unwrap_or_default();
 
     let relations = parsed.relations.unwrap_or_default();
+    let plan_section = parsed.plan.unwrap_or_default();
 
     Ok(PartInfo {
         name: parsed.part.name,
@@ -408,6 +488,12 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         conflicts: relations.conflicts,
         provides: relations.provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
+        plan_name: parsed.part.plan_name,
+        plan_version: parsed.part.plan_version,
+        plan_release: parsed.part.plan_release,
+        plan_epoch: parsed.part.plan_epoch,
+        build_deps: plan_section.build_deps,
+        link_deps: plan_section.link_deps,
     })
 }
 
@@ -421,6 +507,7 @@ mod tests {
             r#"
 [part]
 name = "demo"
+plan_name = "demo"
 version = "1.0.0"
 release = 1
 description = "demo"

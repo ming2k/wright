@@ -18,9 +18,9 @@ pub(super) struct RawManifest {
     #[serde(flatten)]
     pub plan: PlanMetadata,
     #[serde(default)]
-    pub build: Vec<String>,
+    pub build_deps: Vec<String>,
     #[serde(default)]
-    pub link: Vec<String>,
+    pub link_deps: Vec<String>,
     #[serde(default)]
     pub sources: Option<toml::Value>,
     #[serde(default)]
@@ -260,8 +260,8 @@ impl PlanManifest {
         let raw: RawManifest = toml::from_str(content)?;
         let RawManifest {
             plan,
-            build,
-            link,
+            build_deps,
+            link_deps,
             sources: raw_sources,
             options,
             lifecycle: raw_lifecycle,
@@ -327,8 +327,8 @@ impl PlanManifest {
 
         let manifest = PlanManifest {
             plan,
-            build_deps: build,
-            link_deps: link,
+            build_deps,
+            link_deps,
             runtime_deps,
             relations,
             sources,
@@ -339,6 +339,7 @@ impl PlanManifest {
             outputs,
             install_scripts,
             backup,
+            source_plan: None,
         };
 
         manifest.validate()?;

@@ -269,7 +269,6 @@ impl Builder {
                 ));
             }
             ensure_clean_dir(&staging_dir).await?;
-            ensure_clean_dir(&outputs_dir).await?;
             ensure_clean_dir(&logs_dir).await?;
         } else {
             let key_file = build_root.join(".build_key");
@@ -283,12 +282,10 @@ impl Builder {
             if work_reusable {
                 debug!("Source tree unchanged (build key match) — reusing work/");
                 ensure_clean_dir(&staging_dir).await?;
-                ensure_clean_dir(&outputs_dir).await?;
                 ensure_clean_dir(&logs_dir).await?;
             } else {
                 ensure_clean_dir(&work_dir).await?;
                 ensure_clean_dir(&staging_dir).await?;
-                ensure_clean_dir(&outputs_dir).await?;
                 ensure_clean_dir(&logs_dir).await?;
             }
         }
@@ -410,9 +407,44 @@ impl Builder {
 
         pipeline.run().await?;
 
-        let mut split_part_dirs = std::collections::HashMap::new();
+        let result = self.slice_outputs(manifest, &build_root).await?;
 
-        // Create default_output_dir for catch-all or single-output packaging
+        if !partial {
+            let key_file = build_root.join(".build_key");
+            if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
+                warn!("Failed to write build key: {}", e);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Re-slice the staging directory into output directories based on the
+    /// plan's `[[output]]` configuration.  This is the standalone version of
+    /// the slicing logic previously inlined in `build`; it can be invoked by
+    /// `wright package` to regenerate `outputs/` from an existing `staging/`.
+    pub async fn slice_outputs(
+        &self,
+        manifest: &PlanManifest,
+        build_root: &Path,
+    ) -> Result<BuildResult> {
+        let staging_dir = build_root.join("staging");
+        let outputs_dir = build_root.join("outputs");
+        let default_output_dir = outputs_dir.join("default");
+        let work_dir = build_root.join("work");
+        let logs_dir = build_root.join("logs");
+
+        if !staging_dir.exists() {
+            return Err(WrightError::BuildError(format!(
+                "staging directory does not exist: {}. Run `wright build {}` first.",
+                staging_dir.display(),
+                manifest.plan.name
+            )));
+        }
+
+        // Wipe and recreate outputs so that removed/changed patterns in the
+        // plan do not leave stale files behind.
+        ensure_clean_dir(&outputs_dir).await?;
         tokio::fs::create_dir_all(&default_output_dir)
             .await
             .map_err(|e| {
@@ -423,15 +455,15 @@ impl Builder {
                 ))
             })?;
 
+        let mut split_part_dirs = std::collections::HashMap::new();
+
         if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-            // Build rules only for non-catch-all outputs (those with explicit include patterns).
-            // The catch-all keeps whatever remains in staging_dir (hard-linked to outputs/default/).
             let mut sub_rules: Vec<(&str, PathBuf, Vec<regex::Regex>, Vec<regex::Regex>)> =
                 Vec::new();
             for (sub_name, sub_part) in parts {
                 let incs = match &sub_part.include {
                     Some(v) => v,
-                    None => continue, // catch-all: hard-link remaining files to default_output_dir
+                    None => continue, // catch-all: handled below
                 };
                 let sub_output_dir = outputs_dir.join(sub_name);
                 tokio::fs::create_dir_all(&sub_output_dir)
@@ -493,14 +525,12 @@ impl Builder {
                     }
                 }
 
-                // Track which files were matched by any sub-output
                 let mut matched_files = std::collections::HashSet::new();
 
                 for file_path in &all_entries {
                     if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
                         let rel_str = format!("/{}", rel_path.display());
                         for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
-                            // includes is guaranteed non-empty (catch-all not in sub_rules)
                             let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
                             if matched && !excludes.is_empty() {
                                 if excludes.iter().any(|re| re.is_match(&rel_str)) {
@@ -542,19 +572,10 @@ impl Builder {
                     }
                 }
             } else {
-                // No sub-rules: all files go to catch-all
                 hard_link_all(&staging_dir, &default_output_dir).await?;
             }
         } else {
-            // Single-output or no output config: hard-link everything to default_output_dir
             hard_link_all(&staging_dir, &default_output_dir).await?;
-        }
-
-        if !partial {
-            let key_file = build_root.join(".build_key");
-            if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
-                warn!("Failed to write build key: {}", e);
-            }
         }
 
         Ok(BuildResult {

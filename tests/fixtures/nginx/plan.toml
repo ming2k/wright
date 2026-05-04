@@ -7,8 +7,7 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test Maintainer <test@example.com>"
 
-build = ["perl", "gcc", "make"]
-link = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
+link_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -80,7 +79,7 @@ install -Dm644 conf/nginx.conf ${STAGING_DIR}/etc/nginx/nginx.conf
 name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
-runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
+runtime_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
 backup = [
     "/etc/nginx/nginx.conf",
     "/etc/nginx/mime.types",

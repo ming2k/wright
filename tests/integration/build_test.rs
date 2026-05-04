@@ -80,7 +80,7 @@ async fn test_build_and_archive_hello() {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
+    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
@@ -113,12 +113,11 @@ description = "test part"
 license = "MIT"
 arch = "x86_64"
 
-build = []
-link = ["zlib", "libffi"]
+link_deps = ["zlib:default", "libffi:default"]
 
 [[output]]
 name = "runtime-link-overlap"
-runtime_deps = ["openssl", "zlib"]
+runtime_deps = ["openssl:default", "zlib:default"]
 
 [lifecycle.staging]
 executor = "shell"
@@ -155,15 +154,15 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
+    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
     let partinfo = part::read_partinfo(&archive_path).unwrap();
 
-    assert_eq!(partinfo.runtime_deps, vec!["openssl", "zlib"]);
+    assert_eq!(partinfo.runtime_deps, vec!["openssl:default", "zlib:default"]);
 
     let extract_dir = tempfile::tempdir().unwrap();
     part::extract_part(&archive_path, extract_dir.path()).unwrap();
     let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
-    assert!(partinfo.contains("runtime = [\"openssl\", \"zlib\"]"));
+    assert!(partinfo.contains("runtime = [\"openssl:default\", \"zlib:default\"]"));
     assert!(!partinfo.contains("link ="));
 }
 
@@ -178,8 +177,7 @@ description = "test canonical plan variables"
 license = "MIT"
 arch = "x86_64"
 
-build = []
-link = []
+link_deps = []
 
 [lifecycle.staging]
 executor = "shell"
@@ -373,8 +371,7 @@ description = "verify stdout/stderr split for --print-parts"
 license = "MIT"
 arch = "x86_64"
 
-build = []
-link = []
+link_deps = []
 
 [lifecycle.staging]
 executor = "shell"
@@ -489,8 +486,7 @@ description = "verify --until-stage"
 license = "MIT"
 arch = "x86_64"
 
-build = []
-link = []
+link_deps = []
 
 [lifecycle.prepare]
 executor = "shell"
@@ -640,8 +636,8 @@ description = "main"
 license = "MIT"
 arch = "x86_64"
 
-build = ["resume-dep"]
-link = []
+build_deps = ["resume-dep:default"]
+link_deps = []
 
 [lifecycle.staging]
 executor = "shell"

@@ -114,6 +114,7 @@ pub struct ExecutorOptions {
     pub verbose: bool,
     pub cpu_count: Option<u32>,
     pub log_stdout: Option<std::fs::File>,
+    pub dep_mounts: Vec<(PathBuf, PathBuf)>,
 }
 
 pub async fn execute_script(
@@ -169,6 +170,7 @@ pub async fn execute_script(
     config.verbose = options.verbose;
     config.cpu_count = options.cpu_count;
     config.log_stdout = options.log_stdout.take();
+    config.dep_mounts = std::mem::take(&mut options.dep_mounts);
 
     if let Some(ref main_part) = options.main_part_dir {
         config

@@ -185,12 +185,11 @@ Removal protection follows recorded installed/runtime dependencies.
 - **optional**: Enhances functionality but is not mandatory.
 
 ```toml
-build = ["gcc", "make", "cmake"]
-link = ["zlib", "openssl >= 3.0"]
+link_deps = ["zlib:default", "openssl >= 3.0:default"]
 
 [[output]]
 name = "myapp"
-runtime_deps = ["bash"]
+runtime_deps = ["bash:default"]
 ```
 
 ### 3.3 Avoiding Circular Dependencies
@@ -198,7 +197,7 @@ runtime_deps = ["bash"]
 Circular dependencies are detected and rejected by Wright's dependency resolver. If you encounter them:
 
 1. Determine if it's a true runtime circular dependency.
-2. Handle it in `build` dependencies or merge the parts.
+2. Handle it in `build_deps` or merge the parts.
 3. If necessary, merge them into a single part.
 
 For cycles that cannot be broken by classification, see [ADR-0006: MVP Two-Pass Build](../adr/0006-mvp-two-pass-build.md).

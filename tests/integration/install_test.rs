@@ -45,7 +45,7 @@ async fn build_hello_archive() -> PathBuf {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive = part::create_part(&result.output_dir, &manifest, output_dir.path()).unwrap();
+    let archive = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};

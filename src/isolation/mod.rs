@@ -131,6 +131,9 @@ pub struct IsolationConfig {
     pub log_stdout: Option<std::fs::File>,
     /// When set, subprocess stderr is tee'd to this file in real time.
     pub log_stderr: Option<std::fs::File>,
+    /// Build-dependency mounts: (host_path, isolation_path).
+    /// These are mounted read-only into the isolation environment.
+    pub dep_mounts: Vec<(PathBuf, PathBuf)>,
 }
 
 impl IsolationConfig {
@@ -153,6 +156,7 @@ impl IsolationConfig {
             cpu_count: None,
             log_stdout: None,
             log_stderr: None,
+            dep_mounts: Vec::new(),
         }
     }
 }

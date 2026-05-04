@@ -317,8 +317,8 @@ pub async fn execute(
                     }
                     println!("Install Size: {} bytes", info.install_size.unwrap_or(0));
                     println!("Origin      : {}", info.origin);
-                    if let Some(ref plan) = info.plan_name {
-                        println!("Plan        : {}", plan);
+                    if info.plan_id > 0 {
+                        println!("Plan ID     : {}", info.plan_id);
                     }
                     println!("Installed At: {}", info.installed_at.unwrap_or_default());
                     if let Some(ref hash) = info.part_hash {

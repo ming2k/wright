@@ -37,7 +37,11 @@ pub async fn execute_list(
                     } else {
                         format!("{}-{}-{}", ver, part.release, part.arch)
                     };
-                    let plan_info = part.plan_name.as_deref().unwrap_or("-");
+                    let plan_info = if part.plan_id > 0 {
+                        part.plan_id.to_string()
+                    } else {
+                        "-".to_string()
+                    };
                     println!("{:<12} {:<24} {:<20} {}", part.origin, part.name, ver_rel_arch, plan_info);
                 }
             } else {

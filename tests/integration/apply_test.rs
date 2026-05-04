@@ -52,8 +52,7 @@ release = 1
 description = "Wayland utils"
 license = "MIT"
 arch = "x86_64"
-build = []
-link = []
+link_deps = []
 [lifecycle.staging]
 executor = "shell"
 isolation = "none"
@@ -61,7 +60,7 @@ script = "mkdir -p ${STAGING_DIR}/usr/bin"
 
 [[output]]
 name = "wayland-utils"
-runtime_deps = ["wayland"]
+runtime_deps = ["wayland:default"]
 "#,
     )
     .unwrap();
@@ -144,8 +143,7 @@ release = 1
 description = "main"
 license = "MIT"
 arch = "x86_64"
-build = []
-link = []
+link_deps = []
 [lifecycle.staging]
 executor = "shell"
 isolation = "none"
@@ -156,7 +154,7 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/apply-resume-main
 
 [[output]]
 name = "apply-resume-main"
-runtime_deps = ["apply-resume-dep"]
+runtime_deps = ["apply-resume-dep:default"]
 "#,
             signal_path.display()
         ),

@@ -12,6 +12,7 @@ async fn test_apply_force_always_includes_explicit_targets() {
     // 1. Simulate a part 'a' already installed
     db.insert_part(NewPart {
         name: "a",
+        plan_id: 0,
         version: "1.0.0",
         release: 1,
         epoch: 0,
@@ -23,8 +24,6 @@ async fn test_apply_force_always_includes_explicit_targets() {
         part_hash: Some("oldhash"),
         install_scripts: None,
         origin: Origin::Manual,
-        plan_name: None,
-        plan_id: None,
     })
     .await
     .unwrap();

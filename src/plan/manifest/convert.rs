@@ -62,6 +62,7 @@ impl SubFabricateOutput {
             outputs: None,
             install_scripts,
             backup,
+            source_plan: Some(parent.plan.name.clone()),
         }
     }
 }

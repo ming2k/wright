@@ -4,8 +4,8 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 
 ## Current Model
 
-- `wright build` builds plans into staging directories (`work/`)
-- `wright package` creates `.wright.tar.zst` archives from staging directories
+- `wright build` builds plans into staging directories (`work/` and `staging/`)
+- `wright package` slices `staging/` into `outputs/` (using the plan's `[[output]]` rules) and creates `.wright.tar.zst` archives
 - `wright install` reads `.PARTINFO` metadata directly from archives
 
 ## Quick Start

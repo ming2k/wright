@@ -22,13 +22,13 @@ name  = "gcc"
 version = "14.2.0"
 # ...
 
-build = ["binutils", "glibc", "gcc"]  # gcc needs itself — cycle!
+build_deps = ["binutils:default", "glibc:default", "gcc:default"]  # gcc needs itself — cycle!
 ```
 
 `mvp.toml`:
 
 ```toml
-build = ["binutils", "glibc"]     # MVP: build without gcc in deps
+build_deps = ["binutils:default", "glibc:default"]     # MVP: build without gcc in deps
 ```
 
 Wright detects the cycle automatically and schedules:
@@ -58,7 +58,7 @@ wright lint gcc binutils glibc
 
 Most apparent cycles are caused by incorrect dependency classification. Before defining phase-specific dependencies, verify that:
 
-- **`link`** is only used for shared libraries your binary actually links against at build time.
+- **`link_deps`** is only used for shared libraries your binary actually links against at build time.
 - **`runtime_deps`** is used for plugins, loaders, and tools called at runtime.
 
 Reserve phase-specific dependencies for cycles that remain after dependency types are correct.

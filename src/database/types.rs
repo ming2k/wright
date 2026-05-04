@@ -121,8 +121,7 @@ pub struct InstalledPart {
     pub install_scripts: Option<String>,
     pub assumed: bool,
     pub origin: Origin,
-    pub plan_name: Option<String>,
-    pub plan_id: Option<i64>,
+    pub plan_id: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -138,6 +137,7 @@ pub struct FileEntry {
 #[derive(Debug, Clone)]
 pub struct NewPart<'a> {
     pub name: &'a str,
+    pub plan_id: i64,
     pub version: &'a str,
     pub release: u32,
     pub epoch: u32,
@@ -149,14 +149,13 @@ pub struct NewPart<'a> {
     pub part_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
     pub origin: Origin,
-    pub plan_name: Option<&'a str>,
-    pub plan_id: Option<i64>,
 }
 
 impl<'a> Default for NewPart<'a> {
     fn default() -> Self {
         Self {
             name: "",
+            plan_id: 0,
             version: "",
             release: 0,
             epoch: 0,
@@ -168,10 +167,22 @@ impl<'a> Default for NewPart<'a> {
             part_hash: None,
             install_scripts: None,
             origin: Origin::Manual,
-            plan_name: None,
-            plan_id: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct NewPlan<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    pub release: u32,
+    pub epoch: u32,
+    pub description: &'a str,
+    pub arch: &'a str,
+    pub license: &'a str,
+    pub url: Option<&'a str>,
+    pub build_deps: Option<&'a str>,  // JSON array
+    pub link_deps: Option<&'a str>,   // JSON array
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
