@@ -61,6 +61,7 @@ struct OutputSection {
     install_scripts: Option<InstallScripts>,
     backup: Option<BackupConfig>,
     relations: Relations,
+    runtime_deps: Vec<String>,
 }
 
 fn parse_output_section(
@@ -122,6 +123,12 @@ fn parse_output_section(
             }
 
             let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
+            let mut all_runtime_deps = Vec::new();
+            for (_, sub) in &parts {
+                all_runtime_deps.extend(sub.runtime_deps.iter().cloned());
+            }
+            all_runtime_deps.sort();
+            all_runtime_deps.dedup();
             match catchall_count {
                 0 => {
                     // No catch-all: un-matched files are discarded.
@@ -130,6 +137,7 @@ fn parse_output_section(
                         install_scripts: None,
                         backup: None,
                         relations: Relations::default(),
+                        runtime_deps: all_runtime_deps,
                     })
                 }
                 1 => {
@@ -156,6 +164,7 @@ fn parse_output_section(
                         install_scripts,
                         backup: backup_cfg,
                         relations,
+                        runtime_deps: all_runtime_deps,
                     })
                 }
                 _ => {
@@ -194,6 +203,7 @@ fn parse_output_section(
             let replaces = extract_output_string_list(&mut table, "replaces")?;
             let conflicts = extract_output_string_list(&mut table, "conflicts")?;
             let provides = extract_output_string_list(&mut table, "provides")?;
+            let runtime_deps = extract_output_string_list(&mut table, "runtime_deps")?;
 
             if !table.is_empty() {
                 let unexpected: Vec<_> = table.keys().collect();
@@ -227,6 +237,7 @@ fn parse_output_section(
                 install_scripts,
                 backup: backup_cfg,
                 relations: main_relations,
+                runtime_deps,
             })
         }
 
@@ -235,6 +246,7 @@ fn parse_output_section(
             install_scripts: None,
             backup: None,
             relations: Relations::default(),
+            runtime_deps: Vec::new(),
         }),
 
         Some(_) => Err(WrightError::ParseError(
@@ -310,23 +322,8 @@ impl PlanManifest {
             install_scripts,
             backup,
             relations,
+            runtime_deps,
         } = output_section;
-
-        // Aggregate runtime deps from outputs so plan-level dependency
-        // resolution (e.g. `wright apply --deps`) sees them.
-        let mut runtime_deps = Vec::new();
-        if let Some(ref outputs) = outputs {
-            match outputs {
-                super::OutputConfig::Single(_) => {}
-                super::OutputConfig::Multi(parts) => {
-                    for (_, sub) in parts {
-                        runtime_deps.extend(sub.runtime_deps.iter().cloned());
-                    }
-                }
-            }
-        }
-        runtime_deps.sort();
-        runtime_deps.dedup();
 
         let manifest = PlanManifest {
             plan,

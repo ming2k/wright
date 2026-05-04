@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.1.5] - 2026-05-04
+
+### Fixed
+- **`[output]` now supports `runtime_deps`**: single-output plans using `[output]` can declare `runtime_deps` just like `[[output]]` multi-output entries. Previously this was rejected with a parse error.
+- **Documentation**: `docs/reference/writing-plans.md` corrected to reflect that `runtime_deps` is valid in both `[output]` and `[[output]]`.
+
 ## [3.1.4] - 2026-05-04
 
 ### Changed

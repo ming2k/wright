@@ -393,7 +393,7 @@ backup = ["/etc/nginx/nginx.conf"]
 post_install = "useradd -r nginx 2>/dev/null || true"
 ```
 
-**`[output]` does NOT support:** `name`, `include`, `exclude`, `description`, `runtime_deps`. These are multi-output only.
+**`[output]` does NOT support:** `name`, `include`, `exclude`, `description`. These are multi-output only. `runtime_deps` is supported in both `[output]` and `[[output]]`.
 
 #### Mode 3: Multi-output (`[[output]]`)
 
