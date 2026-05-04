@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-05-04
+
+### Fixed
+- **Fixed deadlock in multi-batch apply/build resume**: `execute_builds` loop failed to account for `session_completed` tasks (previously built in earlier batches), causing `finished_count` to exceed `build_set.len()` and the loop condition to never trigger. Additionally resolved a mutex lock-ordering deadlock between `completed`/`failed_set` and `in_progress`.
+
 ## [4.0.0] - 2026-05-04
 
 ### Breaking Changes

@@ -195,12 +195,20 @@ pub(super) async fn execute_builds(
             });
         }
 
-        let finished_count = completed.lock().await.len() + *failed_count.lock().await;
-        if in_progress.lock().await.is_empty() && finished_count == build_set.len() {
+        let finished_in_build_set = {
+            let comp = completed.lock().await;
+            let fail = failed_set.lock().await;
+            build_set
+                .iter()
+                .filter(|name| comp.contains(*name) || fail.contains(*name))
+                .count()
+        };
+        let in_progress_empty = in_progress.lock().await.is_empty();
+        if in_progress_empty && finished_in_build_set == build_set.len() {
             break;
         }
 
-        if in_progress.lock().await.is_empty() && finished_count < build_set.len() {
+        if in_progress_empty && finished_in_build_set < build_set.len() {
             let mut message =
                 String::from("Deadlock detected or dependency missing from plan set:\n");
             let comp = completed.lock().await;
