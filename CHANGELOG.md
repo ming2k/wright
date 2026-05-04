@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.1.6] - 2026-05-04
+
+### Changed
+- **Build directory reorganization**: build root layout changed from `output/` + `output-<name>/` to `staging/` + `outputs/default/` + `outputs/<name>/`. Build scripts write to `staging/` which is preserved after the build for inspection. Output slicing now uses hard-links instead of moves, so `staging/` remains intact while `outputs/` contains the sliced results.
+- **`wright build` no longer packages by default**: use `--package` flag to also create `.wright.tar.zst` archives. New `wright package` command packages existing staging directories.
+
 ## [3.1.5] - 2026-05-04
 
 ### Fixed
@@ -15,6 +21,7 @@
 - **Removed assemblies**: the `@assembly` target syntax and `assemblies_dir` config are removed. Plan lists can be passed directly as arguments or piped via stdin.
 - **Prune simplification**: `--untracked` flag removed from `wright prune`. Only `--latest` (keep newest archive per name) remains.
 - **Lock directory logic**: simplified to derive lock directory directly from DB parent (`/var/lib/wright/lock`).
+- **Build directory reorganization**: build root layout changed from `output/` + `output-<name>/` to `staging/` + `outputs/default/` + `outputs/<name>/`. Build scripts write to `staging/` which is preserved after the build for inspection. Output slicing now uses hard-links instead of moves, so `staging/` remains intact while `outputs/` contains the sliced results.
 
 ### Migration Notes
 - Move your database: `mv /var/lib/wright/state/installed.db /var/lib/wright/wright.db`

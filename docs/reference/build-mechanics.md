@@ -11,7 +11,7 @@ when work is skipped or repeated.
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
-| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `output/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
+| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `staging/`, `outputs/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
 | `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
 
 ### How the two layers relate
@@ -31,16 +31,18 @@ Each part gets its own working directory under `build_dir`
 
 ```
 <build_dir>/<name>-<version>/¹
-├── work/     # The source tree (mounted at /build in isolation)
-├── output/   # Main output staging root ($PART_DIR / $MAIN_PART_DIR, mounted at /output)
-├── logs/     # Per-stage log files
+├── work/      # The source tree (mounted at /build in isolation)
+├── staging/   # Build script output root ($PART_DIR / $MAIN_PART_DIR, mounted at /output)
+├── outputs/   # Sliced output directories (hard-linked from staging/)
+│   └── default/  # Catch-all output
+├── logs/      # Per-stage log files
 └── .wright_script* # Temporary build script (auto-cleaned on next run)
 
 ¹ When `version` is omitted from `plan.toml`, the directory uses `<name>-noversion`.
 ```
 
-`work/` is the isolation's `/build` mount. `output/` is `/output`. By default,
-`output/` and `logs/` are recreated clean at the start of every build. `work/` is
+`work/` is the isolation's `/build` mount. `staging/` is `/output`. By default,
+`staging/`, `outputs/`, and `logs/` are recreated clean at the start of every build. `work/` is
 **reused** when the build key has not changed (same version, sources, and
 lifecycle scripts), enabling incremental builds — the fetch/verify/extract
 steps are skipped entirely. When the build key changes (e.g. a version bump),
@@ -52,9 +54,11 @@ staging directories are created:
 
 ```
 <build_dir>/<name>-<version>/¹
-├── output/          # Main part output
-├── output-<name>/   # Sub-part output (e.g. output-dev)
-
+├── staging/         # Build script output (preserved for inspection)
+├── outputs/
+│   ├── default/     # Catch-all output (hard-linked from staging/)
+│   └── <name>/      # Sub-part output (e.g. outputs/dev/)
+│
 ¹ Uses `<name>-noversion` when `version` is omitted.
 └── ...
 ```
@@ -112,13 +116,13 @@ path.
 
 ### Directory lifecycle rules
 
-| Operation | `work/` | `output/` | `logs/` |
-|-----------|:------:|:------:|:------:|
-| Full build (key match) | **preserved** | recreated | recreated |
-| Full build (key mismatch) | recreated | recreated | recreated |
-| `--stage=<s>` | preserved | recreated | recreated |
-| `--clean` then build | deleted first | recreated | recreated |
-| Cache hit | recreated empty | restored | restored |
+| Operation | `work/` | `staging/` | `outputs/` | `logs/` |
+|-----------|:------:|:------:|:------:|:------:|
+| Full build (key match) | **preserved** | recreated | recreated | recreated |
+| Full build (key mismatch) | recreated | recreated | recreated | recreated |
+| `--stage=<s>` | preserved | recreated | recreated | recreated |
+| `--clean` then build | deleted first | recreated | recreated | recreated |
+| Cache hit | recreated empty | restored | restored | restored |
 
 On a build-cache hit, Wright recreates the working directories first, then
 extracts the cached snapshot into `build_root`. Because `work/` is not part of
@@ -199,7 +203,7 @@ Use `--force` to override this and rebuild regardless.
 
 ### What the part contains
 
-The part is created from the staged root (`output/`) after the final
+The part is created from the output directories (`outputs/<name>/`) after the
 output slicing phase and records the full part metadata (name, version,
 dependencies, file list) for the installer.
 
@@ -209,18 +213,19 @@ When multi-output plans declare `[[output]]` entries:
 
 1. Non-catch-all outputs (those with explicit `include` patterns) are processed
    in their declared order.
-2. For each output, files matching its `include` patterns are moved out of
-   `output/` into `output-<name>/`.
+2. For each output, files matching its `include` patterns are **hard-linked**
+   from `staging/` into `outputs/<name>/`.
 3. If a catch-all output exists (the one with no `include`), it keeps whatever
-   remains in `output/`.
+   remains in `staging/` via hard-links into `outputs/default/`.
 4. If there is **no** catch-all, any remaining files are silently discarded.
 
 Later outputs only see files not claimed by earlier outputs. Order matters
-when `include` patterns overlap.
+when `include` patterns overlap. The original `staging/` directory is left
+intact for inspection after the build completes.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Output part | `work/` | `output/` / `logs/` |
+| Flag | Source cache | Output part | `work/` | `staging/` / `outputs/` / `logs/` |
 |------|:---:|:---:|:---:|:---:|
 | (default) | reuse | skip if exists | reuse if key matches | recreated |
 | `--force` | reuse | overwrite | reuse if key matches | recreated |

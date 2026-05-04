@@ -90,6 +90,39 @@ fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> 
     Ok(resolved)
 }
 
+/// Recursively hard-link all files from src_dir to dest_dir, preserving directory structure.
+async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
+    let mut dirs_to_visit = vec![src_dir.to_path_buf()];
+    while let Some(dir) = dirs_to_visit.pop() {
+        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if tokio::fs::metadata(&path)
+                    .await
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
+                    dirs_to_visit.push(path);
+                } else if let Ok(rel_path) = path.strip_prefix(src_dir) {
+                    let dest_path = dest_dir.join(rel_path);
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    if let Err(e) = tokio::fs::hard_link(&path, &dest_path).await {
+                        return Err(WrightError::BuildError(format!(
+                            "failed to hard-link {} to {}: {}",
+                            path.display(),
+                            dest_path.display(),
+                            e
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Builder {
     pub fn new(config: GlobalConfig) -> Self {
         let mut executors = executor::ExecutorRegistry::new();
@@ -202,8 +235,11 @@ impl Builder {
     ) -> Result<BuildResult> {
         let build_root = self.build_root(manifest)?;
         let work_dir = build_root.join("work");
-        let output_dir = build_root.join("output");
+        let staging_dir = build_root.join("staging");
+        let outputs_dir = build_root.join("outputs");
+        let default_output_dir = outputs_dir.join("default");
         let logs_dir = build_root.join("logs");
+        let output_dir = staging_dir.clone();
         let partial = !stages.is_empty() || fetch_only;
         let build_key = self.compute_build_key(manifest)?;
 
@@ -232,7 +268,8 @@ impl Builder {
                     "cannot use --stage: no previous build found (work/ does not exist). Run a full build first.".to_string()
                 ));
             }
-            ensure_clean_dir(&output_dir).await?;
+            ensure_clean_dir(&staging_dir).await?;
+            ensure_clean_dir(&outputs_dir).await?;
             ensure_clean_dir(&logs_dir).await?;
         } else {
             let key_file = build_root.join(".build_key");
@@ -245,11 +282,13 @@ impl Builder {
 
             if work_reusable {
                 debug!("Source tree unchanged (build key match) — reusing work/");
-                ensure_clean_dir(&output_dir).await?;
+                ensure_clean_dir(&staging_dir).await?;
+                ensure_clean_dir(&outputs_dir).await?;
                 ensure_clean_dir(&logs_dir).await?;
             } else {
                 ensure_clean_dir(&work_dir).await?;
-                ensure_clean_dir(&output_dir).await?;
+                ensure_clean_dir(&staging_dir).await?;
+                ensure_clean_dir(&outputs_dir).await?;
                 ensure_clean_dir(&logs_dir).await?;
             }
         }
@@ -262,7 +301,7 @@ impl Builder {
                 self.fetch(manifest, plan_dir).await?;
                 if until_stage == Some("fetch") {
                     return Ok(BuildResult {
-                        output_dir,
+                        output_dir: default_output_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -271,7 +310,7 @@ impl Builder {
                 self.verify(manifest).await?;
                 if until_stage == Some("verify") {
                     return Ok(BuildResult {
-                        output_dir,
+                        output_dir: default_output_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -281,7 +320,7 @@ impl Builder {
                 let _ = tokio::fs::write(work_dir.join(".extracted"), "").await;
                 if until_stage == Some("extract") {
                     return Ok(BuildResult {
-                        output_dir,
+                        output_dir: default_output_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -291,7 +330,7 @@ impl Builder {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
                 if matches!(until_stage, Some("fetch" | "verify" | "extract")) {
                     return Ok(BuildResult {
-                        output_dir,
+                        output_dir: default_output_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -302,7 +341,7 @@ impl Builder {
 
         if fetch_only {
             return Ok(BuildResult {
-                output_dir,
+                output_dir: default_output_dir.clone(),
                 work_dir,
                 logs_dir,
                 split_part_dirs: std::collections::HashMap::new(),
@@ -339,9 +378,9 @@ impl Builder {
             release: manifest.plan.release,
             arch: &manifest.plan.arch,
             workdir: &work_dir.to_string_lossy(),
-            part_dir: &output_dir.to_string_lossy(),
+            part_dir: &staging_dir.to_string_lossy(),
             main_part_name: &manifest.plan.name,
-            main_part_dir: &output_dir.to_string_lossy(),
+            main_part_dir: &staging_dir.to_string_lossy(),
         });
 
         for (k, v) in &manifest.options.env {
@@ -372,17 +411,29 @@ impl Builder {
         pipeline.run().await?;
 
         let mut split_part_dirs = std::collections::HashMap::new();
+
+        // Create default_output_dir for catch-all or single-output packaging
+        tokio::fs::create_dir_all(&default_output_dir)
+            .await
+            .map_err(|e| {
+                WrightError::BuildError(format!(
+                    "failed to create default output directory {}: {}",
+                    default_output_dir.display(),
+                    e
+                ))
+            })?;
+
         if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
             // Build rules only for non-catch-all outputs (those with explicit include patterns).
-            // The catch-all keeps whatever remains in output_dir — no move needed.
+            // The catch-all keeps whatever remains in staging_dir (hard-linked to outputs/default/).
             let mut sub_rules: Vec<(&str, PathBuf, Vec<regex::Regex>, Vec<regex::Regex>)> =
                 Vec::new();
             for (sub_name, sub_part) in parts {
                 let incs = match &sub_part.include {
                     Some(v) => v,
-                    None => continue, // catch-all stays in output_dir
+                    None => continue, // catch-all: hard-link remaining files to default_output_dir
                 };
-                let sub_output_dir = build_root.join(format!("output-{}", sub_name));
+                let sub_output_dir = outputs_dir.join(sub_name);
                 tokio::fs::create_dir_all(&sub_output_dir)
                     .await
                     .map_err(|e| {
@@ -424,7 +475,7 @@ impl Builder {
             if !sub_rules.is_empty() {
                 debug!("Splitting staging dir into {} non-catch-all outputs", sub_rules.len());
                 let mut all_entries = Vec::new();
-                let mut dirs_to_visit = vec![output_dir.clone()];
+                let mut dirs_to_visit = vec![staging_dir.clone()];
                 while let Some(dir) = dirs_to_visit.pop() {
                     if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
                         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -442,8 +493,11 @@ impl Builder {
                     }
                 }
 
-                for file_path in all_entries {
-                    if let Ok(rel_path) = file_path.strip_prefix(&output_dir) {
+                // Track which files were matched by any sub-output
+                let mut matched_files = std::collections::HashSet::new();
+
+                for file_path in &all_entries {
+                    if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
                         let rel_str = format!("/{}", rel_path.display());
                         for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
                             // includes is guaranteed non-empty (catch-all not in sub_rules)
@@ -458,20 +512,42 @@ impl Builder {
                                 if let Some(parent) = dest_path.parent() {
                                     let _ = tokio::fs::create_dir_all(parent).await;
                                 }
-                                if let Err(e) = tokio::fs::rename(&file_path, &dest_path).await {
+                                if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
                                     return Err(WrightError::BuildError(format!(
-                                        "failed to move {} to {}: {}",
+                                        "failed to hard-link {} to {}: {}",
                                         file_path.display(),
                                         dest_path.display(),
                                         e
                                     )));
                                 }
+                                matched_files.insert(file_path.clone());
                                 break;
                             }
                         }
                     }
                 }
+
+                // Hard-link remaining files to default_output_dir (catch-all)
+                for file_path in &all_entries {
+                    if !matched_files.contains(file_path) {
+                        if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
+                            let dest_path = default_output_dir.join(rel_path);
+                            if let Some(parent) = dest_path.parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
+                                warn!("Failed to hard-link catch-all file {}: {}", file_path.display(), e);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No sub-rules: all files go to catch-all
+                hard_link_all(&staging_dir, &default_output_dir).await?;
             }
+        } else {
+            // Single-output or no output config: hard-link everything to default_output_dir
+            hard_link_all(&staging_dir, &default_output_dir).await?;
         }
 
         if !partial {
@@ -482,7 +558,7 @@ impl Builder {
         }
 
         Ok(BuildResult {
-            output_dir,
+            output_dir: default_output_dir,
             work_dir,
             logs_dir,
             split_part_dirs,

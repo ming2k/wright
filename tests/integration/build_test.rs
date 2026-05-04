@@ -427,6 +427,7 @@ retry_count = 3
         .arg("-v")
         .arg("build")
         .arg("verbose-pipe-test")
+        .arg("--package")
         .arg("--print-parts")
         .output()
         .unwrap();
@@ -575,7 +576,7 @@ retry_count = 3
     );
     assert!(
         build_dir
-            .join("stop-at-staging-1.0.0/output/usr/bin/stop-at-staging")
+            .join("stop-at-staging-1.0.0/staging/usr/bin/stop-at-staging")
             .exists(),
         "staged output should remain available for inspection"
     );

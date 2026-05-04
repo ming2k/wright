@@ -209,14 +209,14 @@ fn expected_staging_dirs(build_dir: &Path, plan_path: &Path) -> Result<Vec<PathB
             let mut dirs = Vec::new();
             for (sub_name, sub_part) in parts {
                 if sub_part.include.is_none() {
-                    dirs.push(build_root.join("output"));
+                    dirs.push(build_root.join("outputs").join("default"));
                 } else {
-                    dirs.push(build_root.join(format!("output-{}", sub_name)));
+                    dirs.push(build_root.join("outputs").join(sub_name));
                 }
             }
             Ok(dirs)
         }
-        _ => Ok(vec![build_root.join("output")]),
+        _ => Ok(vec![build_root.join("outputs").join("default")]),
     }
 }
 

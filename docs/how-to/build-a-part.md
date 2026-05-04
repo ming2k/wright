@@ -61,7 +61,7 @@ To run a normal build from the start but stop after a stage so you can inspect t
 
 ```bash
 wright build mypart --until-stage=staging
-# Inspect /var/tmp/wright/workshop/mypart-<version>/output/
+# Inspect /var/tmp/wright/workshop/mypart-<version>/staging/
 ```
 
 To iterate on a subset of stages and inspect the result:

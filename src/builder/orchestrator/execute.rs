@@ -395,14 +395,14 @@ async fn build_one(
                 Some(OutputConfig::Multi(ref parts)) => {
                     parts.iter().all(|(sub_name, sub_part)| {
                         let dir = if sub_part.include.is_none() {
-                            build_root.join("output")
+                            build_root.join("outputs").join("default")
                         } else {
-                            build_root.join(format!("output-{}", sub_name))
+                            build_root.join("outputs").join(sub_name)
                         };
                         dir.exists()
                     })
                 }
-                _ => build_root.join("output").exists(),
+                _ => build_root.join("outputs").join("default").exists(),
             }
         };
         if all_exist {
@@ -540,11 +540,11 @@ pub async fn package_manifest(
 ) -> Result<()> {
     let builder = crate::builder::Builder::new(config.clone());
     let build_root = builder.build_root(manifest)?;
-    let output_dir = build_root.join("output");
+    let output_dir = build_root.join("outputs").join("default");
 
     if !output_dir.exists() {
         return Err(WrightError::BuildError(format!(
-            "staging directory does not exist: {}. Run `wright build {}` first.",
+            "output directory does not exist: {}. Run `wright build {}` first.",
             output_dir.display(),
             manifest.plan.name
         )));
@@ -556,7 +556,7 @@ pub async fn package_manifest(
             if sub_part.include.is_none() {
                 continue;
             }
-            let sub_dir = build_root.join(format!("output-{}", sub_name));
+            let sub_dir = build_root.join("outputs").join(sub_name);
             if !sub_dir.exists() {
                 return Err(WrightError::BuildError(format!(
                     "output directory for '{}' does not exist: {}. Run `wright build {}` first.",
