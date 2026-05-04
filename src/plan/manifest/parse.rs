@@ -124,13 +124,40 @@ fn parse_output_section(
             let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
             match catchall_count {
                 0 => {
-                    return Err(WrightError::ParseError(
-                        "multi-output plans need exactly one catch-all output \
-                         (a [[output]] entry with no 'include')"
-                            .to_string(),
-                    ))
+                    // No catch-all: un-matched files are discarded.
+                    Ok(OutputSection {
+                        outputs: Some(OutputConfig::Multi(parts)),
+                        install_scripts: None,
+                        backup: None,
+                        relations: Relations::default(),
+                    })
                 }
-                1 => {}
+                1 => {
+                    let (_, catchall) = parts.iter().find(|(_, s)| s.include.is_none()).unwrap();
+                    let relations = Relations {
+                        replaces: catchall.replaces.clone(),
+                        conflicts: catchall.conflicts.clone(),
+                        provides: catchall.provides.clone(),
+                    };
+                    let install_scripts = catchall.hooks.as_ref().map(|h| InstallScripts {
+                        pre_install: h.pre_install.clone(),
+                        post_install: h.post_install.clone(),
+                        post_upgrade: h.post_upgrade.clone(),
+                        pre_remove: h.pre_remove.clone(),
+                        post_remove: h.post_remove.clone(),
+                    });
+                    let backup_cfg = catchall
+                        .backup
+                        .as_ref()
+                        .map(|files| BackupConfig { files: files.clone() });
+
+                    Ok(OutputSection {
+                        outputs: Some(OutputConfig::Multi(parts)),
+                        install_scripts,
+                        backup: backup_cfg,
+                        relations,
+                    })
+                }
                 _ => {
                     return Err(WrightError::ParseError(
                         "multiple [[output]] entries have no 'include'; \
@@ -139,31 +166,6 @@ fn parse_output_section(
                     ))
                 }
             }
-
-            let (_, catchall) = parts.iter().find(|(_, s)| s.include.is_none()).unwrap();
-            let relations = Relations {
-                replaces: catchall.replaces.clone(),
-                conflicts: catchall.conflicts.clone(),
-                provides: catchall.provides.clone(),
-            };
-            let install_scripts = catchall.hooks.as_ref().map(|h| InstallScripts {
-                pre_install: h.pre_install.clone(),
-                post_install: h.post_install.clone(),
-                post_upgrade: h.post_upgrade.clone(),
-                pre_remove: h.pre_remove.clone(),
-                post_remove: h.post_remove.clone(),
-            });
-            let backup_cfg = catchall
-                .backup
-                .as_ref()
-                .map(|files| BackupConfig { files: files.clone() });
-
-            Ok(OutputSection {
-                outputs: Some(OutputConfig::Multi(parts)),
-                install_scripts,
-                backup: backup_cfg,
-                relations,
-            })
         }
 
         // --- Single-output mode: [output] table ---

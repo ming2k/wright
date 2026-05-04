@@ -211,8 +211,9 @@ When multi-output plans declare `[[output]]` entries:
    in their declared order.
 2. For each output, files matching its `include` patterns are moved out of
    `output/` into `output-<name>/`.
-3. The catch-all output (the one with no `include`) keeps whatever remains
-   in `output/`.
+3. If a catch-all output exists (the one with no `include`), it keeps whatever
+   remains in `output/`.
+4. If there is **no** catch-all, any remaining files are silently discarded.
 
 Later outputs only see files not claimed by earlier outputs. Order matters
 when `include` patterns overlap.

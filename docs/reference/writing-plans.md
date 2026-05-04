@@ -346,46 +346,99 @@ texlinks 2>/dev/null || true
 #  sudo fmtutil-sys --byfmt pdflatex
 ```
 
-### `[output]` — Output Metadata & Part Relations
+### Output Modes
 
-`[output]` defines install-time metadata for the main part, and
-`[[output]]` array-of-tables declares additional split outputs.
+Wright has three output modes. A plan **must** use exactly one of them.
 
-Each output carries its own **part relations** — install-time metadata
-describing how a part interacts with other parts in the system.
+| Mode | Syntax | Use case |
+|------|--------|----------|
+| **No output section** | Omit `[output]` and `[[output]]` entirely | Simple package; everything in `${PART_DIR}` becomes the part named after `plan.name` |
+| **Single-output metadata** | `[output]` table | Same as above, but with hooks, backup files, or part relations |
+| **Multi-output** | `[[output]]` array-of-tables | Split staging files into multiple sub-parts |
+
+#### Mode 1: No output section (default)
+
+If you omit both `[output]` and `[[output]]`, the plan produces exactly one part named after the top-level `name` field. Everything installed into `${PART_DIR}` during staging becomes that part.
 
 ```toml
+name = "hello"
+version = "1.0.0"
+release = 1
+description = "Hello World"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.staging]
+script = """
+install -Dm755 hello ${PART_DIR}/usr/bin/hello
+"""
+```
+
+Result: one part named `hello` containing `/usr/bin/hello`.
+
+#### Mode 2: Single-output metadata (`[output]`)
+
+Use `[output]` when you need hooks, backup files, or part relations for a single part. It does **not** split files; it only attaches metadata to the single part named after `plan.name`.
+
+```toml
+name = "nginx"
+# ...
+
 [output]
 conflicts = ["apache"]
 provides = ["http-server"]
-replaces = ["old-nginx"]
-backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+backup = ["/etc/nginx/nginx.conf"]
 
-[[output]]
-name = "nginx-doc"
-description = "Nginx documentation"
-provides = ["nginx-documentation"]
-include = ["/usr/share/doc/.*", "/usr/share/man/.*"]
+[hooks]
+post_install = "useradd -r nginx 2>/dev/null || true"
 ```
 
-| Field     | Type      | Description               |
-|----------------|-----------------|------------------------------------------|
-| `replaces`   | list of strings | Parts this output replaces (auto-removed on install) |
-| `conflicts`  | list of strings | Parts that cannot coexist with this output |
-| `provides`   | list of strings | Virtual part names this output satisfies |
-| `backup`    | list of strings | Config files preserved across upgrades  |
-| `description` | string     | Sub-part description (multi-output mode) |
-| `include`   | list of strings | Regex patterns for files to include in this sub-part (multi-output mode) |
-| `exclude`   | list of strings | Regex patterns for files to exclude from this sub-part (multi-output mode) |
-| `hooks.*`   | table/fields  | Transaction hooks for a sub-part   |
-| `dependencies` | table      | Additional sub-part dependencies (sub-parts automatically inherit all dependencies from the parent) |
+**`[output]` does NOT support:** `name`, `include`, `exclude`, `description`, `runtime_deps`. These are multi-output only.
 
-#### `output` vs `outputs`
+#### Mode 3: Multi-output (`[[output]]`)
 
-`output` (singular) is the TOML field for output configuration (`[output]` or `[[output]]`).
-`outputs` (plural) is a user-facing lifecycle stage alias that maps to the internal
-`fabricate` stage. They are **not** duplicated — they serve completely different
-purposes.
+Use `[[output]]` to split staging files into multiple parts. Each entry **must** have a `name`. Other fields depend on whether the entry is a catch-all or not.
+
+```toml
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+[[output]]
+name = "gcc"
+# catch-all — keeps everything not claimed by earlier outputs
+
+[[output]]
+name = "libstdc++"
+description = "GNU C++ standard library"
+include = ["/usr/lib/libstdc.*"]
+runtime_deps = ["libgcc"]
+```
+
+**Rules for `[[output]]`:**
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | **Yes** | Part name for this output |
+| `description` | Yes for non-catch-all | Human-readable description |
+| `include` | No | Regex patterns for files to move into this part. Omit = catch-all |
+| `exclude` | No | Regex patterns to exclude from this part |
+| `runtime_deps` | No | Per-output runtime dependencies |
+| `hooks.*` | No | Per-output transaction hooks |
+| `backup` | No | Per-output backup files |
+| `replaces` | No | Per-output replacement relations |
+| `conflicts` | No | Per-output conflict relations |
+| `provides` | No | Per-output virtual provides |
+
+**Catch-all rules:**
+
+- At most **one** catch-all (an entry with no `include`) is allowed
+- Catch-all is **optional** — you may have zero catch-alls
+- When there is no catch-all, un-matched files are **silently discarded**
+- `description` is **not** required for catch-all outputs
 
 #### Implicit Slicing (Declarative Outputs)
 
@@ -396,11 +449,13 @@ After `staging` is complete, an implicit slicing engine processes the files base
 
 **Output processing order:**
 
-1. Non-catch-all outputs (those with explicit `include` patterns) are processed in their declared order.
-2. For each non-catch-all output, files matching its `include` patterns are moved out of `${PART_DIR}` into the respective sub-part directories.
-3. The catch-all output (the one with no `include`) keeps whatever remains in `${PART_DIR}`.
+1. Non-catch-all outputs (those with explicit `include` patterns) are processed **in their declared order**.
+2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **moved** out of `${PART_DIR}` into the respective sub-part directories.
+3. A file is claimed by the **first** output whose `include` matches it. Later outputs never see it.
+4. The optional catch-all output (the one with no `include`) keeps whatever remains in `${PART_DIR}`.
+5. If there is **no catch-all**, any remaining files are discarded.
 
-This means later outputs in the declaration only see files not claimed by earlier outputs. The catch-all is always last and receives the leftovers.
+**Critical: `include` patterns must be specific.** Using `include = ["/.*"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
 
 #### Part Relations
 
@@ -951,38 +1006,108 @@ description = "Nginx documentation files"
 include = ["/usr/share/doc/.*"]
 ```
 
-### Multi-Output Mode
+### Multi-Output Examples
 
-A single plan can produce multiple output parts. This avoids rebuilding the same source just to partition files into separate archives. Common use cases: separating documentation, libraries, or development headers from the main part.
+#### Example: Library + Development Headers
 
-In multi-output mode, the main part uses `[output]`, and extra outputs are
-declared as `[[output]]` array-of-tables.
+Split runtime libraries from headers and static archives:
 
 ```toml
-name = "gcc"
-version = "14.2.0"
+name = "libfoo"
+version = "1.0.0"
 release = 1
-description = "The GNU Compiler Collection"
-license = "GPL-3.0-or-later"
+description = "Foo library"
+license = "MIT"
 arch = "x86_64"
-
-[lifecycle.compile]
-script = "make -j$(nproc)"
 
 [lifecycle.staging]
 script = """
 make DESTDIR=${PART_DIR} install
 """
 
-[hooks]
-post_install = "..."
+[[output]]
+name = "libfoo"
+description = "Foo runtime libraries"
+include = ["/usr/lib/libfoo\\.so.*"]
+runtime_deps = ["glibc"]
 
 [[output]]
-name = "libstdc++"
-description = "GNU C++ standard library"
-include = ["/usr/lib/libstdc.*"]
-hooks.post_install = "ldconfig"
-runtime_deps = ["libgcc"]
+name = "libfoo-dev"
+description = "Foo development files"
+include = ["/usr/include/.*", "/usr/lib/libfoo\\.a", "/usr/lib/pkgconfig/libfoo.*"]
+```
+
+In this example, files not matching either `include` are discarded because there is no catch-all.
+
+#### Example: Meta-part with Sub-parts
+
+Create a meta-part that depends on all sub-parts, useful for grouping:
+
+```toml
+name = "linux-firmware"
+version = "20250101"
+release = 1
+description = "Linux firmware files"
+license = "multiple"
+arch = "x86_64"
+
+[[output]]
+name = "linux-firmware"
+# Meta-part that depends on all sub-parts; no include = catch-all, but it won't
+# contain any files because all files are claimed by sub-parts above it.
+runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
+
+[[output]]
+name = "linux-firmware-amd"
+description = "AMD GPU/CPU firmware"
+include = ["/usr/lib/firmware/amdgpu/.*", "/usr/lib/firmware/radeon/.*"]
+
+[[output]]
+name = "linux-firmware-intel"
+description = "Intel GPU/CPU firmware"
+include = ["/usr/lib/firmware/i915/.*", "/usr/lib/firmware/iwlwifi/.*"]
+
+[[output]]
+name = "linux-firmware-nvidia"
+description = "NVIDIA GPU firmware"
+include = ["/usr/lib/firmware/nvidia/.*"]
+```
+
+**Note:** The `linux-firmware` catch-all comes first and receives whatever the sub-parts don't claim. If you want it to be a pure meta-part with no files, put it **after** all the sub-parts that claim all files — then the catch-all will be empty. Or omit the catch-all entirely and let unclaimed files be discarded.
+
+#### Example: No Catch-All (Discard Unmatched)
+
+Only keep specific files; discard everything else:
+
+```toml
+name = "llvm-tools"
+version = "22.1.3"
+release = 1
+description = "Selected LLVM tools"
+license = "Apache-2.0-with-LLVM-exception"
+arch = "x86_64"
+
+[[output]]
+name = "llvm-opt"
+description = "LLVM optimizer"
+include = ["/usr/bin/opt", "/usr/bin/llvm-opt.*"]
+
+[[output]]
+name = "llvm-dis"
+description = "LLVM disassembler"
+include = ["/usr/bin/llvm-dis", "/usr/bin/llvm-as"]
+```
+
+Files like `clang`, `lld`, headers, and libraries are silently discarded because they match no `include` and there is no catch-all.
+
+#### Example: Override Architecture for Documentation
+
+```toml
+[[output]]
+name = "mypart-doc"
+description = "Documentation for mypart"
+arch = "any"
+include = ["/usr/share/doc/.*"]
 ```
 
 Sub-parts inherit `version`, `release`, `arch`, and `license` from the

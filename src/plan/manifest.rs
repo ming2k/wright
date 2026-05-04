@@ -71,10 +71,11 @@ pub struct SubFabricateOutput {
 #[derive(Debug, Clone)]
 pub enum OutputConfig {
     Single(FabricateOutput),
-    /// Ordered list of outputs. Exactly one has `include = None` (the catch-all);
+    /// Ordered list of outputs. At most one has `include = None` (the catch-all);
     /// all others carry explicit `include` patterns. Non-catch-all outputs are
     /// processed in declared order, moving matching files out of the staging dir.
-    /// The catch-all keeps whatever remains — no move needed.
+    /// The optional catch-all keeps whatever remains — no move needed.
+    /// If there is no catch-all, un-matched files are silently discarded.
     Multi(Vec<(String, SubFabricateOutput)>),
 }
 
@@ -390,11 +391,6 @@ impl PlanManifest {
             match part {
                 OutputConfig::Multi(ref parts) => {
                     let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
-                    if catchall_count == 0 {
-                        return Err(WrightError::ValidationError(
-                            "multi-output plans must have exactly one catch-all output (an [output.<name>] with no 'include')".to_string(),
-                        ));
-                    }
                     if catchall_count > 1 {
                         return Err(WrightError::ValidationError(
                             "multiple outputs have no 'include'; exactly one catch-all is allowed".to_string(),
@@ -966,7 +962,7 @@ include = []
     }
 
     #[test]
-    fn test_multi_output_no_catchall_error() {
+    fn test_multi_output_no_catchall_ok() {
         let toml_str = r#"
 name = "test"
 version = "1.0.0"
@@ -978,6 +974,7 @@ arch = "x86_64"
 
 [[output]]
 name = "test"
+description = "test bin"
 include = ["/usr/bin/.*"]
 
 [[output]]
@@ -985,8 +982,15 @@ name = "test-lib"
 description = "test lib"
 include = ["/usr/lib/.*"]
 "#;
-        let err = PlanManifest::parse(toml_str).unwrap_err();
-        assert!(err.to_string().contains("catch-all"));
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(parts)) => {
+                assert_eq!(parts.len(), 2);
+                assert!(parts[0].1.include.is_some());
+                assert!(parts[1].1.include.is_some());
+            }
+            _ => panic!("expected Multi output config"),
+        }
     }
 
     #[test]

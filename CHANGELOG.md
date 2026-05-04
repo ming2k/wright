@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.3] - 2026-05-04
+
+### Changed
+- **Multi-output catch-all is now optional**: plans using `[[output]]` no longer require a catch-all entry (an output with no `include`). When no catch-all is present, any files not claimed by explicit `include` patterns are silently discarded. This allows plans to split out only specific files and ignore the rest, rather than being forced to package leftovers into a catch-all part.
+- **Documentation**: `docs/reference/writing-plans.md` and `docs/reference/build-mechanics.md` updated to clarify the three output modes (no output section, single-output metadata, multi-output) and the optional catch-all behavior.
+- **Fixed broken plan files**: `llvm`, `rust`, and `dbus` plans were using `include = ["/.*"]` on non-catch-all outputs, which greedily captured all files and left nothing for subsequent outputs. These have been corrected with precise `include` patterns.
+
 ## [3.1.2] - 2026-05-04
 
 ### Changed
