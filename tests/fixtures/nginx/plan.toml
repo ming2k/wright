@@ -73,8 +73,8 @@ executor = "shell"
 isolation = "strict"
 script = """
 cd ${WORKDIR}
-make DESTDIR=${PART_DIR} install
-install -Dm644 conf/nginx.conf ${PART_DIR}/etc/nginx/nginx.conf
+make DESTDIR=${STAGING_DIR} install
+install -Dm644 conf/nginx.conf ${STAGING_DIR}/etc/nginx/nginx.conf
 """
 [[output]]
 name = "nginx"

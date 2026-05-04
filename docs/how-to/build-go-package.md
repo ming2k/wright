@@ -25,7 +25,7 @@ go build -mod=vendor -o hugo .
 
 [lifecycle.staging]
 script = """
-install -Dm755 hugo ${PART_DIR}/usr/bin/hugo
+install -Dm755 hugo ${STAGING_DIR}/usr/bin/hugo
 """
 ```
 
@@ -44,6 +44,6 @@ go build -o hugo .
 
 [lifecycle.staging]
 script = """
-install -Dm755 hugo ${PART_DIR}/usr/bin/hugo
+install -Dm755 hugo ${STAGING_DIR}/usr/bin/hugo
 """
 ```

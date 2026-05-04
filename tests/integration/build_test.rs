@@ -124,7 +124,7 @@ runtime_deps = ["openssl", "zlib"]
 executor = "shell"
 isolation = "none"
 script = """
-install -Dm755 /bin/sh ${PART_DIR}/usr/bin/runtime-link-overlap
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
 """
 "#,
     )
@@ -185,8 +185,8 @@ link = []
 executor = "shell"
 isolation = "none"
 script = """
-install -Dm755 /bin/sh ${PART_DIR}/usr/bin/${NAME}-${VERSION}
-install -Dm644 /dev/null ${PART_DIR}/usr/share/doc/${NAME}
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/${NAME}-${VERSION}
+install -Dm644 /dev/null ${STAGING_DIR}/usr/share/doc/${NAME}
 """
 
 [[output]]
@@ -381,7 +381,7 @@ executor = "shell"
 isolation = "none"
 script = """
 echo LIVE-BUILD-OUTPUT
-install -Dm755 /bin/sh ${PART_DIR}/usr/bin/verbose-pipe-test
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/verbose-pipe-test
 """
 "#,
     )
@@ -507,7 +507,7 @@ chmod +x hello.sh
 executor = "shell"
 isolation = "none"
 script = """
-install -Dm755 hello.sh ${PART_DIR}/usr/bin/stop-at-staging
+install -Dm755 hello.sh ${STAGING_DIR}/usr/bin/stop-at-staging
 """
 "#,
     )
@@ -619,7 +619,7 @@ executor = "shell"
 isolation = "none"
 script = """
 printf x >> "{}"
-install -Dm644 /dev/null ${{PART_DIR}}/usr/share/resume-dep
+install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/resume-dep
 """
 "#,
             counter_path.display()
@@ -648,7 +648,7 @@ executor = "shell"
 isolation = "none"
 script = """
 test -f "{}"
-install -Dm644 /dev/null ${{PART_DIR}}/usr/share/resume-main
+install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/resume-main
 """
 "#,
             signal_path.display()

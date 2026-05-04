@@ -352,13 +352,13 @@ Wright has three output modes. A plan **must** use exactly one of them.
 
 | Mode | Syntax | Use case |
 |------|--------|----------|
-| **No output section** | Omit `[output]` and `[[output]]` entirely | Simple package; everything in `${PART_DIR}` becomes the part named after `plan.name` |
+| **No output section** | Omit `[output]` and `[[output]]` entirely | Simple package; everything in `${STAGING_DIR}` becomes the part named after `plan.name` |
 | **Single-output metadata** | `[output]` table | Same as above, but with hooks, backup files, or part relations |
 | **Multi-output** | `[[output]]` array-of-tables | Split staging files into multiple sub-parts |
 
 #### Mode 1: No output section (default)
 
-If you omit both `[output]` and `[[output]]`, the plan produces exactly one part named after the top-level `name` field. Everything installed into `${PART_DIR}` during staging becomes that part.
+If you omit both `[output]` and `[[output]]`, the plan produces exactly one part named after the top-level `name` field. Everything installed into `${STAGING_DIR}` during staging becomes that part.
 
 ```toml
 name = "hello"
@@ -370,7 +370,7 @@ arch = "x86_64"
 
 [lifecycle.staging]
 script = """
-install -Dm755 hello ${PART_DIR}/usr/bin/hello
+install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
 ```
 
@@ -443,16 +443,16 @@ runtime_deps = ["libgcc"]
 #### Implicit Slicing (Declarative Outputs)
 
 Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture.
-Instead of writing explicit scripts to move files between packages, all files should be installed to the default `${PART_DIR}` during the `staging` lifecycle phase.
+Instead of writing explicit scripts to move files between packages, all files should be installed to the default `${STAGING_DIR}` during the `staging` lifecycle phase.
 
-After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions. The engine evaluates files in `${PART_DIR}` against the `include` and `exclude` regular expressions.
+After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions. The engine evaluates files in `${STAGING_DIR}` against the `include` and `exclude` regular expressions.
 
 **Output processing order:**
 
 1. Non-catch-all outputs (those with explicit `include` patterns) are processed **in their declared order**.
-2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **moved** out of `${PART_DIR}` into the respective sub-part directories.
+2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **moved** out of `${STAGING_DIR}` into the respective sub-part directories.
 3. A file is claimed by the **first** output whose `include` matches it. Later outputs never see it.
-4. The optional catch-all output (the one with no `include`) keeps whatever remains in `${PART_DIR}`.
+4. The optional catch-all output (the one with no `include`) keeps whatever remains in `${STAGING_DIR}`.
 5. If there is **no catch-all**, any remaining files are discarded.
 
 **Critical: `include` patterns must be specific.** Using `include = ["/.*"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
@@ -510,7 +510,7 @@ The default pipeline runs these stages in order:
 | `configure`  | user   | Run configure scripts          |
 | `compile`   | user   | Compile the software           |
 | `check`    | user   | Run test suites             |
-| `staging`   | user   | Install files into `${PART_DIR}`     |
+| `staging`   | user   | Install files into `${STAGING_DIR}`     |
 
 Built-in stages (`fetch`, `verify`, `extract`) are handled by the build tool automatically. User stages are only run if defined in `plan.toml` — undefined stages are silently skipped. All file system layout operations (such as `make install`, path moving, and symlink creation) should be performed within the `staging` phase. After staging, an implicit and declarative "output slicing" engine processes the resulting files according to the `[output]` blocks to construct the final archives.
 
@@ -680,9 +680,9 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | `${RELEASE}`| Release number as a string         |
 | `${ARCH}`  | Target architecture            |
 | `${WORKDIR}`  | Extraction root directory         |
-| `${PART_DIR}`  | Current output staging directory |
+| `${STAGING_DIR}`  | Current output staging directory |
 | `${MAIN_PART_NAME}` | Primary output name from the top-level `name` field |
-| `${MAIN_PART_DIR}` | Primary output staging directory (`${PART_DIR}` outside split outputs) |
+| `${MAIN_STAGING_DIR}` | Primary output staging directory (`${STAGING_DIR}` outside split outputs) |
 | `${WRIGHT_BUILD_PHASE}` | Current phase name (`full` or `mvp`) |
 | `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Set to `1` for each dep excluded in the MVP pass |
 
@@ -693,7 +693,7 @@ Wright uses standard variables to refer to build directories. When running insid
 | Variable    | Host value (Default) | Isolation value | Description |
 |-------------|----------------------|-----------------|-------------|
 | `${WORKDIR}` | `/var/tmp/wright/workshop/<name>-<version>/work`¹ | `/build` | The root container for all sources. |
-| `${PART_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output`¹ | `/output` | The installation target directory (DESTDIR). |
+| `${STAGING_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output`¹ | `/output` | The installation target directory (DESTDIR). |
 
 ¹ When `version` is omitted, the directory uses `<name>-noversion` instead of `<name>-<version>`.
 
@@ -894,7 +894,7 @@ Reference a custom executor by name:
 executor = "python"
 script = """
 import os
-os.makedirs(f"{os.environ['PART_DIR']}/usr/lib", exist_ok=True)
+os.makedirs(f"{os.environ['STAGING_DIR']}/usr/lib", exist_ok=True)
 """
 ```
 
@@ -927,7 +927,7 @@ gcc -o hello hello.c
 
 [lifecycle.staging]
 script = """
-install -Dm755 hello ${PART_DIR}/usr/bin/hello
+install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
 ```
 
@@ -984,7 +984,7 @@ make test
 
 [lifecycle.staging]
 script = """
-make DESTDIR=${PART_DIR} install
+make DESTDIR=${STAGING_DIR} install
 """
 
 [hooks]
@@ -1022,7 +1022,7 @@ arch = "x86_64"
 
 [lifecycle.staging]
 script = """
-make DESTDIR=${PART_DIR} install
+make DESTDIR=${STAGING_DIR} install
 """
 
 [[output]]
@@ -1116,7 +1116,7 @@ parent manifest unless overridden. Each sub-part can have a `description`,
 `runtime_deps`.
 
 During sub-part staging, the main part's output is mounted read-only at
-`/main-part` (and available via `${MAIN_PART_DIR}`).
+`/main-part` (and available via `${MAIN_STAGING_DIR}`).
 
 Sub-part dependencies are declared directly on the `[[output]]` entry:
 
@@ -1239,5 +1239,5 @@ extract_to = "plugins/extra"
 ### Scripting Robustness
 - **Explicit Navigation**: Now that automatic directory detection is removed, always start your scripts with an explicit `cd` if your work is in a subdirectory.
 - **Variable Usage**: Prefer `${WORKDIR}/filename` over relative paths for clarity.
-- **Cleanup**: Don't worry about cleaning up `${WORKDIR}` or `${PART_DIR}`; Wright handles this automatically before each build.
+- **Cleanup**: Don't worry about cleaning up `${WORKDIR}` or `${STAGING_DIR}`; Wright handles this automatically before each build.
 

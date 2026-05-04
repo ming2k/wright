@@ -577,7 +577,7 @@ gcc -o hello hello.c
 executor = "shell"
 isolation = "none"
 script = """
-install -Dm755 hello ${PART_DIR}/usr/bin/hello
+install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -660,7 +660,7 @@ executor = "shell"
 isolation = "strict"
 script = """
 cd ${BUILD_DIR}
-make DESTDIR=${PART_DIR} install
+make DESTDIR=${STAGING_DIR} install
 """
 
 [hooks]
@@ -772,7 +772,7 @@ arch = "x86_64"
 script = "make -j4"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PART_DIR} install"
+script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
 name = "gcc"
@@ -823,7 +823,7 @@ arch = "x86_64"
 
 
 [lifecycle.staging]
-script = "make DESTDIR=${PART_DIR} install"
+script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
 name = "nginx"
@@ -1092,7 +1092,7 @@ license = "MIT"
 arch = "x86_64"
 
 [lifecycle.staging]
-script = "make DESTDIR=${PART_DIR} install"
+script = "make DESTDIR=${STAGING_DIR} install"
 
 [hooks]
 pre_install = "echo pre"
@@ -1129,7 +1129,7 @@ arch = "x86_64"
 
 
 [lifecycle.staging]
-script = "make DESTDIR=${PART_DIR} install"
+script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
 name = "gcc"
@@ -1382,7 +1382,7 @@ arch = "x86_64"
 script = "true"
 
 [lifecycle.outputs]
-script = "strip ${PART_DIR}/usr/bin/test"
+script = "strip ${STAGING_DIR}/usr/bin/test"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(
@@ -1390,7 +1390,7 @@ script = "strip ${PART_DIR}/usr/bin/test"
                 .lifecycle
                 .get("fabricate")
                 .map(|stage| stage.script.as_str()),
-            Some("strip ${PART_DIR}/usr/bin/test")
+            Some("strip ${STAGING_DIR}/usr/bin/test")
         );
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.1.7] - 2026-05-04
+
+### Changed
+- **Renamed build variables**: `${PART_DIR}` renamed to `${STAGING_DIR}`, `${MAIN_PART_DIR}` renamed to `${MAIN_STAGING_DIR}`. This better reflects the directory semantics: build scripts write to a staging directory during the build, and the contents are later sliced into output parts. All documentation, tests, and example plans updated to use the new variable names.
+
 ## [3.1.6] - 2026-05-04
 
 ### Changed

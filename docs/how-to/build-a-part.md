@@ -24,7 +24,7 @@ script = "./configure --prefix=/usr"
 script = "make"
 
 [lifecycle.staging]
-script = "make DESTDIR=$PART_DIR install"
+script = "make DESTDIR=$STAGING_DIR install"
 ```
 
 ## Fetch Checksums Automatically
@@ -57,7 +57,7 @@ wright build mypart
 wright build mypart --stage=staging
 ```
 
-To run a normal build from the start but stop after a stage so you can inspect the current `${PART_DIR}` contents, use `--until-stage`:
+To run a normal build from the start but stop after a stage so you can inspect the current `${STAGING_DIR}` contents, use `--until-stage`:
 
 ```bash
 wright build mypart --until-stage=staging

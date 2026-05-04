@@ -32,7 +32,7 @@ Each part gets its own working directory under `build_dir`
 ```
 <build_dir>/<name>-<version>/¹
 ├── work/      # The source tree (mounted at /build in isolation)
-├── staging/   # Build script output root ($PART_DIR / $MAIN_PART_DIR, mounted at /output)
+├── staging/   # Build script output root ($STAGING_DIR / $MAIN_STAGING_DIR, mounted at /output)
 ├── outputs/   # Sliced output directories (hard-linked from staging/)
 │   └── default/  # Catch-all output
 ├── logs/      # Per-stage log files
@@ -64,7 +64,7 @@ staging directories are created:
 ```
 
 During sub-part staging, the main part's output is mounted read-only at
-`/main-part` (and available via `${MAIN_PART_DIR}`).
+`/main-part` (and available via `${MAIN_STAGING_DIR}`).
 
 
 set to that subdirectory (the common case for tarballs that unpack into
@@ -111,7 +111,7 @@ overwritten on the next build attempt.
 
 **Golden Standard:** Wright automatically maps internal sandbox paths back to
 their corresponding variables in error messages. If a script fails, you will
-see `${PART_DIR}/usr/bin` in the output instead of the internal `/output/usr/bin`
+see `${STAGING_DIR}/usr/bin` in the output instead of the internal `/output/usr/bin`
 path.
 
 ### Directory lifecycle rules
@@ -157,7 +157,7 @@ again. If `work/` is reusable, it is not used in that run.
 ## FHS Validation
 
 After the final staging and output slicing completes, Wright validates every
-file and symlink in `$PART_DIR` against the distribution's FHS whitelist before
+file and symlink in `$STAGING_DIR` against the distribution's FHS whitelist before
 creating the part. This catches silent packaging mistakes
 — such as forgetting `--prefix=/usr` — at build time with a clear error:
 

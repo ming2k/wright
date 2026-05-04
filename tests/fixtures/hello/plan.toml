@@ -28,5 +28,5 @@ gcc -o hello hello.c
 executor = "shell"
 isolation = "strict"
 script = """
-install -Dm755 hello ${PART_DIR}/usr/bin/hello
+install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """

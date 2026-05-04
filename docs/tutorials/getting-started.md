@@ -54,7 +54,7 @@ script = "gcc -o hello hello.c"
 
 [lifecycle.staging]
 isolation = "none"
-script = "install -Dm755 hello ${PART_DIR}/usr/bin/hello"
+script = "install -Dm755 hello ${STAGING_DIR}/usr/bin/hello"
 ```
 
 directory, and use `${NAME}` / `${VERSION}` for plan metadata.

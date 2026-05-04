@@ -27,7 +27,7 @@ script = "mkdir -p usr/bin"
 
 [lifecycle.compile]
 isolation = "none"
-script = "mkdir -p ${{PART_DIR}}/usr/bin && echo -n '{}' > ${{PART_DIR}}/usr/bin/shared"
+script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/usr/bin/shared"
 "#,
         name, shared_file_content
     );

@@ -33,7 +33,7 @@ cargo build --release --offline
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${WORKDIR}/target/release/rg ${PART_DIR}/usr/bin/rg
+install -Dm755 ${WORKDIR}/target/release/rg ${STAGING_DIR}/usr/bin/rg
 """
 ```
 
@@ -58,6 +58,6 @@ cargo build --release
 
 [lifecycle.staging]
 script = """
-install -Dm755 ${WORKDIR}/target/release/rg ${PART_DIR}/usr/bin/rg
+install -Dm755 ${WORKDIR}/target/release/rg ${STAGING_DIR}/usr/bin/rg
 """
 ```

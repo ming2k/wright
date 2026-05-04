@@ -127,9 +127,9 @@ pub async fn execute_script(
     let effective_vars = if options.level != IsolationLevel::None {
         let mut v = vars.clone();
         v.insert("WORKDIR".to_string(), "/build".to_string());
-        v.insert("PART_DIR".to_string(), "/output".to_string());
+        v.insert("STAGING_DIR".to_string(), "/output".to_string());
         v.insert(
-            "MAIN_PART_DIR".to_string(),
+            "MAIN_STAGING_DIR".to_string(),
             if options.main_part_dir.is_some() {
                 "/main-part".to_string()
             } else {
@@ -234,8 +234,8 @@ pub async fn execute_script(
 
     if output.status.code() != Some(0) {
         let mut remapped_stderr = output.stderr.tail.clone();
-        remapped_stderr = remapped_stderr.replace("/main-part", "${MAIN_PART_DIR}");
-        remapped_stderr = remapped_stderr.replace("/output", "${PART_DIR}");
+        remapped_stderr = remapped_stderr.replace("/main-part", "${MAIN_STAGING_DIR}");
+        remapped_stderr = remapped_stderr.replace("/output", "${STAGING_DIR}");
         remapped_stderr = remapped_stderr.replace("/build", "${WORKDIR}");
         output.stderr.tail = remapped_stderr;
     }

@@ -35,7 +35,7 @@ arch = "x86_64"
 [lifecycle.staging]
 executor = "shell"
 isolation = "none"
-script = "mkdir -p ${PART_DIR}/usr/lib"
+script = "mkdir -p ${STAGING_DIR}/usr/lib"
 "#,
     )
     .unwrap();
@@ -57,7 +57,7 @@ link = []
 [lifecycle.staging]
 executor = "shell"
 isolation = "none"
-script = "mkdir -p ${PART_DIR}/usr/bin"
+script = "mkdir -p ${STAGING_DIR}/usr/bin"
 
 [[output]]
 name = "wayland-utils"
@@ -127,7 +127,7 @@ arch = "x86_64"
 [lifecycle.staging]
 executor = "shell"
 isolation = "none"
-script = "install -Dm644 /dev/null ${PART_DIR}/usr/share/apply-resume-dep"
+script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/apply-resume-dep"
 "#,
     )
     .unwrap();
@@ -151,7 +151,7 @@ executor = "shell"
 isolation = "none"
 script = """
 test -f "{}"
-install -Dm644 /dev/null ${{PART_DIR}}/usr/share/apply-resume-main
+install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/apply-resume-main
 """
 
 [[output]]

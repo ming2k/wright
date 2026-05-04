@@ -1,7 +1,7 @@
 //! FHS (Filesystem Hierarchy Standard) validation for part staging directories.
 //!
 //! Wright targets a merged-usr Linux layout. This module validates that all files
-//! installed into a part's staging directory (`PART_DIR`) reside under an
+//! installed into a part's staging directory (`STAGING_DIR`) reside under an
 //! allowed FHS path before the archive is created.
 
 use std::fs;
