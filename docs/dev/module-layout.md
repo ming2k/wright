@@ -10,7 +10,7 @@ src/
 ├── config.rs         # global config
 ├── archive/          # archive pruning and resolution logic
 ├── builder/          # build orchestration and lifecycle execution
-├── database/         # unified database layer (installed system + archive catalogue)
+├── database/         # installed system state and migration layer
 ├── isolation/        # sandbox isolation
 ├── part/             # archive format, versions, FHS validation
 ├── plan/             # plan parsing and validation

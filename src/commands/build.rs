@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::BufRead;
+use std::path::Path;
 
 use crate::builder::orchestrator::{self, BuildOptions};
 use crate::cli::build::BuildArgs;
@@ -9,18 +10,19 @@ use crate::database::InstalledDb;
 pub async fn execute_build(
     args: BuildArgs,
     config: &GlobalConfig,
+    db_path: &Path,
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(&config.general.db_path),
+        &crate::util::lock::lock_dir_from_db(db_path),
         crate::util::lock::LockIdentity::Command("build"),
         crate::util::lock::LockMode::Exclusive,
     )
     .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
-        let db = InstalledDb::open(&config.general.db_path)
+        let db = InstalledDb::open(db_path)
             .await
             .context("failed to open database")?;
         let count = db.clear_all_sessions().await?;

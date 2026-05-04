@@ -43,7 +43,10 @@ pub fn standard_variables(ctx: VariableContext) -> HashMap<String, String> {
     vars.insert("WORKDIR".to_string(), ctx.workdir.to_string());
     vars.insert("STAGING_DIR".to_string(), ctx.part_dir.to_string());
     vars.insert("MAIN_PART_NAME".to_string(), ctx.main_part_name.to_string());
-    vars.insert("MAIN_STAGING_DIR".to_string(), ctx.main_part_dir.to_string());
+    vars.insert(
+        "MAIN_STAGING_DIR".to_string(),
+        ctx.main_part_dir.to_string(),
+    );
     vars
 }
 
@@ -72,7 +75,8 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("STAGING_DIR".to_string(), "/tmp/staging".to_string());
 
-        let script = "install -d ${STAGING_DIR}/usr/bin\ninstall -m755 foo ${STAGING_DIR}/usr/bin/foo";
+        let script =
+            "install -d ${STAGING_DIR}/usr/bin\ninstall -m755 foo ${STAGING_DIR}/usr/bin/foo";
         let result = substitute(script, &vars);
         assert_eq!(
             result,

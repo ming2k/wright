@@ -5,11 +5,11 @@ pub mod mvp;
 pub mod orchestrator;
 pub mod variables;
 
+use indicatif::HumanBytes;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
-use indicatif::HumanBytes;
 
 use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
@@ -162,7 +162,7 @@ impl Builder {
                         hasher.update(self.process_uri(r#ref, manifest).as_bytes());
                     }
                     if let Some(depth) = git.depth {
-                        hasher.update(&depth.to_le_bytes());
+                        hasher.update(depth.to_le_bytes());
                     }
                     if let Some(ref ext) = git.extract_to {
                         hasher.update(ext.as_bytes());
@@ -291,9 +291,9 @@ impl Builder {
         }
 
         if stages.is_empty() {
-            if !tokio::fs::metadata(work_dir.join(".extracted"))
+            if tokio::fs::metadata(work_dir.join(".extracted"))
                 .await
-                .is_ok()
+                .is_err()
             {
                 self.fetch(manifest, plan_dir).await?;
                 if until_stage == Some("fetch") {
@@ -505,7 +505,10 @@ impl Builder {
             }
 
             if !sub_rules.is_empty() {
-                debug!("Splitting staging dir into {} non-catch-all outputs", sub_rules.len());
+                debug!(
+                    "Splitting staging dir into {} non-catch-all outputs",
+                    sub_rules.len()
+                );
                 let mut all_entries = Vec::new();
                 let mut dirs_to_visit = vec![staging_dir.clone()];
                 while let Some(dir) = dirs_to_visit.pop() {
@@ -532,10 +535,10 @@ impl Builder {
                         let rel_str = format!("/{}", rel_path.display());
                         for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
                             let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
-                            if matched && !excludes.is_empty() {
-                                if excludes.iter().any(|re| re.is_match(&rel_str)) {
-                                    matched = false;
-                                }
+                            if matched && !excludes.is_empty()
+                                && excludes.iter().any(|re| re.is_match(&rel_str))
+                            {
+                                matched = false;
                             }
                             if matched {
                                 let dest_path = sub_dir.join(rel_path);
@@ -566,7 +569,11 @@ impl Builder {
                                 let _ = tokio::fs::create_dir_all(parent).await;
                             }
                             if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
-                                warn!("Failed to hard-link catch-all file {}: {}", file_path.display(), e);
+                                warn!(
+                                    "Failed to hard-link catch-all file {}: {}",
+                                    file_path.display(),
+                                    e
+                                );
                             }
                         }
                     }
@@ -621,7 +628,7 @@ impl Builder {
                 .clone()
                 .unwrap_or_else(|| source_cache_filename(&manifest.plan.name, &processed_url));
             let path = cache_dir.join(&filename);
-            if !tokio::fs::metadata(&path).await.is_ok() {
+            if tokio::fs::metadata(&path).await.is_err() {
                 return Err(WrightError::ValidationError(format!(
                     "source file missing: {}",
                     filename
@@ -778,7 +785,7 @@ impl Builder {
     pub async fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
         let cache_dir = &self.config.general.source_dir;
-        if !tokio::fs::metadata(cache_dir).await.is_ok() {
+        if tokio::fs::metadata(cache_dir).await.is_err() {
             tokio::fs::create_dir_all(cache_dir)
                 .await
                 .map_err(WrightError::IoError)?;
@@ -884,8 +891,8 @@ impl Builder {
 
         // Detect arbitrary commit hashes (40-char hex) and disable shallow clone
         // since --depth may not reach them.
-        let is_commit_hash = actual_ref.len() == 40
-            && actual_ref.chars().all(|c| c.is_ascii_hexdigit());
+        let is_commit_hash =
+            actual_ref.len() == 40 && actual_ref.chars().all(|c| c.is_ascii_hexdigit());
         let effective_depth = if is_commit_hash {
             tracing::debug!(
                 "[{}] ref '{}' looks like a commit hash; disabling shallow clone",
@@ -897,7 +904,7 @@ impl Builder {
             depth
         };
         let label = progress::source_label(git_url);
-        let is_fresh_clone = !tokio::fs::metadata(dest).await.is_ok();
+        let is_fresh_clone = tokio::fs::metadata(dest).await.is_err();
         let repo = if is_fresh_clone {
             info!("[{}] Cloning Git repository: {}", scope, git_url);
             git2::Repository::init_bare(dest)
@@ -949,7 +956,10 @@ impl Builder {
                 (
                     received,
                     total_objects,
-                    format!("receiving objects {}/{} ({}%)", received, total_objects, pct),
+                    format!(
+                        "receiving objects {}/{} ({}%)",
+                        received, total_objects, pct
+                    ),
                 )
             } else if indexed < total_objects {
                 let pct = if total_objects > 0 {
@@ -971,10 +981,21 @@ impl Builder {
                 (
                     indexed_deltas,
                     total_deltas,
-                    format!("resolving deltas {}/{} ({}%)", indexed_deltas, total_deltas, pct),
+                    format!(
+                        "resolving deltas {}/{} ({}%)",
+                        indexed_deltas, total_deltas, pct
+                    ),
                 )
             } else {
-                (total_objects, total_objects, format!("done ({}, {} objects)", HumanBytes(received_bytes), total_objects))
+                (
+                    total_objects,
+                    total_objects,
+                    format!(
+                        "done ({}, {} objects)",
+                        HumanBytes(received_bytes),
+                        total_objects
+                    ),
+                )
             };
 
             pb_clone.set_length(length);
@@ -995,11 +1016,8 @@ impl Builder {
             Some(&mut fetch_opts),
             None,
         );
-        if fetch_result.is_err() {
-            return Err(WrightError::BuildError(format!(
-                "git fetch failed: {}",
-                fetch_result.unwrap_err()
-            )));
+        if let Err(e) = fetch_result {
+            return Err(WrightError::BuildError(format!("git fetch failed: {e}")));
         }
         progress::finish_source(&pb, scope, dest);
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
@@ -1010,7 +1028,7 @@ impl Builder {
 
     pub async fn fetch(&self, manifest: &PlanManifest, plan_dir: &Path) -> Result<()> {
         let cache_dir = &self.config.general.source_dir;
-        if !tokio::fs::metadata(cache_dir).await.is_ok() {
+        if tokio::fs::metadata(cache_dir).await.is_err() {
             tokio::fs::create_dir_all(cache_dir)
                 .await
                 .map_err(WrightError::IoError)?;
@@ -1021,7 +1039,7 @@ impl Builder {
                     let processed_url = self.process_uri(&git.url, manifest);
                     let git_dir_name = git_cache_dir_name(&processed_url);
                     let git_cache_dir = cache_dir.join("git");
-                    if !tokio::fs::metadata(&git_cache_dir).await.is_ok() {
+                    if tokio::fs::metadata(&git_cache_dir).await.is_err() {
                         tokio::fs::create_dir_all(&git_cache_dir).await.ok();
                     }
                     let dest = git_cache_dir.join(&git_dir_name);

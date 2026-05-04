@@ -14,13 +14,13 @@ build-side and system-side workflows.
 ## System commands
 
 - `wright install <PART...>`
- installs part paths or locally registered part names
+ installs archive paths or part names resolved by scanning `parts_dir`; runtime dependency problems are warnings, not install blockers
 - `wright apply <TARGET...>`
  resolves plans, executes wave-by-wave build/install orchestration, and converges the live system to those targets with plan-driven install/upgrade handling
 - `wright upgrade <PART...>`
- upgrades installed parts by local part name or part path
+ upgrades installed parts by archive path or by latest matching archive in `parts_dir`
 - `wright sysupgrade`
- upgrades everything to the newest locally registered parts
+ upgrades everything to the newest matching archives in `parts_dir`
 - `wright remove <PART...>`
 - `wright list`
 - `wright query <PART>`
@@ -47,7 +47,7 @@ build-side and system-side workflows.
 - `wright resolve <TARGET...>`
  expands dependency and rebuild scope without building
 - `wright prune`
- cleans tracked or stray parts from the local inventory
+ prunes stale archives from `parts_dir`
 
 Useful `wright build` flags:
 
@@ -59,15 +59,17 @@ Useful `wright build` flags:
 - `--skip-check`
 - `--mvp`
 - `--print-parts`
- prints only part paths on stdout; logs and progress stay on stderr for safe piping into `wright install`
+ prints produced archive paths on stdout when combined with `--package`; logs and progress stay on stderr for safe piping into `wright install`
 - `--fetch`
 - `--checksum`
+- `--package`
 
 ## Lint commands
 
 - `wright lint [TARGET...]`
-  validates plan syntax, logical integrity, and dependency graph cycles for
-  specified plans (or all plans if omitted)
+  validates plan syntax, dependency reference format, local plan/output
+  references, and dependency graph cycles for specified plans (or all plans if
+  omitted)
 
 Useful `wright lint` flags:
 
@@ -94,9 +96,14 @@ Useful `wright apply` flags:
 - `--resume [HASH]`
 - `--dry-run`
 
+Useful `wright install` flags:
+
+- `--force`
+- `--nodeps`
+  suppresses runtime dependency warnings
+
 
 Useful `wright prune` flags:
 
-- `--untracked`
 - `--latest`
 - `--apply`

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Track files that have been copied during installation for rollback.
 pub struct RollbackState {
@@ -48,8 +48,8 @@ impl RollbackState {
     /// If a leftover journal exists, replay it first to recover from a previous crash.
     pub fn with_journal(path: PathBuf) -> Self {
         if path.exists() {
-            warn!(
-                "Found leftover rollback journal at {}, replaying...",
+            info!(
+                "Recovering unfinished filesystem transaction from rollback journal: {}",
                 path.display()
             );
             Self::replay_journal(&path);
@@ -237,7 +237,10 @@ impl RollbackState {
         if let Err(e) = std::fs::remove_file(path) {
             warn!("Failed to remove replayed journal: {}", e);
         } else {
-            warn!("Rollback journal replayed and removed");
+            info!(
+                "Filesystem transaction recovery completed; removed rollback journal: {}",
+                path.display()
+            );
         }
     }
 }

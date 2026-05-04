@@ -68,7 +68,7 @@ For the ADR behind these decisions, see [ADR-0007: usrmerge and sbin Merged into
 | Configuration | `/etc/` | System-level configuration |
 | runit service | `/etc/sv/{service}/` | Service definition |
 | Runtime data | `/var/lib/{partname}/` | Databases, state files |
-| Logs | `/var/logs/{partname}/` | Log directory |
+| Logs | `/var/log/{partname}/` | Log directory |
 
 ## 2. Packaging Principles
 
@@ -156,7 +156,7 @@ For Wright's target users (personal or small team maintained custom distribution
 
 ### 2.6 Multi-Part Practice
 
-Use `[[output]]` array-of-tables in `plan.toml` to define sub-parts. See [Writing Plans](../reference/writing-plans.md) for details.
+Use `[[output]]` array-of-tables in `plan.toml` to define sub-parts. See [How to Write a Plan](../how-to/write-a-plan.md) for details.
 
 ### 2.7 Decision Summary Table
 
@@ -179,13 +179,13 @@ Removal protection follows recorded installed/runtime dependencies.
 
 ### 3.2 Dependency Declaration Principles
 
-- **runtime**: Parts that must exist at runtime.
-- **build**: Required only during build time; not recorded in binary parts.
-- **link**: ABI-sensitive build edge used for rebuild propagation. It may overlap with `runtime`.
-- **optional**: Enhances functionality but is not mandatory.
+- **build_deps**: Plan-level build inputs mounted for build execution.
+- **link_deps**: Plan-level ABI-sensitive build edges used for rebuild propagation.
+- **runtime_deps**: Output-level runtime requirements recorded in binary part metadata.
 
 ```toml
-link_deps = ["zlib:default", "openssl >= 3.0:default"]
+build_deps = ["pkg-config:default"]
+link_deps = ["zlib:default", "openssl:default >= 3.0"]
 
 [[output]]
 name = "myapp"

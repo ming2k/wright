@@ -20,7 +20,7 @@ wright resolve pcre2 --rdeps --depth=0 | wright build --resume
 If you need to install the rebuilt outputs afterward, print the archive paths and feed them to `wright install`:
 
 ```bash
-wright resolve pcre2 --rdeps --depth=0 | wright build --resume --print-parts | wright install
+wright resolve pcre2 --rdeps --depth=0 | wright build --resume --package --print-parts | wright install
 ```
 
 ## Auto-Detect the Session

@@ -55,7 +55,9 @@ impl InstalledDb {
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e))
+            })?;
 
         schema::init_db(&pool).await?;
 

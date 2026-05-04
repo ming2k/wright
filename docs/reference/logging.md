@@ -62,6 +62,7 @@ DEBUG install texlive-texmf: file scan and metadata collection completed in 44.9
 DEBUG install texlive-texmf: owner conflict check completed in 1.731s
 DEBUG install texlive-texmf: filesystem copy into target root completed in 318.442s
 DEBUG install texlive-texmf: database update completed in 201.557s
+INFO Installed texlive-texmf: 2025-1
 DEBUG install texlive-texmf: total completed in 579.395s
 ```
 
@@ -86,7 +87,7 @@ wright build -v <target>
 ```
 
 Verbose subprocess output is mirrored to stderr, not stdout. This keeps
-`wright build --print-parts` safe to pipe into `wright install` while still
+`wright build --package --print-parts` safe to pipe into `wright install` while still
 showing live build logs.
 
 When Wright runs multiple build tasks in parallel, `-v` still keeps subprocess
@@ -101,13 +102,13 @@ Build logs follow the build directory. Configure it in `wright.toml`:
 
 ```toml
 [build]
-build_dir = "/var/tmp/wright/workshop" # build logs end up under <build_dir>/<name>-<version>/log
+build_dir = "/var/tmp/wright/workshop" # build logs end up under <build_dir>/<name>-<version>/logs
 ```
 
 If you want persistent logs, choose a non-temporary path.
 
-### `log_dir` (Operation Logs)
+### `logs_dir` (Operation Logs)
 
-`[general].log_dir` is reserved for system/operation logs and defaults to
-`/var/logs/wright` (root) or `~/.local/state/wright` (non-root). It is not wired
+`[general].logs_dir` is reserved for system/operation logs and defaults to
+`/var/log/wright` (root) or `~/.local/state/wright` (non-root). It is not wired
 to build logs, which always live under `build_dir` today.

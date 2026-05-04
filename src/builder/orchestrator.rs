@@ -23,8 +23,8 @@ use planning::{
     expand_rebuild_deps,
 };
 
-pub use resolver::{setup_resolver, resolve_targets};
 pub use execute::package_manifest;
+pub use resolver::{resolve_targets, setup_resolver};
 
 use crate::archive::resolver::LocalResolver;
 use crate::plan::manifest::OutputConfig;
@@ -514,10 +514,7 @@ pub fn describe_batch_actions(
     actions.join(", ")
 }
 
-pub fn lint_dependency_graph_for_targets(
-    config: &GlobalConfig,
-    targets: &[String],
-) -> Result<()> {
+pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[String]) -> Result<()> {
     let resolver = setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
     let plans_to_build = resolve_targets(targets, &all_plans, &resolver)?;
@@ -526,13 +523,7 @@ pub fn lint_dependency_graph_for_targets(
         return Ok(());
     }
 
-    let graph = planning::build_dep_map(
-        &plans_to_build,
-        false,
-        false,
-        HashMap::new(),
-        &all_plans,
-    )?;
+    let graph = planning::build_dep_map(&plans_to_build, false, false, HashMap::new(), &all_plans)?;
 
     execute::lint_dependency_graph(&graph)
 }

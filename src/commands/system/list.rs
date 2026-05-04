@@ -28,7 +28,11 @@ pub async fn execute_list(
     } else {
         for part in &parts {
             if long {
-                let ver = if part.version.is_empty() { "-" } else { &part.version };
+                let ver = if part.version.is_empty() {
+                    "-"
+                } else {
+                    &part.version
+                };
                 if part.assumed {
                     println!("{:<12} {:<24} {}", "external", part.name, ver);
                 } else {
@@ -42,7 +46,10 @@ pub async fn execute_list(
                     } else {
                         "-".to_string()
                     };
-                    println!("{:<12} {:<24} {:<20} {}", part.origin, part.name, ver_rel_arch, plan_info);
+                    println!(
+                        "{:<12} {:<24} {:<20} {}",
+                        part.origin, part.name, ver_rel_arch, plan_info
+                    );
                 }
             } else {
                 println!("{}", part.name);

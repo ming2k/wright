@@ -171,7 +171,7 @@ impl<'a> Default for NewPart<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NewPlan<'a> {
     pub name: &'a str,
     pub version: &'a str,
@@ -181,8 +181,8 @@ pub struct NewPlan<'a> {
     pub arch: &'a str,
     pub license: &'a str,
     pub url: Option<&'a str>,
-    pub build_deps: Option<&'a str>,  // JSON array
-    pub link_deps: Option<&'a str>,   // JSON array
+    pub build_deps: Option<&'a str>,
+    pub link_deps: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

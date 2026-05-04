@@ -20,21 +20,13 @@ pub async fn dispatch(
 ) -> Result<()> {
     match cli.command {
         crate::cli::Commands::System(sys_cmd) => {
-            system::execute(
-                sys_cmd,
-                config,
-                &db_path,
-                &root_dir,
-                cli.verbose,
-                cli.quiet,
-            )
-            .await
+            system::execute(sys_cmd, config, &db_path, &root_dir, cli.verbose, cli.quiet).await
         }
         crate::cli::Commands::Build(args) => {
-            build::execute_build(args, config, cli.verbose, cli.quiet).await
+            build::execute_build(args, config, &db_path, cli.verbose, cli.quiet).await
         }
         crate::cli::Commands::Package(args) => {
-            package::execute_package(args, config, cli.verbose, cli.quiet).await
+            package::execute_package(args, config, &db_path, cli.verbose, cli.quiet).await
         }
         crate::cli::Commands::Resolve(args) => {
             resolve::execute_resolve(args, config, &db_path).await
@@ -44,7 +36,7 @@ pub async fn dispatch(
                 .await
                 .map_err(Into::into)
         }
-        crate::cli::Commands::Prune(args) => prune::execute_prune(args, config).await,
+        crate::cli::Commands::Prune(args) => prune::execute_prune(args, config, &db_path).await,
     }
 }
 

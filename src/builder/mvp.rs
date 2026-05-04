@@ -101,8 +101,10 @@ pub(crate) fn collect_phase_deps(
                                 .unwrap_or_else(|_| (rdep.clone(), None))
                                 .0;
                             let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
-                            let rdep_plan =
-                                part_to_plan.get(&rdep_plan_name).cloned().unwrap_or(rdep_plan_name);
+                            let rdep_plan = part_to_plan
+                                .get(&rdep_plan_name)
+                                .cloned()
+                                .unwrap_or(rdep_plan_name);
                             if rdep_plan != manifest.plan.name {
                                 deps.push(rdep_plan.clone());
                             }

@@ -1,4 +1,5 @@
 pub mod native;
+pub mod sysroot;
 
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
@@ -161,7 +162,6 @@ impl IsolationConfig {
     }
 }
 
-/// Run a command inside a isolation using the native Linux namespace implementation.
 pub fn run_in_isolation(
     config: &mut IsolationConfig,
     command: &str,

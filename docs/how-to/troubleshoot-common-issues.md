@@ -114,7 +114,7 @@ Triggered during automatic dependency expansion when a dependency declared in `p
 **Options:**
 
 1. Add the missing plan to your plans directory.
-2. If the dependency is already installed on the system and you don't want to build it, mark it as a runtime-only dep or remove it from `tools`/`link_deps` dependencies if it is genuinely not needed at build time.
+2. If the dependency is already installed on the system and you don't want to build it, keep it out of `build_deps` and `link_deps`; declare it only as `runtime_deps` when the output needs it after installation.
 3. Skip dependency expansion and build only the target:
    ```bash
    wright build mypart
@@ -314,8 +314,8 @@ If filesystem copy dominates, the bottleneck is usually the target filesystem's 
 **Symptom:** After interrupting `wright`, you still see files such as:
 
 ```text
-/var/lib/wright/lock/installed.db.lock
-/var/lib/wright/lock/archives.db.lock
+/var/lib/wright/lock/cmd-wright.lock
+/var/lib/wright/lock/db-wright.db.lock
 ```
 
 This is normal. Wright uses fixed lock files as anchors for `flock(2)`. The presence of the file alone does **not** mean the database is still locked. The actual lock is held by the live process; once that process exits, the kernel releases the lock automatically even if the `.lock` file remains on disk.

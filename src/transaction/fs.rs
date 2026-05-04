@@ -124,7 +124,7 @@ pub(super) async fn copy_entries_to_root(
         }
         let relative = entry.path.trim_start_matches('/');
         let dest_path = root_dir.join(relative);
-        if !tokio::fs::metadata(&dest_path).await.is_ok() {
+        if tokio::fs::metadata(&dest_path).await.is_err() {
             tokio::fs::create_dir_all(&dest_path).await.map_err(|e| {
                 WrightError::InstallError(format!(
                     "failed to create directory {}: {}",

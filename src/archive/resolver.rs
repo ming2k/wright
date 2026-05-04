@@ -16,8 +16,10 @@ pub struct LocalResolver {
 
 pub struct ResolvedPart {
     pub name: String,
+    pub version: String,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +30,7 @@ pub struct ResolvedPartVersioned {
     pub epoch: u32,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 impl ResolvedPartVersioned {
@@ -99,8 +102,10 @@ impl LocalResolver {
         let all = self.resolve_all(name).await?;
         Ok(pick_latest(&all).map(|p| ResolvedPart {
             name: p.name.clone(),
+            version: p.version.clone(),
             path: p.path.clone(),
             dependencies: p.dependencies.clone(),
+            provides: p.provides.clone(),
         }))
     }
 
@@ -145,6 +150,7 @@ impl LocalResolver {
                         epoch: partinfo.epoch,
                         path,
                         dependencies: partinfo.runtime_deps,
+                        provides: partinfo.provides,
                     });
                 }
             }
@@ -158,8 +164,10 @@ impl LocalResolver {
         let partinfo = part::read_partinfo(path)?;
         Ok(ResolvedPart {
             name: partinfo.name,
+            version: partinfo.version,
             path: path.to_path_buf(),
             dependencies: partinfo.runtime_deps,
+            provides: partinfo.provides,
         })
     }
 

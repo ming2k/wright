@@ -8,7 +8,8 @@ it moves the live system toward the state described by the current plan tree.
 
 The lower-level commands remain important:
 
-- `wright build` manufactures archives from plans.
+- `wright build` manufactures staging directories from plans.
+- `wright package` creates archives from staging directories.
 - `wright resolve` expands a build set.
 - `wright install` applies chosen archives to the live system.
 
@@ -76,13 +77,13 @@ At the same time, `apply` does **not** default to reverse rebuild cascades.
 Rebuilding dependent dependents is a heavier policy decision and remains an
 explicit low-level workflow through `wright resolve --rdeps`.
 
-### Inventory-First, Plan-Driven
+### Parts-Dir First, Plan-Driven
 
 `wright apply` does not blindly rebuild everything.
 
-- If the local inventory already contains matching build outputs, they can be reused.
-- If an dependency part is missing or outdated and a plan exists for it, Wright builds it.
-- The install step still resolves archive dependencies from the local inventory.
+- If `parts_dir` already contains matching build outputs, they can be reused.
+- If a dependency part is missing or outdated and a plan exists for it, Wright builds it.
+- The install step still resolves archive dependencies from archives in `parts_dir`.
 
 This makes `apply` neither purely build-first nor purely install-first. It is a
 coordinated plan-to-system command.
@@ -133,8 +134,9 @@ tasks that can be built before the next dependency level begins.
 
 The same machinery also carries build labels such as:
 
-- `tools`
+- `build`
 - `relink`
+- `rebuild`
 - `build:mvp`
 - `build:full`
 

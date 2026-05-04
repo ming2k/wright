@@ -409,6 +409,17 @@ pub fn run_in_isolation(
                     }
 
                     // --- Set up new root filesystem ---
+                    //
+                    // We use a pre-copied sysroot (base_root != "/") instead of OverlayFS
+                    // to avoid the ETXTBUSY race condition.  When multiple parallel tasks
+                    // share an OverlayFS lowerdir=/ they contend on the host's live inode
+                    // cache.  A read-only sysroot copied once and bind-mounted per task
+                    // eliminates that race because the copied inodes are not opened for
+                    // writing by any process.
+                    //
+                    // When no sysroot is configured we fall back to tmpfs + manual bind
+                    // mounts from the host root (still safer than OverlayFS because we
+                    // avoid the shared lowerdir).
 
                     let scratch_base = isolation_scratch_base(config);
                     let newroot = scratch_base.join("root");
@@ -416,72 +427,41 @@ pub fn run_in_isolation(
                         die(format!("mkdir newroot: {e}"));
                     }
 
-                    // Try OverlayFS first (much faster and cleaner).
-                    // When the lower root is already the session sysroot overlay,
-                    // avoid overlay-over-overlay and use tmpfs + bind mounts instead.
-                    let mut overlay_success = false;
-                    let overlay_base = scratch_base.join("overlay");
-                    let upper = overlay_base.join("upper");
-                    let work = overlay_base.join("work");
+                    let use_sysroot = config.base_root != Path::new("/");
 
-                    if config.base_root == Path::new("/")
-                        && std::fs::create_dir_all(&upper).is_ok()
-                        && std::fs::create_dir_all(&work).is_ok()
-                    {
-                        let opts = format!(
-                            "lowerdir={},upperdir={},workdir={}",
-                            config.base_root.to_string_lossy(),
-                            upper.to_string_lossy(),
-                            work.to_string_lossy()
-                        );
-                        if mount(
-                            Some("overlay"),
+                    if use_sysroot {
+                        debug!("Using sysroot bind mount: {}", config.base_root.display());
+                        if let Err(e) = mount(
+                            Some(config.base_root.as_path()),
                             &newroot,
-                            Some("overlay"),
+                            None::<&str>,
+                            MsFlags::MS_BIND | MsFlags::MS_REC,
+                            None::<&str>,
+                        ) {
+                            die(format!(
+                                "bind mount {} -> {}: {e}",
+                                config.base_root.display(),
+                                newroot.display()
+                            ));
+                        }
+                    } else {
+                        debug!("No sysroot configured; falling back to tmpfs + bind mounts");
+                        if let Err(e) = mount(
+                            Some("tmpfs"),
+                            &newroot,
+                            Some("tmpfs"),
                             MsFlags::empty(),
-                            Some(opts.as_str()),
-                        )
-                        .is_ok()
-                        {
-                            overlay_success = true;
-                            debug!("Using OverlayFS for isolation root: {}", newroot.display());
+                            None::<&str>,
+                        ) {
+                            die(format!("mount tmpfs on newroot: {e}"));
                         }
                     }
 
-                    let session_root_bind = !overlay_success && config.base_root != Path::new("/");
-
-                    if !overlay_success {
-                        if config.base_root == Path::new("/") {
-                            debug!("OverlayFS failed, falling back to tmpfs + bind mounts");
-                            if let Err(e) = mount(
-                                Some("tmpfs"),
-                                &newroot,
-                                Some("tmpfs"),
-                                MsFlags::empty(),
-                                None::<&str>,
-                            ) {
-                                die(format!("mount tmpfs on newroot: {e}"));
-                            }
-                        } else {
-                            debug!(
-                                "Using recursive bind mount from session root: {}",
-                                config.base_root.display()
-                            );
-                            if let Err(e) = mount(
-                                Some(config.base_root.as_path()),
-                                &newroot,
-                                None::<&str>,
-                                MsFlags::MS_BIND | MsFlags::MS_REC,
-                                None::<&str>,
-                            ) {
-                                die(format!(
-                                    "bind mount {} -> {}: {e}",
-                                    config.base_root.display(),
-                                    newroot.display()
-                                ));
-                            }
-                        }
-                    }
+                    // When using a sysroot we need to remount the newroot read-only
+                    // after all bind mounts are done, because the recursive bind mount
+                    // above brings the sysroot in as read-write (even though the
+                    // underlying files are chmod a-w, the mount itself is rw).
+                    let session_root_bind = use_sysroot;
 
                     // Helper to bind-mount a path into the new root.
                     let bind = |src: &Path,
@@ -500,7 +480,6 @@ pub fn run_in_isolation(
                         }
 
                         // Fix: ALWAYS ensure the destination mount point exists.
-                        // Even with overlay, we need to create the directory/file in the upperdir.
                         if src.is_dir() {
                             if dest.symlink_metadata().is_err() {
                                 std::fs::create_dir_all(&dest)
@@ -539,9 +518,10 @@ pub fn run_in_isolation(
                         Ok(())
                     };
 
-                    // If not using overlay, we must manually bind system dirs.
-                    // If using overlay, these are already present via lowerdir=base_root.
-                    if !overlay_success && config.base_root == Path::new("/") {
+                    // When falling back to tmpfs (no sysroot) we must manually bind
+                    // system dirs from the host.  With a sysroot these are already
+                    // present because the entire sysroot was recursively bind-mounted.
+                    if !use_sysroot {
                         for dir in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
                             let p = Path::new(dir);
                             let dest = newroot.join(dir.trim_start_matches('/'));
@@ -776,13 +756,25 @@ pub fn run_in_isolation(
                         apply_cpu_affinity(n);
                     }
 
-                    match execvp(&c_command, &c_args) {
-                        Ok(infallible) => match infallible {},
-                        Err(e) => {
-                            eprintln!("exec {command}: {e}");
-                            unsafe { libc::_exit(127) }
+                    // Defensive retry for ETXTBUSY: even with a sysroot, certain
+                    // kernels or filesystem configurations may briefly report the
+                    // file as busy.  A short exponential backoff covers the window.
+                    for attempt in 0..5 {
+                        match execvp(&c_command, &c_args) {
+                            Ok(infallible) => match infallible {},
+                            Err(nix::errno::Errno::ETXTBSY) if attempt < 4 => {
+                                let delay_ms = 20 * (1_u64 << attempt);
+                                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                            }
+                            Err(e) => {
+                                eprintln!("exec {command}: {e}");
+                                unsafe { libc::_exit(127) }
+                            }
                         }
                     }
+                    // All retries exhausted.
+                    eprintln!("exec {command}: ETXTBUSY after retries");
+                    unsafe { libc::_exit(127) }
                 }
                 Ok(ForkResult::Parent { child: grandchild }) => {
                     // Intermediate child: wait for grandchild, propagate exit.

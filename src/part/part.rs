@@ -465,10 +465,7 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     let parsed: PartInfoToml = toml::from_str(content)
         .map_err(|e| WrightError::PartError(format!("failed to parse .PARTINFO: {}", e)))?;
 
-    let runtime_deps = parsed
-        .dependencies
-        .map(|d| d.runtime)
-        .unwrap_or_default();
+    let runtime_deps = parsed.dependencies.map(|d| d.runtime).unwrap_or_default();
 
     let relations = parsed.relations.unwrap_or_default();
     let plan_section = parsed.plan.unwrap_or_default();

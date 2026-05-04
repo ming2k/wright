@@ -6,12 +6,12 @@ Examples:
   wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
-  wright resolve openssl --dependents | wright build
+  wright resolve openssl --rdeps | wright build
   echo -e 'curl\\nwget' | wright build --force";
 
 #[derive(Parser, Debug, Clone)]
 pub struct BuildArgs {
-    /// Paths to plan directories, part names, or @assemblies
+    /// Paths to plan directories or part names
     pub targets: Vec<String>,
 
     /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
@@ -31,7 +31,7 @@ pub struct BuildArgs {
     pub skip_check: bool,
 
     /// Clear the build cache, source tree, and working directory before
-    /// starting. Without --clean, src/ is preserved for incremental builds
+    /// starting. Without --clean, work/ is preserved for incremental builds
     /// when the build key is unchanged. Composable with --force.
     #[arg(long, short = 'c')]
     pub clean: bool,

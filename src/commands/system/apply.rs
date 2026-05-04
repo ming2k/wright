@@ -45,7 +45,7 @@ pub async fn resolve_install_paths(
         match resolver.resolve(arg).await? {
             Some(resolved) => part_paths.push(resolved.path),
             None => anyhow::bail!(
-                "'{}' is not a file and could not be resolved from the local archive catalogue",
+                "'{}' is not a file and could not be resolved from parts_dir",
                 arg
             ),
         }
@@ -60,7 +60,10 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
             .iter()
             .map(|(sub_name, sub_part)| {
                 let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
-                (sub_name.clone(), parts_dir.join(sub_manifest.part_filename()))
+                (
+                    sub_name.clone(),
+                    parts_dir.join(sub_manifest.part_filename()),
+                )
             })
             .collect()),
         _ => Ok(vec![(
@@ -92,6 +95,10 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
         package: true,
         ..Default::default()
     }
+}
+
+fn short_hash(h: &str) -> &str {
+    &h[..12.min(h.len())]
 }
 
 fn domain_arg_key(domain: Option<DomainArg>) -> &'static str {
@@ -171,18 +178,18 @@ async fn load_apply_resume_state(
     if session.command_kind != "apply" {
         anyhow::bail!(
             "session {} is for '{}', not 'apply'",
-            &session.session_hash[..12.min(session.session_hash.len())],
+            short_hash(&session.session_hash),
             session.command_kind
         );
     }
 
     let metadata_json = session.metadata_json.as_deref().context(format!(
         "apply session {} is missing metadata",
-        &session.session_hash[..12.min(session.session_hash.len())]
+        short_hash(&session.session_hash)
     ))?;
     let metadata: ApplySessionMeta = serde_json::from_str(metadata_json).context(format!(
         "failed to decode apply session {} metadata",
-        &session.session_hash[..12.min(session.session_hash.len())]
+        short_hash(&session.session_hash)
     ))?;
 
     let current_fingerprints = crate::builder::orchestrator::task_fingerprints(plan)?;
@@ -190,24 +197,27 @@ async fn load_apply_resume_state(
         let Some(stored) = metadata.task_fingerprints.get(&task) else {
             anyhow::bail!(
                 "apply session {} is stale: task '{}' is not part of the original execution plan",
-                &session.session_hash[..12.min(session.session_hash.len())],
+                short_hash(&session.session_hash),
                 task
             );
         };
         if stored != &fingerprint {
             anyhow::bail!(
                 "apply session {} is stale: plan '{}' changed since the original run",
-                &session.session_hash[..12.min(session.session_hash.len())],
+                short_hash(&session.session_hash),
                 task
             );
         }
     }
 
     let completed = crate::builder::orchestrator::load_completed_build_tasks(
-        &db,
+        db,
         ctx.config,
-        &plan,
-        session.task_session_hash.as_deref().unwrap_or(apply_session_hash),
+        plan,
+        session
+            .task_session_hash
+            .as_deref()
+            .unwrap_or(apply_session_hash),
         true,
     )
     .await?;
@@ -349,17 +359,14 @@ async fn apply_targets(
         match load_apply_resume_state(&db, &ctx, apply_session_hash, &plan).await? {
             Some(state) => {
                 if !ctx.quiet {
-                    tracing::info!(
-                        "resuming apply session {}",
-                        &apply_session_hash[..12.min(apply_session_hash.len())]
-                    );
+                    tracing::info!("resuming apply session {}", short_hash(apply_session_hash));
                 }
                 state
             }
             None => {
                 tracing::warn!(
                     "no existing apply session {} found, starting fresh apply",
-                    &apply_session_hash[..12.min(apply_session_hash.len())]
+                    short_hash(apply_session_hash)
                 );
                 let build_hash = crate::builder::orchestrator::compute_build_session_hash(
                     &plan,
@@ -419,6 +426,16 @@ async fn apply_targets(
     if !ctx.quiet {
         let resources = crate::builder::orchestrator::summarize_build_resources(ctx.config);
         tracing::info!("{}", describe_build_resources(resources));
+    }
+
+    // Pre-warm the sysroot cache before any isolated builds start.
+    // This avoids a thundering-herd where N parallel tasks all try to
+    // create the sysroot simultaneously on the first apply invocation.
+    if let Err(e) = crate::isolation::sysroot::ensure_global_sysroot() {
+        tracing::warn!(
+            "Sysroot preparation failed, builds may encounter ETXTBUSY: {}",
+            e
+        );
     }
 
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
@@ -482,10 +499,14 @@ async fn apply_targets(
             let old_parts = db.get_parts_by_plan(plan_name).await?;
             for old_part in old_parts {
                 if !batch_part_names.contains(&old_part.name) {
-                    tracing::info!("Removing old part {} from plan {}", old_part.name, plan_name);
-                    if let Err(e) = transaction::remove_part(
-                        &db, &old_part.name, ctx.root_dir, true,
-                    ).await {
+                    tracing::info!(
+                        "Removing old part {} from plan {}",
+                        old_part.name,
+                        plan_name
+                    );
+                    if let Err(e) =
+                        transaction::remove_part(&db, &old_part.name, ctx.root_dir, true).await
+                    {
                         tracing::warn!("Failed to remove old part {}: {}", old_part.name, e);
                     }
                 }
@@ -500,7 +521,6 @@ async fn apply_targets(
             ctx.resolver,
             ctx.force,
             install_nodeps,
-            &plan_map,
         )
         .await
         .inspect_err(|_| {
@@ -525,22 +545,40 @@ fn emit_partial_apply_note(applied_parts: &[String]) {
     }
 }
 
-pub async fn execute_apply(
-    targets: Vec<String>,
-    resume: Option<String>,
-    deps: Option<DomainArg>,
-    rdeps: Option<DomainArg>,
-    match_policies: Vec<MatchPolicyArg>,
-    depth: Option<usize>,
-    force: bool,
-    dry_run: bool,
-    config: &GlobalConfig,
-    db_path: &Path,
-    root_dir: &Path,
-    verbose: u8,
-    quiet: bool,
-    resolver: &LocalResolver,
-) -> Result<()> {
+pub struct ApplyArgs<'a> {
+    pub targets: Vec<String>,
+    pub resume: Option<String>,
+    pub deps: Option<DomainArg>,
+    pub rdeps: Option<DomainArg>,
+    pub match_policies: Vec<MatchPolicyArg>,
+    pub depth: Option<usize>,
+    pub force: bool,
+    pub dry_run: bool,
+    pub config: &'a GlobalConfig,
+    pub db_path: &'a Path,
+    pub root_dir: &'a Path,
+    pub verbose: u8,
+    pub quiet: bool,
+    pub resolver: &'a LocalResolver,
+}
+
+pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
+    let ApplyArgs {
+        targets,
+        resume,
+        deps,
+        rdeps,
+        match_policies,
+        depth,
+        force,
+        dry_run,
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        resolver,
+    } = args;
     let targets = collect_install_args(targets)?;
     let (resume_requested, explicit_resume_hash) = match resume {
         Some(hash) if hash.is_empty() => (true, None),
@@ -570,7 +608,7 @@ pub async fn execute_apply(
     if resume_requested && apply_session_hash != computed_apply_session_hash {
         anyhow::bail!(
             "apply session hash {} does not match the current targets/scope; rerun with the original apply arguments",
-            &apply_session_hash[..12.min(apply_session_hash.len())]
+            short_hash(&apply_session_hash)
         );
     }
 

@@ -11,7 +11,7 @@ logs_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 
 [build]
-build_dir = "/var/tmp/wright-build"
+build_dir = "/var/tmp/wright/workshop"
 default_isolation = "strict"
 ccache = false
 

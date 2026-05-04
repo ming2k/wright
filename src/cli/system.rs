@@ -119,9 +119,9 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Install parts from local parts or the local archive catalogue
+    /// Install parts from archive files or names found in parts_dir
     #[command(
-        long_about = "Install parts from archive files or locally registered part names.\n\nParts explicitly named by the user are marked as explicit installs. Dependencies pulled in automatically are marked as dependency installs.",
+        long_about = "Install parts from archive files or part names found in parts_dir.\n\nInstall applies the selected archives to the target root. Runtime dependencies are checked for warnings and recorded in the database, but missing runtime dependencies do not block installation.",
         after_help = WRIGHT_INSTALL_AFTER_HELP
     )]
     Install {
@@ -133,7 +133,7 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Skip dependency resolution
+        /// Skip runtime dependency warnings
         #[arg(long)]
         nodeps: bool,
     },
@@ -201,7 +201,7 @@ pub enum Commands {
     },
     /// Upgrade installed parts by name or from archive files
     #[command(
-        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest locally registered version from the archive catalogue. When given an archive path, it upgrades directly from that file.",
+        long_about = "Upgrade installed parts by name or from archive files.\n\nWhen given a part name, `wright` resolves the latest matching archive from parts_dir. When given an archive path, it upgrades directly from that file.",
         after_help = WRIGHT_UPGRADE_AFTER_HELP
     )]
     Upgrade {
@@ -368,7 +368,7 @@ pub enum Commands {
     },
     /// Upgrade all installed parts to latest available versions
     #[command(
-        long_about = "Upgrade all installed parts to the latest versions available in the local archive catalogue.\n\nUse `--dry-run` to preview the transaction without making any changes.",
+        long_about = "Upgrade all installed parts to the latest versions available in parts_dir.\n\nUse `--dry-run` to preview the transaction without making any changes.",
         after_help = WRIGHT_SYSUPGRADE_AFTER_HELP
     )]
     Sysupgrade {

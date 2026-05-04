@@ -45,7 +45,8 @@ async fn build_hello_archive() -> PathBuf {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+    let archive =
+        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -111,6 +112,28 @@ async fn test_end_to_end_install_query_remove() {
     assert!(db.get_part("hello").await.unwrap().is_none());
     assert!(db.list_parts().await.unwrap().is_empty());
     assert!(db.find_owner("/usr/bin/hello").await.unwrap().is_none());
+
+    let _ = std::fs::remove_file(&archive);
+}
+
+#[tokio::test]
+async fn test_successful_install_removes_rollback_journal() {
+    let state = tempfile::tempdir().unwrap();
+    let db_path = state.path().join("wright.db");
+    let journal_path = db_path.with_extension("journal");
+    let db = InstalledDb::open(&db_path).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let archive = build_hello_archive().await;
+
+    transaction::install_part(&db, &archive, root.path(), false)
+        .await
+        .unwrap();
+
+    assert!(
+        !journal_path.exists(),
+        "successful install left rollback journal at {}",
+        journal_path.display()
+    );
 
     let _ = std::fs::remove_file(&archive);
 }

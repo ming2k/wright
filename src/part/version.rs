@@ -208,6 +208,64 @@ pub fn parse_dep_ref(dep: &str) -> (String, String) {
     }
 }
 
+fn is_valid_dep_component(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit() => {}
+        _ => return false,
+    }
+
+    chars
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '+' | '.' | '-'))
+}
+
+/// Parse and validate a dependency reference with optional version constraint.
+///
+/// The accepted dependency reference form is `plan:output`, optionally followed
+/// by a version constraint such as `>= 1.2`. `:default` is resolved to the plan's
+/// single-output name.
+pub fn parse_dependency_ref(dep: &str) -> Result<(String, String, Option<VersionConstraint>)> {
+    let (dep_ref, constraint) = parse_dependency(dep)?;
+    let parts: Vec<&str> = dep_ref.split(':').collect();
+    if parts.len() != 2 {
+        return Err(WrightError::ValidationError(format!(
+            "dependency '{}' must use 'plan:output' syntax",
+            dep.trim()
+        )));
+    }
+
+    let plan = parts[0].trim();
+    let output = parts[1].trim();
+    if plan.is_empty() || output.is_empty() {
+        return Err(WrightError::ValidationError(format!(
+            "dependency '{}' must include non-empty plan and output names",
+            dep.trim()
+        )));
+    }
+    if !is_valid_dep_component(plan) {
+        return Err(WrightError::ValidationError(format!(
+            "dependency '{}': invalid plan name '{}'",
+            dep.trim(),
+            plan
+        )));
+    }
+    if !is_valid_dep_component(output) {
+        return Err(WrightError::ValidationError(format!(
+            "dependency '{}': invalid output name '{}'",
+            dep.trim(),
+            output
+        )));
+    }
+
+    let output = if output == "default" {
+        plan.to_string()
+    } else {
+        output.to_string()
+    };
+
+    Ok((plan.to_string(), output, constraint))
+}
+
 /// Parse a dependency string like "openssl >= 3.0" into (name, optional constraint)
 pub fn parse_dependency(dep: &str) -> Result<(String, Option<VersionConstraint>)> {
     let dep = dep.trim();
@@ -348,6 +406,34 @@ mod tests {
         let (name, constraint) = parse_dependency("gcc").unwrap();
         assert_eq!(name, "gcc");
         assert!(constraint.is_none());
+    }
+
+    #[test]
+    fn test_parse_dependency_ref() {
+        let (plan, output, constraint) = parse_dependency_ref("llvm:llvm-libs >= 22.1").unwrap();
+        assert_eq!(plan, "llvm");
+        assert_eq!(output, "llvm-libs");
+        assert!(constraint.is_some());
+    }
+
+    #[test]
+    fn test_parse_dependency_ref_default_output() {
+        let (plan, output, constraint) = parse_dependency_ref("glibc:default").unwrap();
+        assert_eq!(plan, "glibc");
+        assert_eq!(output, "glibc");
+        assert!(constraint.is_none());
+    }
+
+    #[test]
+    fn test_parse_dependency_ref_rejects_missing_output() {
+        assert!(parse_dependency_ref("glibc").is_err());
+        assert!(parse_dependency_ref("glibc:").is_err());
+        assert!(parse_dependency_ref(":default").is_err());
+    }
+
+    #[test]
+    fn test_parse_dependency_ref_rejects_constraint_before_output() {
+        assert!(parse_dependency_ref("pcre2 >= 10.42:default").is_err());
     }
 
     #[test]

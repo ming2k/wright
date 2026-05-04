@@ -67,7 +67,8 @@ pub(super) async fn expand_missing_dependencies(
                 queue.push_back((dep_plan_name.clone(), dep_depth));
             }
 
-            if policies.contains(&MatchPolicy::All) && SYSTEM_TOOLCHAIN.contains(&dep_plan_name.as_str())
+            if policies.contains(&MatchPolicy::All)
+                && SYSTEM_TOOLCHAIN.contains(&dep_plan_name.as_str())
             {
                 continue;
             }

@@ -2,10 +2,23 @@
 
 ## [Unreleased]
 
-## [4.0.2] - 2026-05-04
+## [4.0.2] - 2026-05-05
+
+### Added
+- `wright lint` now validates dependency references against local plans: each `plan:output` dependency must point to an existing local plan and an output declared by that plan.
 
 ### Changed
 - **Removed strict plan version consistency check**: `ensure_plan_registered` no longer refuses to install when a plan's version changes. Instead, it updates the existing plan record in-place. This simplifies upgrades where an entire plan (all outputs) is being replaced.
+
+### Fixed
+- Documentation and CLI help now consistently describe the current build/package/install flow: `wright build` stages outputs, `wright package` or `wright build --package` creates archives, local part names resolve from `parts_dir`, and `wright prune --untracked` / `@assembly` workflows are no longer documented as current behavior.
+- Dependency parsing now rejects malformed references such as missing outputs or constraints placed before the `:output` segment.
+- Global `--db` is now honored by `wright build --clear-sessions`, `wright package` command locking, and `wright prune` instead of those paths always using `db_path` from config.
+- Packaging now fails clearly when `parts_dir` cannot be created instead of silently writing archives to the current directory, which could make `wright apply` build successfully and then fail to find the produced archives.
+- `wright remove --plan` now plans removals as a batch, so split outputs from the same plan do not block each other due to intra-plan dependencies.
+- `wright install` now treats missing or version-mismatched `runtime_deps` as warnings instead of blocking archive installation. Runtime dependency edges are still recorded for queries and removal protection; plan `build_deps` and `link_deps` remain build-time constraints.
+- Rollback journal recovery now runs before a new install or upgrade transaction is recorded, logs successful recovery as informational output, and successful installs now remove their journal.
+- Successful `wright install` transactions now emit an `Installed <name>: <version-release>` completion log after commit.
 
 ## [4.0.1] - 2026-05-04
 

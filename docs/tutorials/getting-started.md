@@ -6,6 +6,7 @@
 - Linux x86_64
 - `bubblewrap`
 - `bash`
+- a C compiler for the sample plan
 
 ## Build
 
@@ -18,9 +19,9 @@ install -m755 target/release/wright /usr/local/bin/
 
 ## Mental Model
 
-- `wright build` turns plans into local part archives.
-- `wright build` registers those archives in a local inventory DB.
-- `wright` installs and upgrades the live system from those local archives.
+- `wright build` turns plans into staging directories.
+- `wright package` turns build staging directories into local part archives.
+- `wright` installs and upgrades the live system from archives in `parts_dir`.
 - `wright apply` is the high-level source-first combo workflow: resolve the
  build graph, add missing or outdated dependency plans, build each
  wave, and install or upgrade each wave before continuing.
@@ -55,12 +56,14 @@ isolation = "none"
 script = "install -Dm755 hello ${STAGING_DIR}/usr/bin/hello"
 ```
 
-directory, and use `${NAME}` / `${VERSION}` for plan metadata.
+You now have one plan directory, and the lifecycle scripts can use `${NAME}` /
+`${VERSION}` for plan metadata.
 
 Build and install it:
 
 ```bash
 wright build plans/hello
+wright package plans/hello
 wright install hello
 ```
 
@@ -84,5 +87,4 @@ wright remove hello
 - [Usage Guide](../tutorials/first-steps.md)
 - [CLI Reference](../reference/cli-reference.md)
 - [Configuration](../reference/configuration.md)
-- [Writing Plans](../reference/writing-plans.md)
-
+- [How to Write a Plan](../how-to/write-a-plan.md)

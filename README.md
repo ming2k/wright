@@ -25,10 +25,10 @@ install -Dm644 target/man/wright.1 /usr/share/man/man1/wright.1
 ## Quick Start
 
 ```bash
-wright build hello
+wright build hello --package
 wright install hello
-wright apply @base
-wright prune --untracked --latest --apply
+wright apply hello
+wright prune --latest --apply
 wright list
 ```
 

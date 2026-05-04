@@ -17,10 +17,8 @@ pub async fn execute_resolve(
     config: &GlobalConfig,
     db_path: &Path,
 ) -> Result<()> {
-    if args.tree {
+    if args.installed {
         render_installed_tree(&args, db_path).await
-    } else if args.installed {
-        render_installed_list(&args, db_path).await
     } else {
         render_build_view(args, config).await
     }
@@ -54,10 +52,7 @@ async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()>
             writeln!(buf)?;
         }
 
-        let part = db
-            .get_part(target)
-            .await
-            .context("failed to query part")?;
+        let part = db.get_part(target).await.context("failed to query part")?;
         if part.is_none() {
             eprintln!("part '{}' is not installed", target);
             std::process::exit(1);
@@ -88,92 +83,35 @@ async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()>
         writeln!(
             buf,
             "{}",
-            "\nSource: local part database (.PARTINFO-derived metadata)"
-                .dimmed()
+            "\nSource: local part database (.PARTINFO-derived metadata)".dimmed()
         )
         .ok();
     } else {
-        writeln!(buf, "\nSource: local part database (.PARTINFO-derived metadata)").ok();
+        writeln!(
+            buf,
+            "\nSource: local part database (.PARTINFO-derived metadata)"
+        )
+        .ok();
     }
 
     print!("{}", String::from_utf8_lossy(&buf));
     Ok(())
 }
 
-// ─── Installed-side list rendering ───────────────────────────────────────────
-
-async fn render_installed_list(args: &ResolveArgs, db_path: &Path) -> Result<()> {
-    let db = InstalledDb::open(db_path)
-        .await
-        .context("failed to open installed database")?;
-
-    for target in &args.targets {
-        let part = db
-            .get_part(target)
-            .await
-            .context("failed to query part")?;
-        if part.is_none() {
-            continue;
-        }
-
-        if args.deps.is_none() && args.rdeps.is_none() {
-            println!("{}", target);
-            continue;
-        }
-
-        if let Some(domain) = args.deps {
-            let deps = db
-                .get_dependencies_by_name(target)
-                .await
-                .context("failed to get dependencies")?;
-            for dep in deps {
-                // Database only stores runtime dependencies.
-                // Build/link deps live in the plan table and are resolved at build time.
-                if matches!(domain, DomainArg::All | DomainArg::Runtime) {
-                    println!("{}", dep.name);
-                }
-            }
-        }
-
-        if let Some(domain) = args.rdeps {
-            let rdeps = db
-                .get_dependents(target)
-                .await
-                .context("failed to get dependents")?;
-            for (name, _kind) in rdeps {
-                // Database only tracks runtime dependents.
-                if matches!(domain, DomainArg::All | DomainArg::Runtime) {
-                    println!("{}", name);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// ─── Build-side rendering (unchanged) ────────────────────────────────────────
+// ─── Plan-side tree rendering ────────────────────────────────────────────────
 
 async fn render_build_view(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let is_tty = std::io::stdout().is_terminal();
 
-    if is_tty
-        && !args.exclude_targets
-        && (args.deps.is_none() && args.rdeps.is_none())
-    {
-        render_interactive_trees(&args, config).await?;
-        return Ok(());
-    }
-
-    if is_tty && !args.exclude_targets && (args.deps.is_some() || args.rdeps.is_some()) {
-        render_interactive_trees(&args, config).await?;
+    if is_tty && !args.exclude_targets {
+        render_plan_tree(args, config).await?;
         return Ok(());
     }
 
     render_list_output(args, config).await
 }
 
-async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> Result<()> {
+async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let resolver = orchestrator::setup_resolver(config)?;
     let all_plans = resolver.get_all_plans()?;
 
@@ -181,9 +119,7 @@ async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> 
     for (name, path) in &all_plans {
         if let Ok(m) = PlanManifest::from_file(path) {
             for (dep_raw, kind) in m.all_dependencies() {
-                let dep_name = version::parse_dependency(&dep_raw)
-                    .map(|(n, _)| n)
-                    .unwrap_or(dep_raw);
+                let (dep_name, _) = version::parse_dep_ref(&dep_raw);
                 rdeps_map
                     .entry(dep_name)
                     .or_default()
@@ -198,6 +134,8 @@ async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> 
         None => 1,
     };
 
+    let color = std::io::stdout().is_terminal();
+
     for (idx, target) in args.targets.iter().enumerate() {
         if idx > 0 {
             println!();
@@ -206,20 +144,30 @@ async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> 
         let show_dependencies =
             (args.deps.is_none() && args.rdeps.is_none()) || args.deps.is_some();
         if show_dependencies {
-            println!("{}", "Dependencies:".bold().cyan());
-            print!("{}", target.bold().green());
+            if color {
+                println!("{}", "Dependencies:".bold().cyan());
+                print!("{}", target.bold().green());
+            } else {
+                println!("Dependencies:");
+                print!("{}", target);
+            }
             let mut visited = HashSet::new();
             visited.insert(target.to_string());
-            if !print_dependency_tree(
-                target,
-                &all_plans,
-                "",
-                1,
-                effective_depth,
-                &mut visited,
-                args.deps,
-            )? {
-                println!(" {}", "(none)".dimmed());
+            let dep_ctx = DepTreeCtx {
+                all_plans: &all_plans,
+                max_depth: effective_depth,
+                filter: args.deps,
+                color,
+            };
+            if !print_dependency_tree(target, &dep_ctx, "", 1, &mut visited)? {
+                println!(
+                    " {}",
+                    if color {
+                        "(none)".dimmed().to_string()
+                    } else {
+                        "(none)".to_string()
+                    }
+                );
             } else {
                 println!();
             }
@@ -227,20 +175,30 @@ async fn render_interactive_trees(args: &ResolveArgs, config: &GlobalConfig) -> 
 
         let show_dependents = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
         if show_dependents {
-            println!("{}", "Dependents:".bold().cyan());
-            print!("{}", target.bold().green());
+            if color {
+                println!("{}", "Dependents:".bold().cyan());
+                print!("{}", target.bold().green());
+            } else {
+                println!("Dependents:");
+                print!("{}", target);
+            }
             let mut visited = HashSet::new();
             visited.insert(target.to_string());
-            if !print_dependent_tree(
-                target,
-                &rdeps_map,
-                "",
-                1,
-                effective_depth,
-                &mut visited,
-                args.rdeps,
-            )? {
-                println!(" {}", "(none)".dimmed());
+            let rdep_ctx = RdepTreeCtx {
+                rdeps_map: &rdeps_map,
+                max_depth: effective_depth,
+                filter: args.rdeps,
+                color,
+            };
+            if !print_dependent_tree(target, &rdep_ctx, "", 1, &mut visited)? {
+                println!(
+                    " {}",
+                    if color {
+                        "(none)".dimmed().to_string()
+                    } else {
+                        "(none)".to_string()
+                    }
+                );
             } else {
                 println!();
             }
@@ -302,25 +260,30 @@ async fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<
     Ok(())
 }
 
+struct DepTreeCtx<'a> {
+    all_plans: &'a HashMap<String, PathBuf>,
+    max_depth: usize,
+    filter: Option<DomainArg>,
+    color: bool,
+}
+
 fn print_dependency_tree(
     name: &str,
-    all_plans: &HashMap<String, PathBuf>,
+    ctx: &DepTreeCtx,
     prefix: &str,
     current_depth: usize,
-    max_depth: usize,
     visited: &mut HashSet<String>,
-    filter: Option<DomainArg>,
 ) -> Result<bool> {
-    if current_depth > max_depth {
+    if current_depth > ctx.max_depth {
         return Ok(false);
     }
-    let path = match all_plans.get(name) {
+    let path = match ctx.all_plans.get(name) {
         Some(p) => p,
         None => return Ok(false),
     };
     let manifest = PlanManifest::from_file(path)?;
     let mut deps = manifest.all_dependencies();
-    if let Some(domain) = filter {
+    if let Some(domain) = ctx.filter {
         deps.retain(|(_, kind)| match domain {
             DomainArg::Link => kind == "link",
             DomainArg::Runtime => kind == "runtime",
@@ -332,53 +295,52 @@ fn print_dependency_tree(
         return Ok(false);
     }
     for (i, (dep_raw, kind)) in deps.iter().enumerate() {
-        let dep_name = version::parse_dependency(dep_raw)
-            .map(|(n, _)| n)
-            .unwrap_or_else(|_| dep_raw.clone());
+        let (dep_name, _) = version::parse_dep_ref(dep_raw);
         let last_child = i == deps.len() - 1;
-        let connector = if last_child {
-            "└── "
+        let connector = if last_child { "└── " } else { "├── " };
+        if ctx.color {
+            print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), dep_name);
         } else {
-            "├── "
-        };
-        print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), dep_name);
+            print!("\n{}{}{}: {}", prefix, connector, kind, dep_name);
+        }
         if visited.contains(&dep_name) {
-            print!(" {}", "(*)".dimmed());
+            if ctx.color {
+                print!(" {}", "(*)".dimmed());
+            } else {
+                print!(" (*)");
+            }
             continue;
         }
         visited.insert(dep_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependency_tree(
-            &dep_name,
-            all_plans,
-            &new_prefix,
-            current_depth + 1,
-            max_depth,
-            visited,
-            filter,
-        )?;
+        print_dependency_tree(&dep_name, ctx, &new_prefix, current_depth + 1, visited)?;
     }
     Ok(true)
 }
 
+struct RdepTreeCtx<'a> {
+    rdeps_map: &'a HashMap<String, Vec<(String, String)>>,
+    max_depth: usize,
+    filter: Option<DomainArg>,
+    color: bool,
+}
+
 fn print_dependent_tree(
     name: &str,
-    rdeps_map: &HashMap<String, Vec<(String, String)>>,
+    ctx: &RdepTreeCtx,
     prefix: &str,
     current_depth: usize,
-    max_depth: usize,
     visited: &mut HashSet<String>,
-    filter: Option<DomainArg>,
 ) -> Result<bool> {
-    if current_depth > max_depth {
+    if current_depth > ctx.max_depth {
         return Ok(false);
     }
-    let rdeps_full = match rdeps_map.get(name) {
+    let rdeps_full = match ctx.rdeps_map.get(name) {
         Some(r) => r,
         None => return Ok(false),
     };
     let mut rdeps = rdeps_full.clone();
-    if let Some(domain) = filter {
+    if let Some(domain) = ctx.filter {
         rdeps.retain(|(_, kind)| match domain {
             DomainArg::Link => kind == "link",
             DomainArg::Runtime => kind == "runtime",
@@ -391,27 +353,23 @@ fn print_dependent_tree(
     }
     for (i, (child_name, kind)) in rdeps.iter().enumerate() {
         let last_child = i == rdeps.len() - 1;
-        let connector = if last_child {
-            "└── "
+        let connector = if last_child { "└── " } else { "├── " };
+        if ctx.color {
+            print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), child_name);
         } else {
-            "├── "
-        };
-        print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), child_name);
+            print!("\n{}{}{}: {}", prefix, connector, kind, child_name);
+        }
         if visited.contains(child_name) {
-            print!(" {}", "(*)".dimmed());
+            if ctx.color {
+                print!(" {}", "(*)".dimmed());
+            } else {
+                print!(" (*)");
+            }
             continue;
         }
         visited.insert(child_name.clone());
         let new_prefix = format!("{}{}", prefix, if last_child { "    " } else { "│   " });
-        print_dependent_tree(
-            child_name,
-            rdeps_map,
-            &new_prefix,
-            current_depth + 1,
-            max_depth,
-            visited,
-            filter,
-        )?;
+        print_dependent_tree(child_name, ctx, &new_prefix, current_depth + 1, visited)?;
     }
     Ok(true)
 }

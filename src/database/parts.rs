@@ -213,7 +213,10 @@ impl InstalledDb {
     }
 
     pub async fn get_assumed_parts(&self) -> Result<Vec<InstalledPart>> {
-        let sql = format!("SELECT {} FROM parts WHERE assumed = 1 ORDER BY name", PART_COLUMNS);
+        let sql = format!(
+            "SELECT {} FROM parts WHERE assumed = 1 ORDER BY name",
+            PART_COLUMNS
+        );
         query_as::<_, InstalledPart>(&sql)
             .fetch_all(&self.pool)
             .await
@@ -248,7 +251,9 @@ impl InstalledDb {
             .bind(plan_name)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to remove parts by plan: {}", e)))?;
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to remove parts by plan: {}", e))
+            })?;
 
         Ok(count as u64)
     }

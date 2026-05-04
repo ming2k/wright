@@ -16,8 +16,7 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
     // Add current directory to plans search path so we can resolve dependencies
     // in local development trees.
     if let Ok(cwd) = std::env::current_dir() {
-        resolver.add_plans_dir(cwd.clone());
-        resolver.add_search_dir(cwd);
+        resolver.add_plans_dir(cwd);
     }
 
     // Always include the configured parts directory in the part search path.

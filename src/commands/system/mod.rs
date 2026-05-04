@@ -42,7 +42,7 @@ pub async fn execute(
         dry_run,
     } = command
     {
-        return apply::execute_apply(
+        return apply::execute_apply(apply::ApplyArgs {
             targets,
             resume,
             deps,
@@ -56,8 +56,8 @@ pub async fn execute(
             root_dir,
             verbose,
             quiet,
-            &resolver,
-        )
+            resolver: &resolver,
+        })
         .await;
     }
 
@@ -170,19 +170,47 @@ pub async fn execute(
             if remove_by_plan {
                 // Remove all parts from the specified plans
                 for plan_name in &parts {
-                    let plan_parts = db.get_parts_by_plan(plan_name).await
+                    let plan_parts = db
+                        .get_parts_by_plan(plan_name)
+                        .await
                         .context(format!("failed to get parts for plan {}", plan_name))?;
                     if plan_parts.is_empty() {
                         println!("no parts found for plan '{}'", plan_name);
                         continue;
                     }
-                    println!("removing {} part(s) from plan '{}'", plan_parts.len(), plan_name);
-                    for part in &plan_parts {
-                        match transaction::remove_part(&db, &part.name, root_dir, force
-                        ).await {
-                            Ok(()) => println!("removed: {}", part.name),
+                    println!(
+                        "removing {} part(s) from plan '{}'",
+                        plan_parts.len(),
+                        plan_name
+                    );
+                    let part_names: Vec<String> =
+                        plan_parts.iter().map(|part| part.name.clone()).collect();
+                    let batch_targets: HashSet<String> = part_names.iter().cloned().collect();
+                    let removal_order = transaction::order_removal_batch(&db, &part_names)
+                        .await
+                        .context(format!(
+                            "failed to plan removal order for plan {}",
+                            plan_name
+                        ))?;
+
+                    for part_name in &removal_order {
+                        let ignored_dependents: HashSet<String> = batch_targets
+                            .iter()
+                            .filter(|candidate| candidate.as_str() != part_name)
+                            .cloned()
+                            .collect();
+                        match transaction::remove_part_with_ignored_dependents(
+                            &db,
+                            part_name,
+                            root_dir,
+                            force,
+                            &ignored_dependents,
+                        )
+                        .await
+                        {
+                            Ok(()) => println!("removed: {}", part_name),
                             Err(e) => {
-                                eprintln!("error removing {}: {}", part.name, e);
+                                eprintln!("error removing {}: {}", part_name, e);
                                 std::process::exit(1);
                             }
                         }
@@ -228,9 +256,7 @@ pub async fn execute(
                         }
 
                         for dep in &dependents {
-                            match transaction::remove_part(
-                                &db, dep, root_dir, true
-                            ).await {
+                            match transaction::remove_part(&db, dep, root_dir, true).await {
                                 Ok(()) => println!("removed: {}", dep),
                                 Err(e) => {
                                     eprintln!("error removing {}: {}", dep, e);
@@ -242,11 +268,9 @@ pub async fn execute(
 
                     // Compute cascade list before removing the target
                     let cascade_list = if cascade {
-                        let list = transaction::cascade_remove_list(
-                            &db, name
-                        )
-                        .await
-                        .context(format!("failed to compute cascade list for {}", name))?;
+                        let list = transaction::cascade_remove_list(&db, name)
+                            .await
+                            .context(format!("failed to compute cascade list for {}", name))?;
                         if !list.is_empty() {
                             println!(
                                 "will also remove orphan dependencies of {}: {}",
@@ -260,9 +284,7 @@ pub async fn execute(
                     };
 
                     let result = if recursive {
-                        transaction::remove_part(
-                            &db, name, root_dir, force || recursive
-                        ).await
+                        transaction::remove_part(&db, name, root_dir, force || recursive).await
                     } else {
                         let ignored_dependents: HashSet<String> = batch_targets
                             .iter()
@@ -289,9 +311,7 @@ pub async fn execute(
 
                     // Remove orphan dependencies (leaf-first order)
                     for orphan in &cascade_list {
-                        match transaction::remove_part(
-                            &db, orphan, root_dir, true
-                        ).await {
+                        match transaction::remove_part(&db, orphan, root_dir, true).await {
                             Ok(()) => println!("removed: {}", orphan),
                             Err(e) => {
                                 eprintln!("error removing {}: {}", orphan, e);
@@ -307,7 +327,14 @@ pub async fn execute(
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);
-                    println!("Version     : {}", if info.version.is_empty() { "-" } else { &info.version });
+                    println!(
+                        "Version     : {}",
+                        if info.version.is_empty() {
+                            "-"
+                        } else {
+                            &info.version
+                        }
+                    );
                     println!("Release     : {}", info.release);
                     println!("Description : {}", info.description.unwrap_or_default());
                     println!("Architecture: {}", info.arch);
@@ -454,9 +481,7 @@ pub async fn execute(
                                 };
                                 println!(
                                     "upgrade: {} {} -> {}",
-                                    part.name,
-                                    old_ver_rel,
-                                    new_ver_rel
+                                    part.name, old_ver_rel, new_ver_rel
                                 );
                                 if !dry_run {
                                     if let Err(e) = transaction::upgrade_part(
@@ -499,7 +524,11 @@ pub async fn execute(
                 );
             }
         }
-        SystemCommands::Assume { name, version, file } => {
+        SystemCommands::Assume {
+            name,
+            version,
+            file,
+        } => {
             let mut entries: Vec<(String, String)> = Vec::new();
 
             if let Some(path) = file {
@@ -511,8 +540,12 @@ pub async fn execute(
                         continue;
                     }
                     let mut parts = trimmed.split_whitespace();
-                    let n = parts.next().context(format!("missing name in line: {}", trimmed))?;
-                    let v = parts.next().context(format!("missing version in line: {}", trimmed))?;
+                    let n = parts
+                        .next()
+                        .context(format!("missing name in line: {}", trimmed))?;
+                    let v = parts
+                        .next()
+                        .context(format!("missing version in line: {}", trimmed))?;
                     entries.push((n.to_string(), v.to_string()));
                 }
             } else if let (Some(n), Some(v)) = (name, version) {
@@ -526,12 +559,18 @@ pub async fn execute(
                         continue;
                     }
                     let mut parts = trimmed.split_whitespace();
-                    let n = parts.next().context(format!("missing name in line: {}", trimmed))?;
-                    let v = parts.next().context(format!("missing version in line: {}", trimmed))?;
+                    let n = parts
+                        .next()
+                        .context(format!("missing name in line: {}", trimmed))?;
+                    let v = parts
+                        .next()
+                        .context(format!("missing version in line: {}", trimmed))?;
                     entries.push((n.to_string(), v.to_string()));
                 }
             } else {
-                eprintln!("error: provide name and version as arguments, use --file, or pipe input");
+                eprintln!(
+                    "error: provide name and version as arguments, use --file, or pipe input"
+                );
                 std::process::exit(1);
             }
 
@@ -609,5 +648,3 @@ pub async fn execute(
     }
     Ok(())
 }
-
-

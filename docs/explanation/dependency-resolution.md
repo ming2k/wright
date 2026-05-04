@@ -6,9 +6,9 @@ This document explains how Wright resolves and acts on dependencies from a user 
 Wright uses two dependency types, each with a different purpose.
 
 - `link_deps`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes.
-- `runtime`: Required for the part to run after installation.
+- `runtime_deps`: Required for the part to run after installation.
 
-`link_deps` and `runtime` are allowed to overlap. If something is needed after installation, it must be listed in `runtime` even if it also appears in `link_deps`.
+`link_deps` and `runtime_deps` are allowed to overlap. If something is needed after installation, it must be listed in `runtime_deps` even if it also appears in `link_deps`.
 
 **Where Dependencies Come From**
 Dependencies are declared in `plan.toml` at two levels:
@@ -16,7 +16,21 @@ Dependencies are declared in `plan.toml` at two levels:
 - **Plan level**: `link_deps` is a top-level field that drives the build orchestrator.
 - **Output level**: `runtime_deps` is declared inside each `[[output]]` entry. It describes what a specific installed part needs at run time.
 
-Only `runtime_deps` and part relations are serialized into binary part metadata used by `wright install`. `link_deps` remains a build-graph concept used by `wright resolve`.
+Plan-level dependencies are for build planning: `build_deps` selects tools and
+inputs mounted for the build, and `link_deps` marks ABI-sensitive inputs for
+rebuild decisions. Output-level `runtime_deps` are for installation: they are
+serialized into binary part metadata, recorded in the installed database, and
+checked by `wright install` as warnings.
+
+Dependency references are resolved as `plan:output`, not as bare part names.
+For a multi-output plan, `llvm:llvm-libs` means the `llvm-libs` output produced
+by the `llvm` plan. `llvm-libs:default` means a separate local plan named
+`llvm-libs`; if no such plan exists, `wright lint` reports the exact plan file
+and dependency field.
+
+Only `runtime_deps` and part relations are serialized into binary part metadata
+used by `wright install`. `build_deps` and `link_deps` remain build-graph
+concepts used by `wright resolve`.
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
@@ -39,18 +53,18 @@ hold tree before building.
 
 With `--deps=all`, Wright expands more aggressively:
 
-- `link_deps` and `runtime` dependencies are added to the resolved target set.
+- `link_deps` and `runtime_deps` dependencies are added to the resolved target set.
 - This is useful for deep rebuilds when you want a clean, consistent dependency chain.
 
 **Downward Expansion: Reverse Rebuilds**
 When a dependency changes, other parts may need to be rebuilt.
 
 - `link_deps` dependencies always trigger reverse rebuilds via `wright resolve --rdeps`.
-- `runtime` dependencies only trigger reverse rebuilds with `--rdeps=all`.
+- `runtime_deps` dependencies only trigger reverse rebuilds with `--rdeps=all`.
 
 This behavior keeps ABI-sensitive chains correct without forcing expensive rebuilds by default.
 
-This rebuild behavior does not make `link_deps` an implicit runtime dependency. Runtime requirements must still be declared in `runtime`.
+This rebuild behavior does not make `link_deps` an implicit runtime dependency. Runtime requirements must still be declared in `runtime_deps`.
 
 **Scheduling Labels**
 `wright build` logs a scheduling plan before building. Each entry includes an
@@ -82,10 +96,11 @@ If no MVP definition exists, Wright stops and reports the cycle.
 Wright exposes separate build and install flows:
 
 - `wright build` creates archives from plans.
-- `wright install` installs archives onto the live system.
+- `wright install` installs selected archives onto the live system and warns
+  when recorded runtime dependencies are missing or version-mismatched.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
-assemblies, checks the local archive inventory, automatically adds missing or
+plan directories, checks archives in `parts_dir`, automatically adds missing or
 outdated dependency plans, builds what is needed, and then installs or
 upgrades the requested outputs. In other words, `apply` is the natural
 plan-driven install/upgrade/dependency combo command.
@@ -114,7 +129,7 @@ Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wright resolve zlib --rdeps=all --depth=0 | wright build --force --print-parts | wright install
+wright resolve zlib --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
 ```
 
 **Install Origin Tracking**
@@ -133,4 +148,4 @@ install or apply a part that was previously pulled in as a dependency, Wright
 promotes it to `manual`. Upgrading via `wright upgrade` preserves the existing
 origin.
 
-If you want a deeper view that maps these steps to code paths, see `docs/architecture.md`.
+If you want a deeper view that maps these steps to code paths, see [Architecture](architecture.md).

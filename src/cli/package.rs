@@ -9,7 +9,7 @@ Examples:
 
 #[derive(Parser, Debug, Clone)]
 pub struct PackageArgs {
-    /// Paths to plan directories, part names, or @assemblies
+    /// Paths to plan directories or part names
     pub targets: Vec<String>,
 
     /// Force repackaging: re-slice outputs from staging and overwrite existing archives

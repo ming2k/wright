@@ -11,3 +11,4 @@
 | [ADR-0007](0007-usrmerge-and-sbin-merge.md) | usrmerge and sbin merged into bin | Accepted |
 | [ADR-0008](0008-no-dev-splitting.md) | No -dev splitting for personal distributions | Accepted |
 | [ADR-0009](0009-separate-plan-output-dependencies.md) | Separate plan-level and output-level dependencies | Accepted |
+| [ADR-0010](0010-pre-copied-sysroot-isolation.md) | Pre-copied read-only sysroot instead of OverlayFS | Accepted |

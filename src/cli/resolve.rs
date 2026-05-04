@@ -7,8 +7,8 @@ Examples:
   wright resolve openssl --rdeps
   wright resolve glibc --rdeps=all --depth=0
   wright resolve zlib --deps=link --match=outdated
-  wright resolve gcc --tree --installed
-  wright resolve gcc --tree --installed --rdeps
+  wright resolve gcc --installed
+  wright resolve gcc --installed --rdeps
 
 Pipe into wright build:
   wright resolve openssl --rdeps | wright build";
@@ -39,7 +39,7 @@ pub enum DomainArg {
 
 #[derive(Parser, Debug, Clone)]
 pub struct ResolveArgs {
-    /// Paths to plan directories, part names, or @assemblies
+    /// Paths to plan directories or part names
     pub targets: Vec<String>,
 
     /// Exclude the listed target plans themselves from the output
@@ -70,7 +70,7 @@ pub struct ResolveArgs {
         long = "rdeps",
         value_enum,
         num_args = 0..=1,
-        default_missing_value = "link"
+        default_missing_value = "all"
     )]
     pub rdeps: Option<DomainArg>,
 
@@ -86,14 +86,7 @@ pub struct ResolveArgs {
     pub depth: Option<usize>,
 
     /// Use the installed part database instead of plan.toml files.
-    /// When combined with --tree, shows the installed dependency tree.
-    /// When combined with --deps or --rdeps, filters based on installed state.
+    /// Shows the installed dependency tree (TTY) or flat list (pipe).
     #[arg(long)]
     pub installed: bool,
-
-    /// Show a visual dependency tree.
-    /// Without --installed, shows the plan dependency tree.
-    /// With --installed, shows the installed dependency tree.
-    #[arg(long, short = 't', conflicts_with_all = ["match_policies", "exclude_targets"])]
-    pub tree: bool,
 }

@@ -72,28 +72,21 @@ find /usr/bin -type f -executable -exec ldd {} \; | grep "not found"
 ## 4. Maintenance Pro-Tips
 
 - **Don't Trust Version Numbers**: Some libraries change ABIs in minor releases. Always verify the `soname`.
-- **Leverage Link Classification**: Use `link_deps` dependencies in your `plan.toml` instead of just `runtime`. This allows Wright to distinguish between "I need this tool to run" and "I am compiled against this library."
-- **Atomic Transactions**: Always prefer `wright apply` over manual `tools` and `install`. `apply` ensures that if a rebuild in the recursive chain fails, your system isn't left in a broken "half-updated" state.
+- **Leverage Link Classification**: Use `link_deps` in your `plan.toml` instead of only `runtime_deps`. This allows Wright to distinguish between "I am compiled against this library" and "I need this part after installation."
+- **Wave Installation**: Prefer `wright apply` over manual `build --package` and `install`. `apply` installs completed dependency waves in order and leaves clear resume state if a later rebuild fails.
 - **Assume External Parts**: Use `wright assume <name> <version>` (or `wright assume --file` for bulk) for external/bootstrap packages to satisfy the dependency graph without managing them via Wright.
 
 ## 5. Database Maintenance & Migration
 
 As Wright evolves, the underlying database schema may change.
 
-### 5.1 Wright 2.x to 3.0 Migration
-
-Version 3.0 introduces a significant database refactoring. To migrate your existing system state and archive catalogue, use the provided migration script:
+### 5.1 Schema Upgrades
 
 ```bash
-# Run the migration script from the Wright project root
-python3 final_migration.py
+wright doctor
 ```
 
-This script will:
-
-1. Read your pre-created `installed.db.bak` and `archives.db.bak` backups.
-2. Create new databases consistent with the v3.0 SQL migration schema and register the SQLx migration baseline.
-3. Transfer all existing part records, file manifests, and dependency data.
+Wright opens `/var/lib/wright/wright.db` and applies pending SQL migrations automatically. Keep backups before major Wright upgrades, and never edit files under `src/database/migrations/`.
 
 ### 5.2 Schema Integrity
 

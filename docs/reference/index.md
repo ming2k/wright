@@ -3,7 +3,7 @@
 Lookup tables for configuration, APIs, and CLI values.
 
 - [Terminology](terminology.md)
-- [Writing Plans](writing-plans.md)
+- [Plan Manifest](plan-manifest.md)
 - [CLI Reference](cli-reference.md)
 - [Configuration](configuration.md)
 - [Logging](logging.md)

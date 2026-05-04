@@ -31,6 +31,58 @@ use crate::part::fhs;
 use crate::part::part;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
+fn collect_ready(
+    build_set: &HashSet<String>,
+    deps_map: &HashMap<String, Vec<String>>,
+    completed: &HashSet<String>,
+    in_progress: &HashSet<String>,
+    failed: &HashSet<String>,
+    checksum: bool,
+) -> Vec<String> {
+    build_set
+        .iter()
+        .filter(|n| !completed.contains(*n) && !in_progress.contains(*n) && !failed.contains(*n))
+        .filter(|n| {
+            checksum
+                || deps_map
+                    .get(*n)
+                    .expect("build node exists")
+                    .iter()
+                    .filter(|d| build_set.contains(*d))
+                    .all(|d| completed.contains(d))
+        })
+        .cloned()
+        .collect()
+}
+
+fn cpu_share(total_cpus: usize, planned_active: usize, position: usize) -> u32 {
+    let parallel = planned_active.max(1);
+    let base = total_cpus / parallel;
+    let remainder = total_cpus % parallel;
+    (if position <= remainder {
+        base + 1
+    } else {
+        base
+    })
+    .max(1) as u32
+}
+
+fn make_spinner(name: &str, show: bool) -> Option<indicatif::ProgressBar> {
+    if !show {
+        return None;
+    }
+    let pb = crate::util::progress::MULTI.add(indicatif::ProgressBar::new_spinner());
+    pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .template("{spinner:.cyan} {prefix}: {msg}")
+            .expect("valid spinner template"),
+    );
+    pb.set_prefix(name.to_string());
+    pb.set_message("starting");
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    Some(pb)
+}
+
 use super::BuildOptions;
 
 #[allow(clippy::too_many_arguments)]
@@ -62,28 +114,12 @@ pub(super) async fn execute_builds(
     let actual_isolations = resources.concurrent_tasks;
 
     loop {
-        let mut ready_to_launch = Vec::new();
-        {
+        let ready_to_launch = {
             let comp = completed.lock().await;
             let prog = in_progress.lock().await;
             let fail = failed_set.lock().await;
-
-            for name in build_set {
-                if !comp.contains(name) && !prog.contains(name) && !fail.contains(name) {
-                    let all_deps_met = opts.checksum
-                        || deps_map
-                            .get(name)
-                            .expect("build node exists")
-                            .iter()
-                            .filter(|d| build_set.contains(*d))
-                            .all(|d| comp.contains(d));
-
-                    if all_deps_met {
-                        ready_to_launch.push(name.clone());
-                    }
-                }
-            }
-        }
+            collect_ready(build_set, deps_map, &comp, &prog, &fail, opts.checksum)
+        };
 
         let base_active = in_progress.lock().await.len();
         let free_slots = actual_isolations.saturating_sub(base_active);
@@ -91,24 +127,15 @@ pub(super) async fn execute_builds(
         let planned_active = base_active + launch_batch.len();
 
         for (launch_idx, name) in launch_batch.into_iter().enumerate() {
-            {
-                let mut in_progress_guard = in_progress.lock().await;
-                in_progress_guard.insert(name.clone());
-            }
+            in_progress.lock().await.insert(name.clone());
 
-            let dynamic_nproc_cap = if let Some(n) = opts.nproc_per_isolation {
-                Some(n)
-            } else {
-                let base_share = (total_cpus / planned_active.max(1)).max(1);
-                let remainder = total_cpus % planned_active.max(1);
-                let active_position = base_active + launch_idx + 1;
-                let share = if active_position <= remainder {
-                    base_share + 1
-                } else {
-                    base_share
-                };
-                Some(share as u32)
-            };
+            let dynamic_nproc_cap = opts.nproc_per_isolation.or_else(|| {
+                Some(cpu_share(
+                    total_cpus,
+                    planned_active,
+                    base_active + launch_idx + 1,
+                ))
+            });
 
             info!("{}", logging::build_started(&name));
 
@@ -138,20 +165,8 @@ pub(super) async fn execute_builds(
             }
             effective_opts.nproc_per_isolation = dynamic_nproc_cap;
 
-            let spinner = if actual_isolations > 1 && build_set.len() > 1 && !opts.quiet {
-                let pb = crate::util::progress::MULTI.add(indicatif::ProgressBar::new_spinner());
-                pb.set_style(
-                    indicatif::ProgressStyle::default_spinner()
-                        .template("{spinner:.cyan} {prefix}: {msg}")
-                        .expect("valid spinner template"),
-                );
-                pb.set_prefix(name.clone());
-                pb.set_message("starting");
-                pb.enable_steady_tick(std::time::Duration::from_millis(100));
-                Some(pb)
-            } else {
-                None
-            };
+            let show_spinner = actual_isolations > 1 && build_set.len() > 1 && !opts.quiet;
+            let spinner = make_spinner(&name, show_spinner);
 
             tokio::spawn(async move {
                 let manifest = match PlanManifest::from_file(&path) {
@@ -306,9 +321,7 @@ async fn complete_build_task(
     }
 }
 
-pub fn lint_dependency_graph(
-    graph: &crate::builder::mvp::PlanGraph,
-) -> Result<()> {
+pub fn lint_dependency_graph(graph: &crate::builder::mvp::PlanGraph) -> Result<()> {
     let cycles = find_cycles(&graph.deps_map);
 
     println!("Dependency Analysis Report");
@@ -336,7 +349,7 @@ pub fn lint_dependency_graph(
     println!("Cycle | Candidate | Excludes | Selected");
     println!("----- | --------- | -------- | --------");
     for (idx, cycle) in cycles.iter().enumerate() {
-        let candidates = cycle_candidates_for(cycle, &graph);
+        let candidates = cycle_candidates_for(cycle, graph);
         if candidates.is_empty() {
             println!("{} | - | - | no candidates", idx + 1);
             continue;
@@ -395,37 +408,28 @@ async fn build_one(
         && !opts.fetch_only
     {
         let all_exist = if opts.package {
-            let parts_dir = if config.general.parts_dir.exists()
-                || tokio::fs::create_dir_all(&config.general.parts_dir)
-                    .await
-                    .is_ok()
-            {
-                config.general.parts_dir.clone()
-            } else {
-                std::env::current_dir().map_err(WrightError::IoError)?
-            };
+            tokio::fs::create_dir_all(&config.general.parts_dir)
+                .await
+                .map_err(WrightError::IoError)?;
+            let parts_dir = config.general.parts_dir.clone();
             match manifest.outputs {
-                Some(OutputConfig::Multi(ref parts)) => {
-                    parts.iter().all(|(sub_name, sub_part)| {
-                        let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                        parts_dir.join(sub_manifest.part_filename()).exists()
-                    })
-                }
+                Some(OutputConfig::Multi(ref parts)) => parts.iter().all(|(sub_name, sub_part)| {
+                    let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                    parts_dir.join(sub_manifest.part_filename()).exists()
+                }),
                 _ => parts_dir.join(manifest.part_filename()).exists(),
             }
         } else {
             let build_root = builder.build_root(manifest)?;
             match manifest.outputs {
-                Some(OutputConfig::Multi(ref parts)) => {
-                    parts.iter().all(|(sub_name, sub_part)| {
-                        let dir = if sub_part.include.is_none() {
-                            build_root.join("outputs").join("default")
-                        } else {
-                            build_root.join("outputs").join(sub_name)
-                        };
-                        dir_is_populated(&dir)
-                    })
-                }
+                Some(OutputConfig::Multi(ref parts)) => parts.iter().all(|(sub_name, sub_part)| {
+                    let dir = if sub_part.include.is_none() {
+                        build_root.join("outputs").join("default")
+                    } else {
+                        build_root.join("outputs").join(sub_name)
+                    };
+                    dir_is_populated(&dir)
+                }),
                 _ => dir_is_populated(&build_root.join("outputs").join("default")),
             }
         };
@@ -504,15 +508,10 @@ pub async fn package_outputs(
     result: &crate::builder::BuildResult,
     print_parts: bool,
 ) -> Result<()> {
-    let output_dir = if config.general.parts_dir.exists()
-        || tokio::fs::create_dir_all(&config.general.parts_dir)
-            .await
-            .is_ok()
-    {
-        config.general.parts_dir.clone()
-    } else {
-        std::env::current_dir().map_err(WrightError::IoError)?
-    };
+    tokio::fs::create_dir_all(&config.general.parts_dir)
+        .await
+        .map_err(WrightError::IoError)?;
+    let output_dir = config.general.parts_dir.clone();
 
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
@@ -521,22 +520,19 @@ pub async fn package_outputs(
                     &result.output_dir
                 } else {
                     result.split_part_dirs.get(sub_name).ok_or_else(|| {
-                        WrightError::BuildError(format!(
-                            "missing output dir for '{}'",
-                            sub_name
-                        ))
+                        WrightError::BuildError(format!("missing output dir for '{}'", sub_name))
                     })?
                 };
                 if !manifest.options.skip_fhs_check {
                     fhs::validate(part_dir, sub_name)?;
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
+                let sub_part_path =
+                    part::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
                 if print_parts {
                     println!("{}", sub_part_path.display());
                 }
-
             }
         }
         _ => {
@@ -548,7 +544,6 @@ pub async fn package_outputs(
             if print_parts {
                 println!("{}", part_path.display());
             }
-
         }
     }
 
@@ -573,10 +568,9 @@ pub async fn package_manifest(
 
     let need_slice = force
         || !output_dir.exists()
-        || manifest.outputs.as_ref().map_or(false, |cfg| match cfg {
+        || manifest.outputs.as_ref().is_some_and(|cfg| match cfg {
             OutputConfig::Multi(parts) => parts.iter().any(|(sub_name, sub_part)| {
-                sub_part.include.is_some()
-                    && !build_root.join("outputs").join(sub_name).exists()
+                sub_part.include.is_some() && !build_root.join("outputs").join(sub_name).exists()
             }),
             OutputConfig::Single(_) => false,
         });
@@ -590,10 +584,7 @@ pub async fn package_manifest(
                 if sub_part.include.is_none() {
                     continue;
                 }
-                split_part_dirs.insert(
-                    sub_name.clone(),
-                    build_root.join("outputs").join(sub_name),
-                );
+                split_part_dirs.insert(sub_name.clone(), build_root.join("outputs").join(sub_name));
             }
         }
         crate::builder::BuildResult {
@@ -606,5 +597,3 @@ pub async fn package_manifest(
 
     package_outputs(manifest, config, &result, print_parts).await
 }
-
-

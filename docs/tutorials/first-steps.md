@@ -115,6 +115,6 @@ wright upgrade openssl
 
 ## Next Steps
 
-- Learn how to [write plans](../reference/writing-plans.md)
+- Learn how to [write a plan](../how-to/write-a-plan.md)
 - Browse the [how-to guides](../how-to/index.md)
 - Read the [explanations](../explanation/index.md)

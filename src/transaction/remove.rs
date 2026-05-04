@@ -35,7 +35,11 @@ pub async fn remove_part_with_ignored_dependents(
     }
 
     if !dependents.is_empty() {
-        let deps_str: String = dependents.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(", ");
+        let deps_str: String = dependents
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
 
         if force {
             warn!(

@@ -3,13 +3,15 @@ use crate::cli::prune::PruneArgs;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use anyhow::{Context, Result};
+use std::path::Path;
 
-pub async fn execute_prune(args: PruneArgs, config: &GlobalConfig) -> Result<()> {
-    prune_parts(config, args.latest, args.apply).await
+pub async fn execute_prune(args: PruneArgs, config: &GlobalConfig, db_path: &Path) -> Result<()> {
+    prune_parts(config, db_path, args.latest, args.apply).await
 }
 
 async fn prune_parts(
     config: &GlobalConfig,
+    db_path: &Path,
     keep_latest: bool,
     apply: bool,
 ) -> Result<()> {
@@ -22,24 +24,18 @@ async fn prune_parts(
         .await
         .with_context(|| format!("failed to create {}", parts_dir.display()))?;
 
-    let installed_db = InstalledDb::open(&config.general.db_path)
+    let installed_db = InstalledDb::open(db_path)
         .await
         .context("failed to open installed-part database")?;
 
     let report = if apply {
-        prune::apply_prune(&installed_db,
-            parts_dir,
-            keep_latest,
-        )
-        .await
-        .context("prune failed")?
+        prune::apply_prune(&installed_db, parts_dir, keep_latest)
+            .await
+            .context("prune failed")?
     } else {
-        prune::plan_prune(&installed_db,
-            parts_dir,
-            keep_latest,
-        )
-        .await
-        .context("prune planning failed")?
+        prune::plan_prune(&installed_db, parts_dir, keep_latest)
+            .await
+            .context("prune planning failed")?
     };
 
     for stale in &report.stale {

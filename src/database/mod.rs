@@ -556,7 +556,15 @@ mod tests {
     async fn test_plan_id_field() {
         let db = test_db().await;
         let plan_id = db
-            .insert_plan("hello-plan", "1.0.0", 1, 0, "test plan", "x86_64", "MIT", None, None, None)
+            .insert_plan(NewPlan {
+                name: "hello-plan",
+                version: "1.0.0",
+                release: 1,
+                description: "test plan",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
             .await
             .unwrap();
         let id = db
@@ -578,7 +586,15 @@ mod tests {
 
         // update_part should preserve plan_id
         let new_plan_id = db
-            .insert_plan("hello-plan-v2", "1.0.1", 2, 0, "updated plan", "x86_64", "MIT", None, None, None)
+            .insert_plan(NewPlan {
+                name: "hello-plan-v2",
+                version: "1.0.1",
+                release: 2,
+                description: "updated plan",
+                arch: "x86_64",
+                license: "MIT",
+                ..Default::default()
+            })
             .await
             .unwrap();
         db.update_part(NewPart {
@@ -604,11 +620,27 @@ mod tests {
     async fn test_get_parts_by_plan() {
         let db = test_db().await;
         let toolchain_id = db
-            .insert_plan("toolchain", "1.0.0", 1, 0, "toolchain", "x86_64", "GPL", None, None, None)
+            .insert_plan(NewPlan {
+                name: "toolchain",
+                version: "1.0.0",
+                release: 1,
+                description: "toolchain",
+                arch: "x86_64",
+                license: "GPL",
+                ..Default::default()
+            })
             .await
             .unwrap();
         let webstack_id = db
-            .insert_plan("webstack", "1.0.0", 1, 0, "webstack", "x86_64", "BSD", None, None, None)
+            .insert_plan(NewPlan {
+                name: "webstack",
+                version: "1.0.0",
+                release: 1,
+                description: "webstack",
+                arch: "x86_64",
+                license: "BSD",
+                ..Default::default()
+            })
             .await
             .unwrap();
 
@@ -668,11 +700,27 @@ mod tests {
     async fn test_remove_parts_by_plan() {
         let db = test_db().await;
         let toolchain_id = db
-            .insert_plan("toolchain", "1.0.0", 1, 0, "toolchain", "x86_64", "GPL", None, None, None)
+            .insert_plan(NewPlan {
+                name: "toolchain",
+                version: "1.0.0",
+                release: 1,
+                description: "toolchain",
+                arch: "x86_64",
+                license: "GPL",
+                ..Default::default()
+            })
             .await
             .unwrap();
         let webstack_id = db
-            .insert_plan("webstack", "1.0.0", 1, 0, "webstack", "x86_64", "BSD", None, None, None)
+            .insert_plan(NewPlan {
+                name: "webstack",
+                version: "1.0.0",
+                release: 1,
+                description: "webstack",
+                arch: "x86_64",
+                license: "BSD",
+                ..Default::default()
+            })
             .await
             .unwrap();
 

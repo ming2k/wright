@@ -46,7 +46,7 @@ pub struct SubFabricateOutput {
     pub arch: Option<String>,
     pub license: Option<String>,
     /// Runtime dependencies for this specific output. Recorded in the binary
-    /// part and enforced at install time.
+    /// part and checked as install-time warnings.
     #[serde(default)]
     pub runtime_deps: Vec<String>,
     /// Parts that this output replaces (automatic uninstall on install).
@@ -219,7 +219,6 @@ pub struct PlanMetadata {
     #[serde(default)]
     pub maintainer: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Default)]
 pub struct Sources {
@@ -397,7 +396,8 @@ impl PlanManifest {
                     let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
                     if catchall_count > 1 {
                         return Err(WrightError::ValidationError(
-                            "multiple outputs have no 'include'; exactly one catch-all is allowed".to_string(),
+                            "multiple outputs have no 'include'; exactly one catch-all is allowed"
+                                .to_string(),
                         ));
                     }
                     for (sub_name, sub_part) in parts {
@@ -447,7 +447,9 @@ impl PlanManifest {
             }
         }
 
-        // Validate deps: plan:output syntax, no empty strings, no duplicates
+        // Validate deps: plan:output syntax, optional constraints, no duplicates.
+        // Existence of the referenced local plan/output is checked by
+        // `wright lint`, where the full local plan index is available.
         let dep_kinds = [
             ("build_deps", &self.build_deps),
             ("link_deps", &self.link_deps),
@@ -463,12 +465,8 @@ impl PlanManifest {
                         kind
                     )));
                 }
-                if !trimmed.contains(':') {
-                    return Err(WrightError::ValidationError(format!(
-                        "{} entry '{}' must use 'plan:output' syntax",
-                        kind, trimmed
-                    )));
-                }
+                crate::part::version::parse_dependency_ref(trimmed)
+                    .map_err(|e| WrightError::ValidationError(format!("{} entry: {}", kind, e)))?;
                 if !seen.insert(trimmed) {
                     return Err(WrightError::ValidationError(format!(
                         "{} contains duplicate entry '{}'",
@@ -515,8 +513,7 @@ impl PlanManifest {
     pub fn output_parts(&self) -> impl Iterator<Item = (&str, &SubFabricateOutput)> {
         match self.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
-                Box::new(parts.iter().map(|(n, p)| (n.as_str(), p)))
-                    as Box<dyn Iterator<Item = _>>
+                Box::new(parts.iter().map(|(n, p)| (n.as_str(), p))) as Box<dyn Iterator<Item = _>>
             }
             _ => Box::new(std::iter::empty()),
         }
@@ -538,7 +535,10 @@ impl PlanManifest {
         }
     }
 
-    /// Get all plan-level dependencies (build, link) with their type labels.
+    /// Get all dependency references with type labels.
+    ///
+    /// `build_deps` and `link_deps` are plan-level. `runtime_deps` is the
+    /// aggregate of output-level install dependencies.
     pub fn all_dependencies(&self) -> Vec<(String, String)> {
         let mut all = Vec::new();
         for dep in &self.build_deps {
@@ -546,6 +546,9 @@ impl PlanManifest {
         }
         for dep in &self.link_deps {
             all.push((dep.clone(), "link".to_string()));
+        }
+        for dep in &self.runtime_deps {
+            all.push((dep.clone(), "runtime".to_string()));
         }
         all
     }

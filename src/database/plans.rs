@@ -1,4 +1,4 @@
-use super::{InstalledDb, PART_COLUMNS};
+use super::{InstalledDb, NewPlan, PART_COLUMNS};
 use crate::error::{Result, WrightError};
 use crate::part::part::PartInfo;
 use sqlx::{query, query_as};
@@ -20,38 +20,26 @@ pub struct PlanRecord {
 }
 
 impl InstalledDb {
-    pub async fn insert_plan(
-        &self,
-        name: &str,
-        version: &str,
-        release: u32,
-        epoch: u32,
-        description: &str,
-        arch: &str,
-        license: &str,
-        url: Option<&str>,
-        build_deps: Option<&str>,
-        link_deps: Option<&str>,
-    ) -> Result<i64> {
+    pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
         let res = query(
             "INSERT INTO plans (name, version, release, epoch, description, arch, license, url, build_deps, link_deps)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(name)
-            .bind(version)
-            .bind(release as i64)
-            .bind(epoch as i64)
-            .bind(description)
-            .bind(arch)
-            .bind(license)
-            .bind(url)
-            .bind(build_deps)
-            .bind(link_deps)
+            .bind(plan.name)
+            .bind(plan.version)
+            .bind(plan.release as i64)
+            .bind(plan.epoch as i64)
+            .bind(plan.description)
+            .bind(plan.arch)
+            .bind(plan.license)
+            .bind(plan.url)
+            .bind(plan.build_deps)
+            .bind(plan.link_deps)
         .execute(&self.pool)
         .await
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e {
                 if db_err.is_unique_violation() {
-                    return WrightError::DatabaseError(format!("plan '{}' already registered", name));
+                    return WrightError::DatabaseError(format!("plan '{}' already registered", plan.name));
                 }
             }
             WrightError::DatabaseError(format!("failed to insert plan: {}", e))
@@ -60,8 +48,7 @@ impl InstalledDb {
         Ok(res.last_insert_rowid())
     }
 
-    pub async fn get_plan(&self, name: &str
-    ) -> Result<Option<PlanRecord>> {
+    pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
             "SELECT id, name, version, release, epoch, description, arch, license, url, build_deps, link_deps, registered_at
              FROM plans WHERE name = ?")
@@ -71,8 +58,7 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to get plan: {}", e)))
     }
 
-    pub async fn get_plan_by_id(&self, id: i64
-    ) -> Result<Option<PlanRecord>> {
+    pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
             "SELECT id, name, version, release, epoch, description, arch, license, url, build_deps, link_deps, registered_at
              FROM plans WHERE id = ?")
@@ -105,12 +91,17 @@ impl InstalledDb {
     }
 
     pub async fn get_parts_by_plan_id(&self, plan_id: i64) -> Result<Vec<super::InstalledPart>> {
-        let sql = format!("SELECT {} FROM parts WHERE plan_id = ? ORDER BY name", PART_COLUMNS);
+        let sql = format!(
+            "SELECT {} FROM parts WHERE plan_id = ? ORDER BY name",
+            PART_COLUMNS
+        );
         query_as::<_, super::InstalledPart>(&sql)
             .bind(plan_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get parts by plan_id: {}", e)))
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get parts by plan_id: {}", e))
+            })
     }
 
     pub async fn get_plan_id_by_name(&self, name: &str) -> Result<Option<i64>> {
@@ -123,7 +114,9 @@ impl InstalledDb {
         match row {
             Some(r) => {
                 use sqlx::Row;
-                let id: i64 = r.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                let id: i64 = r
+                    .try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
                 Ok(Some(id))
             }
             None => Ok(None),
@@ -132,10 +125,7 @@ impl InstalledDb {
 
     /// Ensure a plan is registered in the database from pack metadata.
     /// If the plan already exists, updates its version metadata to match the pack.
-    pub async fn ensure_plan_registered(
-        &self,
-        partinfo: &PartInfo,
-    ) -> Result<i64> {
+    pub async fn ensure_plan_registered(&self, partinfo: &PartInfo) -> Result<i64> {
         if let Some(existing) = self.get_plan(&partinfo.plan_name).await? {
             let build_deps_json = if partinfo.build_deps.is_empty() {
                 None
@@ -182,18 +172,18 @@ impl InstalledDb {
                     WrightError::DatabaseError(format!("failed to serialize link_deps: {}", e))
                 })?)
             };
-            self.insert_plan(
-                &partinfo.plan_name,
-                &partinfo.plan_version,
-                partinfo.plan_release,
-                partinfo.plan_epoch,
-                &partinfo.description,
-                &partinfo.arch,
-                &partinfo.license,
-                None,
-                build_deps_json.as_deref(),
-                link_deps_json.as_deref(),
-            )
+            self.insert_plan(NewPlan {
+                name: &partinfo.plan_name,
+                version: &partinfo.plan_version,
+                release: partinfo.plan_release,
+                epoch: partinfo.plan_epoch,
+                description: &partinfo.description,
+                arch: &partinfo.arch,
+                license: &partinfo.license,
+                build_deps: build_deps_json.as_deref(),
+                link_deps: link_deps_json.as_deref(),
+                ..Default::default()
+            })
             .await
         }
     }

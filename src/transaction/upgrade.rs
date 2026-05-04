@@ -53,7 +53,10 @@ pub async fn upgrade_part(
         let is_newer = if new_epoch != old_epoch {
             new_epoch > old_epoch
         } else {
-            match (Version::parse(&old_part.version).ok(), Version::parse(&partinfo.version).ok()) {
+            match (
+                Version::parse(&old_part.version).ok(),
+                Version::parse(&partinfo.version).ok(),
+            ) {
                 (Some(old_v), Some(new_v)) => {
                     if new_v != old_v {
                         new_v > old_v
@@ -86,9 +89,7 @@ pub async fn upgrade_part(
             };
             return Err(WrightError::UpgradeError(format!(
                 "{} {} is not newer than installed {}",
-                partinfo.name,
-                new_ver_rel,
-                old_ver_rel,
+                partinfo.name, new_ver_rel, old_ver_rel,
             )));
         }
     }
@@ -121,7 +122,7 @@ pub async fn upgrade_part(
                     warn!(
                         "[{}] diverted {} (owned by {})",
                         partinfo.name,
-                        super::compact_path(&entry.path),
+                        crate::util::compact_path(&entry.path),
                         owner
                     );
                     shadows.push((entry.path.clone(), owner.clone()));
@@ -137,6 +138,11 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
+    let mut rollback_state = match journal_path_from_db(db) {
+        Some(jp) => RollbackState::with_journal(jp),
+        None => RollbackState::new(),
+    };
+
     let tx_id = db
         .record_transaction(
             "upgrade",
@@ -147,11 +153,6 @@ pub async fn upgrade_part(
             None,
         )
         .await?;
-
-    let mut rollback_state = match journal_path_from_db(db) {
-        Some(jp) => RollbackState::with_journal(jp),
-        None => RollbackState::new(),
-    };
 
     let old_files = db.get_files(old_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();

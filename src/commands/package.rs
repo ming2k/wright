@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::BufRead;
+use std::path::Path;
 
 use crate::builder::orchestrator;
 use crate::cli::package::PackageArgs;
@@ -10,11 +11,12 @@ use crate::plan::manifest::PlanManifest;
 pub async fn execute_package(
     args: PackageArgs,
     config: &GlobalConfig,
+    db_path: &Path,
     _verbose: u8,
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(&config.general.db_path),
+        &crate::util::lock::lock_dir_from_db(db_path),
         crate::util::lock::LockIdentity::Command("package"),
         crate::util::lock::LockMode::Exclusive,
     )
@@ -33,10 +35,7 @@ pub async fn execute_package(
     }
 
     if all_targets.is_empty() {
-        return Err(WrightError::BuildError(
-            "No targets specified to package.".to_string(),
-        )
-        .into());
+        return Err(WrightError::BuildError("No targets specified to package.".to_string()).into());
     }
 
     let resolver = orchestrator::setup_resolver(config)?;
@@ -58,15 +57,10 @@ pub async fn execute_package(
             tracing::info!("Packaging {}...", manifest.plan.name);
         }
 
-        let parts_dir = if config.general.parts_dir.exists()
-            || tokio::fs::create_dir_all(&config.general.parts_dir)
-                .await
-                .is_ok()
-        {
-            config.general.parts_dir.clone()
-        } else {
-            std::env::current_dir().map_err(WrightError::IoError)?
-        };
+        tokio::fs::create_dir_all(&config.general.parts_dir)
+            .await
+            .with_context(|| format!("failed to create {}", config.general.parts_dir.display()))?;
+        let parts_dir = config.general.parts_dir.clone();
 
         if !args.force {
             let all_exist = match manifest.outputs {
@@ -82,8 +76,7 @@ pub async fn execute_package(
                 if !quiet {
                     tracing::info!(
                         "{}",
-                        crate::builder::logging::plan_skipped_existing(&manifest.plan.name
-                        )
+                        crate::builder::logging::plan_skipped_existing(&manifest.plan.name)
                     );
                 }
                 continue;

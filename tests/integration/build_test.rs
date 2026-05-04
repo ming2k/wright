@@ -80,7 +80,8 @@ async fn test_build_and_archive_hello() {
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+    let archive_path =
+        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
@@ -154,10 +155,14 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive_path = part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+    let archive_path =
+        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
     let partinfo = part::read_partinfo(&archive_path).unwrap();
 
-    assert_eq!(partinfo.runtime_deps, vec!["openssl:default", "zlib:default"]);
+    assert_eq!(
+        partinfo.runtime_deps,
+        vec!["openssl:default", "zlib:default"]
+    );
 
     let extract_dir = tempfile::tempdir().unwrap();
     part::extract_part(&archive_path, extract_dir.path()).unwrap();

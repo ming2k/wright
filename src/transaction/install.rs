@@ -24,7 +24,16 @@ pub async fn install_parts(
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
-    install_parts_with_plan_map(db, parts, root_dir, resolver, force, nodeps, &HashMap::new()).await
+    install_parts_with_plan_map(
+        db,
+        parts,
+        root_dir,
+        resolver,
+        force,
+        nodeps,
+        &HashMap::new(),
+    )
+    .await
 }
 
 pub async fn install_parts_with_plan_map(
@@ -34,7 +43,7 @@ pub async fn install_parts_with_plan_map(
     resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
-    plan_map: &HashMap<String, String>,
+    _plan_map: &HashMap<String, String>,
 ) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
         .iter()
@@ -51,7 +60,6 @@ pub async fn install_parts_with_plan_map(
         resolver,
         force,
         nodeps,
-        plan_map,
     )
     .await
 }
@@ -66,7 +74,13 @@ pub async fn install_parts_with_explicit_targets(
     nodeps: bool,
 ) -> Result<()> {
     install_parts_with_explicit_targets_and_plan_map(
-        db, parts, explicit_targets, root_dir, resolver, force, nodeps, &HashMap::new(),
+        db,
+        parts,
+        explicit_targets,
+        root_dir,
+        resolver,
+        force,
+        nodeps,
     )
     .await
 }
@@ -79,92 +93,16 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
     resolver: &LocalResolver,
     force: bool,
     nodeps: bool,
-    _plan_map: &HashMap<String, String>,
 ) -> Result<()> {
     let mut resolved_map = HashMap::new();
-    let mut targets = Vec::new();
 
     for path in parts {
         let resolved = resolver.read_part(path)?;
-        targets.push(resolved.name.clone());
         resolved_map.insert(resolved.name.clone(), resolved);
     }
 
     if !nodeps {
-        let mut queue = targets.clone();
-        let mut processed = HashSet::new();
-
-        while let Some(name) = queue.pop() {
-            if processed.contains(&name) {
-                continue;
-            }
-
-            let dependencies = if let Some(part) = resolved_map.get(&name) {
-                part.dependencies.clone()
-            } else {
-                continue;
-            };
-
-            for dep in &dependencies {
-                let dep = dep.trim();
-                if dep.is_empty() {
-                    return Err(WrightError::DependencyError(format!(
-                        "part '{}' declares an empty dependency. Check its recipe file",
-                        name
-                    )));
-                }
-
-                let (dep_name, constraint) =
-                    version::parse_dependency(dep).unwrap_or_else(|_| (dep.to_string(), None));
-                let (dep_plan_name, dep_output_name) = version::parse_dep_ref(&dep_name);
-                let output_name = if dep_output_name == dep_plan_name {
-                    &dep_plan_name
-                } else {
-                    &dep_output_name
-                };
-
-                #[allow(clippy::map_entry)]
-                if !resolved_map.contains_key(output_name) {
-                    if let Some(installed) = db.get_part(output_name).await? {
-                        if let Some(ref c) = constraint {
-                            if let Ok(installed_ver) = Version::parse(&installed.version) {
-                                if !c.satisfies(&installed_ver) {
-                                    let ver_display = if installed.version.is_empty() { "(no version)".to_string() } else { installed.version.clone() };
-                                    return Err(WrightError::DependencyError(format!(
-                                        "installed {} {} does not satisfy constraint {}",
-                                        output_name, ver_display, c
-                                    )));
-                                }
-                            } else if !installed.version.is_empty() {
-                                return Err(WrightError::DependencyError(format!(
-                                    "installed {} {} does not satisfy constraint {}",
-                                    output_name, installed.version, c
-                                )));
-                            }
-                            // Empty version always satisfies constraints
-                        }
-                        continue;
-                    }
-
-                    if !db.find_providers(output_name).await?.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(resolved) = resolver.resolve(output_name).await? {
-                        queue.push(output_name.to_string());
-                        resolved_map.insert(output_name.to_string(), resolved);
-                    } else {
-                        return Err(WrightError::DependencyError(format!(
-                            "could not resolve dependency '{}' required by '{}'",
-                            output_name, name
-                        )));
-                    }
-                } else {
-                    queue.push(output_name.to_string());
-                }
-            }
-            processed.insert(name);
-        }
+        warn_about_runtime_dependencies(db, &resolved_map).await?;
     }
 
     let sorted_names = crate::transaction::dag::sort_dependencies(&resolved_map)?;
@@ -208,6 +146,102 @@ pub async fn install_parts_with_explicit_targets_and_plan_map(
     }
 
     Ok(())
+}
+
+async fn warn_about_runtime_dependencies(
+    db: &InstalledDb,
+    resolved_map: &HashMap<String, crate::archive::resolver::ResolvedPart>,
+) -> Result<()> {
+    let mut provided_in_batch = HashSet::new();
+    for part in resolved_map.values() {
+        provided_in_batch.insert(part.name.clone());
+        provided_in_batch.extend(part.provides.iter().cloned());
+    }
+
+    for (name, part) in resolved_map {
+        for dep in &part.dependencies {
+            let dep = dep.trim();
+            if dep.is_empty() {
+                warn!(
+                    "Part {} declares an empty runtime dependency; continuing install",
+                    name
+                );
+                continue;
+            }
+
+            let (dep_ref, constraint) = match version::parse_dependency(dep) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    warn!(
+                        "Part {} declares invalid runtime dependency '{}': {}; continuing install",
+                        name, dep, e
+                    );
+                    continue;
+                }
+            };
+            let (_, output_name) = version::parse_dep_ref(&dep_ref);
+
+            if let Some(candidate) = resolved_map.get(&output_name) {
+                warn_if_constraint_not_satisfied(
+                    name,
+                    &output_name,
+                    &candidate.version,
+                    constraint.as_ref(),
+                );
+                continue;
+            }
+
+            if provided_in_batch.contains(&output_name) {
+                continue;
+            }
+
+            if let Some(installed) = db.get_part(&output_name).await? {
+                warn_if_constraint_not_satisfied(
+                    name,
+                    &output_name,
+                    &installed.version,
+                    constraint.as_ref(),
+                );
+                continue;
+            }
+
+            if !db.find_providers(&output_name).await?.is_empty() {
+                continue;
+            }
+
+            warn!(
+                "Runtime dependency {} required by {} is not installed; continuing install",
+                output_name, name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn warn_if_constraint_not_satisfied(
+    dependent: &str,
+    dependency: &str,
+    version: &str,
+    constraint: Option<&crate::part::version::VersionConstraint>,
+) {
+    let Some(constraint) = constraint else {
+        return;
+    };
+
+    if version.is_empty() {
+        return;
+    }
+
+    match Version::parse(version) {
+        Ok(installed_ver) if constraint.satisfies(&installed_ver) => {}
+        _ => {
+            warn!(
+                "Runtime dependency {} required by {} has version {} which does not satisfy {}; continuing install",
+                dependency, dependent, version, constraint
+            );
+        }
+    }
 }
 
 pub async fn install_part(
@@ -336,7 +370,7 @@ pub async fn install_part_with_origin(
                     warn!(
                         "[{}] diverted {} (owned by {})",
                         partinfo.name,
-                        super::compact_path(&entry.path),
+                        crate::util::compact_path(&entry.path),
                         owner_name
                     );
                     shadows.push((entry.path.clone(), owner_name.clone()));
@@ -352,6 +386,11 @@ pub async fn install_part_with_origin(
         phase_start.elapsed(),
     );
 
+    let mut rollback_state = match journal_path_from_db(db) {
+        Some(jp) => RollbackState::with_journal(jp),
+        None => RollbackState::new(),
+    };
+
     let tx_id = db
         .record_transaction(
             "install",
@@ -362,11 +401,6 @@ pub async fn install_part_with_origin(
             None,
         )
         .await?;
-
-    let mut rollback_state = match journal_path_from_db(db) {
-        Some(jp) => RollbackState::with_journal(jp),
-        None => RollbackState::new(),
-    };
 
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::InstallError(format!("failed to create backup dir: {}", e)))?;
@@ -501,13 +535,16 @@ pub async fn install_part_with_origin(
         }
     }
 
-    log_debug_timing(
-        "install",
-        &partinfo.name,
-        "total",
-        overall_start.elapsed(),
-    );
+    rollback_state.commit();
+
+    let ver_rel = if partinfo.version.is_empty() {
+        format!("{}", partinfo.release)
+    } else {
+        format!("{}-{}", partinfo.version, partinfo.release)
+    };
+    info!("Installed {}: {}", partinfo.name, ver_rel);
+
+    log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
 
     Ok(())
 }
-

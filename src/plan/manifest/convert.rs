@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::{
-    BackupConfig, BuildOptions, InstallScripts, PlanManifest, PlanMetadata,
-    Relations, Sources, SubFabricateOutput,
+    BackupConfig, BuildOptions, InstallScripts, PlanManifest, PlanMetadata, Relations, Sources,
+    SubFabricateOutput,
 };
 
 impl SubFabricateOutput {
@@ -28,10 +28,7 @@ impl SubFabricateOutput {
         PlanManifest {
             plan: PlanMetadata {
                 name: name.to_string(),
-                version: self
-                    .version
-                    .clone()
-                    .or_else(|| parent.plan.version.clone()),
+                version: self.version.clone().or_else(|| parent.plan.version.clone()),
                 release: self.release.unwrap_or(parent.plan.release),
                 epoch: parent.plan.epoch,
                 description,

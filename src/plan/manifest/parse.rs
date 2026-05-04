@@ -5,12 +5,12 @@ use serde::Deserialize;
 
 use crate::error::{Result, WrightError};
 
+use super::BuildOptions;
 use super::{
     convert::{fabricate_backup, fabricate_install_scripts},
     BackupConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder, LifecycleStage,
     OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
-use super::BuildOptions;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,12 +106,14 @@ fn parse_output_section(
                     }
                 };
                 let sub: super::SubFabricateOutput =
-                    toml::Value::Table(table).try_into().map_err(|e: toml::de::Error| {
-                        WrightError::ParseError(format!(
-                            "failed to parse [[output]] entry '{}': {}",
-                            name, e
-                        ))
-                    })?;
+                    toml::Value::Table(table)
+                        .try_into()
+                        .map_err(|e: toml::de::Error| {
+                            WrightError::ParseError(format!(
+                                "failed to parse [[output]] entry '{}': {}",
+                                name, e
+                            ))
+                        })?;
                 if matches!(&sub.include, Some(v) if v.is_empty()) {
                     return Err(WrightError::ParseError(format!(
                         "output '{}': include = [] is invalid; \
@@ -154,10 +156,9 @@ fn parse_output_section(
                         pre_remove: h.pre_remove.clone(),
                         post_remove: h.post_remove.clone(),
                     });
-                    let backup_cfg = catchall
-                        .backup
-                        .as_ref()
-                        .map(|files| BackupConfig { files: files.clone() });
+                    let backup_cfg = catchall.backup.as_ref().map(|files| BackupConfig {
+                        files: files.clone(),
+                    });
 
                     Ok(OutputSection {
                         outputs: Some(OutputConfig::Multi(parts)),
@@ -168,7 +169,7 @@ fn parse_output_section(
                     })
                 }
                 _ => {
-                    return Err(WrightError::ParseError(
+                    Err(WrightError::ParseError(
                         "multiple [[output]] entries have no 'include'; \
                          exactly one catch-all is allowed"
                             .to_string(),
