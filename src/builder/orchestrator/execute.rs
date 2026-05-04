@@ -5,6 +5,22 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
+/// Check whether a directory exists and contains at least one file (recursively).
+fn dir_is_populated(dir: &Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                return true;
+            }
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && dir_is_populated(&path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 use crate::builder::logging;
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
 use crate::builder::Builder;
@@ -399,10 +415,10 @@ async fn build_one(
                         } else {
                             build_root.join("outputs").join(sub_name)
                         };
-                        dir.exists()
+                        dir_is_populated(&dir)
                     })
                 }
-                _ => build_root.join("outputs").join("default").exists(),
+                _ => dir_is_populated(&build_root.join("outputs").join("default")),
             }
         };
         if all_exist {
