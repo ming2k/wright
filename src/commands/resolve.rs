@@ -15,12 +15,12 @@ use crate::query::{self, PrefixMode, TreeOptions};
 pub async fn execute_resolve(
     args: ResolveArgs,
     config: &GlobalConfig,
-    installed_db_path: &Path,
+    db_path: &Path,
 ) -> Result<()> {
     if args.tree {
-        render_installed_tree(&args, installed_db_path).await
+        render_installed_tree(&args, db_path).await
     } else if args.installed {
-        render_installed_list(&args, installed_db_path).await
+        render_installed_list(&args, db_path).await
     } else {
         render_build_view(args, config).await
     }

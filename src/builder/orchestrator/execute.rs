@@ -272,7 +272,7 @@ async fn complete_build_task(
     quiet: bool,
 ) {
     if let Some(hash) = session_hash {
-        if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
+        if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
             let _ = db.mark_execution_session_item_completed(hash, name).await;
         }
     }
@@ -364,28 +364,46 @@ async fn build_one(
             .context("failed to clean workspace")?;
     }
 
-    let output_dir = if config.general.parts_dir.exists()
-        || tokio::fs::create_dir_all(&config.general.parts_dir)
-            .await
-            .is_ok()
-    {
-        config.general.parts_dir.clone()
-    } else {
-        std::env::current_dir().map_err(WrightError::IoError)?
-    };
-
     if !opts.force
         && opts.resume.is_none()
         && opts.stages.is_empty()
         && opts.until_stage.is_none()
         && !opts.fetch_only
     {
-        let all_exist = match manifest.outputs {
-            Some(OutputConfig::Multi(ref parts)) => parts.iter().all(|(sub_name, sub_part)| {
-                let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                output_dir.join(sub_manifest.part_filename()).exists()
-            }),
-            _ => output_dir.join(manifest.part_filename()).exists(),
+        let all_exist = if opts.package {
+            let parts_dir = if config.general.parts_dir.exists()
+                || tokio::fs::create_dir_all(&config.general.parts_dir)
+                    .await
+                    .is_ok()
+            {
+                config.general.parts_dir.clone()
+            } else {
+                std::env::current_dir().map_err(WrightError::IoError)?
+            };
+            match manifest.outputs {
+                Some(OutputConfig::Multi(ref parts)) => {
+                    parts.iter().all(|(sub_name, sub_part)| {
+                        let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                        parts_dir.join(sub_manifest.part_filename()).exists()
+                    })
+                }
+                _ => parts_dir.join(manifest.part_filename()).exists(),
+            }
+        } else {
+            let build_root = builder.build_root(manifest)?;
+            match manifest.outputs {
+                Some(OutputConfig::Multi(ref parts)) => {
+                    parts.iter().all(|(sub_name, sub_part)| {
+                        let dir = if sub_part.include.is_none() {
+                            build_root.join("output")
+                        } else {
+                            build_root.join(format!("output-{}", sub_name))
+                        };
+                        dir.exists()
+                    })
+                }
+                _ => build_root.join("output").exists(),
+            }
         };
         if all_exist {
             info!("{}", logging::plan_skipped_existing(&manifest.plan.name));
@@ -442,107 +460,121 @@ async fn build_one(
         )
         .await?;
 
-    let has_fabricate_stage = manifest.outputs.is_some();
-    let produces_output =
-        opts.until_stage.is_none() && (opts.stages.is_empty() || has_fabricate_stage);
-    if produces_output && !opts.fetch_only {
-        match manifest.outputs {
-            Some(OutputConfig::Multi(ref parts)) => {
-                for (sub_name, sub_part) in parts {
-                    let part_dir = if sub_part.include.is_none() {
-                        // catch-all: files remain in the staging dir
-                        &result.output_dir
-                    } else {
-                        result.split_part_dirs.get(sub_name).ok_or_else(|| {
-                            WrightError::BuildError(format!(
-                                "missing output dir for '{}'",
-                                sub_name
-                            ))
-                        })?
-                    };
-                    if !manifest.options.skip_fhs_check {
-                        fhs::validate(part_dir, sub_name)?;
-                    }
-                    let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                    let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir)?;
-                    info!("{}", logging::plan_packed(sub_name, &sub_part_path));
-                    if opts.print_parts {
-                        println!("{}", sub_part_path.display());
-                    }
-                    register_in_archive_db(&config.general.archive_db_path, &sub_part_path).await;
-                }
-            }
-            _ => {
-                if !manifest.options.skip_fhs_check {
-                    fhs::validate(&result.output_dir, &manifest.plan.name)?;
-                }
-                let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
-                info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
-                if opts.print_parts {
-                    println!("{}", part_path.display());
-                }
-                register_in_archive_db(&config.general.archive_db_path, &part_path).await;
-            }
+    if opts.package {
+        let has_fabricate_stage = manifest.outputs.is_some();
+        let produces_output =
+            opts.until_stage.is_none() && (opts.stages.is_empty() || has_fabricate_stage);
+        if produces_output && !opts.fetch_only {
+            package_outputs(manifest, config, &result, opts.print_parts).await?;
         }
     }
 
     Ok(())
 }
 
-async fn register_in_archive_db(archive_db_path: &Path, part_path: &Path) {
-    // Local registration might still be sync if it uses rusqlite,
-    // but ArchiveDb should also be refactored eventually.
-    // For now, I'll assume ArchiveDb is still sync but I'll mark this as async.
-    let archive_db_path = archive_db_path.to_path_buf();
-    let part_path = part_path.to_path_buf();
+/// Package the staging directories for a plan into `.wright.tar.zst` archives.
+/// This is the extracted packaging logic that can be called independently of build.
+pub async fn package_outputs(
+    manifest: &PlanManifest,
+    config: &GlobalConfig,
+    result: &crate::builder::BuildResult,
+    print_parts: bool,
+) -> Result<()> {
+    let output_dir = if config.general.parts_dir.exists()
+        || tokio::fs::create_dir_all(&config.general.parts_dir)
+            .await
+            .is_ok()
+    {
+        config.general.parts_dir.clone()
+    } else {
+        std::env::current_dir().map_err(WrightError::IoError)?
+    };
 
-    let _ = tokio::spawn(async move {
-        let archive_db = match crate::database::ArchiveDb::open(&archive_db_path).await {
-            Ok(db) => db,
-            Err(e) => {
-                warn!("Failed to open local archive DB: {}", e);
-                return;
-            }
-        };
+    match manifest.outputs {
+        Some(OutputConfig::Multi(ref parts)) => {
+            for (sub_name, sub_part) in parts {
+                let part_dir = if sub_part.include.is_none() {
+                    &result.output_dir
+                } else {
+                    result.split_part_dirs.get(sub_name).ok_or_else(|| {
+                        WrightError::BuildError(format!(
+                            "missing output dir for '{}'",
+                            sub_name
+                        ))
+                    })?
+                };
+                if !manifest.options.skip_fhs_check {
+                    fhs::validate(part_dir, sub_name)?;
+                }
+                let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                let sub_part_path = part::create_part(part_dir, &sub_manifest, &output_dir)?;
+                info!("{}", logging::plan_packed(sub_name, &sub_part_path));
+                if print_parts {
+                    println!("{}", sub_part_path.display());
+                }
 
-        let partinfo = match tokio::task::spawn_blocking({
-            let path = part_path.clone();
-            move || part::read_partinfo(&path)
-        })
-        .await
-        {
-            Ok(Ok(info)) => info,
-            Ok(Err(e)) => {
-                warn!("Failed to read partinfo for DB registration: {}", e);
-                return;
             }
-            Err(e) => {
-                warn!("Task failed: {}", e);
-                return;
-            }
-        };
-
-        let sha256 = match tokio::task::spawn_blocking({
-            let path = part_path.clone();
-            move || crate::util::checksum::sha256_file(&path)
-        })
-        .await
-        {
-            Ok(Ok(hash)) => hash,
-            Ok(Err(e)) => {
-                warn!("Failed to compute sha256 for DB registration: {}", e);
-                return;
-            }
-            Err(e) => {
-                warn!("Task failed: {}", e);
-                return;
-            }
-        };
-
-        let filename = part_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if let Err(e) = archive_db.register_part(&partinfo, filename, &sha256).await {
-            warn!("Failed to register in local archive DB: {}", e);
         }
-    })
-    .await;
+        _ => {
+            if !manifest.options.skip_fhs_check {
+                fhs::validate(&result.output_dir, &manifest.plan.name)?;
+            }
+            let part_path = part::create_part(&result.output_dir, manifest, &output_dir)?;
+            info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
+            if print_parts {
+                println!("{}", part_path.display());
+            }
+
+        }
+    }
+
+    Ok(())
 }
+
+/// Package a plan from its existing staging directories.
+/// This is the entry point for the `wright package` command.
+pub async fn package_manifest(
+    manifest: &PlanManifest,
+    config: &GlobalConfig,
+    print_parts: bool,
+) -> Result<()> {
+    let builder = crate::builder::Builder::new(config.clone());
+    let build_root = builder.build_root(manifest)?;
+    let output_dir = build_root.join("output");
+
+    if !output_dir.exists() {
+        return Err(WrightError::BuildError(format!(
+            "staging directory does not exist: {}. Run `wright build {}` first.",
+            output_dir.display(),
+            manifest.plan.name
+        )));
+    }
+
+    let mut split_part_dirs = std::collections::HashMap::new();
+    if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+        for (sub_name, sub_part) in parts {
+            if sub_part.include.is_none() {
+                continue;
+            }
+            let sub_dir = build_root.join(format!("output-{}", sub_name));
+            if !sub_dir.exists() {
+                return Err(WrightError::BuildError(format!(
+                    "output directory for '{}' does not exist: {}. Run `wright build {}` first.",
+                    sub_name, sub_dir.display(), manifest.plan.name
+                )));
+            }
+            split_part_dirs.insert(sub_name.clone(), sub_dir);
+        }
+    }
+
+    let result = crate::builder::BuildResult {
+        output_dir,
+        work_dir: build_root.join("work"),
+        logs_dir: build_root.join("logs"),
+        split_part_dirs,
+    };
+
+    package_outputs(manifest, config, &result, print_parts).await
+}
+
+

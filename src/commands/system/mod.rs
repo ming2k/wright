@@ -18,13 +18,13 @@ use crate::transaction;
 pub async fn execute(
     command: SystemCommands,
     config: &GlobalConfig,
-    installed_db_path: &Path,
+    db_path: &Path,
     root_dir: &Path,
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(installed_db_path),
+        &crate::util::lock::lock_dir_from_db(db_path),
         crate::util::lock::LockIdentity::Command("wright"),
         crate::util::lock::LockMode::Exclusive,
     )
@@ -52,7 +52,7 @@ pub async fn execute(
             force,
             dry_run,
             config,
-            installed_db_path,
+            db_path,
             root_dir,
             verbose,
             quiet,
@@ -61,7 +61,7 @@ pub async fn execute(
         .await;
     }
 
-    let db = InstalledDb::open(installed_db_path)
+    let db = InstalledDb::open(db_path)
         .await
         .context("failed to open database")?;
 

@@ -9,7 +9,6 @@ Task-oriented guides for specific problems.
 - [Build dependency chains](build-dependency-chains.md)
 - [Rebuild after a library update](rebuild-after-library-update.md)
 - [Resume a failed build](resume-failed-build.md)
-- [Build an assembly](build-an-assembly.md)
 - [Force-rebuild everything](force-rebuild-everything.md)
 - [Build a Rust package](build-rust-package.md)
 - [Build a Go package](build-go-package.md)

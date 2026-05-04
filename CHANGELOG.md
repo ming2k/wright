@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.1.4] - 2026-05-04
+
+### Changed
+- **Build/package separation**: `wright build` no longer automatically packages outputs. Use `--package` flag to also create `.wright.tar.zst` archives. New `wright package` command packages existing staging directories.
+- **Removed ArchiveDb**: the local archive catalogue database (`archives.db`) is deleted entirely. `wright install/upgrade/sysupgrade` now scan `parts_dir` directly and read `.PARTINFO` from archives on demand.
+- **Database path rename**: `installed_db_path` config key renamed to `db_path`. Default path changed from `/var/lib/wright/state/installed.db` to `/var/lib/wright/wright.db`.
+- **Removed assemblies**: the `@assembly` target syntax and `assemblies_dir` config are removed. Plan lists can be passed directly as arguments or piped via stdin.
+- **Prune simplification**: `--untracked` flag removed from `wright prune`. Only `--latest` (keep newest archive per name) remains.
+- **Lock directory logic**: simplified to derive lock directory directly from DB parent (`/var/lib/wright/lock`).
+
+### Migration Notes
+- Move your database: `mv /var/lib/wright/state/installed.db /var/lib/wright/wright.db`
+- Update config: replace `installed_db_path` with `db_path`, remove `archive_db_path`
+- Remove assemblies directory if present (`/var/lib/wright/assemblies/`)
+- `wright apply @base` becomes `wright apply plan1 plan2 plan3`
+
 ## [3.1.3] - 2026-05-04
 
 ### Changed

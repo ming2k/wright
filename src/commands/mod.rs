@@ -1,5 +1,6 @@
 pub mod build;
 pub mod lint;
+pub mod package;
 pub mod prune;
 pub mod resolve;
 pub mod system;
@@ -14,7 +15,7 @@ use std::path::PathBuf;
 pub async fn dispatch(
     cli: Cli,
     config: &GlobalConfig,
-    installed_db_path: PathBuf,
+    db_path: PathBuf,
     root_dir: PathBuf,
 ) -> Result<()> {
     match cli.command {
@@ -22,7 +23,7 @@ pub async fn dispatch(
             system::execute(
                 sys_cmd,
                 config,
-                &installed_db_path,
+                &db_path,
                 &root_dir,
                 cli.verbose,
                 cli.quiet,
@@ -32,8 +33,11 @@ pub async fn dispatch(
         crate::cli::Commands::Build(args) => {
             build::execute_build(args, config, cli.verbose, cli.quiet).await
         }
+        crate::cli::Commands::Package(args) => {
+            package::execute_package(args, config, cli.verbose, cli.quiet).await
+        }
         crate::cli::Commands::Resolve(args) => {
-            resolve::execute_resolve(args, config, &installed_db_path).await
+            resolve::execute_resolve(args, config, &db_path).await
         }
         crate::cli::Commands::Lint { targets, recursive } => {
             lint::execute_lint(targets, recursive, config)

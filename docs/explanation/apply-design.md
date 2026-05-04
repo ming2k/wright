@@ -3,9 +3,8 @@
 ## Purpose
 
 `wright apply` is not just a thin wrapper around `wright build` and `wright install`.
-It is Wright's high-level convergence command: given plan names, plan paths, or
-`@assembly` targets, it moves the live system toward the state described by the
-current plan tree.
+It is Wright's high-level convergence command: given plan names or plan paths,
+it moves the live system toward the state described by the current plan tree.
 
 The lower-level commands remain important:
 
@@ -30,7 +29,6 @@ without becoming magical.
 
 - plan names
 - plan directories
-- `@assembly` references
 - targets from stdin when not attached to a TTY
 
 Its job is to converge those requested targets onto the live system by:
@@ -41,7 +39,7 @@ Its job is to converge those requested targets onto the live system by:
 4. building each dependency wave
 5. installing each completed wave before moving to the next one
 
-This is a source-first workflow. The user asks for desired parts or assemblies,
+This is a source-first workflow. The user asks for desired parts,
 not for a precomputed archive list.
 
 ## Smart Defaults

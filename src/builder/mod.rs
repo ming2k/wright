@@ -168,7 +168,7 @@ impl Builder {
         variables::substitute(uri, &vars)
     }
 
-    fn build_root(&self, manifest: &PlanManifest) -> Result<PathBuf> {
+    pub fn build_root(&self, manifest: &PlanManifest) -> Result<PathBuf> {
         let build_dir = if self.config.build.build_dir.is_absolute() {
             self.config.build.build_dir.clone()
         } else {

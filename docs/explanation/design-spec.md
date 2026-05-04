@@ -2,108 +2,75 @@
 
 This document replaces the older historical spec. Wright is now a
 source-first, local-first system with one primary CLI, distinct build/system
-subcommands, and one local archive inventory.
+subcommands, and a single state database.
 
 ## Core Objects
 
 - `plan`: the source definition for one buildable unit
 - `part`: a built `.wright.tar.zst` archive
-- `assembly`: a named set of plans used as a build or apply target
-- `system`: the installed live state tracked in `installed.db`
-- `inventory`: the local catalog of built archives tracked in `archives.db`
-
-There is no separate indexing/publish manager and no install-time grouping
-model beyond assemblies.
+- `system`: the installed live state tracked in `wright.db`
 
 ## Tool Boundaries
 
-- `wright build` builds parts from plans and records successful outputs in the
-  local inventory
-- `wright` installs, upgrades, removes, verifies, and applies those locally
-  available parts to the live system
+- `wright build` builds parts from plans and creates `.wright.tar.zst` archives
+- `wright package` packages existing staging directories into archives
+- `wright install` installs locally available archives to the live system
+- `wright apply` resolves, builds, and installs plans in dependency waves
 
 The main workflows are:
 
 ```bash
 wright build curl
-wright install curl
+wright package curl
+wright install ./curl-8.0-1-x86_64.wright.tar.zst
 
-wright apply @base
-
-wright resolve openssl --rdeps=all --depth=0 | wright build --force --print-parts | wright install
+# Or the all-in-one apply workflow:
+wright apply curl
 ```
 
-## Intended Workflow
+## File Model
 
-Wright is optimized for self-hosted maintenance:
+A `plan.toml` lives in its own directory under `plans_dir`. Each plan is self-contained:
 
-- plans are the source of truth
-- built archives exist mainly for rollback, recovery, and local reuse
-- `wright apply` is the preferred command when you want the system to match
-  current plans or assemblies
-- `wright prune` cleans stale or stray archives from the local store
-
-## Data Layout
-
-Typical paths:
-
-```text
-/etc/wright/wright.toml
-/var/lib/wright/plans/
-/var/lib/wright/assemblies/
-/var/lib/wright/parts/
-/var/lib/wright/state/installed.db
-/var/lib/wright/state/archives.db
-/var/lib/wright/lock/installed.db.lock
-/var/lib/wright/lock/archives.db.lock
+```
+plans/curl/plan.toml
 ```
 
-`installed.db` tracks installed system state. `archives.db` tracks built archives
-available for reuse or installation.
+## Output Model
 
-## Design Constraints
+Each build produces one or more `.wright.tar.zst` archives under `parts_dir`. A plan
+can have multiple outputs (e.g. `gcc` and `gcc-libs`) defined by `[[output]]` tables.
 
-- build and install are separate phases
-- successful builds are registered automatically in the local inventory
-- install and upgrade resolution uses only the local inventory
-- assemblies are the only built-in grouping abstraction
-- published binary distribution is out of scope for the default architecture
+## State Model
 
-## No Magic Behavior
+`wright.db` is the single source of truth for:
 
-For the rationale behind explicit over implicit behavior, see [ADR-0004: No Magic Behavior](../adr/0004-no-magic-behavior.md).
+- installed parts and their files
+- dependency relationships
+- transaction history
+- build/apply resume sessions
 
-Wright does not perform implicit actions on behalf of the plan author. If the
-tool does something, it must be because the plan explicitly asked for it.
+## CLI Architecture
 
-Wright targets LFS-based distributions where the user base consists of power
-users who understand what they are doing and expect predictable, auditable
-behavior. Implicit automation that is convenient for casual users is a poor
-trade-off here: it hides intent, makes plans harder to read, and introduces
-edge cases that require even more implicit rules to handle.
-
-**Concrete example — patch application.** A plan that needs to apply patches
-declares them as `[[sources]]` entries (so they are fetched and verified like
-any other source) and applies them explicitly in the `prepare` script:
-
-```toml
-[[sources]]
-uri = "patches/fix-headers.patch"
-sha256 = "SKIP"
+```
+wright build   →  build plans
+wright package →  package staging directories
+wright apply   →  resolve + build + install
+wright install →  install archives
+wright upgrade →  upgrade installed parts
+wright remove  →  remove installed parts
+wright list    →  list installed parts
+wright resolve →  inspect dependency graph
+wright lint    →  validate plan files
+wright prune   →  clean old archives
 ```
 
-```sh
-# prepare
-patch -p1 < "${WRIGHT_SRC_DIR}/fix-headers.patch"
-```
+## Isolation Model
 
-Wright will never auto-detect `.patch` files and apply them silently. That
-would hide the strip level, application order, and any conditional logic from
-the reader. Two lines of shell are clearer and more flexible than any implicit
-convention.
+Build stages run in optional sandboxed environments. The default isolation level
+is `strict`. Each stage can override this via its `isolation` field.
 
-When evaluating a feature request, ask: does this save meaningful work, or
-does it only save the user from writing something explicit and readable? If the
-latter, prefer keeping behavior explicit.
+## Concurrency Model
 
-For command details and current examples, use the rest of the documentation.
+Builds run in dependency-ordered waves. Plans in the same wave build in parallel.
+The scheduler divides available CPUs across active isolations.

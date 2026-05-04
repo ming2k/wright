@@ -36,7 +36,7 @@ pub struct BuildArgs {
     #[arg(long, short = 'c')]
     pub clean: bool,
 
-    /// Force rebuild: overwrite existing archive and bypass the build cache
+    /// Force rebuild: bypass the build cache and re-run the pipeline
     #[arg(long, short)]
     pub force: bool,
 
@@ -52,7 +52,8 @@ pub struct BuildArgs {
     #[arg(long)]
     pub mvp: bool,
 
-    /// Print produced archive paths to stdout after a successful build.
+    /// Print produced archive paths to stdout after packaging.
+    /// Only has effect when combined with `--package`.
     /// Human-readable logs continue to go to stderr so this remains pipe-safe.
     #[arg(long)]
     pub print_parts: bool,
@@ -68,4 +69,8 @@ pub struct BuildArgs {
     /// Compute and update SHA256 checksums in plan.toml
     #[arg(long, conflicts_with = "fetch")]
     pub checksum: bool,
+
+    /// Package outputs into `.wright.tar.zst` archives after build
+    #[arg(long)]
+    pub package: bool,
 }

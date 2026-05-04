@@ -1,4 +1,5 @@
 pub mod build;
+pub mod package;
 pub mod prune;
 pub mod resolve;
 pub mod system;
@@ -7,6 +8,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 use build::BUILD_AFTER_HELP;
+use package::PACKAGE_AFTER_HELP;
 use resolve::RESOLVE_AFTER_HELP;
 
 #[derive(Parser)]
@@ -53,6 +55,10 @@ pub enum Commands {
     #[command(after_help = BUILD_AFTER_HELP)]
     Build(build::BuildArgs),
 
+    /// Package built staging directories into `.wright.tar.zst` archives
+    #[command(after_help = PACKAGE_AFTER_HELP)]
+    Package(package::PackageArgs),
+
     /// Resolve targets and expand their dependency graph
     #[command(after_help = RESOLVE_AFTER_HELP)]
     Resolve(resolve::ResolveArgs),
@@ -66,6 +72,6 @@ pub enum Commands {
         recursive: bool,
     },
 
-    /// Prune local archive catalogue and stale parts
+    /// Prune stale archives from the parts directory
     Prune(prune::PruneArgs),
 }

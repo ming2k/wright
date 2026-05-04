@@ -4,7 +4,6 @@ Lookup tables for configuration, APIs, and CLI values.
 
 - [Terminology](terminology.md)
 - [Writing Plans](writing-plans.md)
-- [Writing Assemblies](writing-assemblies.md)
 - [CLI Reference](cli-reference.md)
 - [Configuration](configuration.md)
 - [Logging](logging.md)

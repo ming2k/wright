@@ -4,9 +4,8 @@ use clap::{ArgAction, Parser, Subcommand};
 
 const WRIGHT_AFTER_HELP: &str = "\
 Workflows:
-  Install from archive catalogue:   wright install zlib
   Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
-  Apply an assembly:        wright apply @base
+  Apply plans:              wright apply zlib openssl
   Upgrade everything:       wright sysupgrade
   Inspect dependencies:     wright resolve zlib --tree
   Change install reason:    wright mark zlib --as-dependency
@@ -19,10 +18,9 @@ Examples:
   wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst";
 const WRIGHT_APPLY_AFTER_HELP: &str = "\
 Examples:
-  wright apply @base
-  wright apply @base @devel
+  wright apply zlib
+  wright apply zlib openssl
   wright apply ./plans/bash
-  wright apply gcc
   wright apply gcc --match=all";
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
@@ -139,13 +137,13 @@ pub enum Commands {
         #[arg(long)]
         nodeps: bool,
     },
-    /// Build and apply plan-driven installs/upgrades for plans or assemblies
+    /// Build and apply plan-driven installs/upgrades for plans
     #[command(
-        long_about = "Apply plans or assemblies to the local system.\n\nTargets may be plan names, plan directories, or `@assembly` references. Wright is the high-level source-first combo command: it resolves requested targets, automatically pulls in dependencies that are missing or outdated under the selected match policy, builds what is needed in dependency waves, and installs each completed wave onto the live system. Use it for natural plan-driven install and upgrade workflows.",
+        long_about = "Apply plans to the local system.\n\nTargets may be plan names or plan directories. Wright is the high-level source-first combo command: it resolves requested targets, automatically pulls in dependencies that are missing or outdated under the selected match policy, builds what is needed in dependency waves, and installs each completed wave onto the live system. Use it for natural plan-driven install and upgrade workflows.",
         after_help = WRIGHT_APPLY_AFTER_HELP
     )]
     Apply {
-        /// Plan names, plan directories, or @assemblies
+        /// Plan names or plan directories
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 

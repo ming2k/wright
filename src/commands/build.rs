@@ -13,14 +13,14 @@ pub async fn execute_build(
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(&config.general.installed_db_path),
+        &crate::util::lock::lock_dir_from_db(&config.general.db_path),
         crate::util::lock::LockIdentity::Command("build"),
         crate::util::lock::LockMode::Exclusive,
     )
     .context("failed to acquire build command lock")?;
 
     if args.clear_sessions {
-        let db = InstalledDb::open(&config.general.installed_db_path)
+        let db = InstalledDb::open(&config.general.db_path)
             .await
             .context("failed to open database")?;
         let count = db.clear_all_sessions().await?;
@@ -59,6 +59,7 @@ pub async fn execute_build(
             mvp: args.mvp,
             print_parts: args.print_parts,
             nproc_per_isolation: config.build.nproc_per_isolation,
+            package: args.package,
         },
     )
     .await?;

@@ -31,20 +31,12 @@ pub struct GeneralConfig {
     pub parts_dir: PathBuf,
     #[serde(default = "default_source_dir")]
     pub source_dir: PathBuf,
-    #[serde(default = "default_installed_db_path", alias = "db_path")]
-    pub installed_db_path: PathBuf,
+    #[serde(default = "default_db_path")]
+    pub db_path: PathBuf,
     #[serde(default = "default_logs_dir")]
     pub logs_dir: PathBuf,
     #[serde(default = "default_executors_dir")]
     pub executors_dir: PathBuf,
-    #[serde(default = "default_assemblies_dir")]
-    pub assemblies_dir: PathBuf,
-    #[serde(
-        default = "default_archive_db_path",
-        alias = "repo_db_path",
-        alias = "inventory_db_path"
-    )]
-    pub archive_db_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -82,22 +74,6 @@ pub struct NetworkConfig {
     pub retry_count: u32,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct AssembliesConfig {
-    #[serde(default)]
-    pub assemblies: std::collections::HashMap<String, Assembly>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Assembly {
-    pub name: String,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub plans: Vec<String>,
-    #[serde(default)]
-    pub includes: Vec<String>,
-}
-
 fn default_general() -> GeneralConfig {
     let uid = unsafe { libc::getuid() };
     let use_xdg = uid != 0;
@@ -115,15 +91,13 @@ fn default_general() -> GeneralConfig {
         // by default so `wright resolve ... | sudo wright build ...` consult the
         // same installation state. Per-user overrides can still point db_path
         // elsewhere explicitly.
-        installed_db_path: default_installed_db_path(),
+        db_path: default_db_path(),
         logs_dir: if use_xdg {
             get_xdg_state().unwrap_or_else(default_logs_dir)
         } else {
             default_logs_dir()
         },
         executors_dir: default_executors_dir(),
-        assemblies_dir: default_assemblies_dir(),
-        archive_db_path: default_archive_db_path(),
     }
 }
 
@@ -180,20 +154,14 @@ fn default_parts_dir() -> PathBuf {
 fn default_source_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/sources")
 }
-fn default_installed_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/state/installed.db")
+fn default_db_path() -> PathBuf {
+    PathBuf::from("/var/lib/wright/wright.db")
 }
 fn default_logs_dir() -> PathBuf {
     PathBuf::from("/var/log/wright")
 }
 fn default_executors_dir() -> PathBuf {
     PathBuf::from("/etc/wright/executors")
-}
-fn default_assemblies_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/assemblies")
-}
-fn default_archive_db_path() -> PathBuf {
-    PathBuf::from("/var/lib/wright/state/archives.db")
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright/workshop")
@@ -242,46 +210,6 @@ impl Default for NetworkConfig {
     }
 }
 
-impl AssembliesConfig {
-    pub fn load_all(dir: &Path) -> Result<Self> {
-        let mut config = AssembliesConfig {
-            assemblies: std::collections::HashMap::new(),
-        };
-        if !dir.exists() {
-            return Ok(config);
-        }
-
-        for entry in std::fs::read_dir(dir).map_err(WrightError::IoError)? {
-            let entry = entry.map_err(WrightError::IoError)?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                let content = std::fs::read_to_string(&path).map_err(|e| {
-                    WrightError::ConfigError(format!("failed to read {}: {}", path.display(), e))
-                })?;
-                let assembly: Assembly = toml::from_str(&content).map_err(|e| {
-                    WrightError::ConfigError(format!("failed to parse {}: {}", path.display(), e))
-                })?;
-
-                let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-                    WrightError::ConfigError(format!("invalid file name: {}", path.display()))
-                })?;
-
-                if assembly.name != stem {
-                    return Err(WrightError::ConfigError(format!(
-                        "assembly name '{}' in {} does not match file name '{}'",
-                        assembly.name,
-                        path.display(),
-                        stem
-                    )));
-                }
-
-                config.assemblies.insert(assembly.name.clone(), assembly);
-            }
-        }
-        Ok(config)
-    }
-}
-
 impl GlobalConfig {
     /// Load configuration with layered merging.
     ///
@@ -325,17 +253,13 @@ impl GlobalConfig {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{default_archive_db_path, default_installed_db_path};
+    use super::default_db_path;
 
     #[test]
-    fn new_default_db_path_names_are_installed_and_archives() {
+    fn new_default_db_path() {
         assert_eq!(
-            default_installed_db_path(),
-            PathBuf::from("/var/lib/wright/state/installed.db")
-        );
-        assert_eq!(
-            default_archive_db_path(),
-            PathBuf::from("/var/lib/wright/state/archives.db")
+            default_db_path(),
+            PathBuf::from("/var/lib/wright/wright.db")
         );
     }
 }

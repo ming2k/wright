@@ -5,7 +5,7 @@ use wright::database::{InstalledDb, NewPart, Origin};
 #[tokio::test]
 async fn test_apply_force_always_includes_explicit_targets() {
     let temp = tempfile::tempdir().unwrap();
-    let db_path = temp.path().join("state").join("installed.db");
+    let db_path = temp.path().join("wright").join("wright.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
     let db = InstalledDb::open(&db_path).await.unwrap();
 
@@ -49,7 +49,7 @@ arch = "x86_64"
     .unwrap();
 
     let mut config = GlobalConfig::default();
-    config.general.installed_db_path = db_path;
+    config.general.db_path = db_path;
     config.general.plans_dir = plans_dir;
 
     // 3. Resolve without force (MatchPolicy::Outdated)

@@ -1,4 +1,3 @@
-use crate::config::AssembliesConfig;
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::Version;
@@ -13,8 +12,6 @@ pub fn sanitize_cache_filename(raw: &str) -> String {
 pub struct LocalResolver {
     pub search_dirs: Vec<PathBuf>,
     pub plans_dirs: Vec<PathBuf>,
-    pub assemblies: AssembliesConfig,
-    pub archive_db_path: Option<PathBuf>,
 }
 
 pub struct ResolvedPart {
@@ -83,10 +80,6 @@ impl LocalResolver {
         Self {
             search_dirs: Vec::new(),
             plans_dirs: Vec::new(),
-            assemblies: AssembliesConfig {
-                assemblies: std::collections::HashMap::new(),
-            },
-            archive_db_path: None,
         }
     }
 
@@ -98,67 +91,67 @@ impl LocalResolver {
         self.plans_dirs.push(path);
     }
 
-    pub fn set_archive_db_path(&mut self, path: PathBuf) {
-        self.archive_db_path = Some(path);
-    }
-
-    pub fn load_assemblies(&mut self, config: AssembliesConfig) {
-        self.assemblies = config;
-    }
-
     pub async fn resolve(&self, name: &str) -> Result<Option<ResolvedPart>> {
         self.resolve_local(name).await
     }
 
     async fn resolve_local(&self, name: &str) -> Result<Option<ResolvedPart>> {
-        let archive_db_path = match &self.archive_db_path {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-        let archive_db = crate::database::ArchiveDb::open(archive_db_path).await?;
-        let entry = match archive_db.find_part(name).await? {
-            Some(e) => e,
-            None => return Ok(None),
-        };
-        for dir in &self.search_dirs {
-            let path = dir.join(&entry.filename);
-            if path.exists() {
-                return Ok(Some(ResolvedPart {
-                    name: entry.name,
-                    path,
-                    dependencies: entry.runtime_deps,
-                }));
-            }
-        }
-        Ok(None)
+        let all = self.resolve_all(name).await?;
+        Ok(pick_latest(&all).map(|p| ResolvedPart {
+            name: p.name.clone(),
+            path: p.path.clone(),
+            dependencies: p.dependencies.clone(),
+        }))
     }
 
     pub async fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
-        let archive_db_path = match &self.archive_db_path {
-            Some(p) => p,
-            None => return Ok(Vec::new()),
-        };
-        let archive_db = crate::database::ArchiveDb::open(archive_db_path).await?;
-        let entries = archive_db.find_all_versions(name).await?;
+        let search_dirs = self.search_dirs.clone();
+        let name = name.to_string();
 
-        let mut results = Vec::new();
-        for entry in entries {
-            for dir in &self.search_dirs {
-                let path = dir.join(&entry.filename);
-                if path.exists() {
+        tokio::task::spawn_blocking(move || {
+            let mut results = Vec::new();
+            for dir in &search_dirs {
+                if !dir.exists() {
+                    continue;
+                }
+                let entries = match std::fs::read_dir(dir) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let path = entry.path();
+                    let fname = match path.file_name().and_then(|s| s.to_str()) {
+                        Some(f) => f,
+                        None => continue,
+                    };
+                    if !fname.ends_with(".wright.tar.zst") {
+                        continue;
+                    }
+                    let partinfo = match part::read_partinfo(&path) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    if partinfo.name != name {
+                        continue;
+                    }
                     results.push(ResolvedPartVersioned {
-                        name: entry.name.clone(),
-                        version: entry.version.clone(),
-                        release: entry.release as u32,
-                        epoch: entry.epoch as u32,
+                        name: partinfo.name,
+                        version: partinfo.version,
+                        release: partinfo.release,
+                        epoch: partinfo.epoch,
                         path,
-                        dependencies: entry.runtime_deps.clone(),
+                        dependencies: partinfo.runtime_deps,
                     });
-                    break;
                 }
             }
-        }
-        Ok(results)
+            Ok(results)
+        })
+        .await
+        .map_err(|e| WrightError::BuildError(format!("resolver task failed: {}", e)))?
     }
 
     pub fn read_part(&self, path: &Path) -> Result<ResolvedPart> {
@@ -168,44 +161,6 @@ impl LocalResolver {
             path: path.to_path_buf(),
             dependencies: partinfo.runtime_deps,
         })
-    }
-
-    pub fn resolve_assembly(&self, assembly_name: &str) -> Result<Vec<PathBuf>> {
-        let all_plans = self.get_all_plans()?;
-        let mut plan_names = std::collections::HashSet::new();
-
-        if self.assemblies.assemblies.contains_key(assembly_name) {
-            self.collect_assembly_members(assembly_name, &mut plan_names);
-        }
-
-        let mut paths = Vec::new();
-        for name in plan_names {
-            if let Some(path) = all_plans.get(&name) {
-                paths.push(path.clone());
-            } else {
-                tracing::warn!(
-                    "Plan {} defined in assembly {} not found in plans tree",
-                    name,
-                    assembly_name
-                );
-            }
-        }
-        Ok(paths)
-    }
-
-    fn collect_assembly_members(
-        &self,
-        name: &str,
-        members: &mut std::collections::HashSet<String>,
-    ) {
-        if let Some(assembly) = self.assemblies.assemblies.get(name) {
-            for plan in &assembly.plans {
-                members.insert(plan.clone());
-            }
-            for include in &assembly.includes {
-                self.collect_assembly_members(include, members);
-            }
-        }
     }
 
     pub fn get_all_plans(&self) -> Result<std::collections::HashMap<String, PathBuf>> {

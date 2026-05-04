@@ -43,13 +43,13 @@ Sessions are cleaned up automatically when all parts complete successfully.
 Re-run the same apply request with `--resume`:
 
 ```bash
-wright apply @base --deps --resume
+wright apply zlib openssl --deps --resume
 ```
 
 Or pass the explicit hash printed on failure:
 
 ```bash
-wright apply @base --deps --resume a1b2c3...
+wright apply zlib openssl --deps --resume a1b2c3...
 ```
 
 `apply --resume` must be used with the same targets and scope flags (`--deps/--rdeps/--match/--depth/--force`) as the original run.

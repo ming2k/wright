@@ -19,7 +19,7 @@ plan.toml -> wright build -> .wright.tar.zst -> archives.db -> wright install/up
 
 ### `wright build` / `wright resolve` / `wright prune`
 
-- resolve plans and assemblies
+- resolve plans
 - expand dependency and rebuild scope
 - execute sandboxed stages
 - create `.wright.tar.zst` archives

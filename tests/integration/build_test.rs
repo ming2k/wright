@@ -351,7 +351,7 @@ async fn test_print_parts_keeps_verbose_build_output_off_stdout() {
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("components");
     let cache_dir = root.path().join("cache");
-    let db_dir = root.path().join("state");
+    let db_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
     let build_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
@@ -396,8 +396,7 @@ arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
 cache_dir = "{}"
-installed_db_path = "{}"
-archive_db_path = "{}"
+db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
@@ -414,8 +413,7 @@ retry_count = 3
             plans_dir.display(),
             parts_dir.display(),
             cache_dir.display(),
-            db_dir.join("installed.db").display(),
-            db_dir.join("archives.db").display(),
+            db_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
             build_dir.display(),
@@ -468,7 +466,7 @@ fn test_until_stage_stops_before_packing_parts() {
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("parts");
     let cache_dir = root.path().join("cache");
-    let db_dir = root.path().join("state");
+    let db_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
     let build_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
@@ -523,8 +521,7 @@ arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
 source_dir = "{}"
-installed_db_path = "{}"
-archive_db_path = "{}"
+db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
@@ -541,8 +538,7 @@ retry_count = 3
             plans_dir.display(),
             parts_dir.display(),
             cache_dir.display(),
-            db_dir.join("installed.db").display(),
-            db_dir.join("archives.db").display(),
+            db_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
             build_dir.display(),
@@ -591,7 +587,7 @@ fn test_build_resume_skips_already_completed_dependency_tasks() {
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("parts");
     let source_dir = root.path().join("sources");
-    let state_dir = root.path().join("state");
+    let state_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
     let build_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
@@ -668,8 +664,7 @@ arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
 source_dir = "{}"
-installed_db_path = "{}"
-archive_db_path = "{}"
+db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
@@ -686,8 +681,7 @@ retry_count = 3
             plans_dir.display(),
             parts_dir.display(),
             source_dir.display(),
-            state_dir.join("installed.db").display(),
-            state_dir.join("archives.db").display(),
+            state_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
             build_dir.display(),

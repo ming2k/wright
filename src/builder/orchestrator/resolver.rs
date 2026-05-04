@@ -1,33 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use tracing::warn;
-
 use crate::archive::resolver::LocalResolver;
-use crate::config::{AssembliesConfig, GlobalConfig};
+use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::plan::manifest::PlanManifest;
 
 pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
-    let mut all_assemblies = AssembliesConfig {
-        assemblies: HashMap::new(),
-    };
-
-    if let Ok(f) = AssembliesConfig::load_all(&config.general.assemblies_dir) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    if let Ok(f) = AssembliesConfig::load_all(&config.general.plans_dir.join("assemblies")) {
-        all_assemblies.assemblies.extend(f.assemblies);
-    }
-    for extra_dir in &config.general.extra_plans_dirs {
-        if let Ok(f) = AssembliesConfig::load_all(&extra_dir.join("assemblies")) {
-            all_assemblies.assemblies.extend(f.assemblies);
-        }
-    }
-
     let mut resolver = LocalResolver::new();
-    resolver.set_archive_db_path(config.general.archive_db_path.clone());
-    resolver.load_assemblies(all_assemblies);
     resolver.add_plans_dir(config.general.plans_dir.clone());
     for extra_dir in &config.general.extra_plans_dirs {
         resolver.add_plans_dir(extra_dir.clone());
@@ -46,7 +26,7 @@ pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
     Ok(resolver)
 }
 
-pub(super) fn resolve_targets(
+pub fn resolve_targets(
     targets: &[String],
     all_plans: &HashMap<String, PathBuf>,
     resolver: &LocalResolver,
@@ -59,15 +39,7 @@ pub(super) fn resolve_targets(
             continue;
         }
 
-        if let Some(assembly_name) = clean_target.strip_prefix('@') {
-            let paths = resolver.resolve_assembly(assembly_name)?;
-            if paths.is_empty() {
-                warn!("Assembly not found: {}", assembly_name);
-            }
-            for p in paths {
-                plans_to_build.insert(p);
-            }
-        } else if let Some(path) = all_plans.get(clean_target) {
+        if let Some(path) = all_plans.get(clean_target) {
             plans_to_build.insert(path.clone());
         } else {
             let plan_path = PathBuf::from(clean_target);

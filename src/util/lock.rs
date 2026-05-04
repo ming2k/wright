@@ -86,12 +86,8 @@ fn acquire_flock(file: &File, lock_path: &Path, mode: LockMode, timeout: Duratio
 pub fn lock_dir_from_db(db_path: &Path) -> PathBuf {
     db_path
         .parent()
-        .and_then(|p| p.parent())
         .map(|p| p.join("lock"))
-        .unwrap_or_else(|| {
-            // Fallback for non-standard paths, though GlobalConfig should ideally provide this
-            db_path.parent().unwrap_or(Path::new(".")).join("lock")
-        })
+        .unwrap_or_else(|| Path::new(".").join("lock"))
 }
 
 fn acquire_lock_path_with_timeout(
@@ -173,7 +169,7 @@ mod tests {
 
     #[test]
     fn lock_dir_derivation() {
-        let db_path = std::path::Path::new("/var/lib/wright/state/installed.db");
+        let db_path = std::path::Path::new("/var/lib/wright/wright.db");
         assert_eq!(
             lock_dir_from_db(db_path),
             std::path::Path::new("/var/lib/wright/lock")
@@ -206,9 +202,9 @@ mod tests {
     #[test]
     fn shared_locks_can_coexist() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("state").join("installed.db");
+        let db_path = dir.path().join("wright.db");
 
-        let identity = LockIdentity::Database("installed.db");
+        let identity = LockIdentity::Database("wright.db");
         let _lock1 = acquire_lock_with_timeout(
             &db_path,
             identity.clone(),
@@ -228,9 +224,9 @@ mod tests {
     #[test]
     fn exclusive_lock_blocks_shared_locks() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("state").join("installed.db");
+        let db_path = dir.path().join("wright.db");
 
-        let identity = LockIdentity::Database("installed.db");
+        let identity = LockIdentity::Database("wright.db");
         let _lock = acquire_lock_with_timeout(
             &db_path,
             identity.clone(),

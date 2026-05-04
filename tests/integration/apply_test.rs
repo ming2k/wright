@@ -12,14 +12,13 @@ async fn test_apply_with_dependency_in_cwd() {
     let root = temp.path().join("root");
     let plans = temp.path().join("plans");
     let parts = temp.path().join("parts");
-    let state = temp.path().join("state");
+    let state = temp.path().join("wright");
     fs::create_dir_all(&root).unwrap();
     fs::create_dir_all(&plans).unwrap();
     fs::create_dir_all(&parts).unwrap();
     fs::create_dir_all(&state).unwrap();
 
-    let db_path = state.join("installed.db");
-    let archive_db_path = state.join("archives.db");
+    let db_path = state.join("wright.db");
 
     // Create a dependency plan 'wayland' in CWD (actually in the temp dir where we'll run)
     let wayland_dir = plans.join("wayland");
@@ -69,8 +68,7 @@ runtime_deps = ["wayland"]
 
     let mut config = GlobalConfig::default();
     config.general.parts_dir = parts;
-    config.general.installed_db_path = db_path.clone();
-    config.general.archive_db_path = archive_db_path;
+    config.general.db_path = db_path.clone();
     config.general.plans_dir = PathBuf::from("/nonexistent"); // Don't use default
 
     // Change CWD to the plans directory
@@ -102,7 +100,7 @@ fn test_apply_resume_continues_after_partial_success() {
     let plans = temp.path().join("plans");
     let parts = temp.path().join("parts");
     let sources = temp.path().join("sources");
-    let state = temp.path().join("state");
+    let state = temp.path().join("wright");
     let logs = temp.path().join("logs");
     let build = temp.path().join("build");
     fs::create_dir_all(&root).unwrap();
@@ -174,8 +172,7 @@ arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
 source_dir = "{}"
-installed_db_path = "{}"
-archive_db_path = "{}"
+db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
@@ -192,8 +189,7 @@ retry_count = 3
             plans.display(),
             parts.display(),
             sources.display(),
-            state.join("installed.db").display(),
-            state.join("archives.db").display(),
+            state.join("wright.db").display(),
             logs.display(),
             temp.path().join("assemblies").display(),
             build.display(),

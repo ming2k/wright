@@ -47,7 +47,7 @@ for plan in binutils gcc glibc linux-api-headers linux; do
 done
 
 # After the toolchain is updated, rebuild the rest of the system.
-wright apply @base
+wright apply $(wright list | grep -v -E '^(binutils|gcc|glibc|linux-api-headers|linux)$')
 ```
 
 Wright's `apply` command will automatically remove the old parts produced by

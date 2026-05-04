@@ -72,7 +72,7 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
 
 struct ApplyContext<'a> {
     config: &'a GlobalConfig,
-    installed_db_path: &'a Path,
+    db_path: &'a Path,
     resolver: &'a LocalResolver,
     root_dir: &'a Path,
     force: bool,
@@ -89,6 +89,7 @@ fn build_options_for_apply(ctx: &ApplyContext) -> crate::builder::orchestrator::
         quiet: ctx.quiet,
         print_parts: false,
         nproc_per_isolation: ctx.config.build.nproc_per_isolation,
+        package: true,
         ..Default::default()
     }
 }
@@ -203,10 +204,11 @@ async fn load_apply_resume_state(
     }
 
     let completed = crate::builder::orchestrator::load_completed_build_tasks(
-        db,
+        &db,
         ctx.config,
-        plan,
-        &metadata.build_session_hash,
+        &plan,
+        session.task_session_hash.as_deref().unwrap_or(apply_session_hash),
+        true,
     )
     .await?;
 
@@ -293,7 +295,7 @@ async fn apply_targets(
         crate::builder::orchestrator::resolve_build_set(ctx.config, targets.clone(), resolve_opts)
             .await?;
 
-    let db = InstalledDb::open(ctx.installed_db_path)
+    let db = InstalledDb::open(ctx.db_path)
         .await
         .context("failed to open database for apply session")?;
 
@@ -532,7 +534,7 @@ pub async fn execute_apply(
     force: bool,
     dry_run: bool,
     config: &GlobalConfig,
-    installed_db_path: &Path,
+    db_path: &Path,
     root_dir: &Path,
     verbose: u8,
     quiet: bool,
@@ -576,7 +578,7 @@ pub async fn execute_apply(
     match apply_targets(
         ApplyContext {
             config,
-            installed_db_path,
+            db_path,
             resolver,
             root_dir,
             force,

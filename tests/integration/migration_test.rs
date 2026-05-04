@@ -1,5 +1,5 @@
 use tempfile::tempdir;
-use wright::database::{ArchiveDb, InstalledDb};
+use wright::database::InstalledDb;
 
 use sqlx::sqlite::SqliteConnectOptions;
 use std::path::Path;
@@ -7,10 +7,6 @@ use std::path::Path;
 const INSTALLED_SCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/src/database/migrations/001_initial_schema.sql"
-));
-const ARCHIVE_SCHEMA: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/src/database/migrations/archive/001_initial_archive_schema.sql"
 ));
 
 async fn seed_schema_without_sqlx_migrations(path: &Path, schema: &str) {
@@ -42,26 +38,12 @@ async fn migration_count(path: &Path) -> i64 {
 #[tokio::test]
 async fn installed_db_open_handles_preseeded_v1_schema_without_sqlx_metadata() {
     let temp = tempdir().unwrap();
-    let db_path = temp.path().join("state").join("installed.db");
+    let db_path = temp.path().join("wright").join("wright.db");
 
     seed_schema_without_sqlx_migrations(&db_path, INSTALLED_SCHEMA).await;
 
     let db = InstalledDb::open(&db_path).await;
     assert!(db.is_ok(), "InstalledDb::open failed: {:?}", db.err());
-    drop(db);
-
-    assert_eq!(migration_count(&db_path).await, 1);
-}
-
-#[tokio::test]
-async fn archive_db_open_handles_preseeded_v1_schema_without_sqlx_metadata() {
-    let temp = tempdir().unwrap();
-    let db_path = temp.path().join("state").join("archives.db");
-
-    seed_schema_without_sqlx_migrations(&db_path, ARCHIVE_SCHEMA).await;
-
-    let db = ArchiveDb::open(&db_path).await;
-    assert!(db.is_ok(), "ArchiveDb::open failed: {:?}", db.err());
     drop(db);
 
     assert_eq!(migration_count(&db_path).await, 1);

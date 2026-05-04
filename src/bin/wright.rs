@@ -38,12 +38,12 @@ async fn main() -> Result<()> {
     // 2. Load Configuration
     let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
 
-    let installed_db_path = cli
+    let db_path = cli
         .db
         .clone()
-        .unwrap_or_else(|| config.general.installed_db_path.clone());
+        .unwrap_or_else(|| config.general.db_path.clone());
     let root_dir = cli.root.clone().unwrap_or_else(|| PathBuf::from("/"));
 
     // 3. Dispatch to Command Handlers
-    wright::commands::dispatch(cli, &config, installed_db_path, root_dir).await
+    wright::commands::dispatch(cli, &config, db_path, root_dir).await
 }

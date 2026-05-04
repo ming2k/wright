@@ -2,11 +2,7 @@ use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
 pub struct PruneArgs {
-    /// Delete parts that are present on disk but not registered in the archive DB
-    #[arg(long)]
-    pub untracked: bool,
-
-    /// Keep only the latest tracked archive per part name, while preserving installed versions
+    /// Keep only the latest archive per part name, while preserving installed versions
     #[arg(long)]
     pub latest: bool,
 

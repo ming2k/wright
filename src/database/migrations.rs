@@ -12,15 +12,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     .await
 }
 
-pub async fn run_archive_migrations(pool: &SqlitePool) -> Result<()> {
-    run_migrator(
-        pool,
-        sqlx::migrate!("./src/database/migrations/archive"),
-        "archive database",
-    )
-    .await
-}
-
 async fn run_migrator(pool: &SqlitePool, migrator: Migrator, label: &str) -> Result<()> {
     let mut conn = pool.acquire().await.map_err(|e| {
         crate::error::WrightError::DatabaseError(format!(

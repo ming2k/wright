@@ -22,9 +22,9 @@ use planning::{
     build_dep_map, construction_plan_batches, construction_plan_label, expand_missing_dependencies,
     expand_rebuild_deps,
 };
-use resolver::resolve_targets;
 
-pub use resolver::setup_resolver;
+pub use resolver::{setup_resolver, resolve_targets};
+pub use execute::package_manifest;
 
 use crate::archive::resolver::LocalResolver;
 use crate::plan::manifest::OutputConfig;
@@ -90,6 +90,8 @@ pub struct BuildOptions {
     pub mvp: bool,
     pub print_parts: bool,
     pub nproc_per_isolation: Option<u32>,
+    /// Whether to package outputs into `.wright.tar.zst` archives after build.
+    pub package: bool,
 }
 
 impl BuildOptions {
@@ -160,6 +162,7 @@ pub fn compute_build_session_hash(
     hasher.update(format!("fetch_only={}\n", opts.fetch_only).as_bytes());
     hasher.update(format!("skip_check={}\n", opts.skip_check).as_bytes());
     hasher.update(format!("checksum={}\n", opts.checksum).as_bytes());
+    hasher.update(format!("package={}\n", opts.package).as_bytes());
     hasher.update(format!("until_stage={:?}\n", opts.until_stage).as_bytes());
     hasher.update(format!("stages={:?}\n", opts.stages).as_bytes());
 
@@ -194,11 +197,35 @@ fn expected_task_artifacts(parts_dir: &Path, plan_path: &Path) -> Result<Vec<Pat
     }
 }
 
+fn expected_staging_dirs(build_dir: &Path, plan_path: &Path) -> Result<Vec<PathBuf>> {
+    let manifest = PlanManifest::from_file(plan_path)?;
+    let build_root = build_dir.join(format!(
+        "{}-{}",
+        manifest.plan.name,
+        manifest.plan.version.as_deref().unwrap_or("noversion")
+    ));
+    match manifest.outputs {
+        Some(OutputConfig::Multi(ref parts)) => {
+            let mut dirs = Vec::new();
+            for (sub_name, sub_part) in parts {
+                if sub_part.include.is_none() {
+                    dirs.push(build_root.join("output"));
+                } else {
+                    dirs.push(build_root.join(format!("output-{}", sub_name)));
+                }
+            }
+            Ok(dirs)
+        }
+        _ => Ok(vec![build_root.join("output")]),
+    }
+}
+
 pub async fn load_completed_build_tasks(
     db: &InstalledDb,
     config: &GlobalConfig,
     plan: &BuildExecutionPlan,
     session_hash: &str,
+    package: bool,
 ) -> Result<HashSet<String>> {
     let completed = db
         .get_execution_session_completed_items(session_hash)
@@ -209,7 +236,11 @@ pub async fn load_completed_build_tasks(
         let Some(plan_path) = plan.name_to_path.get(&task_name) else {
             continue;
         };
-        let artifacts = expected_task_artifacts(&config.general.parts_dir, plan_path)?;
+        let artifacts = if package {
+            expected_task_artifacts(&config.general.parts_dir, plan_path)?
+        } else {
+            expected_staging_dirs(&config.build.build_dir, plan_path)?
+        };
         if artifacts.iter().all(|path| path.exists()) {
             reusable.insert(task_name);
         }
@@ -262,7 +293,7 @@ pub async fn resolve_build_set(
     };
 
     {
-        let db_path = config.general.installed_db_path.clone();
+        let db_path = config.general.db_path.clone();
         let db = InstalledDb::open(&db_path)
             .await
             .context("failed to open database for dependency resolution")?;
@@ -528,7 +559,7 @@ pub async fn run_build(
             if hash.is_empty() {
                 (false, HashSet::new())
             } else {
-                let db = InstalledDb::open(&config.general.installed_db_path)
+                let db = InstalledDb::open(&config.general.db_path)
                     .await
                     .context("failed to open database for resume")?;
                 if let Some(session) = db.get_execution_session(&hash).await? {
@@ -544,6 +575,7 @@ pub async fn run_build(
                         config,
                         &plan,
                         session.task_session_hash.as_deref().unwrap_or(&hash),
+                        opts.package,
                     )
                     .await?;
                     info!(
@@ -604,7 +636,7 @@ pub async fn run_build(
 
     let active_session_hash = if let Some(ref hash) = session_hash {
         if opts.is_build_op() {
-            if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
+            if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
                 let packages: Vec<String> = plan.name_to_path.keys().cloned().collect();
                 let _ = db
                     .ensure_execution_session(hash, "build", Some(hash), None)
@@ -634,7 +666,7 @@ pub async fn run_build(
     match &result {
         Ok(()) => {
             if let Some(ref hash) = active_session_hash {
-                if let Ok(db) = InstalledDb::open(&config.general.installed_db_path).await {
+                if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
                     let _ = db.clear_execution_session(hash).await;
                 }
             }

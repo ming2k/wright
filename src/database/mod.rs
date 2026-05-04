@@ -1,4 +1,3 @@
-mod archive;
 mod core;
 mod dependencies;
 mod files;
@@ -10,7 +9,6 @@ pub mod schema;
 mod sessions;
 mod types;
 
-pub use archive::{ArchiveDb, ArchivePart};
 pub use core::InstalledDb;
 use core::PART_COLUMNS;
 pub use plans::PlanRecord;

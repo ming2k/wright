@@ -7,7 +7,7 @@ src/
 ├── lib.rs            # Library root
 ├── cli/              # clap schemas grouped by subcommand
 ├── commands/         # command handlers grouped by subcommand
-├── config.rs         # global config and assembly definitions
+├── config.rs         # global config
 ├── archive/          # archive pruning and resolution logic
 ├── builder/          # build orchestration and lifecycle execution
 ├── database/         # unified database layer (installed system + archive catalogue)
