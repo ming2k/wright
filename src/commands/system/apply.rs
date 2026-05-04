@@ -483,7 +483,8 @@ async fn apply_targets(
             for old_part in old_parts {
                 if !batch_part_names.contains(&old_part.name) {
                     tracing::info!("Removing old part {} from plan {}", old_part.name, plan_name);
-                    if let Err(e) = transaction::remove_part(&db, &old_part.name, ctx.root_dir, true,
+                    if let Err(e) = transaction::remove_part(
+                        &db, &old_part.name, ctx.root_dir, true,
                     ).await {
                         tracing::warn!("Failed to remove old part {}: {}", old_part.name, e);
                     }

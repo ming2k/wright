@@ -131,30 +131,41 @@ impl InstalledDb {
     }
 
     /// Ensure a plan is registered in the database from pack metadata.
-    /// If the plan already exists, performs a strict version consistency check.
+    /// If the plan already exists, updates its version metadata to match the pack.
     pub async fn ensure_plan_registered(
         &self,
         partinfo: &PartInfo,
     ) -> Result<i64> {
         if let Some(existing) = self.get_plan(&partinfo.plan_name).await? {
-            let existing_release = existing.release as u32;
-            let existing_epoch = existing.epoch as u32;
-            if existing.version != partinfo.plan_version
-                || existing_release != partinfo.plan_release
-                || existing_epoch != partinfo.plan_epoch
-            {
-                return Err(WrightError::ValidationError(format!(
-                    "Plan version mismatch for '{}': installed {}-{}:{}, pack {}-{}:{}. \
-                     Refusing to install mixed-version outputs.",
-                    partinfo.plan_name,
-                    existing_epoch,
-                    existing.version,
-                    existing_release,
-                    partinfo.plan_epoch,
-                    partinfo.plan_version,
-                    partinfo.plan_release
-                )));
-            }
+            let build_deps_json = if partinfo.build_deps.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&partinfo.build_deps).map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to serialize build_deps: {}", e))
+                })?)
+            };
+            let link_deps_json = if partinfo.link_deps.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&partinfo.link_deps).map_err(|e| {
+                    WrightError::DatabaseError(format!("failed to serialize link_deps: {}", e))
+                })?)
+            };
+            query(
+                "UPDATE plans SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, build_deps = ?, link_deps = ? WHERE id = ?"
+            )
+            .bind(&partinfo.plan_version)
+            .bind(partinfo.plan_release as i64)
+            .bind(partinfo.plan_epoch as i64)
+            .bind(&partinfo.description)
+            .bind(&partinfo.arch)
+            .bind(&partinfo.license)
+            .bind(build_deps_json.as_deref())
+            .bind(link_deps_json.as_deref())
+            .bind(existing.id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
             Ok(existing.id)
         } else {
             let build_deps_json = if partinfo.build_deps.is_empty() {

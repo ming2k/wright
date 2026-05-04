@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-05-04
+
+### Changed
+- **Removed strict plan version consistency check**: `ensure_plan_registered` no longer refuses to install when a plan's version changes. Instead, it updates the existing plan record in-place. This simplifies upgrades where an entire plan (all outputs) is being replaced.
+
 ## [4.0.1] - 2026-05-04
 
 ### Fixed
