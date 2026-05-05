@@ -11,10 +11,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::archive::resolver::sanitize_cache_filename;
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use crate::isolation::ResourceLimits;
+use crate::part::store::sanitize_cache_filename;
 use crate::plan::manifest::{OutputConfig, PlanManifest, Source};
 use crate::util::{checksum, compress, download, progress};
 
@@ -465,6 +465,7 @@ impl Builder {
         let mut split_part_dirs = std::collections::HashMap::new();
 
         if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            let has_catchall = parts.iter().any(|(_, sub_part)| sub_part.include.is_none());
             let mut sub_rules: Vec<(&str, PathBuf, Vec<regex::Regex>, Vec<regex::Regex>)> =
                 Vec::new();
             for (sub_name, sub_part) in parts {
@@ -511,83 +512,136 @@ impl Builder {
                 sub_rules.push((sub_name.as_str(), sub_output_dir, includes, excludes));
             }
 
-            if !sub_rules.is_empty() {
-                debug!(
-                    "Splitting staging dir into {} non-catch-all outputs",
-                    sub_rules.len()
-                );
-                let mut all_entries = Vec::new();
-                let mut dirs_to_visit = vec![staging_dir.clone()];
-                while let Some(dir) = dirs_to_visit.pop() {
-                    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let path = entry.path();
-                            if tokio::fs::metadata(&path)
-                                .await
-                                .map(|m| m.is_dir())
-                                .unwrap_or(false)
-                            {
-                                dirs_to_visit.push(path);
+            let mut discard_rules: Vec<(&str, Vec<regex::Regex>, Vec<regex::Regex>)> = Vec::new();
+            for discard in &manifest.discard {
+                let includes = discard
+                    .include
+                    .iter()
+                    .map(|pat| {
+                        regex::Regex::new(pat).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "invalid discard include regex '{}': {}",
+                                pat, e
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let excludes = discard
+                    .exclude
+                    .iter()
+                    .map(|pat| {
+                        regex::Regex::new(pat).map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "invalid discard exclude regex '{}': {}",
+                                pat, e
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                discard_rules.push((discard.reason.as_str(), includes, excludes));
+            }
+
+            debug!(
+                "Splitting staging dir into {} outputs and {} discard rules",
+                sub_rules.len(),
+                discard_rules.len()
+            );
+            let mut all_entries = Vec::new();
+            let mut dirs_to_visit = vec![staging_dir.clone()];
+            while let Some(dir) = dirs_to_visit.pop() {
+                if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let path = entry.path();
+                        if tokio::fs::metadata(&path)
+                            .await
+                            .map(|m| m.is_dir())
+                            .unwrap_or(false)
+                        {
+                            dirs_to_visit.push(path);
+                        } else {
+                            all_entries.push(path);
+                        }
+                    }
+                }
+            }
+            all_entries.sort();
+
+            let mut link_actions = Vec::new();
+            let mut unmatched = Vec::new();
+            for file_path in &all_entries {
+                if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
+                    let rel_str = format!("/{}", rel_path.display());
+                    let mut dest_path = None;
+                    for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
+                        let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
+                        if matched
+                            && !excludes.is_empty()
+                            && excludes.iter().any(|re| re.is_match(&rel_str))
+                        {
+                            matched = false;
+                        }
+                        if matched {
+                            dest_path = Some(sub_dir.join(rel_path));
+                            break;
+                        }
+                    }
+
+                    if dest_path.is_none() {
+                        let discarded =
+                            discard_rules.iter().any(|(_reason, includes, excludes)| {
+                                let matched = includes.iter().any(|re| re.is_match(&rel_str));
+                                matched
+                                    && (excludes.is_empty()
+                                        || !excludes.iter().any(|re| re.is_match(&rel_str)))
+                            });
+                        if !discarded {
+                            if has_catchall {
+                                dest_path = Some(default_output_dir.join(rel_path));
                             } else {
-                                all_entries.push(path);
+                                unmatched.push(rel_str);
                             }
                         }
                     }
-                }
 
-                let mut matched_files = std::collections::HashSet::new();
-
-                for file_path in &all_entries {
-                    if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
-                        let rel_str = format!("/{}", rel_path.display());
-                        for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
-                            let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
-                            if matched
-                                && !excludes.is_empty()
-                                && excludes.iter().any(|re| re.is_match(&rel_str))
-                            {
-                                matched = false;
-                            }
-                            if matched {
-                                let dest_path = sub_dir.join(rel_path);
-                                if let Some(parent) = dest_path.parent() {
-                                    let _ = tokio::fs::create_dir_all(parent).await;
-                                }
-                                if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
-                                    return Err(WrightError::BuildError(format!(
-                                        "failed to hard-link {} to {}: {}",
-                                        file_path.display(),
-                                        dest_path.display(),
-                                        e
-                                    )));
-                                }
-                                matched_files.insert(file_path.clone());
-                                break;
-                            }
-                        }
+                    if let Some(dest_path) = dest_path {
+                        link_actions.push((file_path.clone(), dest_path));
                     }
                 }
+            }
 
-                // Hard-link remaining files to default_output_dir (catch-all)
-                for file_path in &all_entries {
-                    if !matched_files.contains(file_path) {
-                        if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
-                            let dest_path = default_output_dir.join(rel_path);
-                            if let Some(parent) = dest_path.parent() {
-                                let _ = tokio::fs::create_dir_all(parent).await;
-                            }
-                            if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
-                                warn!(
-                                    "Failed to hard-link catch-all file {}: {}",
-                                    file_path.display(),
-                                    e
-                                );
-                            }
-                        }
-                    }
+            if !unmatched.is_empty() {
+                let shown = unmatched
+                    .iter()
+                    .take(50)
+                    .map(|p| format!("  - {p}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let omitted = unmatched.len().saturating_sub(50);
+                let suffix = if omitted > 0 {
+                    format!("\n  ... and {omitted} more")
+                } else {
+                    String::new()
+                };
+                return Err(WrightError::BuildError(format!(
+                    "{} staging files are not claimed by any [[output]] or [[discard]] rule:\n{}{}\nAdd an [[output]] include pattern, add an explicit [[discard]] rule, or add a catch-all [[output]] with no include.",
+                    unmatched.len(),
+                    shown,
+                    suffix
+                )));
+            }
+
+            for (file_path, dest_path) in link_actions {
+                if let Some(parent) = dest_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
                 }
-            } else {
-                hard_link_all(&staging_dir, &default_output_dir).await?;
+                if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
+                    return Err(WrightError::BuildError(format!(
+                        "failed to hard-link {} to {}: {}",
+                        file_path.display(),
+                        dest_path.display(),
+                        e
+                    )));
+                }
             }
         } else {
             hard_link_all(&staging_dir, &default_output_dir).await?;

@@ -25,16 +25,6 @@ pub struct FabricateHooks {
     pub post_remove: Option<String>,
 }
 
-/// Main output metadata.
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct FabricateOutput {
-    #[serde(default)]
-    pub hooks: Option<FabricateHooks>,
-    #[serde(default)]
-    pub backup: Option<Vec<String>>,
-}
-
 /// Additional output mode.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -68,14 +58,21 @@ pub struct SubFabricateOutput {
     pub backup: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DiscardRule {
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum OutputConfig {
-    Single(FabricateOutput),
     /// Ordered list of outputs. At most one has `include = None` (the catch-all);
     /// all others carry explicit `include` patterns. Non-catch-all outputs are
-    /// processed in declared order, moving matching files out of the staging dir.
-    /// The optional catch-all keeps whatever remains — no move needed.
-    /// If there is no catch-all, un-matched files are silently discarded.
+    /// processed in declared order. Any unclaimed file must match a discard rule
+    /// or be packaged by the optional catch-all.
     Multi(Vec<(String, SubFabricateOutput)>),
 }
 
@@ -117,7 +114,7 @@ pub struct BackupConfig {
 /// - **`provides`**: Virtual names — allows this part to satisfy dependencies on
 ///   an abstract capability (e.g. `http-server`).
 ///
-/// Declared per-output in `[output]` (main part) or `[output.<name>]` (sub-part).
+/// Declared per-output in `[[output]]`.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct Relations {
     #[serde(default)]
@@ -195,6 +192,8 @@ pub struct PlanManifest {
     pub mvp: Option<PhaseConfig>,
     /// Fabricate output configuration.
     pub outputs: Option<OutputConfig>,
+    /// Explicitly ignored staging files for multi-output slicing.
+    pub discard: Vec<DiscardRule>,
     /// Derived archive metadata populated from `fabricate`.
     pub install_scripts: Option<InstallScripts>,
     pub backup: Option<BackupConfig>,
@@ -400,7 +399,14 @@ impl PlanManifest {
                                 .to_string(),
                         ));
                     }
+                    let mut output_names = std::collections::HashSet::new();
                     for (sub_name, sub_part) in parts {
+                        if !output_names.insert(sub_name) {
+                            return Err(WrightError::ValidationError(format!(
+                                "duplicate output name '{}' in plan '{}'",
+                                sub_name, self.metadata.name
+                            )));
+                        }
                         if !name_re.is_match(sub_name) {
                             return Err(WrightError::ValidationError(format!(
                                 "invalid output name '{}': must match [a-z0-9][a-z0-9_+.-]*",
@@ -433,7 +439,23 @@ impl PlanManifest {
                         }
                     }
                 }
-                OutputConfig::Single(_) => {}
+            }
+        } else if !self.discard.is_empty() {
+            return Err(WrightError::ValidationError(
+                "[[discard]] is only valid for multi-output plans".to_string(),
+            ));
+        }
+
+        for rule in &self.discard {
+            if rule.include.is_empty() {
+                return Err(WrightError::ValidationError(
+                    "[[discard]].include must list at least one pattern".to_string(),
+                ));
+            }
+            if rule.reason.trim().is_empty() {
+                return Err(WrightError::ValidationError(
+                    "[[discard]].reason must explain why matched files are ignored".to_string(),
+                ));
             }
         }
 
@@ -680,15 +702,15 @@ cd ${BUILD_DIR}
 make DESTDIR=${STAGING_DIR} install
 """
 
-[hooks]
-post_install = "useradd -r nginx 2>/dev/null || true"
-post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-pre_remove = "systemctl stop nginx 2>/dev/null || true"
-
-[output]
+[[output]]
 conflicts = ["apache"]
 provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+
+[output.hooks]
+post_install = "useradd -r nginx 2>/dev/null || true"
+post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+pre_remove = "systemctl stop nginx 2>/dev/null || true"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.metadata.name, "nginx");
@@ -707,15 +729,16 @@ backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
         let backup = manifest.backup.as_ref().unwrap();
         assert_eq!(backup.files.len(), 2);
 
-        // New-style fabricate config
+        // Output config
         match manifest.outputs {
-            Some(OutputConfig::Single(ref output)) => {
+            Some(OutputConfig::Multi(ref outputs)) => {
+                let (_, output) = outputs.iter().find(|(name, _)| name == "nginx").unwrap();
                 let hooks = output.hooks.as_ref().unwrap();
                 assert!(hooks.post_install.is_some());
                 assert!(hooks.pre_remove.is_some());
                 assert_eq!(output.backup.as_ref().unwrap().len(), 2);
             }
-            _ => panic!("expected Single fabricate config"),
+            _ => panic!("expected Multi output config"),
         }
     }
 
@@ -1014,6 +1037,117 @@ include = ["/usr/lib/.*"]
     }
 
     #[test]
+    fn test_output_name_defaults_to_plan_name() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+description = "test output"
+include = ["/usr/bin/.*"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(parts)) => {
+                assert_eq!(parts[0].0, "test");
+            }
+            _ => panic!("expected Multi output config"),
+        }
+    }
+
+    #[test]
+    fn test_empty_output_name_defaults_to_plan_name() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = ""
+description = "test output"
+include = ["/usr/bin/.*"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(parts)) => {
+                assert_eq!(parts[0].0, "test");
+            }
+            _ => panic!("expected Multi output config"),
+        }
+    }
+
+    #[test]
+    fn test_duplicate_output_name_error() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "test-bin"
+description = "test bin"
+include = ["/usr/bin/.*"]
+
+[[output]]
+name = "test-bin"
+description = "duplicate"
+include = ["/usr/lib/.*"]
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("duplicate output name"));
+    }
+
+    #[test]
+    fn test_output_table_is_rejected() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[output]
+runtime_deps = ["zlib:default"]
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("[output] table syntax"));
+    }
+
+    #[test]
+    fn test_discard_rule_requires_reason() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "test-bin"
+description = "test bin"
+include = ["/usr/bin/.*"]
+
+[[discard]]
+include = ["/usr/share/doc/.*"]
+reason = ""
+"#;
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        assert!(err.to_string().contains("reason"));
+    }
+
+    #[test]
     fn test_multi_output_multiple_catchall_error() {
         let toml_str = r#"
 name = "test"
@@ -1036,7 +1170,7 @@ description = "test lib"
     }
 
     #[test]
-    fn test_single_output_with_output_section_ok() {
+    fn test_explicit_single_output_ok() {
         let toml_str = r#"
 name = "test"
 version = "1.0.0"
@@ -1114,24 +1248,25 @@ arch = "x86_64"
 [lifecycle.staging]
 script = "make DESTDIR=${STAGING_DIR} install"
 
-[hooks]
+[[output]]
+backup = ["/etc/test.conf"]
+
+[output.hooks]
 pre_install = "echo pre"
 post_install = "ldconfig"
 pre_remove = "systemctl stop test"
-
-[output]
-backup = ["/etc/test.conf"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
-            Some(OutputConfig::Single(ref output)) => {
+            Some(OutputConfig::Multi(ref outputs)) => {
+                let (_, output) = outputs.iter().find(|(name, _)| name == "test").unwrap();
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo pre"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
                 assert_eq!(hooks.pre_remove.as_deref(), Some("systemctl stop test"));
                 assert_eq!(output.backup.as_ref().unwrap(), &["/etc/test.conf"]);
             }
-            _ => panic!("expected Single fabricate config"),
+            _ => panic!("expected Multi output config"),
         }
         assert!(manifest.install_scripts.is_some());
         assert!(manifest.backup.is_some());
@@ -1262,7 +1397,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[output]
+[[output]]
 replaces = ["old-nginx"]
 conflicts = ["apache"]
 provides = ["http-server"]
@@ -1369,20 +1504,21 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[hooks]
+[[output]]
+
+[output.hooks]
 pre_install = "echo preparing"
 post_install = "ldconfig"
-
-[output]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
-            Some(OutputConfig::Single(ref output)) => {
+            Some(OutputConfig::Multi(ref outputs)) => {
+                let (_, output) = outputs.iter().find(|(name, _)| name == "test").unwrap();
                 let hooks = output.hooks.as_ref().unwrap();
                 assert_eq!(hooks.pre_install.as_deref(), Some("echo preparing"));
                 assert_eq!(hooks.post_install.as_deref(), Some("ldconfig"));
             }
-            _ => panic!("expected Single"),
+            _ => panic!("expected Multi"),
         }
         let scripts = manifest.install_scripts.as_ref().unwrap();
         assert_eq!(scripts.pre_install.as_deref(), Some("echo preparing"));

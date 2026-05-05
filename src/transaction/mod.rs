@@ -8,7 +8,7 @@ mod verify;
 
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::part::part::PartInfo;
+use crate::part::archive::PartInfo;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::debug;

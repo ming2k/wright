@@ -27,8 +27,8 @@ use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError, WrightResultExt};
+use crate::part::archive;
 use crate::part::fhs;
-use crate::part::part;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 fn collect_ready(
@@ -537,7 +537,7 @@ pub async fn package_outputs(
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
                 let sub_part_path =
-                    part::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
+                    archive::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
                 if print_parts {
                     println!("{}", sub_part_path.display());
@@ -548,7 +548,7 @@ pub async fn package_outputs(
             if !manifest.options.skip_fhs_check {
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
-            let part_path = part::create_part(&result.output_dir, manifest, &output_dir, None)?;
+            let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
             info!(
                 "{}",
                 logging::plan_packed(&manifest.metadata.name, &part_path)
@@ -584,7 +584,6 @@ pub async fn package_manifest(
             OutputConfig::Multi(parts) => parts.iter().any(|(sub_name, sub_part)| {
                 sub_part.include.is_some() && !build_root.join("outputs").join(sub_name).exists()
             }),
-            OutputConfig::Single(_) => false,
         });
 
     let result = if need_slice {

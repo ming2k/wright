@@ -60,25 +60,10 @@ impl SubFabricateOutput {
             lifecycle_order: None,
             mvp: None,
             outputs: None,
+            discard: Vec::new(),
             install_scripts,
             backup,
             source_plan: Some(parent.metadata.name.clone()),
         }
     }
-}
-
-pub(super) fn fabricate_install_scripts(output: &super::FabricateOutput) -> Option<InstallScripts> {
-    output.hooks.as_ref().map(|h| InstallScripts {
-        pre_install: h.pre_install.clone(),
-        post_install: h.post_install.clone(),
-        post_upgrade: h.post_upgrade.clone(),
-        pre_remove: h.pre_remove.clone(),
-        post_remove: h.post_remove.clone(),
-    })
-}
-
-pub(super) fn fabricate_backup(output: &super::FabricateOutput) -> Option<BackupConfig> {
-    output.backup.as_ref().map(|files| BackupConfig {
-        files: files.clone(),
-    })
 }

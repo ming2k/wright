@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
-use crate::archive::resolver::LocalResolver;
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
+use crate::part::store::LocalPartStore;
 use crate::transaction;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,7 +31,7 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
 }
 
 pub async fn resolve_install_paths(
-    resolver: &LocalResolver,
+    part_store: &LocalPartStore,
     args: &[String],
 ) -> Result<Vec<PathBuf>> {
     let mut part_paths = Vec::new();
@@ -42,7 +42,7 @@ pub async fn resolve_install_paths(
             continue;
         }
 
-        match resolver.resolve(arg).await? {
+        match part_store.resolve(arg).await? {
             Some(resolved) => part_paths.push(resolved.path),
             None => anyhow::bail!(
                 "'{}' is not a file and could not be resolved from parts_dir",
@@ -76,7 +76,7 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
 struct ApplyContext<'a> {
     config: &'a GlobalConfig,
     db_path: &'a Path,
-    resolver: &'a LocalResolver,
+    part_store: &'a LocalPartStore,
     root_dir: &'a Path,
     force: bool,
     verbose: bool,
@@ -296,8 +296,9 @@ async fn apply_targets(
         describe_batch_actions, describe_build_resources, BuildExecutionPlan,
     };
 
+    let plan_dirs = crate::builder::orchestrator::plan_search_dirs(ctx.config);
     let explicit_plan_names =
-        crate::builder::orchestrator::resolve_explicit_plan_names(ctx.resolver, &targets)?;
+        crate::builder::orchestrator::resolve_explicit_plan_names(&plan_dirs, &targets)?;
 
     let install_nodeps = resolve_opts.deps.is_none();
 
@@ -524,7 +525,7 @@ async fn apply_targets(
             &parts,
             &explicit_targets,
             ctx.root_dir,
-            ctx.resolver,
+            ctx.part_store,
             ctx.force,
             install_nodeps,
         )
@@ -565,7 +566,7 @@ pub struct ApplyArgs<'a> {
     pub root_dir: &'a Path,
     pub verbose: u8,
     pub quiet: bool,
-    pub resolver: &'a LocalResolver,
+    pub part_store: &'a LocalPartStore,
 }
 
 pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
@@ -583,7 +584,7 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         root_dir,
         verbose,
         quiet,
-        resolver,
+        part_store,
     } = args;
     let targets = collect_install_args(targets)?;
     let (resume_requested, explicit_resume_hash) = match resume {
@@ -624,7 +625,7 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         ApplyContext {
             config,
             db_path,
-            resolver,
+            part_store,
             root_dir,
             force,
             verbose: verbose > 0,

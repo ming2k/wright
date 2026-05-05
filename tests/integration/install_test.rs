@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use wright::archive::resolver::LocalResolver;
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
-use wright::part::part;
+use wright::part::archive;
+use wright::part::store::LocalPartStore;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
 use wright::transaction;
 
@@ -47,7 +47,7 @@ async fn build_hello_archive() -> PathBuf {
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =
-        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,10 +95,7 @@ include = ["/usr/bin/y"]
     ))
     .unwrap();
 
-    let outputs = match manifest.outputs.as_ref().unwrap() {
-        OutputConfig::Multi(outputs) => outputs,
-        _ => panic!("expected multi-output manifest"),
-    };
+    let OutputConfig::Multi(outputs) = manifest.outputs.as_ref().unwrap();
     let sub = outputs
         .iter()
         .find(|(name, _)| name == output_name)
@@ -116,7 +113,7 @@ include = ["/usr/bin/y"]
     .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
-    let archive = part::create_part(
+    let archive = archive::create_part(
         part_dir.path(),
         &sub_manifest,
         output_dir.path(),
@@ -189,7 +186,7 @@ async fn test_end_to_end_install_query_remove() {
 async fn test_install_accepts_same_revision_split_outputs() {
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let resolver = LocalResolver::new();
+    let part_store = LocalPartStore::new();
     let x = build_split_archive("1.0.0", "x");
     let y = build_split_archive("1.0.0", "y");
 
@@ -197,7 +194,7 @@ async fn test_install_accepts_same_revision_split_outputs() {
         &db,
         &[x.clone(), y.clone()],
         root.path(),
-        &resolver,
+        &part_store,
         false,
         false,
     )
@@ -217,7 +214,7 @@ async fn test_install_accepts_same_revision_split_outputs() {
 async fn test_install_rejects_mixed_split_plan_revisions() {
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let resolver = LocalResolver::new();
+    let part_store = LocalPartStore::new();
     let x = build_split_archive("1.0.0", "x");
     let y = build_split_archive("2.0.0", "y");
 
@@ -225,7 +222,7 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
         &db,
         &[x.clone(), y.clone()],
         root.path(),
-        &resolver,
+        &part_store,
         false,
         false,
     )
@@ -243,7 +240,7 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
 async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let resolver = LocalResolver::new();
+    let part_store = LocalPartStore::new();
     let x_v1 = build_split_archive("1.0.0", "x");
     let y_v2 = build_split_archive("2.0.0", "y");
 
@@ -251,7 +248,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &db,
         std::slice::from_ref(&x_v1),
         root.path(),
-        &resolver,
+        &part_store,
         false,
         false,
     )
@@ -262,7 +259,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &db,
         std::slice::from_ref(&y_v2),
         root.path(),
-        &resolver,
+        &part_store,
         false,
         false,
     )

@@ -38,9 +38,9 @@ pub async fn execute_package(
         return Err(WrightError::BuildError("No targets specified to package.".to_string()).into());
     }
 
-    let resolver = orchestrator::setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
-    let plan_paths = orchestrator::resolve_targets(&all_targets, &all_plans, &resolver)?;
+    let plan_dirs = orchestrator::plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let plan_paths = orchestrator::resolve_targets(&all_targets, &all_plans, &plan_dirs)?;
 
     if plan_paths.is_empty() {
         return Err(WrightError::BuildError(

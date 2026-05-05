@@ -18,12 +18,11 @@ src/
 ├── cli/              # clap argument schemas grouped by subcommand
 ├── commands/         # command handlers grouped by subcommand
 ├── config.rs         # global configuration
-├── archive/          # archive pruning and local part resolution
 ├── builder/          # build orchestration and lifecycle execution
 ├── database/         # SQLite state layer and migrations
 ├── isolation/        # sandbox isolation (bubblewrap, sysroot)
-├── part/             # archive format, version parsing, FHS validation
-├── plan/             # plan manifest parsing and validation
+├── part/             # archive format, local part store, pruning, version parsing, FHS validation
+├── plan/             # plan discovery, manifest parsing, and validation
 ├── query/            # read-only system inspection and tree queries
 ├── transaction/      # install / upgrade / remove with rollback journal
 └── util/             # helpers: download, checksum, compression, locking

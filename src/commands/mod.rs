@@ -5,9 +5,9 @@ pub mod prune;
 pub mod resolve;
 pub mod system;
 
-use crate::archive::resolver::LocalResolver;
 use crate::cli::Cli;
 use crate::config::GlobalConfig;
+use crate::part::store::LocalPartStore;
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -40,7 +40,7 @@ pub async fn dispatch(
     }
 }
 
-/// Helper function to setup the local resolver for commands that need it.
-pub(crate) fn setup_local_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
-    crate::builder::orchestrator::setup_resolver(config).map_err(Into::into)
+/// Helper function to setup the local part store for commands that need it.
+pub(crate) fn setup_local_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
+    crate::builder::orchestrator::setup_part_store(config).map_err(Into::into)
 }

@@ -5,13 +5,13 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::archive::resolver::LocalResolver;
 use crate::database::{
     Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation, TransactionStatus,
 };
 use crate::error::{Result, WrightError};
-use crate::part::part;
-use crate::part::part::PartInfo;
+use crate::part::archive;
+use crate::part::archive::PartInfo;
+use crate::part::store::LocalPartStore;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
@@ -60,13 +60,13 @@ pub async fn install_parts(
     db: &InstalledDb,
     parts: &[PathBuf],
     root_dir: &Path,
-    resolver: &LocalResolver,
+    part_store: &LocalPartStore,
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
         .iter()
-        .map(|path| resolver.read_part(path))
+        .map(|path| part_store.read_part(path))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .map(|resolved| resolved.name)
@@ -76,7 +76,7 @@ pub async fn install_parts(
         parts,
         &explicit_targets,
         root_dir,
-        resolver,
+        part_store,
         force,
         nodeps,
     )
@@ -88,7 +88,7 @@ pub async fn install_parts_with_explicit_targets(
     parts: &[PathBuf],
     explicit_targets: &HashSet<String>,
     root_dir: &Path,
-    resolver: &LocalResolver,
+    part_store: &LocalPartStore,
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
@@ -98,7 +98,7 @@ pub async fn install_parts_with_explicit_targets(
     let mut resolved_map = HashMap::new();
 
     for candidate in &candidates {
-        let resolved = resolver.read_part(&candidate.path)?;
+        let resolved = part_store.read_part(&candidate.path)?;
         resolved_map.insert(resolved.name.clone(), resolved);
     }
 
@@ -153,7 +153,7 @@ fn read_install_candidates(parts: &[PathBuf]) -> Result<Vec<InstallCandidate>> {
     parts
         .iter()
         .map(|path| {
-            let partinfo = part::read_partinfo(path)?;
+            let partinfo = archive::read_partinfo(path)?;
             Ok(InstallCandidate {
                 path: path.clone(),
                 partinfo,
@@ -232,7 +232,7 @@ async fn validate_plan_output_batches(
 
 async fn warn_about_runtime_dependencies(
     db: &InstalledDb,
-    resolved_map: &HashMap<String, crate::archive::resolver::ResolvedPart>,
+    resolved_map: &HashMap<String, crate::part::store::ResolvedPart>,
 ) -> Result<()> {
     let mut provided_in_batch = HashSet::new();
     for part in resolved_map.values() {
@@ -358,7 +358,7 @@ pub async fn install_part_with_origin(
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
     let mut phase_start = Instant::now();
-    let (partinfo, part_hash) = part::extract_part(part_path, temp_dir.path())?;
+    let (partinfo, part_hash) = archive::extract_part(part_path, temp_dir.path())?;
     log_debug_timing(
         "install",
         &partinfo.name,

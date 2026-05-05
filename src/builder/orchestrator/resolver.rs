@@ -1,34 +1,40 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::archive::resolver::LocalResolver;
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError, WrightResultExt};
+use crate::part::store::LocalPartStore;
 use crate::plan::manifest::PlanManifest;
 
-pub fn setup_resolver(config: &GlobalConfig) -> Result<LocalResolver> {
-    let mut resolver = LocalResolver::new();
-    resolver.add_plans_dir(config.general.plans_dir.clone());
+pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    dirs.push(config.general.plans_dir.clone());
     for extra_dir in &config.general.extra_plans_dirs {
-        resolver.add_plans_dir(extra_dir.clone());
+        dirs.push(extra_dir.clone());
     }
 
     // Add current directory to plans search path so we can resolve dependencies
     // in local development trees.
     if let Ok(cwd) = std::env::current_dir() {
-        resolver.add_plans_dir(cwd);
+        dirs.push(cwd);
     }
 
-    // Always include the configured parts directory in the part search path.
-    resolver.add_search_dir(config.general.parts_dir.clone());
+    dirs
+}
 
-    Ok(resolver)
+pub fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
+    let mut store = LocalPartStore::new();
+
+    // Always include the configured parts directory in the part search path.
+    store.add_search_dir(config.general.parts_dir.clone());
+
+    Ok(store)
 }
 
 pub fn resolve_targets(
     targets: &[String],
     all_plans: &HashMap<String, PathBuf>,
-    resolver: &LocalResolver,
+    plan_dirs: &[PathBuf],
 ) -> Result<HashSet<PathBuf>> {
     let mut plans_to_build = HashSet::new();
 
@@ -52,7 +58,7 @@ pub fn resolve_targets(
                 plans_to_build.insert(manifest_path);
             } else {
                 let mut found = false;
-                for plans_dir in &resolver.plans_dirs {
+                for plans_dir in plan_dirs {
                     let candidate = plans_dir.join(clean_target).join("plan.toml");
                     if candidate.exists() {
                         PlanManifest::from_file(&candidate)

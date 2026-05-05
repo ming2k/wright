@@ -1,5 +1,5 @@
 use crate::error::{Result, WrightError};
-use crate::part::part;
+use crate::part::archive;
 use crate::part::version::Version;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -9,9 +9,8 @@ pub fn sanitize_cache_filename(raw: &str) -> String {
     crate::util::sanitize_filename(raw)
 }
 
-pub struct LocalResolver {
+pub struct LocalPartStore {
     pub search_dirs: Vec<PathBuf>,
-    pub plans_dirs: Vec<PathBuf>,
 }
 
 pub struct ResolvedPart {
@@ -72,26 +71,21 @@ pub fn pick_version<'a>(
         .max_by_key(|p| p.release)
 }
 
-impl Default for LocalResolver {
+impl Default for LocalPartStore {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl LocalResolver {
+impl LocalPartStore {
     pub fn new() -> Self {
         Self {
             search_dirs: Vec::new(),
-            plans_dirs: Vec::new(),
         }
     }
 
     pub fn add_search_dir(&mut self, path: PathBuf) {
         self.search_dirs.push(path);
-    }
-
-    pub fn add_plans_dir(&mut self, path: PathBuf) {
-        self.plans_dirs.push(path);
     }
 
     pub async fn resolve(&self, name: &str) -> Result<Option<ResolvedPart>> {
@@ -136,7 +130,7 @@ impl LocalResolver {
                     if !fname.ends_with(".wright.tar.zst") {
                         continue;
                     }
-                    let partinfo = match part::read_partinfo(&path) {
+                    let partinfo = match archive::read_partinfo(&path) {
                         Ok(p) => p,
                         Err(_) => continue,
                     };
@@ -157,11 +151,11 @@ impl LocalResolver {
             Ok(results)
         })
         .await
-        .map_err(|e| WrightError::BuildError(format!("resolver task failed: {}", e)))?
+        .map_err(|e| WrightError::BuildError(format!("part store task failed: {}", e)))?
     }
 
     pub fn read_part(&self, path: &Path) -> Result<ResolvedPart> {
-        let partinfo = part::read_partinfo(path)?;
+        let partinfo = archive::read_partinfo(path)?;
         Ok(ResolvedPart {
             name: partinfo.name,
             version: partinfo.plan.version,
@@ -169,25 +163,5 @@ impl LocalResolver {
             dependencies: partinfo.runtime_deps,
             provides: partinfo.provides,
         })
-    }
-
-    pub fn get_all_plans(&self) -> Result<std::collections::HashMap<String, PathBuf>> {
-        let mut map = std::collections::HashMap::new();
-        for root in &self.plans_dirs {
-            if !root.exists() {
-                continue;
-            }
-            for entry in walkdir::WalkDir::new(root) {
-                let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
-                if entry.file_name() == "plan.toml" {
-                    if let Ok(manifest) =
-                        crate::plan::manifest::PlanManifest::from_file(entry.path())
-                    {
-                        map.insert(manifest.metadata.name, entry.path().to_path_buf());
-                    }
-                }
-            }
-        }
-        Ok(map)
     }
 }

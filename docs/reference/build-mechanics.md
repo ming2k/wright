@@ -50,7 +50,7 @@ steps are skipped entirely. When the build key changes (e.g. a version bump),
 always removes the entire working directory including `work/`.
 
 If multiple outputs are defined in `plan.toml` (split-parts), additional
-staging directories are created:
+output directories are created:
 
 ```
 <build_dir>/<name>-<version>/¹
@@ -215,9 +215,10 @@ When multi-output plans declare `[[output]]` entries:
    in their declared order.
 2. For each output, files matching its `include` patterns are **hard-linked**
    from `staging/` into `outputs/<name>/`.
-3. If a catch-all output exists (the one with no `include`), it keeps whatever
+3. Remaining files matching `[[discard]]` rules are ignored.
+4. If a catch-all output exists (the one with no `include`), it keeps whatever
    remains in `staging/` via hard-links into `outputs/default/`.
-4. If there is **no** catch-all, any remaining files are silently discarded.
+5. Any file still unclaimed fails slicing and must be assigned or explicitly discarded.
 
 Later outputs only see files not claimed by earlier outputs. Order matters
 when `include` patterns overlap. The original `staging/` directory is left
@@ -248,4 +249,3 @@ fetch/verify/extract steps are skipped entirely when `work/` is reused.
 When the build key changes — because the version, sources, or lifecycle scripts
 were modified — `work/` is automatically cleaned and sources are re-extracted.
 To force a clean re-extraction without changing the plan, use `--clean`.
-

@@ -1,6 +1,6 @@
 use super::apply::{collect_install_args, resolve_install_paths};
-use crate::archive::resolver::LocalResolver;
 use crate::database::InstalledDb;
+use crate::part::store::LocalPartStore;
 use crate::transaction;
 use anyhow::Result;
 use std::path::Path;
@@ -11,7 +11,7 @@ pub async fn execute_install(
     force: bool,
     nodeps: bool,
     root_dir: &Path,
-    resolver: &LocalResolver,
+    part_store: &LocalPartStore,
 ) -> Result<()> {
     use std::io::IsTerminal;
     let parts = collect_install_args(parts)?;
@@ -21,9 +21,9 @@ pub async fn execute_install(
         }
         anyhow::bail!("no parts specified (pass part names/paths as arguments or via stdin)");
     }
-    let part_paths = resolve_install_paths(resolver, &parts).await?;
+    let part_paths = resolve_install_paths(part_store, &parts).await?;
 
-    match transaction::install_parts(db, &part_paths, root_dir, resolver, force, nodeps).await {
+    match transaction::install_parts(db, &part_paths, root_dir, part_store, force, nodeps).await {
         Ok(()) => println!("installation completed successfully"),
         Err(e) => {
             eprintln!("error: {:#}", e);

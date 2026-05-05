@@ -1,5 +1,5 @@
-use crate::archive::resolver::ResolvedPart;
 use crate::error::{Result, WrightError};
+use crate::part::store::ResolvedPart;
 use crate::part::version;
 use std::collections::{HashMap, HashSet};
 

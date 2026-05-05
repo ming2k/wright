@@ -3,7 +3,7 @@ use std::process::Command;
 
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
-use wright::part::part;
+use wright::part::archive;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -81,14 +81,14 @@ async fn test_build_and_archive_hello() {
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
     assert!(archive_path.to_string_lossy().ends_with(".wright.tar.zst"));
 
     // Verify we can read PARTINFO from it
-    let partinfo = part::read_partinfo(&archive_path).unwrap();
+    let partinfo = archive::read_partinfo(&archive_path).unwrap();
     assert_eq!(partinfo.name, "hello");
     assert_eq!(partinfo.plan.version, "1.0.0");
     assert_eq!(partinfo.plan.release, 1);
@@ -96,7 +96,7 @@ async fn test_build_and_archive_hello() {
 
     // Verify we can extract it
     let extract_dir = tempfile::tempdir().unwrap();
-    let (extracted_info, _hash) = part::extract_part(&archive_path, extract_dir.path()).unwrap();
+    let (extracted_info, _hash) = archive::extract_part(&archive_path, extract_dir.path()).unwrap();
     assert_eq!(extracted_info.name, "hello");
     assert!(extract_dir.path().join("usr/bin/hello").exists());
     assert!(extract_dir.path().join(".PARTINFO").exists());
@@ -156,8 +156,8 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
-    let partinfo = part::read_partinfo(&archive_path).unwrap();
+        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+    let partinfo = archive::read_partinfo(&archive_path).unwrap();
 
     assert_eq!(
         partinfo.runtime_deps,
@@ -165,7 +165,7 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
     );
 
     let extract_dir = tempfile::tempdir().unwrap();
-    part::extract_part(&archive_path, extract_dir.path()).unwrap();
+    archive::extract_part(&archive_path, extract_dir.path()).unwrap();
     let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
     assert!(partinfo.contains("runtime_deps = [\"openssl:default\", \"zlib:default\"]"));
     assert!(!partinfo.contains("link ="));
@@ -230,6 +230,128 @@ include = ["/usr/share/doc/.*"]
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(result.split_part_dirs["split-vars-doc"]
         .join("usr/share/doc/split-vars")
+        .exists());
+}
+
+#[tokio::test]
+async fn test_multi_output_fails_on_unclaimed_staging_files() {
+    let manifest = PlanManifest::parse(
+        r#"
+name = "coverage"
+version = "1.0.0"
+release = 1
+description = "test output coverage"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/coverage
+install -Dm644 /dev/null ${STAGING_DIR}/usr/share/doc/coverage
+"""
+
+[[output]]
+name = "coverage"
+description = "coverage binary"
+include = ["/usr/bin/.*"]
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.build_dir = build_tmp.path().to_path_buf();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let builder = Builder::new(config);
+    let result = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[],
+            None,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    let err = match result {
+        Ok(_) => panic!("expected unclaimed staging files to fail slicing"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("not claimed"));
+    assert!(msg.contains("/usr/share/doc/coverage"));
+}
+
+#[tokio::test]
+async fn test_discard_rule_explicitly_ignores_unclaimed_files() {
+    let manifest = PlanManifest::parse(
+        r#"
+name = "coverage"
+version = "1.0.0"
+release = 1
+description = "test output coverage"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/coverage
+install -Dm644 /dev/null ${STAGING_DIR}/usr/share/doc/coverage
+"""
+
+[[output]]
+name = "coverage"
+description = "coverage binary"
+include = ["/usr/bin/.*"]
+
+[[discard]]
+include = ["/usr/share/doc/.*"]
+reason = "documentation is intentionally not packaged"
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.build_dir = build_tmp.path().to_path_buf();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let builder = Builder::new(config);
+    let result = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[],
+            None,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.split_part_dirs["coverage"]
+        .join("usr/bin/coverage")
+        .exists());
+    assert!(!result.split_part_dirs["coverage"]
+        .join("usr/share/doc/coverage")
         .exists());
 }
 

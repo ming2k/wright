@@ -1,6 +1,6 @@
-use crate::archive::resolver::{pick_latest, ResolvedPartVersioned};
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
+use crate::part::store::{pick_latest, ResolvedPartVersioned};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -44,7 +44,7 @@ pub async fn plan_prune(
             if !fname.ends_with(".wright.tar.zst") {
                 continue;
             }
-            let partinfo = match crate::part::part::read_partinfo(&path) {
+            let partinfo = match crate::part::archive::read_partinfo(&path) {
                 Ok(p) => p,
                 Err(_) => continue,
             };

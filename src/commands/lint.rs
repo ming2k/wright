@@ -1,6 +1,6 @@
-use crate::builder::orchestrator::{self, setup_resolver};
+use crate::builder::orchestrator;
 use crate::config::GlobalConfig;
-use crate::error::{Result, WrightError};
+use crate::error::Result;
 use crate::part::version;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 use std::collections::{HashMap, HashSet};
@@ -12,15 +12,15 @@ pub async fn execute_lint(
     _recursive: bool,
     config: &GlobalConfig,
 ) -> Result<()> {
-    let resolver = setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
-    let all_plan_paths = collect_plan_files(&resolver.plans_dirs)?;
+    let plan_dirs = orchestrator::plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let all_plan_paths = crate::plan::discovery::collect_plan_files(&plan_dirs)?;
     let mut local_index = build_local_plan_index(&all_plan_paths);
 
     let mut plan_targets = Vec::new();
 
     if targets.is_empty() {
-        plan_targets.extend(all_plan_paths);
+        plan_targets.extend(all_plan_paths.iter().cloned());
     } else {
         for target in targets {
             if let Some(path) = all_plans.get(&target) {
@@ -33,7 +33,7 @@ pub async fn execute_lint(
                     plan_targets.push(path.join("plan.toml"));
                 } else {
                     let mut found = false;
-                    for plans_dir in &resolver.plans_dirs {
+                    for plans_dir in &plan_dirs {
                         let candidate = plans_dir.join(&target).join("plan.toml");
                         if candidate.is_file() {
                             plan_targets.push(candidate);
@@ -51,6 +51,11 @@ pub async fn execute_lint(
 
     let mut failed = 0;
     let mut parsed_targets = Vec::new();
+
+    for message in validate_global_names(&all_plan_paths) {
+        report_lint_error(message);
+        failed += 1;
+    }
 
     // 1. Lint individual plan manifests
     for path in &plan_targets {
@@ -116,29 +121,6 @@ struct LocalPlanOutputs {
     outputs: HashSet<String>,
 }
 
-fn collect_plan_files(plans_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
-    let mut seen = HashSet::new();
-
-    for root in plans_dirs {
-        if !root.exists() {
-            continue;
-        }
-        for entry in walkdir::WalkDir::new(root) {
-            let entry = entry.map_err(|e| WrightError::IoError(std::io::Error::other(e)))?;
-            if entry.file_name() == "plan.toml" {
-                let path = entry.path().to_path_buf();
-                if seen.insert(path.clone()) {
-                    paths.push(path);
-                }
-            }
-        }
-    }
-
-    paths.sort();
-    Ok(paths)
-}
-
 fn build_local_plan_index(paths: &[PathBuf]) -> HashMap<String, LocalPlanOutputs> {
     let mut index = HashMap::new();
     for path in paths {
@@ -153,6 +135,84 @@ fn build_local_plan_index(paths: &[PathBuf]) -> HashMap<String, LocalPlanOutputs
         }
     }
     index
+}
+
+fn validate_global_names(paths: &[PathBuf]) -> Vec<String> {
+    let mut messages = Vec::new();
+    let mut plan_owners: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut output_owners: HashMap<String, Vec<(String, PathBuf)>> = HashMap::new();
+
+    for path in paths {
+        let Ok(manifest) = PlanManifest::from_file(path) else {
+            continue;
+        };
+        let plan_name = manifest.metadata.name.clone();
+        plan_owners
+            .entry(plan_name.clone())
+            .or_default()
+            .push(path.clone());
+        for output_name in output_names(&manifest) {
+            output_owners
+                .entry(output_name)
+                .or_default()
+                .push((plan_name.clone(), path.clone()));
+        }
+    }
+
+    for (name, owners) in &plan_owners {
+        if owners.len() > 1 {
+            let paths = owners
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            messages.push(format!("duplicate plan name '{}': {}", name, paths));
+        }
+    }
+
+    for (name, owners) in &output_owners {
+        let mut unique_plan_names = owners
+            .iter()
+            .map(|(plan_name, _)| plan_name.as_str())
+            .collect::<Vec<_>>();
+        unique_plan_names.sort_unstable();
+        unique_plan_names.dedup();
+        if unique_plan_names.len() > 1 {
+            let locations = owners
+                .iter()
+                .map(|(plan_name, path)| format!("{} in {}", plan_name, path.display()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            messages.push(format!("duplicate output name '{}': {}", name, locations));
+        }
+    }
+
+    for (plan_name, plan_paths) in &plan_owners {
+        let Some(outputs) = output_owners.get(plan_name) else {
+            continue;
+        };
+        let conflicts = outputs
+            .iter()
+            .filter(|(owner_plan, _)| owner_plan != plan_name)
+            .map(|(owner_plan, path)| format!("output of '{}' in {}", owner_plan, path.display()))
+            .collect::<Vec<_>>();
+        if !conflicts.is_empty() {
+            let plan_locations = plan_paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            messages.push(format!(
+                "plan name '{}' conflicts with {} (plan defined in {})",
+                plan_name,
+                conflicts.join(", "),
+                plan_locations
+            ));
+        }
+    }
+
+    messages.sort();
+    messages
 }
 
 fn output_names(manifest: &PlanManifest) -> HashSet<String> {
@@ -339,5 +399,82 @@ include = ["/usr/lib/.*"]
         );
         assert_eq!(messages.len(), 1);
         assert!(messages[0].contains("missing output 'provider:provider'"));
+    }
+
+    #[test]
+    fn rejects_global_plan_and_output_name_collisions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let alpha = tmp.path().join("alpha/plan.toml");
+        let beta = tmp.path().join("beta/plan.toml");
+        std::fs::create_dir_all(alpha.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(beta.parent().unwrap()).unwrap();
+        std::fs::write(
+            &alpha,
+            r#"
+name = "alpha"
+version = "1.0"
+release = 1
+description = "alpha"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "beta"
+description = "conflicts with beta plan name"
+include = ["/usr/bin/alpha"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &beta,
+            r#"
+name = "beta"
+version = "1.0"
+release = 1
+description = "beta"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_global_names(&[alpha, beta]);
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("plan name 'beta' conflicts")));
+    }
+
+    #[test]
+    fn rejects_duplicate_output_names_across_plans() {
+        let tmp = tempfile::tempdir().unwrap();
+        let one = tmp.path().join("one/plan.toml");
+        let two = tmp.path().join("two/plan.toml");
+        std::fs::create_dir_all(one.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(two.parent().unwrap()).unwrap();
+        for (path, plan_name) in [(&one, "one"), (&two, "two")] {
+            std::fs::write(
+                path,
+                format!(
+                    r#"
+name = "{plan_name}"
+version = "1.0"
+release = 1
+description = "{plan_name}"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "shared"
+description = "shared output name"
+include = ["/usr/bin/{plan_name}"]
+"#
+                ),
+            )
+            .unwrap();
+        }
+
+        let messages = validate_global_names(&[one, two]);
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("duplicate output name 'shared'"));
     }
 }

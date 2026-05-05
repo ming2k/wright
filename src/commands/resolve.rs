@@ -112,8 +112,8 @@ async fn render_build_view(args: ResolveArgs, config: &GlobalConfig) -> Result<(
 }
 
 async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
-    let resolver = orchestrator::setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
+    let plan_dirs = orchestrator::plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
 
     let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for (name, path) in &all_plans {

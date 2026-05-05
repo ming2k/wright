@@ -1,7 +1,7 @@
-use crate::archive::prune;
 use crate::cli::prune::PruneArgs;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
+use crate::part::prune;
 use anyhow::{Context, Result};
 use std::path::Path;
 

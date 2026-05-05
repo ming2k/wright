@@ -24,9 +24,8 @@ use planning::{
 };
 
 pub use execute::package_manifest;
-pub use resolver::{resolve_targets, setup_resolver};
+pub use resolver::{plan_search_dirs, resolve_targets, setup_part_store};
 
-use crate::archive::resolver::LocalResolver;
 use crate::plan::manifest::OutputConfig;
 
 #[derive(Debug, Clone)]
@@ -250,11 +249,11 @@ pub async fn load_completed_build_tasks(
 }
 
 pub fn resolve_explicit_plan_names(
-    resolver: &LocalResolver,
+    plan_dirs: &[PathBuf],
     targets: &[String],
 ) -> Result<HashSet<String>> {
-    let all_plans = resolver.get_all_plans()?;
-    let paths = resolve_targets(targets, &all_plans, resolver)?;
+    let all_plans = crate::plan::discovery::get_all_plans(plan_dirs)?;
+    let paths = resolve_targets(targets, &all_plans, plan_dirs)?;
     Ok(paths
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
@@ -267,9 +266,9 @@ pub async fn resolve_build_set(
     targets: Vec<String>,
     opts: ResolveOptions,
 ) -> Result<Vec<String>> {
-    let resolver = setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
-    let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
+    let plan_dirs = plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let plans_to_build = resolve_targets(&targets, &all_plans, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
@@ -379,9 +378,9 @@ pub fn create_execution_plan(
     targets: Vec<String>,
     opts: &BuildOptions,
 ) -> Result<BuildExecutionPlan> {
-    let resolver = setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
-    let plans_to_build = resolve_targets(&targets, &all_plans, &resolver)?;
+    let plan_dirs = plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let plans_to_build = resolve_targets(&targets, &all_plans, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
@@ -551,9 +550,9 @@ pub fn describe_batch_actions(
 }
 
 pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[String]) -> Result<()> {
-    let resolver = setup_resolver(config)?;
-    let all_plans = resolver.get_all_plans()?;
-    let plans_to_build = resolve_targets(targets, &all_plans, &resolver)?;
+    let plan_dirs = plan_search_dirs(config);
+    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let plans_to_build = resolve_targets(targets, &all_plans, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Ok(());

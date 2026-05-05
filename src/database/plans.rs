@@ -1,6 +1,6 @@
 use super::{InstalledDb, NewPlan};
 use crate::error::{Result, WrightError};
-use crate::part::part::PartInfo;
+use crate::part::archive::PartInfo;
 use sqlx::{query, query_as};
 
 #[derive(Debug, Clone, sqlx::FromRow)]

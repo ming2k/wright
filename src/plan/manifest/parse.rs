@@ -7,8 +7,7 @@ use crate::error::{Result, WrightError};
 
 use super::BuildOptions;
 use super::{
-    convert::{fabricate_backup, fabricate_install_scripts},
-    BackupConfig, FabricateHooks, FabricateOutput, InstallScripts, LifecycleOrder, LifecycleStage,
+    BackupConfig, DiscardRule, FabricateHooks, InstallScripts, LifecycleOrder, LifecycleStage,
     OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 
@@ -29,31 +28,13 @@ pub(super) struct RawManifest {
     pub lifecycle: Option<HashMap<String, toml::Value>>,
     #[serde(default)]
     pub lifecycle_order: Option<LifecycleOrder>,
-    /// Top-level [hooks] — only valid for single-output plans.
+    /// Top-level [hooks] — legacy syntax; use [[output]].hooks instead.
     #[serde(default)]
     pub hooks: Option<FabricateHooks>,
     #[serde(default)]
     pub output: Option<toml::Value>,
-}
-
-fn extract_output_string_list(table: &mut toml::value::Table, key: &str) -> Result<Vec<String>> {
-    match table.remove(key) {
-        Some(toml::Value::Array(arr)) => arr
-            .into_iter()
-            .map(|v| match v {
-                toml::Value::String(s) => Ok(s),
-                _ => Err(WrightError::ParseError(format!(
-                    "[output].{} entries must be strings",
-                    key
-                ))),
-            })
-            .collect(),
-        Some(_) => Err(WrightError::ParseError(format!(
-            "[output].{} must be an array of strings",
-            key
-        ))),
-        None => Ok(Vec::new()),
-    }
+    #[serde(default)]
+    pub discard: Vec<DiscardRule>,
 }
 
 struct OutputSection {
@@ -65,6 +46,7 @@ struct OutputSection {
 }
 
 fn parse_output_section(
+    default_output_name: &str,
     output_val: Option<toml::Value>,
     main_hooks: Option<FabricateHooks>,
 ) -> Result<OutputSection> {
@@ -91,6 +73,9 @@ fn parse_output_section(
                     }
                 };
                 let name = match table.remove("name") {
+                    Some(toml::Value::String(s)) if s.trim().is_empty() => {
+                        default_output_name.to_string()
+                    }
                     Some(toml::Value::String(s)) => s,
                     Some(_) => {
                         return Err(WrightError::ParseError(format!(
@@ -98,12 +83,7 @@ fn parse_output_section(
                             i
                         )))
                     }
-                    None => {
-                        return Err(WrightError::ParseError(format!(
-                            "[[output]] entry {}: 'name' is required",
-                            i
-                        )))
-                    }
+                    None => default_output_name.to_string(),
                 };
                 let sub: super::SubFabricateOutput =
                     toml::Value::Table(table)
@@ -132,16 +112,13 @@ fn parse_output_section(
             all_runtime_deps.sort();
             all_runtime_deps.dedup();
             match catchall_count {
-                0 => {
-                    // No catch-all: un-matched files are discarded.
-                    Ok(OutputSection {
-                        outputs: Some(OutputConfig::Multi(parts)),
-                        install_scripts: None,
-                        backup: None,
-                        relations: Relations::default(),
-                        runtime_deps: all_runtime_deps,
-                    })
-                }
+                0 => Ok(OutputSection {
+                    outputs: Some(OutputConfig::Multi(parts)),
+                    install_scripts: None,
+                    backup: None,
+                    relations: Relations::default(),
+                    runtime_deps: all_runtime_deps,
+                }),
                 1 => {
                     let (_, catchall) = parts.iter().find(|(_, s)| s.include.is_none()).unwrap();
                     let relations = Relations {
@@ -176,72 +153,22 @@ fn parse_output_section(
             }
         }
 
-        // --- Single-output mode: [output] table ---
-        Some(toml::Value::Table(mut table)) => {
-            if main_hooks.is_some() && table.contains_key("hooks") {
-                return Err(WrightError::ParseError(
-                    "main part hooks must be declared only once (prefer top-level [hooks])"
-                        .to_string(),
-                ));
-            }
-
-            let hooks = match table.remove("hooks") {
-                Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
-                    WrightError::ParseError(format!("failed to parse [output].hooks: {}", e))
-                })?),
-                None => main_hooks,
-            };
-
-            let backup = match table.remove("backup") {
-                Some(value) => Some(value.try_into().map_err(|e: toml::de::Error| {
-                    WrightError::ParseError(format!("failed to parse [output].backup: {}", e))
-                })?),
-                None => None,
-            };
-
-            let replaces = extract_output_string_list(&mut table, "replaces")?;
-            let conflicts = extract_output_string_list(&mut table, "conflicts")?;
-            let provides = extract_output_string_list(&mut table, "provides")?;
-            let runtime_deps = extract_output_string_list(&mut table, "runtime_deps")?;
-
-            if !table.is_empty() {
-                let unexpected: Vec<_> = table.keys().collect();
-                return Err(WrightError::ParseError(format!(
-                    "[output] has unexpected fields: {}. \
-                     For multi-output plans use [[output]] array-of-tables.",
-                    unexpected
-                        .iter()
-                        .map(|k| k.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
-            }
-
-            let main_relations = Relations {
-                replaces,
-                conflicts,
-                provides,
-            };
-            let main_output = FabricateOutput { hooks, backup };
-            let install_scripts = fabricate_install_scripts(&main_output);
-            let backup_cfg = fabricate_backup(&main_output);
-
-            let outputs = if main_output.hooks.is_some() || main_output.backup.is_some() {
-                Some(OutputConfig::Single(main_output))
-            } else {
-                None
-            };
-            Ok(OutputSection {
-                outputs,
-                install_scripts,
-                backup: backup_cfg,
-                relations: main_relations,
-                runtime_deps,
-            })
-        }
+        // [output] table mode was removed in favor of the single `[[output]]`
+        // representation. This keeps single-output and split-output metadata
+        // on one schema.
+        Some(toml::Value::Table(_)) => Err(WrightError::ParseError(
+            "[output] table syntax is no longer supported; use [[output]] instead".to_string(),
+        )),
 
         None => Ok(OutputSection {
-            outputs: None,
+            outputs: if main_hooks.is_some() {
+                return Err(WrightError::ParseError(
+                    "top-level [hooks] is no longer supported; declare hooks inside [[output]]"
+                        .to_string(),
+                ));
+            } else {
+                None
+            },
             install_scripts: None,
             backup: None,
             relations: Relations::default(),
@@ -249,7 +176,7 @@ fn parse_output_section(
         }),
 
         Some(_) => Err(WrightError::ParseError(
-            "[output] must be a table or [[output]] array-of-tables".to_string(),
+            "output must use [[output]] array-of-tables".to_string(),
         )),
     }
 }
@@ -267,6 +194,7 @@ impl PlanManifest {
             lifecycle_order,
             hooks,
             output,
+            discard,
         } = raw;
 
         let sources = match raw_sources {
@@ -315,7 +243,7 @@ impl PlanManifest {
             }
         }
 
-        let output_section = parse_output_section(output, hooks)?;
+        let output_section = parse_output_section(&metadata.name, output, hooks)?;
         let OutputSection {
             outputs,
             install_scripts,
@@ -336,6 +264,7 @@ impl PlanManifest {
             lifecycle_order,
             mvp: None,
             outputs,
+            discard,
             install_scripts,
             backup,
             source_plan: None,

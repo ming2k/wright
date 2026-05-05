@@ -7,7 +7,7 @@ use crate::database::{
     Dependency, FileType, InstalledDb, NewPart, TransactionOperation, TransactionStatus,
 };
 use crate::error::{Result, WrightError};
-use crate::part::part;
+use crate::part::archive;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
@@ -33,7 +33,7 @@ pub async fn upgrade_part(
 
     // Blocking call to extract_part, but it's mainly I/O.
     // We could wrap it in spawn_blocking if it's too slow.
-    let (partinfo, part_hash) = part::extract_part(part_path, temp_dir.path())?;
+    let (partinfo, part_hash) = archive::extract_part(part_path, temp_dir.path())?;
 
     log_debug_timing(
         "upgrade",

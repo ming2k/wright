@@ -60,7 +60,7 @@ pub(super) async fn expand_missing_dependencies(
             let dep_name = version::parse_dependency(dep)
                 .unwrap_or_else(|_| (dep.clone(), None))
                 .0;
-            let (dep_plan_name, _) = version::parse_dep_ref(&dep_name);
+            let (dep_plan_name, dep_output_name) = version::parse_dep_ref(&dep_name);
             let dep_depth = depth + 1;
 
             if dep_depth > max_depth {
@@ -78,8 +78,14 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if !build_set.contains(&dep_plan_name) {
-                if let Some(label) =
-                    dependency_match_label(&dep_plan_name, all_plans, db, policies).await?
+                if let Some(label) = dependency_match_label(
+                    &dep_output_name,
+                    &dep_plan_name,
+                    all_plans,
+                    db,
+                    policies,
+                )
+                .await?
                 {
                     if let Some(plan_path) = all_plans.get(&dep_plan_name) {
                         info!(
@@ -135,7 +141,7 @@ pub(super) async fn expand_missing_dependencies(
                         let rdep_name = version::parse_dependency(&rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
-                        let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
+                        let (rdep_plan_name, rdep_output_name) = version::parse_dep_ref(&rdep_name);
                         if !runtime_seen.insert(rdep_plan_name.clone()) {
                             continue;
                         }
@@ -150,9 +156,14 @@ pub(super) async fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_plan_name) {
-                            if let Some(label) =
-                                dependency_match_label(&rdep_plan_name, all_plans, db, policies)
-                                    .await?
+                            if let Some(label) = dependency_match_label(
+                                &rdep_output_name,
+                                &rdep_plan_name,
+                                all_plans,
+                                db,
+                                policies,
+                            )
+                            .await?
                             {
                                 if let Some(rdep_plan_path) = all_plans.get(&rdep_plan_name) {
                                     info!(
@@ -178,12 +189,13 @@ pub(super) async fn expand_missing_dependencies(
 /// Returns the match reason label when the dependency matches any policy, or `None` if it doesn't.
 /// Combines the match check and label derivation into a single database round-trip.
 async fn dependency_match_label(
-    dep_name: &str,
+    dep_output_name: &str,
+    dep_plan_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<Option<&'static str>> {
-    let installed = db.get_part(dep_name).await?;
+    let installed = db.get_part(dep_output_name).await?;
     for policy in policies {
         let label = match policy {
             MatchPolicy::All => Some("--match=all"),
@@ -195,7 +207,10 @@ async fn dependency_match_label(
                 }
             }
             MatchPolicy::Installed => {
-                if installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db).await? {
+                if installed.is_some()
+                    && !dependency_plan_differs(dep_output_name, dep_plan_name, all_plans, db)
+                        .await?
+                {
                     Some("installed")
                 } else {
                     None
@@ -204,7 +219,9 @@ async fn dependency_match_label(
             MatchPolicy::Outdated => {
                 if installed.is_none() {
                     Some("missing")
-                } else if dependency_plan_differs(dep_name, all_plans, db).await? {
+                } else if dependency_plan_differs(dep_output_name, dep_plan_name, all_plans, db)
+                    .await?
+                {
                     Some("outdated")
                 } else {
                     None
@@ -224,17 +241,40 @@ pub(super) async fn dependency_matches_policy(
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
-    Ok(dependency_match_label(dep_name, all_plans, db, policies)
+    // 首先尝试直接用 dep_name 查询（单 output plan 或恰好有同名的 output）
+    if dependency_match_label(dep_name, dep_name, all_plans, db, policies)
         .await?
-        .is_some())
+        .is_some()
+    {
+        return Ok(true);
+    }
+
+    // 如果是多 output plan，检查是否有任何 output 匹配
+    if let Some(plan_path) = all_plans.get(dep_name) {
+        if let Ok(manifest) = PlanManifest::from_file(plan_path) {
+            if let Some(OutputConfig::Multi(ref outputs)) = manifest.outputs {
+                for (output_name, _) in outputs {
+                    if dependency_match_label(output_name, dep_name, all_plans, db, policies)
+                        .await?
+                        .is_some()
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 async fn dependency_plan_differs(
-    dep_name: &str,
+    dep_output_name: &str,
+    dep_plan_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
 ) -> Result<bool> {
-    let Some(installed) = db.get_part(dep_name).await? else {
+    let Some(installed) = db.get_part(dep_output_name).await? else {
         return Ok(true);
     };
 
@@ -245,7 +285,7 @@ async fn dependency_plan_differs(
         return Ok(false);
     }
 
-    let Some(plan_path) = all_plans.get(dep_name) else {
+    let Some(plan_path) = all_plans.get(dep_plan_name) else {
         return Ok(false);
     };
     let manifest = PlanManifest::from_file(plan_path)?;

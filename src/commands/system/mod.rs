@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::archive::resolver::{pick_latest, pick_version};
 use crate::cli::system::Commands as SystemCommands;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
+use crate::part::store::{pick_latest, pick_version};
 use crate::transaction;
 
 pub async fn execute(
@@ -29,7 +29,7 @@ pub async fn execute(
         crate::util::lock::LockMode::Exclusive,
     )
     .context("failed to start wright operation")?;
-    let resolver = crate::commands::setup_local_resolver(config)?;
+    let part_store = crate::commands::setup_local_part_store(config)?;
 
     if let SystemCommands::Apply {
         targets,
@@ -56,7 +56,7 @@ pub async fn execute(
             root_dir,
             verbose,
             quiet,
-            resolver: &resolver,
+            part_store: &part_store,
         })
         .await;
     }
@@ -72,7 +72,7 @@ pub async fn execute(
             force,
             nodeps,
         } => {
-            install::execute_install(&db, parts, force, nodeps, root_dir, &resolver).await?;
+            install::execute_install(&db, parts, force, nodeps, root_dir, &part_store).await?;
         }
         SystemCommands::List {
             long,
@@ -106,7 +106,7 @@ pub async fn execute(
                 }
 
                 // Resolve by name
-                let all_versions = resolver
+                let all_versions = part_store
                     .resolve_all(arg)
                     .await
                     .context(format!("failed to resolve '{}'", arg))?;
@@ -445,7 +445,7 @@ pub async fn execute(
             let mut not_found = 0usize;
 
             for part in &parts {
-                match resolver.resolve_all(&part.name).await {
+                match part_store.resolve_all(&part.name).await {
                     Ok(all_versions) if !all_versions.is_empty() => {
                         if let Some(latest) = pick_latest(&all_versions) {
                             let is_newer = {
@@ -508,7 +508,7 @@ pub async fn execute(
                     Ok(_) => {
                         not_found += 1;
                     }
-                    Err(e) => eprintln!("warning: resolver error for {}: {}", part.name, e),
+                    Err(e) => eprintln!("warning: part store error for {}: {}", part.name, e),
                 }
             }
 

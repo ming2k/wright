@@ -219,10 +219,12 @@ When vendoring is not practical (e.g. bootstrapping the toolchain itself), use `
 
 ## Declare Install Hooks
 
-`[hooks]` contains transaction-time scripts that run on the live system, not in the isolated build lifecycle:
+`[output.hooks]` contains transaction-time scripts that run on the live system, not in the isolated build lifecycle:
 
 ```toml
-[hooks]
+[[output]]
+
+[output.hooks]
 pre_install = "echo 'Preparing installation...'"
 post_install = "useradd -r nginx 2>/dev/null || true"
 post_upgrade = "systemctl reload nginx 2>/dev/null || true"
@@ -233,11 +235,11 @@ Hooks run on the live system, serially, blocking the install. Keep them fast. Fo
 
 ## Choose an Output Mode
 
-Wright has three output modes. A plan **must** use exactly one of them.
+Wright has implicit and explicit output modes.
 
 ### Mode 1: No Output Section (Default)
 
-Omit both `[output]` and `[[output]]`. The plan produces exactly one part named after the top-level `name` field. Everything installed into `${STAGING_DIR}` during staging becomes that part.
+Omit `[[output]]`. The plan produces exactly one part named after the top-level `name` field. Everything installed into `${STAGING_DIR}` during staging becomes that part.
 
 ```toml
 name = "hello"
@@ -255,26 +257,26 @@ install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 
 Result: one part named `hello` containing `/usr/bin/hello`.
 
-### Mode 2: Single-Output Metadata (`[output]`)
+### Mode 2: Explicit Single Output (`[[output]]`)
 
-Use `[output]` when you need hooks, backup files, or part relations for a single part. It does **not** split files; it only attaches metadata to the single part named after `plan.name`.
+Use `[[output]]` when you need hooks, backup files, runtime dependencies, part relations, discard rules, or explicit coverage for a single part. Omit `name` or set it to `""` to use the plan name.
 
 ```toml
 name = "nginx"
 # ...
 
-[output]
+[[output]]
 conflicts = ["apache"]
 provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf"]
 
-[hooks]
+[output.hooks]
 post_install = "useradd -r nginx 2>/dev/null || true"
 ```
 
-### Mode 3: Multi-Output (`[[output]]`)
+### Mode 3: Split Outputs (`[[output]]`)
 
-Use `[[output]]` to split staging files into multiple parts. Each entry **must** have a `name`. Other fields depend on whether the entry is a catch-all or not.
+Use `[[output]]` to route staging files through explicit output rules. This can produce one part or many parts. Omit `name` or set it to `""` on one output to use the plan name. Other fields depend on whether the entry is a catch-all or not.
 
 ```toml
 name = "gcc"
@@ -295,24 +297,29 @@ include = ["/usr/lib/libstdc.*"]
 runtime_deps = ["libgcc:default"]
 ```
 
-**Catch-all rules:**
+**Coverage rules:**
 
-- At most **one** catch-all (an entry with no `include`) is allowed
-- Catch-all is **optional** — you may have zero catch-alls
-- When there is no catch-all, un-matched files are **silently discarded**
+- Every staged file must be claimed by one `[[output]]`, matched by `[[discard]]`, or claimed by the optional catch-all
+- Plans with unclaimed staged files fail during output slicing
+- At most one catch-all is allowed
 - `description` is **not** required for catch-all outputs
+
+Use `[[discard]]` for files that are intentionally not packaged. It is always
+an array-of-tables, even for one rule, so each ignored file group can carry its
+own `reason`.
 
 #### Implicit Slicing
 
-Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to the default `${STAGING_DIR}` during the `staging` lifecycle phase. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
+Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to `${STAGING_DIR}` during the `staging` lifecycle phase. On the host, that directory is `build_dir/<name>-<version>/staging`; inside isolation it is mounted at `/output`. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
 
 **Output processing order:**
 
 1. Non-catch-all outputs (those with explicit `include` patterns) are processed **in their declared order**.
-2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **moved** out of `${STAGING_DIR}` into the respective sub-part directories.
+2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **hard-linked** from `${STAGING_DIR}` into the respective output directory.
 3. A file is claimed by the **first** output whose `include` matches it. Later outputs never see it.
-4. The optional catch-all output (the one with no `include`) keeps whatever remains in `${STAGING_DIR}`.
-5. If there is **no catch-all**, any remaining files are discarded.
+4. Remaining files matching `[[discard]]` are ignored.
+5. The optional catch-all output (the one with no `include`) packages whatever remains after earlier outputs and discard rules have handled their files.
+6. Any file still unclaimed fails slicing.
 
 **Critical: `include` patterns must be specific.** Using `include = ["/.*"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
 
@@ -538,18 +545,18 @@ script = """
 make DESTDIR=${STAGING_DIR} install
 """
 
-[hooks]
-pre_install = "echo 'Preparing nginx installation...'"
-post_install = "useradd -r nginx 2>/dev/null || true"
-post_upgrade = "systemctl reload nginx 2>/dev/null || true"
-pre_remove = "systemctl stop nginx 2>/dev/null || true"
-
 [[output]]
 name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
 runtime_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
+
+[output.hooks]
+pre_install = "echo 'Preparing nginx installation...'"
+post_install = "useradd -r nginx 2>/dev/null || true"
+post_upgrade = "systemctl reload nginx 2>/dev/null || true"
+pre_remove = "systemctl stop nginx 2>/dev/null || true"
 
 [[output]]
 name = "nginx-doc"
@@ -588,7 +595,7 @@ description = "Foo development files"
 include = ["/usr/include/.*", "/usr/lib/libfoo\\.a", "/usr/lib/pkgconfig/libfoo.*"]
 ```
 
-In this example, files not matching either `include` are discarded because there is no catch-all.
+In this example, `libfoo` is the catch-all and packages files not claimed by `libfoo-dev`.
 
 #### Meta-part with Sub-parts
 
@@ -622,11 +629,11 @@ description = "NVIDIA GPU firmware"
 include = ["/usr/lib/firmware/nvidia/.*"]
 ```
 
-**Note:** The `linux-firmware` catch-all comes first and receives whatever the sub-parts don't claim. If you want it to be a pure meta-part with no files, put it **after** all the sub-parts that claim all files — then the catch-all will be empty. Or omit the catch-all entirely and let unclaimed files be discarded.
+**Note:** The catch-all receives whatever the sub-parts do not claim. If you want a pure meta-part with no files, ensure the sub-parts claim all installed files; otherwise the catch-all will contain the leftovers.
 
-#### No Catch-All (Discard Unmatched)
+#### Explicit Discard for Ignored Files
 
-Only keep specific files; discard everything else:
+Keep specific files and explicitly ignore known unwanted files:
 
 ```toml
 name = "llvm-tools"
@@ -645,9 +652,16 @@ include = ["/usr/bin/opt", "/usr/bin/llvm-opt.*"]
 name = "llvm-dis"
 description = "LLVM disassembler"
 include = ["/usr/bin/llvm-dis", "/usr/bin/llvm-as"]
+
+[[discard]]
+include = [
+    "/usr/share/doc/.*",
+    "/usr/share/man/.*",
+]
+reason = "documentation and manual pages are intentionally not packaged"
 ```
 
-Files like `clang`, `lld`, headers, and libraries are silently discarded because they match no `include` and there is no catch-all.
+If staging contains files like `clang`, `lld`, headers, or libraries, slicing fails until the plan assigns them to an output or explicitly discards them.
 
 #### Override Architecture for Documentation
 

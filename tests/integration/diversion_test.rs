@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
-use wright::part::part;
+use wright::part::archive;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
 
@@ -60,7 +60,7 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =
-        part::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
 
     let persistent = std::env::temp_dir().join(format!(
         "test-diversion-{}-{}.wright.tar.zst",

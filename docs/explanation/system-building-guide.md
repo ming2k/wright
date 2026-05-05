@@ -235,10 +235,10 @@ ln -s /etc/sv/nginx /var/service/
 
 ### 4.4 Configuration File Protection
 
-Declare configuration files in the `backup` field of `[output]`:
+Declare configuration files in the `backup` field of `[[output]]`:
 
 ```toml
-[output]
+[[output]]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 ```
 

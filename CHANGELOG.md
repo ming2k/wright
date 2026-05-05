@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [4.0.6] - 2026-05-05
+
+### Breaking Changes
+- **Multi-output slicing now enforces full coverage** — every staged file must be claimed by `[[output]]`, matched by an explicit `[[discard]]` rule, or claimed by an optional catch-all output. Unclaimed files now fail build/package slicing instead of being silently dropped.
+- **Removed `[output]` table syntax** — explicit output metadata now uses `[[output]]` for both single-output and split-output plans. Omitted or empty `[[output]].name` defaults to the plan name.
+
+### Added
+- **Output name linting** — `wright lint` now rejects duplicate output names within a plan and name collisions between plan names and outputs across local plans.
 
 ## [4.0.5] - 2026-05-05
 

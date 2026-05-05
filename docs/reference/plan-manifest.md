@@ -144,7 +144,7 @@ Resolution order for the MVP pass:
 
 Do not duplicate part metadata, sources, outputs, or hooks in `mvp.toml`.
 
-## Hooks (`[hooks]`)
+## Hooks (`[[output]].hooks`)
 
 Transaction-time scripts that run on the live system.
 
@@ -158,27 +158,23 @@ Transaction-time scripts that run on the live system.
 
 ## Output Modes
 
-A plan must use exactly one of the following modes.
+A plan can use either implicit or explicit output mode.
 
 | Mode | Syntax | Use case |
 |------|--------|----------|
-| Default (no output section) | Omit `[output]` and `[[output]]` | Simple package; everything in `${STAGING_DIR}` becomes the part named after `plan.name` |
-| Single-output metadata | `[output]` table | Same as above, but with hooks, backup files, or part relations |
-| Multi-output | `[[output]]` array-of-tables | Split staging files into multiple sub-parts |
+| Default (no output section) | Omit `[[output]]` | Simple package; everything in `${STAGING_DIR}` becomes the part named after `plan.name` |
+| Explicit outputs | `[[output]]` array-of-tables | Attach output metadata, split files, discard files, or enforce explicit coverage |
 
-### `[output]` (single-output metadata)
+`[output]` table syntax is not supported. Use `[[output]]` for single-output
+metadata as well as split outputs.
 
-Supported fields: `runtime_deps`, `hooks.*`, `backup`, `replaces`, `conflicts`, `provides`.
-
-**Not supported:** `name`, `include`, `exclude`, `description`.
-
-### `[[output]]` (multi-output)
+### `[[output]]`
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `name` | **Yes** | Part name for this output |
+| `name` | No | Part name for this output. Omit or set to `""` to use `plan.name` |
 | `description` | Yes for non-catch-all | Human-readable description |
-| `include` | No | Regex patterns for files to claim. Omit = catch-all |
+| `include` | No | Regex patterns for files to claim. Omit on at most one output to define a catch-all |
 | `exclude` | No | Regex patterns to exclude |
 | `runtime_deps` | No | Per-output runtime dependencies |
 | `hooks.*` | No | Per-output transaction hooks |
@@ -187,20 +183,32 @@ Supported fields: `runtime_deps`, `hooks.*`, `backup`, `replaces`, `conflicts`, 
 | `conflicts` | No | Per-output conflict relations |
 | `provides` | No | Per-output virtual provides |
 
-**Catch-all rules:**
+**Coverage rules:**
 
+- Every staged file must be claimed by one `[[output]]`, matched by `[[discard]]`, or claimed by the optional catch-all.
+- Plans with unclaimed staged files fail during output slicing.
 - At most one catch-all is allowed.
-- Catch-all is optional.
-- When there is no catch-all, un-matched files are silently discarded.
 - `description` is not required for catch-all outputs.
+
+### `[[discard]]` (explicitly ignored files)
+
+Use `[[discard]]` only with `[[output]]` mode. It is an array-of-tables even
+when only one discard rule is needed.
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `include` | **Yes** | Regex patterns for files to ignore |
+| `exclude` | No | Regex patterns to keep out of this discard rule |
+| `reason` | **Yes** | Human-readable explanation for ignoring matched files |
 
 ### Implicit Slicing Order
 
 1. Non-catch-all outputs are processed in declared order.
-2. Files matching `include` (and not matching `exclude`) are moved into the output directory.
+2. Files matching `include` (and not matching `exclude`) are hard-linked into the output directory.
 3. A file is claimed by the first matching output. Later outputs never see it.
-4. The optional catch-all keeps whatever remains.
-5. If there is no catch-all, remaining files are discarded.
+4. Remaining files matching `[[discard]]` are ignored.
+5. The optional catch-all keeps whatever remains.
+6. Remaining files fail slicing.
 
 ### Part Relations
 
@@ -262,13 +270,17 @@ Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. 
 | Variable | Host value (Default) | Isolation value | Description |
 |----------|----------------------|-----------------|-------------|
 | `${WORKDIR}` | `/var/tmp/wright/workshop/<name>-<version>/work`¹ | `/build` | Root container for all sources |
-| `${STAGING_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/output`¹ | `/output` | Installation target directory (DESTDIR) |
+| `${STAGING_DIR}` | `/var/tmp/wright/workshop/<name>-<version>/staging`¹ | `/output` | Installation target directory (DESTDIR) |
 
 ¹ When `version` is omitted, the directory uses `<name>-noversion`.
 
 Inside isolation:
 - `/build` is a read-write mount of the host's build work directory.
-- `/output` is a read-write mount for build products.
+- `/output` is a read-write mount of the host `staging/` directory for build products.
+
+After lifecycle stages complete, Wright slices `staging/` into `outputs/default/`
+and `outputs/<name>/` directories according to `[[output]]` rules. Slicing uses
+hard links, so `staging/` remains available for inspection.
 
 ## Isolation Levels
 
