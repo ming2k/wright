@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.0.8] - 2026-05-05
+
+### Fixed
+- **`ETXTBSY` retry logic extended** — increased retry attempts from 5 to 8 and base delay from 20ms to 50ms to cover larger synchronization windows on certain kernels/filesystem configurations.
+- **Build script write synchronization** — added `sync_all()` after writing `.wright_script.sh` to ensure inode metadata is fully persisted before execution, eliminating a race condition where the script file appeared busy to `execve`.
+
 ## [4.0.7] - 2026-05-05
 
 ### Breaking Changes

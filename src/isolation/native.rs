@@ -760,11 +760,11 @@ pub fn run_in_isolation(
                     // Defensive retry for ETXTBUSY: even with a sysroot, certain
                     // kernels or filesystem configurations may briefly report the
                     // file as busy.  A short exponential backoff covers the window.
-                    for attempt in 0..5 {
+                    for attempt in 0..8 {
                         match execvp(&c_command, &c_args) {
                             Ok(infallible) => match infallible {},
-                            Err(nix::errno::Errno::ETXTBSY) if attempt < 4 => {
-                                let delay_ms = 20 * (1_u64 << attempt);
+                            Err(nix::errno::Errno::ETXTBSY) if attempt < 7 => {
+                                let delay_ms = 50 * (1_u64 << attempt);
                                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                             }
                             Err(e) => {

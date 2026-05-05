@@ -149,6 +149,13 @@ pub async fn execute_script(
         .await
         .map_err(|e| WrightError::BuildError(format!("failed to write build script: {}", e)))?;
 
+    // Defensive sync: on some kernels/fs configs, a file written via async I/O
+    // may briefly appear busy to execve.  Ensure the script is fully persisted
+    // before we hand it to the executor.
+    if let Ok(file) = tokio::fs::File::open(&script_path).await {
+        let _ = file.sync_all().await;
+    }
+
     let task_id = format!(
         "{}-{}",
         vars.get("NAME")
