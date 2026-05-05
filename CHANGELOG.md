@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.0.5] - 2026-05-05
+
+### Fixed
+- **Relaxed isolation now mounts `/etc/ssl`** — Cargo and other tools relying on system CA certificates no longer fail with "SSL certificate problem: unable to get local issuer certificate" inside relaxed-isolation build stages.
+
 ## [4.0.4] - 2026-05-05
 
 ### Breaking Changes

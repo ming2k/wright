@@ -655,6 +655,7 @@ pub fn run_in_isolation(
                         "/etc/hosts",
                         "/etc/passwd",
                         "/etc/group",
+                        "/etc/ssl",
                     ] {
                         let p = Path::new(etc_file);
                         if p.exists() {
