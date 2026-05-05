@@ -65,21 +65,21 @@ impl InstalledDb {
                     .bind(id)
                     .execute(&self.pool)
                     .await
-                    .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
+                    .map_err(|e| {
+                        WrightError::DatabaseError(format!("failed to update plan: {}", e))
+                    })?;
                 id
             }
-            None => {
-                query(
-                    "INSERT INTO plans (name, version, release, epoch, description, arch, license)
+            None => query(
+                "INSERT INTO plans (name, version, release, epoch, description, arch, license)
                      VALUES (?, ?, 0, 0, 'externally provided', 'any', 'unknown')",
-                )
-                .bind(name)
-                .bind(version)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan: {}", e)))?
-                .last_insert_rowid()
-            }
+            )
+            .bind(name)
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan: {}", e)))?
+            .last_insert_rowid(),
         };
 
         query(
@@ -125,12 +125,13 @@ impl InstalledDb {
     pub async fn update_part(&self, part: NewPart<'_>) -> Result<()> {
         let res = query(
             "UPDATE parts SET plan_id = ?, part_hash = ?, install_scripts = ?, origin = ?
-             WHERE name = ?")
-            .bind(part.plan_id)
-            .bind(part.part_hash)
-            .bind(part.install_scripts)
-            .bind(part.origin)
-            .bind(part.name)
+             WHERE name = ?",
+        )
+        .bind(part.plan_id)
+        .bind(part.part_hash)
+        .bind(part.install_scripts)
+        .bind(part.origin)
+        .bind(part.name)
         .execute(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to update part: {}", e)))?;
@@ -169,7 +170,9 @@ impl InstalledDb {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to query part with plan: {}", e)))
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to query part with plan: {}", e))
+            })
     }
 
     pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {

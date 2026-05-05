@@ -168,13 +168,11 @@ fn parse_output_section(
                         runtime_deps: all_runtime_deps,
                     })
                 }
-                _ => {
-                    Err(WrightError::ParseError(
-                        "multiple [[output]] entries have no 'include'; \
+                _ => Err(WrightError::ParseError(
+                    "multiple [[output]] entries have no 'include'; \
                          exactly one catch-all is allowed"
-                            .to_string(),
-                    ))
-                }
+                        .to_string(),
+                )),
             }
         }
 

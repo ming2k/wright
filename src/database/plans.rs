@@ -21,21 +21,25 @@ impl InstalledDb {
     pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
         let res = query(
             "INSERT INTO plans (name, version, release, epoch, description, arch, license, url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-            .bind(plan.name)
-            .bind(plan.version)
-            .bind(plan.release as i64)
-            .bind(plan.epoch as i64)
-            .bind(plan.description)
-            .bind(plan.arch)
-            .bind(plan.license)
-            .bind(plan.url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(plan.name)
+        .bind(plan.version)
+        .bind(plan.release as i64)
+        .bind(plan.epoch as i64)
+        .bind(plan.description)
+        .bind(plan.arch)
+        .bind(plan.license)
+        .bind(plan.url)
         .execute(&self.pool)
         .await
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e {
                 if db_err.is_unique_violation() {
-                    return WrightError::DatabaseError(format!("plan '{}' already registered", plan.name));
+                    return WrightError::DatabaseError(format!(
+                        "plan '{}' already registered",
+                        plan.name
+                    ));
                 }
             }
             WrightError::DatabaseError(format!("failed to insert plan: {}", e))
@@ -81,7 +85,10 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to remove plan: {}", e)))?;
 
         if res.rows_affected() == 0 {
-            return Err(WrightError::DatabaseError(format!("plan not found: {}", name)));
+            return Err(WrightError::DatabaseError(format!(
+                "plan not found: {}",
+                name
+            )));
         }
         Ok(())
     }
@@ -126,11 +133,13 @@ impl InstalledDb {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to get build deps: {}", e)))?;
-        
+
         let mut deps = Vec::new();
         for row in rows {
             use sqlx::Row;
-            let dep: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let dep: String = row
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             deps.push(dep);
         }
         Ok(deps)
@@ -142,22 +151,19 @@ impl InstalledDb {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to get link deps: {}", e)))?;
-        
+
         let mut deps = Vec::new();
         for row in rows {
             use sqlx::Row;
-            let dep: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            let dep: String = row
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             deps.push(dep);
         }
         Ok(deps)
     }
 
-    async fn replace_plan_deps(
-        &self,
-        plan_id: i64,
-        table: &str,
-        deps: &[ String],
-    ) -> Result<()> {
+    async fn replace_plan_deps(&self, plan_id: i64, table: &str, deps: &[String]) -> Result<()> {
         query(&format!("DELETE FROM {} WHERE plan_id = ?", table))
             .bind(plan_id)
             .execute(&self.pool)
@@ -165,19 +171,23 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to clear plan deps: {}", e)))?;
 
         for dep in deps {
-            query(&format!("INSERT INTO {} (plan_id, depends_on) VALUES (?, ?)", table))
-                .bind(plan_id)
-                .bind(dep)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan dep: {}", e)))?;
+            query(&format!(
+                "INSERT INTO {} (plan_id, depends_on) VALUES (?, ?)",
+                table
+            ))
+            .bind(plan_id)
+            .bind(dep)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan dep: {}", e)))?;
         }
         Ok(())
     }
 
     /// Ensure a plan is registered in the database from pack metadata.
     /// If the plan already exists, updates its version metadata to match the pack.
-    pub async fn ensure_plan_registered(&self,
+    pub async fn ensure_plan_registered(
+        &self,
         partinfo: &PartInfo,
         version: &str,
         release: u32,
@@ -202,25 +212,31 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
 
             // Update dependency tables
-            self.replace_plan_deps(existing.id, "plan_build_deps", &partinfo.plan.build_deps).await?;
-            self.replace_plan_deps(existing.id, "plan_link_deps", &partinfo.plan.link_deps).await?;
+            self.replace_plan_deps(existing.id, "plan_build_deps", &partinfo.plan.build_deps)
+                .await?;
+            self.replace_plan_deps(existing.id, "plan_link_deps", &partinfo.plan.link_deps)
+                .await?;
 
             Ok(existing.id)
         } else {
-            let id = self.insert_plan(NewPlan {
-                name: &partinfo.plan.name,
-                version,
-                release,
-                epoch,
-                description,
-                arch,
-                license,
-                url: None,
-            }).await?;
+            let id = self
+                .insert_plan(NewPlan {
+                    name: &partinfo.plan.name,
+                    version,
+                    release,
+                    epoch,
+                    description,
+                    arch,
+                    license,
+                    url: None,
+                })
+                .await?;
 
             // Insert dependency tables
-            self.replace_plan_deps(id, "plan_build_deps", &partinfo.plan.build_deps).await?;
-            self.replace_plan_deps(id, "plan_link_deps", &partinfo.plan.link_deps).await?;
+            self.replace_plan_deps(id, "plan_build_deps", &partinfo.plan.build_deps)
+                .await?;
+            self.replace_plan_deps(id, "plan_link_deps", &partinfo.plan.link_deps)
+                .await?;
 
             Ok(id)
         }

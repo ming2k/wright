@@ -140,7 +140,14 @@ impl Builder {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(manifest.metadata.name.as_bytes());
-        hasher.update(manifest.metadata.version.as_deref().unwrap_or("").as_bytes());
+        hasher.update(
+            manifest
+                .metadata
+                .version
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+        );
         hasher.update(manifest.metadata.release.to_string().as_bytes());
         for source in &manifest.sources.entries {
             match source {
@@ -535,7 +542,8 @@ impl Builder {
                         let rel_str = format!("/{}", rel_path.display());
                         for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
                             let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
-                            if matched && !excludes.is_empty()
+                            if matched
+                                && !excludes.is_empty()
                                 && excludes.iter().any(|re| re.is_match(&rel_str))
                             {
                                 matched = false;

@@ -94,6 +94,7 @@ pub(super) async fn execute_builds(
     opts: &BuildOptions,
     bootstrap_excluded: &HashMap<String, Vec<String>>,
     session_hash: Option<&str>,
+    session_db: Option<&InstalledDb>,
     session_completed: &HashSet<String>,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<std::result::Result<String, (String, WrightError)>>(100);
@@ -258,7 +259,7 @@ pub(super) async fn execute_builds(
             Some(Ok(name)) => {
                 in_progress.lock().await.remove(&name);
                 complete_build_task(
-                    config,
+                    session_db,
                     session_hash_arc.as_deref(),
                     &completed,
                     &name,
@@ -304,15 +305,20 @@ pub(super) async fn execute_builds(
 }
 
 async fn complete_build_task(
-    config: &GlobalConfig,
+    db: Option<&InstalledDb>,
     session_hash: Option<&str>,
     completed: &Arc<Mutex<HashSet<String>>>,
     name: &str,
     quiet: bool,
 ) {
-    if let Some(hash) = session_hash {
-        if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
-            let _ = db.mark_execution_session_item_completed(hash, name).await;
+    if let (Some(db), Some(hash)) = (db, session_hash) {
+        if let Err(e) = db.mark_execution_session_item_completed(hash, name).await {
+            warn!(
+                "failed to mark build task '{}' complete for session {}: {}",
+                name,
+                &hash[..12.min(hash.len())],
+                e
+            );
         }
     }
     completed.lock().await.insert(name.to_string());
@@ -434,7 +440,10 @@ async fn build_one(
             }
         };
         if all_exist {
-            info!("{}", logging::plan_skipped_existing(&manifest.metadata.name));
+            info!(
+                "{}",
+                logging::plan_skipped_existing(&manifest.metadata.name)
+            );
             return Ok(());
         }
     }
@@ -540,7 +549,10 @@ pub async fn package_outputs(
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
             let part_path = part::create_part(&result.output_dir, manifest, &output_dir, None)?;
-            info!("{}", logging::plan_packed(&manifest.metadata.name, &part_path));
+            info!(
+                "{}",
+                logging::plan_packed(&manifest.metadata.name, &part_path)
+            );
             if print_parts {
                 println!("{}", part_path.display());
             }

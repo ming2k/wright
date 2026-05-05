@@ -176,10 +176,13 @@ fn default_isolation() -> String {
     "strict".to_string()
 }
 fn default_stable_toolchain() -> Vec<String> {
-    ["gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed", "gawk"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4",
+        "sed", "gawk",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 fn default_timeout() -> u64 {
     300

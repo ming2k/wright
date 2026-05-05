@@ -323,7 +323,10 @@ pub async fn execute(
             }
         }
         SystemCommands::Query { part } => {
-            let installed_part = db.get_part_with_plan(&part).await.context("failed to query part")?;
+            let installed_part = db
+                .get_part_with_plan(&part)
+                .await
+                .context("failed to query part")?;
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);

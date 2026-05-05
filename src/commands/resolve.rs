@@ -297,7 +297,11 @@ fn print_dependency_tree(
     for (i, (dep_raw, kind)) in deps.iter().enumerate() {
         let (dep_name, _) = version::parse_dep_ref(dep_raw);
         let last_child = i == deps.len() - 1;
-        let connector = if last_child { "└── " } else { "├── " };
+        let connector = if last_child {
+            "└── "
+        } else {
+            "├── "
+        };
         if ctx.color {
             print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), dep_name);
         } else {
@@ -353,7 +357,11 @@ fn print_dependent_tree(
     }
     for (i, (child_name, kind)) in rdeps.iter().enumerate() {
         let last_child = i == rdeps.len() - 1;
-        let connector = if last_child { "└── " } else { "├── " };
+        let connector = if last_child {
+            "└── "
+        } else {
+            "├── "
+        };
         if ctx.color {
             print!("\n{}{}{}: {}", prefix, connector, kind.dimmed(), child_name);
         } else {

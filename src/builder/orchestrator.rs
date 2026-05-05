@@ -446,12 +446,45 @@ impl BuildExecutionPlan {
         task.trim_end_matches(":bootstrap")
     }
 
+    pub fn requires_sysroot_prewarm(&self) -> bool {
+        let mut seen_paths = HashSet::new();
+        for path in self.name_to_path.values() {
+            if !seen_paths.insert(path) {
+                continue;
+            }
+            let manifest = match PlanManifest::from_file(path) {
+                Ok(manifest) => manifest,
+                Err(_) => return true,
+            };
+
+            let uses_isolation = |stage: &crate::plan::manifest::LifecycleStage| {
+                stage
+                    .isolation
+                    .parse::<crate::isolation::IsolationLevel>()
+                    .map(|level| level != crate::isolation::IsolationLevel::None)
+                    .unwrap_or(true)
+            };
+
+            if manifest.lifecycle.values().any(uses_isolation) {
+                return true;
+            }
+            if let Some(ref mvp) = manifest.mvp {
+                if mvp.lifecycle.values().any(uses_isolation) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub async fn execute_batch(
         &self,
         config: &GlobalConfig,
         batch_index: usize,
         opts: &BuildOptions,
         session_hash: Option<&str>,
+        session_db: Option<&InstalledDb>,
         session_completed: &HashSet<String>,
     ) -> Result<()> {
         let batch = self.batches.get(batch_index).ok_or_else(|| {
@@ -466,6 +499,7 @@ impl BuildExecutionPlan {
             opts,
             &self.bootstrap_excluded,
             session_hash,
+            session_db,
             session_completed,
         )
         .await
@@ -627,6 +661,7 @@ pub async fn run_build(
         }
     }
 
+    let mut session_db = None;
     let active_session_hash = if let Some(ref hash) = session_hash {
         if opts.is_build_op() {
             if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
@@ -635,6 +670,7 @@ pub async fn run_build(
                     .ensure_execution_session(hash, "build", Some(hash), None)
                     .await;
                 let _ = db.ensure_execution_session_items(hash, &packages).await;
+                session_db = Some(db);
             }
             Some(hash.clone())
         } else {
@@ -652,6 +688,7 @@ pub async fn run_build(
         &opts,
         &plan.bootstrap_excluded,
         active_session_hash.as_deref(),
+        session_db.as_ref(),
         &session_completed,
     )
     .await;
@@ -659,7 +696,7 @@ pub async fn run_build(
     match &result {
         Ok(()) => {
             if let Some(ref hash) = active_session_hash {
-                if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
+                if let Some(db) = session_db.as_ref() {
                     let _ = db.clear_execution_session(hash).await;
                 }
             }

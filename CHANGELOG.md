@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [4.0.4] - 2026-05-05
+
+### Breaking Changes
+- **`wright install` enforces plan revision consistency** — mixed-version outputs from the same plan are rejected before installation, and plan revision changes are refused when installed outputs from the old revision would remain outside the current install batch.
+
+### Fixed
+- **`wright apply --resume` no longer waits on its own database lock** — apply now reuses its open database handle when recording completed build tasks.
+- **`wright apply` skips sysroot prewarming for non-isolated build plans** — plans whose lifecycle stages all use `isolation = "none"` no longer pay the global sysroot setup cost.
+- **`wright apply` now aborts if stale plan outputs cannot be removed** — failed cleanup is no longer downgraded to a warning before installing new outputs.
+
 ## [4.0.3] - 2026-05-05
 
 ### Changed

@@ -46,7 +46,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -101,7 +101,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -130,7 +130,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -167,7 +167,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -203,7 +203,7 @@ mod tests {
         let hello_id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -211,7 +211,7 @@ mod tests {
         let world_id = db
             .insert_part(NewPart {
                 name: "world",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -308,7 +308,7 @@ mod tests {
         let result = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await;
@@ -333,7 +333,14 @@ mod tests {
     async fn test_record_transaction() {
         let db = test_db().await;
         let id = db
-            .record_transaction(TransactionOperation::Install, "hello", None, Some("1.0.0"), TransactionStatus::Completed, None)
+            .record_transaction(
+                TransactionOperation::Install,
+                "hello",
+                None,
+                Some("1.0.0"),
+                TransactionStatus::Completed,
+                None,
+            )
             .await
             .unwrap();
         assert!(id > 0);
@@ -375,7 +382,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -420,7 +427,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -456,7 +463,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-            plan_id: 1,
+                plan_id: 1,
                 install_scripts: Some("post_install() { echo done; }"),
                 ..Default::default()
             })

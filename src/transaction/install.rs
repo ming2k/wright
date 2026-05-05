@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use std::time::Instant;
@@ -6,15 +6,53 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::archive::resolver::LocalResolver;
-use crate::database::{Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation, TransactionStatus};
+use crate::database::{
+    Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation, TransactionStatus,
+};
 use crate::error::{Result, WrightError};
 use crate::part::part;
+use crate::part::part::PartInfo;
 use crate::part::version::{self, Version};
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
 use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlanRevision {
+    version: String,
+    release: u32,
+    epoch: u32,
+    arch: String,
+}
+
+impl PlanRevision {
+    fn from_partinfo(partinfo: &PartInfo) -> Self {
+        Self {
+            version: partinfo.plan.version.clone(),
+            release: partinfo.plan.release,
+            epoch: partinfo.plan.epoch,
+            arch: partinfo.plan.arch.clone(),
+        }
+    }
+
+    fn label(&self) -> String {
+        if self.version.is_empty() {
+            format!("{}-{} epoch {}", self.release, self.arch, self.epoch)
+        } else {
+            format!(
+                "{}-{}-{} epoch {}",
+                self.version, self.release, self.arch, self.epoch
+            )
+        }
+    }
+}
+
+struct InstallCandidate {
+    path: PathBuf,
+    partinfo: PartInfo,
+}
 
 /// Install a batch of parts. All are marked `Origin::Manual`.
 /// Use `install_parts_with_explicit_targets` when only a subset are user-requested.
@@ -54,10 +92,13 @@ pub async fn install_parts_with_explicit_targets(
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
+    let candidates = read_install_candidates(parts)?;
+    validate_plan_output_batches(db, &candidates).await?;
+
     let mut resolved_map = HashMap::new();
 
-    for path in parts {
-        let resolved = resolver.read_part(path)?;
+    for candidate in &candidates {
+        let resolved = resolver.read_part(&candidate.path)?;
         resolved_map.insert(resolved.name.clone(), resolved);
     }
 
@@ -103,6 +144,87 @@ pub async fn install_parts_with_explicit_targets(
         let part = resolved_map.get(&name).expect("resolved part exists");
         info!("Installing part {} (origin: {})", name, origin);
         install_part_with_origin(db, &part.path, root_dir, force, origin, true).await?;
+    }
+
+    Ok(())
+}
+
+fn read_install_candidates(parts: &[PathBuf]) -> Result<Vec<InstallCandidate>> {
+    parts
+        .iter()
+        .map(|path| {
+            let partinfo = part::read_partinfo(path)?;
+            Ok(InstallCandidate {
+                path: path.clone(),
+                partinfo,
+            })
+        })
+        .collect()
+}
+
+async fn validate_plan_output_batches(
+    db: &InstalledDb,
+    candidates: &[InstallCandidate],
+) -> Result<()> {
+    let mut by_plan: BTreeMap<&str, Vec<&InstallCandidate>> = BTreeMap::new();
+    for candidate in candidates {
+        by_plan
+            .entry(candidate.partinfo.plan.name.as_str())
+            .or_default()
+            .push(candidate);
+    }
+
+    for (plan_name, group) in by_plan {
+        let first = group.first().expect("non-empty plan group");
+        let expected_revision = PlanRevision::from_partinfo(&first.partinfo);
+        let mut incoming_outputs = HashSet::new();
+        for candidate in group {
+            let revision = PlanRevision::from_partinfo(&candidate.partinfo);
+            if revision != expected_revision {
+                return Err(WrightError::InstallError(format!(
+                    "cannot install mixed revisions for plan '{}': '{}' is {}, expected {}",
+                    plan_name,
+                    candidate.partinfo.name,
+                    revision.label(),
+                    expected_revision.label()
+                )));
+            }
+
+            if !incoming_outputs.insert(candidate.partinfo.name.clone()) {
+                return Err(WrightError::InstallError(format!(
+                    "cannot install duplicate output '{}' for plan '{}' in one batch",
+                    candidate.partinfo.name, plan_name
+                )));
+            }
+        }
+
+        if let Some(installed_plan) = db.get_plan(plan_name).await? {
+            let installed_outputs = db.get_parts_by_plan(plan_name).await?;
+            let installed_revision = PlanRevision {
+                version: installed_plan.version,
+                release: installed_plan.release as u32,
+                epoch: installed_plan.epoch as u32,
+                arch: installed_plan.arch,
+            };
+
+            if installed_revision != expected_revision {
+                let stale_outputs: Vec<_> = installed_outputs
+                    .iter()
+                    .filter(|part| !incoming_outputs.contains(&part.name))
+                    .map(|part| part.name.clone())
+                    .collect();
+                if !stale_outputs.is_empty() {
+                    return Err(WrightError::InstallError(format!(
+                        "cannot install plan '{}' {} while installed output(s) from {} would remain: {}; install those outputs in the same batch or use wright apply {}",
+                        plan_name,
+                        expected_revision.label(),
+                        installed_revision.label(),
+                        stale_outputs.join(", "),
+                        plan_name
+                    )));
+                }
+            }
+        }
     }
 
     Ok(())
@@ -156,11 +278,12 @@ async fn warn_about_runtime_dependencies(
             }
 
             if let Some(installed) = db.get_part(&output_name).await? {
-                let installed_version = if let Some(plan) = db.get_plan_by_id(installed.plan_id).await? {
-                    plan.version
-                } else {
-                    String::new()
-                };
+                let installed_version =
+                    if let Some(plan) = db.get_plan_by_id(installed.plan_id).await? {
+                        plan.version
+                    } else {
+                        String::new()
+                    };
                 warn_if_constraint_not_satisfied(
                     name,
                     &output_name,
@@ -408,7 +531,8 @@ pub async fn install_part_with_origin(
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, TransactionStatus::RolledBack).await?;
+            db.update_transaction_status(tx_id, TransactionStatus::RolledBack)
+                .await?;
             return Err(e);
         }
     }
@@ -420,15 +544,17 @@ pub async fn install_part_with_origin(
     );
 
     phase_start = Instant::now();
-    let plan_id = db.ensure_plan_registered(
-        &partinfo,
-        &partinfo.plan.version,
-        partinfo.plan.release,
-        partinfo.plan.epoch,
-        &partinfo.plan.description,
-        &partinfo.plan.arch,
-        &partinfo.plan.license,
-    ).await?;
+    let plan_id = db
+        .ensure_plan_registered(
+            &partinfo,
+            &partinfo.plan.version,
+            partinfo.plan.release,
+            partinfo.plan.epoch,
+            &partinfo.plan.description,
+            &partinfo.plan.arch,
+            &partinfo.plan.license,
+        )
+        .await?;
     let part_id = db
         .insert_part(NewPart {
             name: &partinfo.name,
@@ -481,7 +607,8 @@ pub async fn install_part_with_origin(
         db.insert_replaces(part_id, &partinfo.replaces).await?;
     }
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed)
+        .await?;
     log_debug_timing(
         "install",
         &partinfo.name,

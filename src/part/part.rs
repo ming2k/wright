@@ -150,10 +150,7 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
     ))
 }
 
-fn generate_partinfo(
-    manifest: &PlanManifest,
-    source_plan: Option<&PlanManifest>,
-) -> String {
+fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     // Determine plan-level metadata: either from the original plan manifest
@@ -236,7 +233,10 @@ fn generate_partinfo(
     if plan.metadata.epoch > 0 {
         plan_toml.push_str(&format!("epoch = {}\n", plan.metadata.epoch));
     }
-    plan_toml.push_str(&format!("description = \"{}\"\n", plan.metadata.description));
+    plan_toml.push_str(&format!(
+        "description = \"{}\"\n",
+        plan.metadata.description
+    ));
     plan_toml.push_str(&format!("arch = \"{}\"\n", plan.metadata.arch));
     plan_toml.push_str(&format!("license = \"{}\"\n", plan.metadata.license));
 
@@ -506,6 +506,9 @@ runtime_deps = ["bash"]
         );
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing required [plan]"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing required [plan]"));
     }
 }

@@ -3,7 +3,9 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{FileType, InstalledDb, InstalledPart, TransactionOperation, TransactionStatus};
+use crate::database::{
+    FileType, InstalledDb, InstalledPart, TransactionOperation, TransactionStatus,
+};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
@@ -65,7 +67,14 @@ pub async fn remove_part_with_ignored_dependents(
     }
 
     let tx_id = db
-        .record_transaction(TransactionOperation::Remove, name, Some(&plan.version), None, TransactionStatus::Pending, None)
+        .record_transaction(
+            TransactionOperation::Remove,
+            name,
+            Some(&plan.version),
+            None,
+            TransactionStatus::Pending,
+            None,
+        )
         .await?;
     let files = db.get_files(part.id).await?;
 
@@ -142,7 +151,8 @@ pub async fn remove_part_with_ignored_dependents(
     }
     let _ = db.remove_shadowed_records(part.id).await;
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed)
+        .await?;
 
     info!("Removed {}", name);
     Ok(())

@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::database::{Dependency, FileType, InstalledDb, NewPart, TransactionOperation, TransactionStatus};
+use crate::database::{
+    Dependency, FileType, InstalledDb, NewPart, TransactionOperation, TransactionStatus,
+};
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::{self, Version};
@@ -47,12 +49,15 @@ pub async fn upgrade_part(
         ))
     })?;
 
-    let installed_plan = db.get_plan_by_id(installed_part.plan_id).await?.ok_or_else(|| {
-        WrightError::UpgradeError(format!(
-            "plan for part '{}' not found in database",
-            partinfo.name
-        ))
-    })?;
+    let installed_plan = db
+        .get_plan_by_id(installed_part.plan_id)
+        .await?
+        .ok_or_else(|| {
+            WrightError::UpgradeError(format!(
+                "plan for part '{}' not found in database",
+                partinfo.name
+            ))
+        })?;
 
     let installed_epoch = installed_plan.epoch as u32;
     let new_epoch = partinfo.plan.epoch;
@@ -181,9 +186,7 @@ pub async fn upgrade_part(
         }
 
         if file.file_type == FileType::File {
-            let backup_path = backup_dir
-                .path()
-                .join(file.path.trim_start_matches('/'));
+            let backup_path = backup_dir.path().join(file.path.trim_start_matches('/'));
             if let Some(parent) = backup_path.parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
                     WrightError::UpgradeError(format!(
@@ -256,7 +259,8 @@ pub async fn upgrade_part(
         Err(e) => {
             warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, TransactionStatus::RolledBack).await?;
+            db.update_transaction_status(tx_id, TransactionStatus::RolledBack)
+                .await?;
             return Err(e);
         }
     };
@@ -320,15 +324,17 @@ pub async fn upgrade_part(
     }
 
     phase_start = Instant::now();
-    let plan_id = db.ensure_plan_registered(
-        &partinfo,
-        &partinfo.plan.version,
-        partinfo.plan.release,
-        partinfo.plan.epoch,
-        &partinfo.plan.description,
-        &partinfo.plan.arch,
-        &partinfo.plan.license,
-    ).await?;
+    let plan_id = db
+        .ensure_plan_registered(
+            &partinfo,
+            &partinfo.plan.version,
+            partinfo.plan.release,
+            partinfo.plan.epoch,
+            &partinfo.plan.description,
+            &partinfo.plan.arch,
+            &partinfo.plan.license,
+        )
+        .await?;
     db.update_part(NewPart {
         name: &partinfo.name,
         plan_id,
@@ -379,7 +385,8 @@ pub async fn upgrade_part(
 
     self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed)
+        .await?;
     log_debug_timing(
         "upgrade",
         &partinfo.name,

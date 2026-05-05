@@ -28,7 +28,10 @@ impl SubFabricateOutput {
         PlanManifest {
             metadata: PlanMetadata {
                 name: name.to_string(),
-                version: self.version.clone().or_else(|| parent.metadata.version.clone()),
+                version: self
+                    .version
+                    .clone()
+                    .or_else(|| parent.metadata.version.clone()),
                 release: self.release.unwrap_or(parent.metadata.release),
                 epoch: parent.metadata.epoch,
                 description,

@@ -78,7 +78,9 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if !build_set.contains(&dep_plan_name) {
-                if let Some(label) = dependency_match_label(&dep_plan_name, all_plans, db, policies).await? {
+                if let Some(label) =
+                    dependency_match_label(&dep_plan_name, all_plans, db, policies).await?
+                {
                     if let Some(plan_path) = all_plans.get(&dep_plan_name) {
                         info!(
                             "Scheduling dependency (depth {}, reason: {}): {}",
@@ -121,7 +123,9 @@ pub(super) async fn expand_missing_dependencies(
 
                     if !manifest_cache.contains_key(&cur) {
                         match PlanManifest::from_file(cur_plan_path) {
-                            Ok(m) => { manifest_cache.insert(cur.clone(), m); }
+                            Ok(m) => {
+                                manifest_cache.insert(cur.clone(), m);
+                            }
                             Err(_) => continue,
                         }
                     }
@@ -146,7 +150,10 @@ pub(super) async fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_plan_name) {
-                            if let Some(label) = dependency_match_label(&rdep_plan_name, all_plans, db, policies).await? {
+                            if let Some(label) =
+                                dependency_match_label(&rdep_plan_name, all_plans, db, policies)
+                                    .await?
+                            {
                                 if let Some(rdep_plan_path) = all_plans.get(&rdep_plan_name) {
                                     info!(
                                         "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
@@ -181,7 +188,11 @@ async fn dependency_match_label(
         let label = match policy {
             MatchPolicy::All => Some("--match=all"),
             MatchPolicy::Missing => {
-                if installed.is_none() { Some("missing") } else { None }
+                if installed.is_none() {
+                    Some("missing")
+                } else {
+                    None
+                }
             }
             MatchPolicy::Installed => {
                 if installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db).await? {
@@ -213,7 +224,9 @@ pub(super) async fn dependency_matches_policy(
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
-    Ok(dependency_match_label(dep_name, all_plans, db, policies).await?.is_some())
+    Ok(dependency_match_label(dep_name, all_plans, db, policies)
+        .await?
+        .is_some())
 }
 
 async fn dependency_plan_differs(
@@ -437,7 +450,8 @@ pub(super) async fn expand_rebuild_deps(
                     .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
 
             if link_changed || runtime_changed || build_changed {
-                if !matches!(mode, DependentsMode::All) && stable_toolchain.iter().any(|t| t == name)
+                if !matches!(mode, DependentsMode::All)
+                    && stable_toolchain.iter().any(|t| t == name)
                 {
                     continue;
                 }

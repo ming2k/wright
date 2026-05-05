@@ -113,7 +113,11 @@ impl InstalledDb {
         }
     }
 
-    pub async fn update_transaction_status(&self, id: i64, status: TransactionStatus) -> Result<()> {
+    pub async fn update_transaction_status(
+        &self,
+        id: i64,
+        status: TransactionStatus,
+    ) -> Result<()> {
         query("UPDATE transactions SET status = ? WHERE id = ?")
             .bind(status)
             .bind(id)

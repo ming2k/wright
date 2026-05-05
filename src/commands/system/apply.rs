@@ -428,14 +428,16 @@ async fn apply_targets(
         tracing::info!("{}", describe_build_resources(resources));
     }
 
-    // Pre-warm the sysroot cache before any isolated builds start.
-    // This avoids a thundering-herd where N parallel tasks all try to
-    // create the sysroot simultaneously on the first apply invocation.
-    if let Err(e) = crate::isolation::sysroot::ensure_global_sysroot() {
-        tracing::warn!(
-            "Sysroot preparation failed, builds may encounter ETXTBUSY: {}",
-            e
-        );
+    if plan.requires_sysroot_prewarm() {
+        // Pre-warm the sysroot cache before any isolated builds start.
+        // This avoids a thundering-herd where N parallel tasks all try to
+        // create the sysroot simultaneously on the first apply invocation.
+        if let Err(e) = crate::isolation::sysroot::ensure_global_sysroot() {
+            tracing::warn!(
+                "Sysroot preparation failed, builds may encounter ETXTBUSY: {}",
+                e
+            );
+        }
     }
 
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
@@ -456,6 +458,7 @@ async fn apply_targets(
             batch_idx,
             &build_opts,
             Some(&build_session_hash),
+            Some(&db),
             &completed_build_tasks,
         )
         .await
@@ -504,11 +507,14 @@ async fn apply_targets(
                         output.name,
                         plan_name
                     );
-                    if let Err(e) =
-                        transaction::remove_part(&db, &output.name, ctx.root_dir, true).await
-                    {
-                        tracing::warn!("Failed to remove existing output {}: {}", output.name, e);
-                    }
+                    transaction::remove_part(&db, &output.name, ctx.root_dir, true)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "failed to remove existing output {} from plan {}",
+                                output.name, plan_name
+                            )
+                        })?;
                 }
             }
         }

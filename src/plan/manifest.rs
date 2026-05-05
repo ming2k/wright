@@ -488,12 +488,19 @@ impl PlanManifest {
             if ver.is_empty() {
                 format!(
                     "{}-{}:{}-{}.wright.tar.zst",
-                    self.metadata.name, self.metadata.epoch, self.metadata.release, self.metadata.arch
+                    self.metadata.name,
+                    self.metadata.epoch,
+                    self.metadata.release,
+                    self.metadata.arch
                 )
             } else {
                 format!(
                     "{}-{}:{}-{}-{}.wright.tar.zst",
-                    self.metadata.name, self.metadata.epoch, ver, self.metadata.release, self.metadata.arch
+                    self.metadata.name,
+                    self.metadata.epoch,
+                    ver,
+                    self.metadata.release,
+                    self.metadata.arch
                 )
             }
         } else if ver.is_empty() {
@@ -810,7 +817,10 @@ runtime_deps = ["libgcc:default"]
                 assert_eq!(sub_manifest.metadata.release, 1);
                 assert_eq!(sub_manifest.metadata.arch, "x86_64");
                 assert_eq!(sub_manifest.metadata.license, "GPL-3.0-or-later");
-                assert_eq!(sub_manifest.metadata.description, "GNU C++ standard library");
+                assert_eq!(
+                    sub_manifest.metadata.description,
+                    "GNU C++ standard library"
+                );
                 assert_eq!(sub_manifest.runtime_deps, vec!["libgcc:default"]);
                 assert_eq!(
                     sub_manifest.part_filename(),
