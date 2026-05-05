@@ -261,7 +261,7 @@ async fn warn_about_runtime_dependencies(
                     continue;
                 }
             };
-            let (_, output_name) = version::parse_dep_ref(&dep_ref);
+            let (_, output_name) = version::parse_dep_ref(&dep_ref).to_plan_output();
 
             if let Some(candidate) = resolved_map.get(&output_name) {
                 warn_if_constraint_not_satisfied(

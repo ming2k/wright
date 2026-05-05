@@ -22,11 +22,16 @@ rebuild decisions. Output-level `runtime_deps` are for installation: they are
 serialized into binary part metadata, recorded in the installed database, and
 checked by `wright install` as warnings.
 
-Dependency references are resolved as `plan:output`, not as bare part names.
-For a multi-output plan, `llvm:llvm-libs` means the `llvm-libs` output produced
-by the `llvm` plan. `llvm-libs:default` means a separate local plan named
-`llvm-libs`; if no such plan exists, `wright lint` reports the exact plan file
-and dependency field.
+Dependency references accept two forms:
+
+- `plan` — all outputs of that plan. For single-output plans this is the
+  most common and recommended form (`openssl` instead of `openssl:openssl`).
+- `plan:output` — exactly one output of a multi-output plan
+  (`llvm:llvm-libs`).
+
+`wright lint` validates that each referenced local plan exists. For explicit
+`plan:output` references, it also checks that the output is declared by that
+plan.
 
 Only `runtime_deps` and part relations are serialized into binary part metadata
 used by `wright install`. `build_deps` and `link_deps` remain build-graph

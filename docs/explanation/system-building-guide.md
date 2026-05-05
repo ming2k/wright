@@ -184,12 +184,12 @@ Removal protection follows recorded installed/runtime dependencies.
 - **runtime_deps**: Output-level runtime requirements recorded in binary part metadata.
 
 ```toml
-build_deps = ["pkg-config:default"]
-link_deps = ["zlib:default", "openssl:default >= 3.0"]
+build_deps = ["pkg-config"]
+link_deps = ["zlib", "openssl >= 3.0"]
 
 [[output]]
 name = "myapp"
-runtime_deps = ["bash:default"]
+runtime_deps = ["bash"]
 ```
 
 ### 3.3 Avoiding Circular Dependencies

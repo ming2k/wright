@@ -33,17 +33,26 @@ If a plan needs a separate bootstrap/MVP override, place it in a sibling `mvp.to
 Use `build_deps` for tools and headers needed during compilation. Use `link_deps` for shared libraries your binary actually links against at build time:
 
 ```toml
-build_deps = ["pkg-config:default"]
-link_deps = ["openssl:default", "zlib:default"]
+build_deps = ["pkg-config"]
+link_deps = ["openssl", "zlib"]
 ```
 
 Put version constraints after the output reference:
 
 ```toml
-link_deps = ["pcre2:default >= 10.42"]
+link_deps = ["pcre2 >= 10.42"]
 ```
 
-`wright lint` validates that each referenced local plan exists and that the referenced output is declared by that plan. In a multi-output plan, depend on the concrete output name, for example `llvm:llvm-libs`; `llvm-libs:default` means a separate plan named `llvm-libs`.
+`wright lint` validates that each referenced local plan exists and that the referenced output is declared by that plan.
+
+For a multi-output plan, use the concrete output name when you only need one:
+
+```toml
+# llvm produces multiple outputs: llvm, llvm-libs, clang, lld
+build_deps = ["llvm:clang", "llvm:lld"]
+```
+
+Writing `llvm-libs:default` would mean a **separate plan** named `llvm-libs`, not the `llvm-libs` output of the `llvm` plan. Always use `plan:output` for specific outputs.
 
 ### Runtime Dependencies
 
@@ -52,16 +61,16 @@ Runtime dependencies are declared per-output, because they describe what a speci
 ```toml
 [[output]]
 name = "nginx"
-runtime_deps = ["openssl:default", "zlib:default"]
+runtime_deps = ["openssl", "zlib"]
 
 [[output]]
 name = "nginx-minimal"
-runtime_deps = ["openssl:default"]
+runtime_deps = ["openssl"]
 include = ["/usr/sbin/nginx", "/etc/nginx/nginx.conf"]
 
 [[output]]
 name = "nginx-modules"
-runtime_deps = ["openssl:default", "zlib:default", "pcre2:default"]
+runtime_deps = ["openssl", "zlib", "pcre2"]
 include = ["/usr/lib/nginx/modules/.*"]
 ```
 
@@ -294,7 +303,7 @@ name = "gcc"
 name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
-runtime_deps = ["libgcc:default"]
+runtime_deps = ["libgcc"]
 ```
 
 **Coverage rules:**
@@ -358,7 +367,7 @@ foo/
 `mvp.toml`:
 
 ```toml
-link_deps = ["freetype:default"] # omit harfbuzz in MVP
+link_deps = ["freetype"] # omit harfbuzz in MVP
 ```
 
 Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has MVP overrides that remove at least one edge of the cycle, it automatically inserts the two-pass schedule.
@@ -373,7 +382,7 @@ For complex parts, provide **dedicated MVP scripts** instead of embedding condit
 
 ```toml
 # mvp.toml
-link_deps = ["cairo:default", "pango:default", "glib:default"]
+link_deps = ["cairo", "pango", "glib"]
 
 [lifecycle.configure]
 script = """
@@ -502,7 +511,7 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Example Maintainer <maintainer@example.com>"
 
-link_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
+link_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -549,7 +558,7 @@ make DESTDIR=${STAGING_DIR} install
 name = "nginx"
 conflicts = ["apache"]
 provides = ["http-server"]
-runtime_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
+runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 [output.hooks]
@@ -587,7 +596,7 @@ make DESTDIR=${STAGING_DIR} install
 name = "libfoo"
 description = "Foo runtime libraries"
 include = ["/usr/lib/libfoo\\.so.*"]
-runtime_deps = ["glibc:default"]
+runtime_deps = ["glibc"]
 
 [[output]]
 name = "libfoo-dev"
@@ -611,7 +620,7 @@ arch = "x86_64"
 
 [[output]]
 name = "linux-firmware"
-runtime_deps = ["linux-firmware-amd:default", "linux-firmware-intel:default", "linux-firmware-nvidia:default"]
+runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nvidia"]
 
 [[output]]
 name = "linux-firmware-amd"

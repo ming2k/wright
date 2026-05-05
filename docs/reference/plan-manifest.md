@@ -45,13 +45,28 @@ Declared as top-level fields; affect build planning and `wright resolve`.
 
 Constraint operators: `>=`, `<=`, `>`, `<`, `=`.
 
-Dependency references use `plan:output` syntax. Version constraints follow the output reference:
+Dependency references accept two forms:
+
+| Form | Meaning | Example |
+|------|---------|---------|
+| `plan` | All outputs of `plan` | `openssl` |
+| `plan:output` | Exactly one output | `llvm:llvm-libs` |
+
+Version constraints follow the reference:
 
 ```toml
-link_deps = ["pcre2:default >= 10.42"]
+link_deps = ["pcre2 >= 10.42"]
 ```
 
-`wright lint` validates that each referenced local plan exists and that the referenced output is declared by that plan.
+`wright lint` validates that each referenced local plan exists. For explicit `plan:output` references, it also checks that the output is declared by that plan.
+
+When a plan produces multiple outputs, use `plan:output` to depend on exactly one:
+
+```toml
+build_deps = ["llvm:clang", "llvm:lld"]
+```
+
+Writing `clang` (bare plan name) would mean "all outputs of the `clang` plan," which is different from "the `clang` output of the `llvm` plan."
 
 ## Output-Level Dependencies
 

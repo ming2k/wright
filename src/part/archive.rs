@@ -470,7 +470,7 @@ license = "MIT"
             r#"
 [part]
 name = "libstdc++"
-runtime_deps = ["libgcc:default"]
+runtime_deps = ["libgcc"]
 
 [plan]
 name = "gcc"
@@ -479,8 +479,8 @@ release = 1
 description = "GNU Compiler Collection"
 arch = "x86_64"
 license = "GPL-3.0-or-later"
-build_deps = ["binutils:default"]
-link_deps = ["zlib:default"]
+build_deps = ["binutils"]
+link_deps = ["zlib"]
 "#,
         )
         .unwrap();
@@ -489,9 +489,9 @@ link_deps = ["zlib:default"]
         assert_eq!(info.plan.name, "gcc");
         assert_eq!(info.plan.version, "14.2.0");
         assert_eq!(info.plan.release, 1);
-        assert_eq!(info.runtime_deps, vec!["libgcc:default"]);
-        assert_eq!(info.plan.build_deps, vec!["binutils:default"]);
-        assert_eq!(info.plan.link_deps, vec!["zlib:default"]);
+        assert_eq!(info.runtime_deps, vec!["libgcc"]);
+        assert_eq!(info.plan.build_deps, vec!["binutils"]);
+        assert_eq!(info.plan.link_deps, vec!["zlib"]);
     }
 
     #[test]

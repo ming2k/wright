@@ -260,7 +260,7 @@ fn validate_local_dependency_refs(
     let mut messages = Vec::new();
 
     for (location, dep) in dependency_entries(manifest) {
-        let (dep_plan, dep_output, _) = match version::parse_dependency_ref(&dep) {
+        let (dep_ref, _) = match version::parse_dependency_ref(&dep) {
             Ok(parsed) => parsed,
             Err(e) => {
                 messages.push(format!(
@@ -274,6 +274,8 @@ fn validate_local_dependency_refs(
             }
         };
 
+        let dep_plan = dep_ref.plan().to_string();
+
         let Some(target) = local_index.get(&dep_plan) else {
             messages.push(format!(
                 "{}: {} dependency '{}' references missing local plan '{}'",
@@ -285,19 +287,21 @@ fn validate_local_dependency_refs(
             continue;
         };
 
-        if !target.outputs.contains(&dep_output) {
-            let mut outputs: Vec<&str> = target.outputs.iter().map(String::as_str).collect();
-            outputs.sort_unstable();
-            messages.push(format!(
-                "{}: {} dependency '{}' references missing output '{}:{}' (defined outputs in {}: {})",
-                path.display(),
-                location,
-                dep,
-                dep_plan,
-                dep_output,
-                target.path.display(),
-                outputs.join(", ")
-            ));
+        if let Some(dep_output) = dep_ref.output() {
+            if !target.outputs.contains(dep_output) {
+                let mut outputs: Vec<&str> = target.outputs.iter().map(String::as_str).collect();
+                outputs.sort_unstable();
+                messages.push(format!(
+                    "{}: {} dependency '{}' references missing output '{}:{}' (defined outputs in {}: {})",
+                    path.display(),
+                    location,
+                    dep,
+                    dep_plan,
+                    dep_output,
+                    target.path.display(),
+                    outputs.join(", ")
+                ));
+            }
         }
     }
 
@@ -366,7 +370,7 @@ release = 1
 description = "consumer"
 license = "MIT"
 arch = "x86_64"
-link_deps = ["provider:default"]
+link_deps = ["provider:provider"]
 "#,
         );
         let provider = manifest(

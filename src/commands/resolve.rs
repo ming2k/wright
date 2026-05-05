@@ -119,7 +119,7 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
     for (name, path) in &all_plans {
         if let Ok(m) = PlanManifest::from_file(path) {
             for (dep_raw, kind) in m.all_dependencies() {
-                let (dep_name, _) = version::parse_dep_ref(&dep_raw);
+                let dep_name = version::parse_dep_ref(&dep_raw).plan().to_string();
                 rdeps_map
                     .entry(dep_name)
                     .or_default()
@@ -295,7 +295,7 @@ fn print_dependency_tree(
         return Ok(false);
     }
     for (i, (dep_raw, kind)) in deps.iter().enumerate() {
-        let (dep_name, _) = version::parse_dep_ref(dep_raw);
+        let dep_name = version::parse_dep_ref(dep_raw).plan().to_string();
         let last_child = i == deps.len() - 1;
         let connector = if last_child {
             "└── "

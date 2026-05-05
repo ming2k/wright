@@ -189,22 +189,49 @@ impl fmt::Display for VersionConstraint {
     }
 }
 
-/// Parse a `plan:output` reference into (plan_name, output_name).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DepRef {
+    /// Bare plan name — resolves to all outputs of that plan.
+    Wildcard(String),
+    /// Explicit plan:output reference.
+    Specific(String, String),
+}
+
+impl DepRef {
+    pub fn plan(&self) -> &str {
+        match self {
+            DepRef::Wildcard(p) => p,
+            DepRef::Specific(p, _) => p,
+        }
+    }
+
+    pub fn output(&self) -> Option<&str> {
+        match self {
+            DepRef::Wildcard(_) => None,
+            DepRef::Specific(_, o) => Some(o),
+        }
+    }
+
+    /// Temporary compatibility helper: returns `(plan, output)` using the
+    /// primary output for bare plan names.  Callers that need true wildcard
+    /// expansion should use `plan` and enumerate the plan's outputs instead.
+    pub fn to_plan_output(&self) -> (String, String) {
+        match self {
+            DepRef::Wildcard(plan) => (plan.clone(), plan.clone()),
+            DepRef::Specific(plan, output) => (plan.clone(), output.clone()),
+        }
+    }
+}
+
+/// Parse a dependency reference into a [`DepRef`].
 ///
-/// - `llvm:clang` → (`llvm`, `clang`)
-/// - `glibc:default` → (`glibc`, `glibc`)  // `:default` is a placeholder for the plan's sole output
-/// - Missing colon is rejected by the caller (validate stage enforces `plan:output`).
-pub fn parse_dep_ref(dep: &str) -> (String, String) {
+/// - `llvm:clang` → `Specific("llvm", "clang")`
+/// - `cmake` → `Wildcard("cmake")`
+pub fn parse_dep_ref(dep: &str) -> DepRef {
     if let Some((plan, output)) = dep.split_once(':') {
-        let plan = plan.to_string();
-        let output = if output == "default" {
-            plan.clone()
-        } else {
-            output.to_string()
-        };
-        (plan, output)
+        DepRef::Specific(plan.to_string(), output.to_string())
     } else {
-        (dep.to_string(), dep.to_string())
+        DepRef::Wildcard(dep.to_string())
     }
 }
 
@@ -221,49 +248,62 @@ fn is_valid_dep_component(value: &str) -> bool {
 
 /// Parse and validate a dependency reference with optional version constraint.
 ///
-/// The accepted dependency reference form is `plan:output`, optionally followed
-/// by a version constraint such as `>= 1.2`. `:default` is resolved to the plan's
-/// single-output name.
-pub fn parse_dependency_ref(dep: &str) -> Result<(String, String, Option<VersionConstraint>)> {
+/// Accepted forms:
+/// - `plan:output` — explicit output reference (`Specific`)
+/// - `plan` — bare plan name, resolves to all outputs (`Wildcard`)
+/// - `:default` is deprecated and resolved to the plan name
+///
+/// An optional version constraint such as `>= 1.2` may follow the reference.
+pub fn parse_dependency_ref(dep: &str) -> Result<(DepRef, Option<VersionConstraint>)> {
     let (dep_ref, constraint) = parse_dependency(dep)?;
-    let parts: Vec<&str> = dep_ref.split(':').collect();
-    if parts.len() != 2 {
-        return Err(WrightError::ValidationError(format!(
-            "dependency '{}' must use 'plan:output' syntax",
-            dep.trim()
-        )));
-    }
 
-    let plan = parts[0].trim();
-    let output = parts[1].trim();
-    if plan.is_empty() || output.is_empty() {
-        return Err(WrightError::ValidationError(format!(
-            "dependency '{}' must include non-empty plan and output names",
-            dep.trim()
-        )));
-    }
-    if !is_valid_dep_component(plan) {
-        return Err(WrightError::ValidationError(format!(
-            "dependency '{}': invalid plan name '{}'",
-            dep.trim(),
-            plan
-        )));
-    }
-    if !is_valid_dep_component(output) {
-        return Err(WrightError::ValidationError(format!(
-            "dependency '{}': invalid output name '{}'",
-            dep.trim(),
-            output
-        )));
-    }
-
-    let output = if output == "default" {
-        plan.to_string()
-    } else {
-        output.to_string()
+    // Check for colon — if present, it's Specific; otherwise Wildcard.
+    let dep_ref = match dep_ref.split_once(':') {
+        Some((plan, output)) => {
+            let plan = plan.trim();
+            let output = output.trim();
+            if plan.is_empty() || output.is_empty() {
+                return Err(WrightError::ValidationError(format!(
+                    "dependency '{}' must include non-empty plan and output names",
+                    dep.trim()
+                )));
+            }
+            if !is_valid_dep_component(plan) {
+                return Err(WrightError::ValidationError(format!(
+                    "dependency '{}': invalid plan name '{}'",
+                    dep.trim(),
+                    plan
+                )));
+            }
+            if !is_valid_dep_component(output) {
+                return Err(WrightError::ValidationError(format!(
+                    "dependency '{}': invalid output name '{}'",
+                    dep.trim(),
+                    output
+                )));
+            }
+            DepRef::Specific(plan.to_string(), output.to_string())
+        }
+        None => {
+            let plan = dep_ref.trim();
+            if plan.is_empty() {
+                return Err(WrightError::ValidationError(format!(
+                    "dependency '{}' must not be empty",
+                    dep.trim()
+                )));
+            }
+            if !is_valid_dep_component(plan) {
+                return Err(WrightError::ValidationError(format!(
+                    "dependency '{}': invalid plan name '{}'",
+                    dep.trim(),
+                    plan
+                )));
+            }
+            DepRef::Wildcard(plan.to_string())
+        }
     };
 
-    Ok((plan.to_string(), output, constraint))
+    Ok((dep_ref, constraint))
 }
 
 /// Parse a dependency string like "openssl >= 3.0" into (name, optional constraint)
@@ -409,31 +449,74 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_dep_ref() {
+        assert_eq!(
+            parse_dep_ref("llvm:clang"),
+            DepRef::Specific("llvm".into(), "clang".into())
+        );
+        assert_eq!(
+            parse_dep_ref("glibc:glibc"),
+            DepRef::Specific("glibc".into(), "glibc".into())
+        );
+        assert_eq!(
+            parse_dep_ref("cmake"),
+            DepRef::Wildcard("cmake".into())
+        );
+    }
+
+    #[test]
+    fn test_dep_ref_methods() {
+        let specific = DepRef::Specific("llvm".into(), "clang".into());
+        assert_eq!(specific.plan(), "llvm");
+        assert_eq!(specific.output(), Some("clang"));
+        assert_eq!(specific.to_plan_output(), ("llvm".into(), "clang".into()));
+
+        let wildcard = DepRef::Wildcard("cmake".into());
+        assert_eq!(wildcard.plan(), "cmake");
+        assert_eq!(wildcard.output(), None);
+        assert_eq!(wildcard.to_plan_output(), ("cmake".into(), "cmake".into()));
+    }
+
+    #[test]
     fn test_parse_dependency_ref() {
-        let (plan, output, constraint) = parse_dependency_ref("llvm:llvm-libs >= 22.1").unwrap();
-        assert_eq!(plan, "llvm");
-        assert_eq!(output, "llvm-libs");
+        let (dep, constraint) = parse_dependency_ref("llvm:llvm-libs >= 22.1").unwrap();
+        assert_eq!(dep, DepRef::Specific("llvm".into(), "llvm-libs".into()));
         assert!(constraint.is_some());
     }
 
     #[test]
-    fn test_parse_dependency_ref_default_output() {
-        let (plan, output, constraint) = parse_dependency_ref("glibc:default").unwrap();
-        assert_eq!(plan, "glibc");
-        assert_eq!(output, "glibc");
+    fn test_parse_dependency_ref_bare_plan() {
+        let (dep, constraint) = parse_dependency_ref("cmake").unwrap();
+        assert_eq!(dep, DepRef::Wildcard("cmake".into()));
         assert!(constraint.is_none());
     }
 
     #[test]
-    fn test_parse_dependency_ref_rejects_missing_output() {
-        assert!(parse_dependency_ref("glibc").is_err());
+    fn test_parse_dependency_ref_rejects_empty_output() {
         assert!(parse_dependency_ref("glibc:").is_err());
-        assert!(parse_dependency_ref(":default").is_err());
+        assert!(parse_dependency_ref(":").is_err());
     }
 
     #[test]
-    fn test_parse_dependency_ref_rejects_constraint_before_output() {
-        assert!(parse_dependency_ref("pcre2 >= 10.42:default").is_err());
+    fn test_parse_dependency_ref_bare_plan_with_constraint() {
+        let (dep, constraint) = parse_dependency_ref("pcre2 >= 10.42").unwrap();
+        assert_eq!(dep, DepRef::Wildcard("pcre2".into()));
+        assert!(constraint.is_some());
+    }
+
+    #[test]
+    fn test_parse_dependency_ref_multi_output_example() {
+        // llvm:clang -> Specific("llvm", "clang")
+        let (dep, _) = parse_dependency_ref("llvm:clang").unwrap();
+        assert_eq!(dep, DepRef::Specific("llvm".into(), "clang".into()));
+
+        // llvm:lld -> Specific("llvm", "lld")
+        let (dep, _) = parse_dependency_ref("llvm:lld").unwrap();
+        assert_eq!(dep, DepRef::Specific("llvm".into(), "lld".into()));
+
+        // bare "clang" -> Wildcard("clang"), i.e. all outputs of plan "clang"
+        let (dep, _) = parse_dependency_ref("clang").unwrap();
+        assert_eq!(dep, DepRef::Wildcard("clang".into()));
     }
 
     #[test]

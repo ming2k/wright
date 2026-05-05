@@ -44,7 +44,7 @@ fn visit_resolved(
         for dep in &part.dependencies {
             let (dep_name, _) =
                 version::parse_dependency(dep).unwrap_or_else(|_| (dep.clone(), None));
-            let (_, output_name) = version::parse_dep_ref(&dep_name);
+            let (_, output_name) = version::parse_dep_ref(&dep_name).to_plan_output();
             if map.contains_key(&output_name) {
                 visit_resolved(&output_name, map, visited, visiting, sorted)?;
             }

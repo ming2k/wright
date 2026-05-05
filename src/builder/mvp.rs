@@ -62,7 +62,7 @@ pub(crate) fn collect_phase_deps(
         let dep_name = version::parse_dependency(dep)
             .unwrap_or_else(|_| (dep.clone(), None))
             .0;
-        let (dep_plan_name, _) = version::parse_dep_ref(&dep_name);
+        let dep_plan_name = version::parse_dep_ref(&dep_name).plan().to_string();
 
         if let Some(parent_plan) = part_to_plan.get(&dep_plan_name) {
             if parent_plan != &manifest.metadata.name {
@@ -80,7 +80,7 @@ pub(crate) fn collect_phase_deps(
             let build_dep_name = version::parse_dependency(build_dep)
                 .unwrap_or_else(|_| (build_dep.clone(), None))
                 .0;
-            let (build_dep_plan_name, _) = version::parse_dep_ref(&build_dep_name);
+            let build_dep_plan_name = version::parse_dep_ref(&build_dep_name).plan().to_string();
             let build_dep_plan = part_to_plan
                 .get(&build_dep_plan_name)
                 .cloned()
@@ -100,7 +100,7 @@ pub(crate) fn collect_phase_deps(
                             let rdep_name = version::parse_dependency(rdep)
                                 .unwrap_or_else(|_| (rdep.clone(), None))
                                 .0;
-                            let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
+                            let rdep_plan_name = version::parse_dep_ref(&rdep_name).plan().to_string();
                             let rdep_plan = part_to_plan
                                 .get(&rdep_plan_name)
                                 .cloned()

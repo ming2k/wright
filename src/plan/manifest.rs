@@ -644,7 +644,7 @@ arch = "x86_64"
 url = "https://nginx.org"
 maintainer = "Test <test@test.com>"
 
-link_deps = ["openssl:default", "pcre2:default >= 10.42", "zlib:default >= 1.2"]
+link_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 
 [[sources]]
 type = "http"
@@ -821,7 +821,7 @@ name = "gcc"
 name = "libstdc++"
 description = "GNU C++ standard library"
 include = ["/usr/lib/libstdc.*"]
-runtime_deps = ["libgcc:default"]
+runtime_deps = ["libgcc"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -832,7 +832,7 @@ runtime_deps = ["libgcc:default"]
                     libstdcpp.description.as_deref(),
                     Some("GNU C++ standard library")
                 );
-                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc:default"]);
+                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc"]);
 
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
                 assert_eq!(sub_manifest.metadata.name, "libstdc++");
@@ -844,7 +844,7 @@ runtime_deps = ["libgcc:default"]
                     sub_manifest.metadata.description,
                     "GNU C++ standard library"
                 );
-                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc:default"]);
+                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc"]);
                 assert_eq!(
                     sub_manifest.part_filename(),
                     "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
@@ -1118,7 +1118,7 @@ license = "MIT"
 arch = "x86_64"
 
 [output]
-runtime_deps = ["zlib:default"]
+runtime_deps = ["zlib"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("[output] table syntax"));
@@ -1182,16 +1182,16 @@ arch = "x86_64"
 [[output]]
 name = "test-lib"
 description = "test lib"
-runtime_deps = ["openssl:default"]
+runtime_deps = ["openssl"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.metadata.name, "test");
-        assert_eq!(manifest.runtime_deps, vec!["openssl:default"]);
+        assert_eq!(manifest.runtime_deps, vec!["openssl"]);
         match manifest.outputs {
             Some(OutputConfig::Multi(parts)) => {
                 assert_eq!(parts.len(), 1);
                 assert_eq!(parts[0].0, "test-lib");
-                assert_eq!(parts[0].1.runtime_deps, vec!["openssl:default"]);
+                assert_eq!(parts[0].1.runtime_deps, vec!["openssl"]);
             }
             _ => panic!("expected Multi output config"),
         }
@@ -1330,7 +1330,7 @@ arch = "x86_64"
         std::fs::write(
             &mvp_path,
             r#"
-build_deps = ["gcc:default"]
+build_deps = ["gcc"]
 
 [lifecycle.configure]
 script = "echo mvp"
@@ -1340,7 +1340,7 @@ script = "echo mvp"
 
         let manifest = PlanManifest::from_file(&plan_path).unwrap();
         let mvp = manifest.mvp.as_ref().unwrap();
-        assert_eq!(mvp.build_deps, vec!["gcc:default"]);
+        assert_eq!(mvp.build_deps, vec!["gcc"]);
         assert_eq!(
             mvp.lifecycle
                 .get("configure")

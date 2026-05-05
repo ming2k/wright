@@ -60,7 +60,7 @@ script = "mkdir -p ${STAGING_DIR}/usr/bin"
 
 [[output]]
 name = "wayland-utils"
-runtime_deps = ["wayland:default"]
+runtime_deps = ["wayland"]
 "#,
     )
     .unwrap();
@@ -154,7 +154,7 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/apply-resume-main
 
 [[output]]
 name = "apply-resume-main"
-runtime_deps = ["apply-resume-dep:default"]
+runtime_deps = ["apply-resume-dep"]
 "#,
             signal_path.display()
         ),

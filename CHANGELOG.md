@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.7] - 2026-05-05
+
+### Breaking Changes
+- **Removed `:default` magic string** — dependency references now use bare plan names (`openssl`) or explicit `plan:output` syntax (`llvm:clang`). The `:default` suffix is no longer recognized and will be rejected at parse time.
+
+### Changed
+- **Dependency reference parser** — introduced `DepRef` enum (`Wildcard` / `Specific`) to distinguish bare plan names from explicit output references. Bare plan names are preserved for future expansion to all outputs.
+
 ## [4.0.6] - 2026-05-05
 
 ### Breaking Changes

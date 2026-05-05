@@ -114,11 +114,11 @@ description = "test part"
 license = "MIT"
 arch = "x86_64"
 
-link_deps = ["zlib:default", "libffi:default"]
+link_deps = ["zlib", "libffi"]
 
 [[output]]
 name = "runtime-link-overlap"
-runtime_deps = ["openssl:default", "zlib:default"]
+runtime_deps = ["openssl", "zlib"]
 
 [lifecycle.staging]
 executor = "shell"
@@ -161,13 +161,13 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
 
     assert_eq!(
         partinfo.runtime_deps,
-        vec!["openssl:default", "zlib:default"]
+        vec!["openssl", "zlib"]
     );
 
     let extract_dir = tempfile::tempdir().unwrap();
     archive::extract_part(&archive_path, extract_dir.path()).unwrap();
     let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
-    assert!(partinfo.contains("runtime_deps = [\"openssl:default\", \"zlib:default\"]"));
+    assert!(partinfo.contains("runtime_deps = [\"openssl\", \"zlib\"]"));
     assert!(!partinfo.contains("link ="));
 }
 
@@ -763,7 +763,7 @@ description = "main"
 license = "MIT"
 arch = "x86_64"
 
-build_deps = ["resume-dep:default"]
+build_deps = ["resume-dep"]
 link_deps = []
 
 [lifecycle.staging]

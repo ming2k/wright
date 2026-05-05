@@ -622,11 +622,30 @@ impl Builder {
                 } else {
                     String::new()
                 };
+
+                let _ = tokio::fs::create_dir_all(&logs_dir).await;
+                let log_path = logs_dir.join("slice-errors.log");
+                if let Ok(mut f) = std::fs::File::create(&log_path) {
+                    use std::io::Write;
+                    let _ = writeln!(f, "plan = {}", manifest.metadata.name);
+                    let _ = writeln!(f, "staging_dir = {}", staging_dir.display());
+                    let _ = writeln!(f, "unmatched_count = {}", unmatched.len());
+                    let _ = writeln!(f);
+                    for p in &unmatched {
+                        let _ = writeln!(f, "{}", p);
+                    }
+                    tracing::info!(
+                        "Full unmatched file list written to {}",
+                        log_path.display()
+                    );
+                }
+
                 return Err(WrightError::BuildError(format!(
-                    "{} staging files are not claimed by any [[output]] or [[discard]] rule:\n{}{}\nAdd an [[output]] include pattern, add an explicit [[discard]] rule, or add a catch-all [[output]] with no include.",
+                    "{} staging files are not claimed by any [[output]] or [[discard]] rule:\n{}{}\nAdd an [[output]] include pattern, add an explicit [[discard]] rule, or add a catch-all [[output]] with no include.\nFull list: {}",
                     unmatched.len(),
                     shown,
-                    suffix
+                    suffix,
+                    log_path.display()
                 )));
             }
 
