@@ -568,6 +568,18 @@ pub fn run_in_isolation(
                             }
                         }
                     }
+                    // On merged-/usr systems the lowerdir collapses to a single
+                    // directory (e.g. /usr), which overlayfs flattens so that
+                    // /usr/lib appears as /lib and there is no /usr directory.
+                    // The host's ld.so.cache (bind-mounted below) contains
+                    // absolute paths like /usr/lib/..., which would fail to
+                    // resolve.  Bind-mount the host /usr to restore the
+                    // expected hierarchy.
+                    if newroot.join("usr").metadata().is_err() {
+                        if let Err(e) = bind(Path::new("/usr"), "/usr", true) {
+                            die(e);
+                        }
+                    }
                     // /dev: try devtmpfs, fall back to tmpfs + bind-mounted devices.
                     let dev = newroot.join("dev");
                     std::fs::create_dir_all(&dev).ok();

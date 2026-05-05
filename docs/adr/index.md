@@ -13,4 +13,5 @@
 | [ADR-0009](0009-separate-plan-output-dependencies.md) | Separate plan-level and output-level dependencies | Accepted |
 | [ADR-0010](0010-pre-copied-sysroot-isolation.md) | Pre-copied read-only sysroot instead of OverlayFS | Superseded by ADR-0012 |
 | [ADR-0011](0011-plan-name-only-dep-all-outputs.md) | Plan-name-only dependency references resolve to all outputs | Accepted |
-| [ADR-0012](0012-overlayfs-per-task-upper.md) | OverlayFS with per-task writable upper layers | Accepted |
+| [ADR-0012](0012-overlayfs-per-task-upper.md) | OverlayFS with per-task writable upper layers | Superseded by ADR-0013 |
+| [ADR-0013](0013-multi-lowerdir-isolation.md) | Multi-lowerdir OverlayFS isolation | Accepted |

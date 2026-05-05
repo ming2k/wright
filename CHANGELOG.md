@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.0.10] - 2026-05-05
+
+### Fixed
+- **OverlayFS `/usr` hierarchy on merged-/usr systems** — after the overlayfs mount, bind-mount host `/usr` into the newroot when the lowerdir has been collapsed to a single directory. This restores the FHS directory hierarchy so that `ld.so.cache` absolute paths (e.g. `/usr/lib/libreadline.so.8`) resolve correctly inside strict isolation. Previously, merged-/usr systems had no `/usr` directory inside the isolation, causing "cannot open shared object file" failures for shells and tools linked against libraries under `/usr/lib`.
+
+### Added
+- **ADR-0013** — documents the multi-lowerdir overlayfs isolation design, superseding ADR-0012. Eliminates the pre-copied sysroot in favour of using host system directories as overlayfs lower layers with a per-task writable upper layer.
+
 ## [4.0.9] - 2026-05-05
 
 ### Changed

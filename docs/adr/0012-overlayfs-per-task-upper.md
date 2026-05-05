@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0013](0013-multi-lowerdir-isolation.md).
 
 Supersedes [ADR-0010](0010-pre-copied-sysroot-isolation.md).
 
