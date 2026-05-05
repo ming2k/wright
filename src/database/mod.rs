@@ -14,8 +14,8 @@ use core::PART_COLUMNS;
 pub use plans::PlanRecord;
 pub use sessions::ExecutionSession;
 pub use types::{
-    DepType, Dependency, FileEntry, FileType, InstalledPart, NewPart, NewPlan, Origin,
-    TransactionRecord,
+    Dependency, FileEntry, FileType, InstalledPart, NewPart, NewPlan, Origin, PartWithPlan,
+    TransactionOperation, TransactionRecord, TransactionStatus,
 };
 
 #[cfg(test)]
@@ -23,7 +23,21 @@ mod tests {
     use super::*;
 
     async fn test_db() -> InstalledDb {
-        InstalledDb::open_in_memory().await.unwrap()
+        let db = InstalledDb::open_in_memory().await.unwrap();
+        // Insert a default plan so tests can reference it via plan_id
+        db.insert_plan(NewPlan {
+            name: "test-plan",
+            version: "1.0.0",
+            release: 1,
+            epoch: 0,
+            description: "test",
+            arch: "x86_64",
+            license: "MIT",
+            url: None,
+        })
+        .await
+        .unwrap();
+        db
     }
 
     #[tokio::test]
@@ -32,12 +46,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test part",
-                arch: "x86_64",
-                license: "MIT",
-                install_size: 1024,
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -46,9 +55,6 @@ mod tests {
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(part.name, "hello");
-        assert_eq!(part.version, "1.0.0");
-        assert_eq!(part.release, 1);
-        assert_eq!(part.install_size, Some(1024));
         assert!(part.install_scripts.is_none());
     }
 
@@ -57,22 +63,14 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "alpha",
-            version: "1.0.0",
-            release: 1,
-            description: "a",
-            arch: "x86_64",
-            license: "MIT",
+            plan_id: 1,
             ..Default::default()
         })
         .await
         .unwrap();
         db.insert_part(NewPart {
             name: "beta",
-            version: "2.0.0",
-            release: 1,
-            description: "b",
-            arch: "x86_64",
-            license: "MIT",
+            plan_id: 1,
             ..Default::default()
         })
         .await
@@ -88,11 +86,7 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "hello",
-            version: "1.0.0",
-            release: 1,
-            description: "test",
-            arch: "x86_64",
-            license: "MIT",
+            plan_id: 1,
             ..Default::default()
         })
         .await
@@ -107,11 +101,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -140,11 +130,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -181,11 +167,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -221,11 +203,7 @@ mod tests {
         let hello_id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -233,11 +211,7 @@ mod tests {
         let world_id = db
             .insert_part(NewPart {
                 name: "world",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -285,22 +259,28 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "hello",
-            version: "1.0.0",
-            release: 1,
-            description: "Hello World",
-            arch: "x86_64",
-            license: "MIT",
+            plan_id: 1,
             ..Default::default()
         })
         .await
         .unwrap();
+        // Create a separate plan for nginx with a description
+        let nginx_plan_id = db
+            .insert_plan(NewPlan {
+                name: "nginx-plan",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                description: "HTTP server",
+                arch: "x86_64",
+                license: "BSD",
+                url: None,
+            })
+            .await
+            .unwrap();
         db.insert_part(NewPart {
             name: "nginx",
-            version: "1.25.3",
-            release: 1,
-            description: "HTTP server",
-            arch: "x86_64",
-            license: "BSD",
+            plan_id: nginx_plan_id,
             ..Default::default()
         })
         .await
@@ -320,11 +300,7 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "hello",
-            version: "1.0.0",
-            release: 1,
-            description: "test",
-            arch: "x86_64",
-            license: "MIT",
+            plan_id: 1,
             ..Default::default()
         })
         .await
@@ -332,11 +308,7 @@ mod tests {
         let result = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "2.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await;
@@ -348,11 +320,7 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "openssl",
-            version: "3.0.0",
-            release: 1,
-            description: "SSL lib",
-            arch: "x86_64",
-            license: "Apache",
+            plan_id: 1,
             ..Default::default()
         })
         .await
@@ -365,11 +333,11 @@ mod tests {
     async fn test_record_transaction() {
         let db = test_db().await;
         let id = db
-            .record_transaction("install", "hello", None, Some("1.0.0"), "completed", None)
+            .record_transaction(TransactionOperation::Install, "hello", None, Some("1.0.0"), TransactionStatus::Completed, None)
             .await
             .unwrap();
         assert!(id > 0);
-        db.update_transaction_status(id, "rolled_back")
+        db.update_transaction_status(id, TransactionStatus::RolledBack)
             .await
             .unwrap();
     }
@@ -379,12 +347,7 @@ mod tests {
         let db = test_db().await;
         db.insert_part(NewPart {
             name: "hello",
-            version: "1.0.0",
-            release: 1,
-            description: "test part",
-            arch: "x86_64",
-            license: "MIT",
-            install_size: 1024,
+            plan_id: 1,
             ..Default::default()
         })
         .await
@@ -392,12 +355,7 @@ mod tests {
 
         db.update_part(NewPart {
             name: "hello",
-            version: "2.0.0",
-            release: 1,
-            description: "updated part",
-            arch: "x86_64",
-            license: "MIT",
-            install_size: 2048,
+            plan_id: 1,
             install_scripts: Some("post_install() { echo hi; }"),
             ..Default::default()
         })
@@ -405,9 +363,6 @@ mod tests {
         .unwrap();
 
         let part = db.get_part("hello").await.unwrap().unwrap();
-        assert_eq!(part.version, "2.0.0");
-        assert_eq!(part.description, Some("updated part".to_string()));
-        assert_eq!(part.install_size, Some(2048));
         assert_eq!(
             part.install_scripts.as_deref(),
             Some("post_install() { echo hi; }")
@@ -420,11 +375,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -469,11 +420,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 ..Default::default()
             })
             .await
@@ -484,7 +431,6 @@ mod tests {
             &[Dependency {
                 name: "openssl".to_string(),
                 version_constraint: Some(">= 3.0".to_string()),
-                dep_type: DepType::Runtime,
             }],
         )
         .await
@@ -494,7 +440,6 @@ mod tests {
             &[Dependency {
                 name: "zlib".to_string(),
                 version_constraint: None,
-                dep_type: DepType::Runtime,
             }],
         )
         .await
@@ -503,7 +448,6 @@ mod tests {
         let deps = db.get_dependencies(id).await.unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].name, "zlib");
-        assert_eq!(deps[0].dep_type, DepType::Runtime);
     }
 
     #[tokio::test]
@@ -512,11 +456,7 @@ mod tests {
         let id = db
             .insert_part(NewPart {
                 name: "hello",
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
+            plan_id: 1,
                 install_scripts: Some("post_install() { echo done; }"),
                 ..Default::default()
             })
@@ -558,11 +498,6 @@ mod tests {
         let plan_id = db
             .insert_plan(NewPlan {
                 name: "hello-plan",
-                version: "1.0.0",
-                release: 1,
-                description: "test plan",
-                arch: "x86_64",
-                license: "MIT",
                 ..Default::default()
             })
             .await
@@ -571,11 +506,6 @@ mod tests {
             .insert_part(NewPart {
                 name: "hello",
                 plan_id,
-                version: "1.0.0",
-                release: 1,
-                description: "test",
-                arch: "x86_64",
-                license: "MIT",
                 ..Default::default()
             })
             .await
@@ -588,11 +518,6 @@ mod tests {
         let new_plan_id = db
             .insert_plan(NewPlan {
                 name: "hello-plan-v2",
-                version: "1.0.1",
-                release: 2,
-                description: "updated plan",
-                arch: "x86_64",
-                license: "MIT",
                 ..Default::default()
             })
             .await
@@ -600,11 +525,6 @@ mod tests {
         db.update_part(NewPart {
             name: "hello",
             plan_id: new_plan_id,
-            version: "1.0.1",
-            release: 2,
-            description: "updated",
-            arch: "x86_64",
-            license: "MIT",
             ..Default::default()
         })
         .await
@@ -622,11 +542,6 @@ mod tests {
         let toolchain_id = db
             .insert_plan(NewPlan {
                 name: "toolchain",
-                version: "1.0.0",
-                release: 1,
-                description: "toolchain",
-                arch: "x86_64",
-                license: "GPL",
                 ..Default::default()
             })
             .await
@@ -634,11 +549,6 @@ mod tests {
         let webstack_id = db
             .insert_plan(NewPlan {
                 name: "webstack",
-                version: "1.0.0",
-                release: 1,
-                description: "webstack",
-                arch: "x86_64",
-                license: "BSD",
                 ..Default::default()
             })
             .await
@@ -647,11 +557,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "gcc",
             plan_id: toolchain_id,
-            version: "14.2.0",
-            release: 1,
-            description: "compiler",
-            arch: "x86_64",
-            license: "GPL",
             ..Default::default()
         })
         .await
@@ -660,11 +565,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "binutils",
             plan_id: toolchain_id,
-            version: "2.42",
-            release: 1,
-            description: "binutils",
-            arch: "x86_64",
-            license: "GPL",
             ..Default::default()
         })
         .await
@@ -673,11 +573,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "nginx",
             plan_id: webstack_id,
-            version: "1.25.0",
-            release: 1,
-            description: "server",
-            arch: "x86_64",
-            license: "BSD",
             ..Default::default()
         })
         .await
@@ -702,11 +597,6 @@ mod tests {
         let toolchain_id = db
             .insert_plan(NewPlan {
                 name: "toolchain",
-                version: "1.0.0",
-                release: 1,
-                description: "toolchain",
-                arch: "x86_64",
-                license: "GPL",
                 ..Default::default()
             })
             .await
@@ -714,11 +604,6 @@ mod tests {
         let webstack_id = db
             .insert_plan(NewPlan {
                 name: "webstack",
-                version: "1.0.0",
-                release: 1,
-                description: "webstack",
-                arch: "x86_64",
-                license: "BSD",
                 ..Default::default()
             })
             .await
@@ -727,11 +612,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "gcc",
             plan_id: toolchain_id,
-            version: "14.2.0",
-            release: 1,
-            description: "compiler",
-            arch: "x86_64",
-            license: "GPL",
             ..Default::default()
         })
         .await
@@ -740,11 +620,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "binutils",
             plan_id: toolchain_id,
-            version: "2.42",
-            release: 1,
-            description: "binutils",
-            arch: "x86_64",
-            license: "GPL",
             ..Default::default()
         })
         .await
@@ -753,11 +628,6 @@ mod tests {
         db.insert_part(NewPart {
             name: "nginx",
             plan_id: webstack_id,
-            version: "1.25.0",
-            release: 1,
-            description: "server",
-            arch: "x86_64",
-            license: "BSD",
             ..Default::default()
         })
         .await

@@ -76,7 +76,7 @@ async fn test_end_to_end_install_query_remove() {
     assert!(hello_bin.exists());
 
     // Query part in DB
-    let part = db.get_part("hello").await.unwrap().unwrap();
+    let part = db.get_part_with_plan("hello").await.unwrap().unwrap();
     assert_eq!(part.name, "hello");
     assert_eq!(part.version, "1.0.0");
     assert_eq!(part.release, 1);

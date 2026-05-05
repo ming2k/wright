@@ -178,7 +178,7 @@ fn default_git_depth() -> Option<u32> {
 
 #[derive(Debug, Clone)]
 pub struct PlanManifest {
-    pub plan: PlanMetadata,
+    pub metadata: PlanMetadata,
     /// Build dependencies — outputs that must be built and mounted into the
     /// isolation environment.
     pub build_deps: Vec<String>,
@@ -319,42 +319,42 @@ pub struct PhaseConfig {
 impl PlanManifest {
     pub fn validate(&self) -> Result<()> {
         let name_re = regex::Regex::new(r"^[a-z0-9][a-z0-9_+.-]*$").unwrap();
-        if !name_re.is_match(&self.plan.name) {
+        if !name_re.is_match(&self.metadata.name) {
             return Err(WrightError::ValidationError(format!(
                 "invalid part name '{}': must match [a-z0-9][a-z0-9_+.-]*",
-                self.plan.name
+                self.metadata.name
             )));
         }
-        if self.plan.name.len() > 64 {
+        if self.metadata.name.len() > 64 {
             return Err(WrightError::ValidationError(
                 "part name must be at most 64 characters".to_string(),
             ));
         }
 
         // Validate version parses if present
-        if let Some(ref ver) = self.plan.version {
+        if let Some(ref ver) = self.metadata.version {
             crate::part::version::Version::parse(ver)?;
         }
 
-        if self.plan.release == 0 {
+        if self.metadata.release == 0 {
             return Err(WrightError::ValidationError(
                 "release must be >= 1".to_string(),
             ));
         }
 
-        if self.plan.description.is_empty() {
+        if self.metadata.description.is_empty() {
             return Err(WrightError::ValidationError(
                 "description must not be empty".to_string(),
             ));
         }
 
-        if self.plan.license.is_empty() {
+        if self.metadata.license.is_empty() {
             return Err(WrightError::ValidationError(
                 "license must not be empty".to_string(),
             ));
         }
 
-        if self.plan.arch.is_empty() {
+        if self.metadata.arch.is_empty() {
             return Err(WrightError::ValidationError(
                 "arch must not be empty".to_string(),
             ));
@@ -483,28 +483,28 @@ impl PlanManifest {
     /// Includes epoch only when > 0: `name-epoch:version-release-arch.wright.tar.zst`
     /// When version is absent, omits the version segment: `name-release-arch.wright.tar.zst`
     pub fn part_filename(&self) -> String {
-        let ver = self.plan.version.as_deref().unwrap_or("");
-        if self.plan.epoch > 0 {
+        let ver = self.metadata.version.as_deref().unwrap_or("");
+        if self.metadata.epoch > 0 {
             if ver.is_empty() {
                 format!(
                     "{}-{}:{}-{}.wright.tar.zst",
-                    self.plan.name, self.plan.epoch, self.plan.release, self.plan.arch
+                    self.metadata.name, self.metadata.epoch, self.metadata.release, self.metadata.arch
                 )
             } else {
                 format!(
                     "{}-{}:{}-{}-{}.wright.tar.zst",
-                    self.plan.name, self.plan.epoch, ver, self.plan.release, self.plan.arch
+                    self.metadata.name, self.metadata.epoch, ver, self.metadata.release, self.metadata.arch
                 )
             }
         } else if ver.is_empty() {
             format!(
                 "{}-{}-{}.wright.tar.zst",
-                self.plan.name, self.plan.release, self.plan.arch
+                self.metadata.name, self.metadata.release, self.metadata.arch
             )
         } else {
             format!(
                 "{}-{}-{}-{}.wright.tar.zst",
-                self.plan.name, ver, self.plan.release, self.plan.arch
+                self.metadata.name, ver, self.metadata.release, self.metadata.arch
             )
         }
     }
@@ -593,11 +593,11 @@ install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(manifest.plan.name, "hello");
-        assert_eq!(manifest.plan.version.as_deref(), Some("1.0.0"));
-        assert_eq!(manifest.plan.release, 1);
-        assert_eq!(manifest.plan.arch, "x86_64");
-        assert_eq!(manifest.plan.epoch, 0);
+        assert_eq!(manifest.metadata.name, "hello");
+        assert_eq!(manifest.metadata.version.as_deref(), Some("1.0.0"));
+        assert_eq!(manifest.metadata.release, 1);
+        assert_eq!(manifest.metadata.arch, "x86_64");
+        assert_eq!(manifest.metadata.epoch, 0);
         assert!(manifest.lifecycle.contains_key("prepare"));
         assert!(manifest.lifecycle.contains_key("compile"));
         assert!(manifest.lifecycle.contains_key("staging"));
@@ -684,8 +684,8 @@ provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(manifest.plan.name, "nginx");
-        assert_eq!(manifest.plan.url.as_deref(), Some("https://nginx.org"));
+        assert_eq!(manifest.metadata.name, "nginx");
+        assert_eq!(manifest.metadata.url.as_deref(), Some("https://nginx.org"));
         assert!(manifest.runtime_deps.is_empty());
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
@@ -805,12 +805,12 @@ runtime_deps = ["libgcc:default"]
                 assert_eq!(libstdcpp.runtime_deps, vec!["libgcc:default"]);
 
                 let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
-                assert_eq!(sub_manifest.plan.name, "libstdc++");
-                assert_eq!(sub_manifest.plan.version.as_deref(), Some("14.2.0"));
-                assert_eq!(sub_manifest.plan.release, 1);
-                assert_eq!(sub_manifest.plan.arch, "x86_64");
-                assert_eq!(sub_manifest.plan.license, "GPL-3.0-or-later");
-                assert_eq!(sub_manifest.plan.description, "GNU C++ standard library");
+                assert_eq!(sub_manifest.metadata.name, "libstdc++");
+                assert_eq!(sub_manifest.metadata.version.as_deref(), Some("14.2.0"));
+                assert_eq!(sub_manifest.metadata.release, 1);
+                assert_eq!(sub_manifest.metadata.arch, "x86_64");
+                assert_eq!(sub_manifest.metadata.license, "GPL-3.0-or-later");
+                assert_eq!(sub_manifest.metadata.description, "GNU C++ standard library");
                 assert_eq!(sub_manifest.runtime_deps, vec!["libgcc:default"]);
                 assert_eq!(
                     sub_manifest.part_filename(),
@@ -895,9 +895,9 @@ include = ["/usr/share/doc/.*"]
             Some(OutputConfig::Multi(ref parts)) => {
                 let (_, doc) = parts.iter().find(|(n, _)| n == "test-doc").unwrap();
                 let doc_manifest = doc.to_manifest("test-doc", &manifest);
-                assert_eq!(doc_manifest.plan.version.as_deref(), Some("1.0.0-doc"));
-                assert_eq!(doc_manifest.plan.arch, "any");
-                assert_eq!(doc_manifest.plan.license, "MIT"); // inherited
+                assert_eq!(doc_manifest.metadata.version.as_deref(), Some("1.0.0-doc"));
+                assert_eq!(doc_manifest.metadata.arch, "any");
+                assert_eq!(doc_manifest.metadata.license, "MIT"); // inherited
             }
             _ => panic!("expected Multi fabricate config"),
         }
@@ -1041,7 +1041,7 @@ description = "test lib"
 runtime_deps = ["openssl:default"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(manifest.plan.name, "test");
+        assert_eq!(manifest.metadata.name, "test");
         assert_eq!(manifest.runtime_deps, vec!["openssl:default"]);
         match manifest.outputs {
             Some(OutputConfig::Multi(parts)) => {
@@ -1155,7 +1155,7 @@ include = ["/usr/share/doc/.*"]
                 let (_, main) = parts.iter().find(|(n, _)| n == "gcc").unwrap();
                 let main_manifest = main.to_manifest("gcc", &manifest);
                 assert_eq!(
-                    main_manifest.plan.description,
+                    main_manifest.metadata.description,
                     "The GNU Compiler Collection"
                 );
             }
@@ -1222,7 +1222,7 @@ arch = "x86_64"
         assert!(manifest.install_scripts.is_none());
         assert!(manifest.backup.is_none());
         assert!(!manifest.options.skip_fhs_check);
-        assert_eq!(manifest.plan.epoch, 0);
+        assert_eq!(manifest.metadata.epoch, 0);
     }
 
     #[test]
@@ -1323,7 +1323,7 @@ license = "MIT"
 arch = "x86_64"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(manifest.plan.epoch, 2);
+        assert_eq!(manifest.metadata.epoch, 2);
         assert_eq!(
             manifest.part_filename(),
             "test-2:1.0.0-1-x86_64.wright.tar.zst"
@@ -1342,7 +1342,7 @@ license = "MIT"
 arch = "x86_64"
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(manifest.plan.epoch, 0);
+        assert_eq!(manifest.metadata.epoch, 0);
         assert_eq!(
             manifest.part_filename(),
             "test-1.0.0-1-x86_64.wright.tar.zst"

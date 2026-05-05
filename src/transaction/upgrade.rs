@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart};
+use crate::database::{Dependency, FileType, InstalledDb, NewPart, TransactionOperation, TransactionStatus};
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::{self, Version};
@@ -22,9 +22,9 @@ pub async fn upgrade_part(
 ) -> Result<()> {
     let overall_start = Instant::now();
 
-    let staging_dir = std::path::Path::new("/var/lib/wright/staging");
-    let _ = tokio::fs::create_dir_all(staging_dir).await;
-    let temp_dir = tempfile::tempdir_in(staging_dir)
+    let staging_dir = root_dir.join("var/lib/wright/staging");
+    let _ = tokio::fs::create_dir_all(&staging_dir).await;
+    let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
     let mut phase_start = Instant::now();
@@ -40,56 +40,63 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    let old_part = db.get_part(&partinfo.name).await?.ok_or_else(|| {
+    let installed_part = db.get_part(&partinfo.name).await?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
             "part '{}' is not installed, use install instead",
             partinfo.name
         ))
     })?;
 
-    let old_epoch = old_part.epoch as u32;
-    let new_epoch = partinfo.epoch;
+    let installed_plan = db.get_plan_by_id(installed_part.plan_id).await?.ok_or_else(|| {
+        WrightError::UpgradeError(format!(
+            "plan for part '{}' not found in database",
+            partinfo.name
+        ))
+    })?;
+
+    let installed_epoch = installed_plan.epoch as u32;
+    let new_epoch = partinfo.plan.epoch;
     if !force {
-        let is_newer = if new_epoch != old_epoch {
-            new_epoch > old_epoch
+        let is_newer = if new_epoch != installed_epoch {
+            new_epoch > installed_epoch
         } else {
             match (
-                Version::parse(&old_part.version).ok(),
-                Version::parse(&partinfo.version).ok(),
+                Version::parse(&installed_plan.version).ok(),
+                Version::parse(&partinfo.plan.version).ok(),
             ) {
-                (Some(old_v), Some(new_v)) => {
-                    if new_v != old_v {
-                        new_v > old_v
+                (Some(installed_v), Some(new_v)) => {
+                    if new_v != installed_v {
+                        new_v > installed_v
                     } else {
-                        partinfo.release > old_part.release as u32
+                        partinfo.plan.release > installed_plan.release as u32
                     }
                 }
                 _ => {
                     // Fallback to string comparison when versions can't be parsed
                     // (e.g., empty versions)
-                    let ord = partinfo.version.cmp(&old_part.version);
+                    let ord = partinfo.plan.version.cmp(&installed_plan.version);
                     if ord != std::cmp::Ordering::Equal {
                         ord == std::cmp::Ordering::Greater
                     } else {
-                        partinfo.release > old_part.release as u32
+                        partinfo.plan.release > installed_plan.release as u32
                     }
                 }
             }
         };
         if !is_newer {
-            let old_ver_rel = if old_part.version.is_empty() {
-                format!("{}", old_part.release)
+            let installed_ver_rel = if installed_plan.version.is_empty() {
+                format!("{}", installed_plan.release)
             } else {
-                format!("{}-{}", old_part.version, old_part.release)
+                format!("{}-{}", installed_plan.version, installed_plan.release)
             };
-            let new_ver_rel = if partinfo.version.is_empty() {
-                format!("{}", partinfo.release)
+            let new_ver_rel = if partinfo.plan.version.is_empty() {
+                format!("{}", partinfo.plan.release)
             } else {
-                format!("{}-{}", partinfo.version, partinfo.release)
+                format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
             };
             return Err(WrightError::UpgradeError(format!(
                 "{} {} is not newer than installed {}",
-                partinfo.name, new_ver_rel, old_ver_rel,
+                partinfo.name, new_ver_rel, installed_ver_rel,
             )));
         }
     }
@@ -145,16 +152,16 @@ pub async fn upgrade_part(
 
     let tx_id = db
         .record_transaction(
-            "upgrade",
+            TransactionOperation::Upgrade,
             &partinfo.name,
-            Some(&old_part.version),
-            Some(&partinfo.version),
-            "pending",
+            Some(&installed_plan.version),
+            Some(&partinfo.plan.version),
+            TransactionStatus::Pending,
             None,
         )
         .await?;
 
-    let old_files = db.get_files(old_part.id).await?;
+    let existing_files = db.get_files(installed_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
 
     let backup_dir = tempfile::tempdir()
@@ -162,21 +169,21 @@ pub async fn upgrade_part(
 
     // Perform backup. For now, doing it sequentially but with async calls for safety.
     // Parallelizing async I/O can be done with join_all or similar.
-    let overlapping: Vec<_> = old_files
+    let overlapping: Vec<_> = existing_files
         .iter()
         .filter(|f| new_paths.contains(f.path.as_str()))
         .collect();
 
-    for old_file in overlapping {
-        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
+    for file in overlapping {
+        let full_path = root_dir.join(file.path.trim_start_matches('/'));
         if !full_path.exists() && full_path.symlink_metadata().is_err() {
             continue;
         }
 
-        if old_file.file_type == FileType::File {
+        if file.file_type == FileType::File {
             let backup_path = backup_dir
                 .path()
-                .join(old_file.path.trim_start_matches('/'));
+                .join(file.path.trim_start_matches('/'));
             if let Some(parent) = backup_path.parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
                     WrightError::UpgradeError(format!(
@@ -204,7 +211,7 @@ pub async fn upgrade_part(
                     )));
                 }
             }
-        } else if old_file.file_type == FileType::Symlink {
+        } else if file.file_type == FileType::Symlink {
             if let Ok(target) = tokio::fs::read_link(&full_path).await {
                 rollback_state
                     .record_symlink_backup(full_path, target.to_string_lossy().to_string());
@@ -249,7 +256,7 @@ pub async fn upgrade_part(
         Err(e) => {
             warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, "rolled_back").await?;
+            db.update_transaction_status(tx_id, TransactionStatus::RolledBack).await?;
             return Err(e);
         }
     };
@@ -264,43 +271,43 @@ pub async fn upgrade_part(
         info!("Preserved config for {}: {}", partinfo.name, path);
     }
 
-    let to_delete_paths: Vec<&str> = old_files
+    let to_delete_paths: Vec<&str> = existing_files
         .iter()
         .filter(|f| !new_paths.contains(f.path.as_str()) && !f.is_config)
         .map(|f| f.path.as_str())
         .collect();
     let other_owners_map = db
-        .get_other_owners_batch(old_part.id, &to_delete_paths)
+        .get_other_owners_batch(installed_part.id, &to_delete_paths)
         .await?;
 
-    for old_file in old_files.iter().rev() {
-        if new_paths.contains(old_file.path.as_str()) {
+    for file in existing_files.iter().rev() {
+        if new_paths.contains(file.path.as_str()) {
             continue;
         }
 
-        if old_file.is_config {
+        if file.is_config {
             info!(
                 "Preserving config file for {}: {}",
-                partinfo.name, old_file.path
+                partinfo.name, file.path
             );
             continue;
         }
 
         let other_owners = other_owners_map
-            .get(&old_file.path)
+            .get(&file.path)
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
         if !other_owners.is_empty() {
             debug!(
                 "Path {} is also owned by: {}. Skipping deletion.",
-                old_file.path,
+                file.path,
                 other_owners.join(", ")
             );
             continue;
         }
 
-        let full_path = root_dir.join(old_file.path.trim_start_matches('/'));
-        match old_file.file_type {
+        let full_path = root_dir.join(file.path.trim_start_matches('/'));
+        match file.file_type {
             FileType::File | FileType::Symlink => {
                 if full_path.exists() || full_path.symlink_metadata().is_ok() {
                     let _ = tokio::fs::remove_file(&full_path).await;
@@ -313,21 +320,21 @@ pub async fn upgrade_part(
     }
 
     phase_start = Instant::now();
-    let plan_id = db.ensure_plan_registered(&partinfo).await?;
+    let plan_id = db.ensure_plan_registered(
+        &partinfo,
+        &partinfo.plan.version,
+        partinfo.plan.release,
+        partinfo.plan.epoch,
+        &partinfo.plan.description,
+        &partinfo.plan.arch,
+        &partinfo.plan.license,
+    ).await?;
     db.update_part(NewPart {
         name: &partinfo.name,
         plan_id,
-        version: &partinfo.version,
-        release: partinfo.release,
-        epoch: partinfo.epoch,
-        description: &partinfo.description,
-        arch: &partinfo.arch,
-        license: &partinfo.license,
-        url: None,
-        install_size: partinfo.install_size,
         part_hash: Some(part_hash.as_str()),
         install_scripts: hooks_content.as_deref(),
-        origin: old_part.origin, // Preserve origin
+        origin: installed_part.origin, // Preserve origin
     })
     .await?;
 
@@ -366,14 +373,13 @@ pub async fn upgrade_part(
         deps.push(Dependency {
             name,
             version_constraint: constraint.map(|c| c.to_string()),
-            dep_type: DepType::Runtime,
         });
     }
     db.replace_dependencies(updated_part.id, &deps).await?;
 
     self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 
-    db.update_transaction_status(tx_id, "completed").await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -400,19 +406,19 @@ pub async fn upgrade_part(
     rollback_state.commit();
 
     log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
-    let old_ver_rel = if old_part.version.is_empty() {
-        format!("{}", old_part.release)
+    let installed_ver_rel = if installed_plan.version.is_empty() {
+        format!("{}", installed_plan.release)
     } else {
-        format!("{}-{}", old_part.version, old_part.release)
+        format!("{}-{}", installed_plan.version, installed_plan.release)
     };
-    let new_ver_rel = if partinfo.version.is_empty() {
-        format!("{}", partinfo.release)
+    let new_ver_rel = if partinfo.plan.version.is_empty() {
+        format!("{}", partinfo.plan.release)
     } else {
-        format!("{}-{}", partinfo.version, partinfo.release)
+        format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
     info!(
         "Upgraded {}: {} -> {}",
-        partinfo.name, old_ver_rel, new_ver_rel,
+        partinfo.name, installed_ver_rel, new_ver_rel,
     );
     Ok(())
 }

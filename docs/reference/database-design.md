@@ -26,17 +26,29 @@
 
 | Table | Contents |
 |-------|----------|
-| `plans` | plan metadata, plan version, plan dependency JSON |
-| `parts` | installed part metadata, origin, plan association |
-| `files` | installed file paths, kinds, checksums, ownership |
-| `dependencies` | installed runtime dependency edges |
-| `provides` | virtual capabilities |
-| `conflicts` | mutually exclusive part names |
+| `plans` | plan metadata (name, version, release, epoch, description, arch, license) |
+| `plan_build_deps` | build-time dependency edges per plan |
+| `plan_link_deps` | ABI-sensitive link dependency edges per plan |
+| `parts` | installed part metadata: origin, plan association, archive hash |
+| `files` | installed file paths, types, checksums, ownership |
+| `dependencies` | installed runtime dependency edges per part |
+| `provides` | virtual capabilities a part provides |
+| `conflicts` | mutually exclusive part name declarations |
 | `replaces` | automatic replacement metadata |
+| `optional_dependencies` | informational (non-enforced) optional dependency hints |
+| `shadowed_files` | file collision records used for divert and safe removal |
 | `transactions` | install, upgrade, remove history |
-| `shadowed_files` | file collision restoration records |
 | `execution_sessions` | resumable `build` and `apply` session metadata |
-| `execution_session_items` | per-task resume state |
+| `execution_session_items` | per-task resume state within a session |
+| `build_sessions` | per-plan build progress state for `--resume` |
+
+## Key Constraints
+
+| Table | Constraint | Rationale |
+|-------|------------|-----------|
+| `parts.name` | `UNIQUE` | Part names are globally unique identifiers |
+| `parts.origin` | `CHECK(origin IN ('dependency','build','manual','external'))` | Enforces valid provenance values at the DB layer |
+| `plans.name` | `UNIQUE` | Each plan name maps to exactly one plan record |
 
 ## Removed Databases
 

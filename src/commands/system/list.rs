@@ -33,7 +33,7 @@ pub async fn execute_list(
                 } else {
                     &part.version
                 };
-                if part.assumed {
+                if part.origin == crate::database::Origin::External {
                     println!("{:<12} {:<24} {}", "external", part.name, ver);
                 } else {
                     let ver_rel_arch = if part.version.is_empty() {
@@ -41,11 +41,7 @@ pub async fn execute_list(
                     } else {
                         format!("{}-{}-{}", ver, part.release, part.arch)
                     };
-                    let plan_info = if part.plan_id > 0 {
-                        part.plan_id.to_string()
-                    } else {
-                        "-".to_string()
-                    };
+                    let plan_info = format!("{} {}", part.plan_name, part.version);
                     println!(
                         "{:<12} {:<24} {:<20} {}",
                         part.origin, part.name, ver_rel_arch, plan_info

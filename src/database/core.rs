@@ -12,7 +12,7 @@ pub struct InstalledDb {
 }
 
 pub(super) const PART_COLUMNS: &str =
-    "id, name, plan_id, version, release, epoch, description, arch, license, url, installed_at, install_size, part_hash, install_scripts, assumed, origin";
+    "id, name, plan_id, installed_at, part_hash, install_scripts, origin";
 
 fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     let file_name = db_path
@@ -72,6 +72,13 @@ impl InstalledDb {
         let pool = SqlitePool::connect("sqlite::memory:").await.map_err(|e| {
             WrightError::DatabaseError(format!("failed to connect to in-memory database: {}", e))
         })?;
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e))
+            })?;
 
         schema::init_db(&pool).await?;
 

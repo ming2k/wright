@@ -35,6 +35,8 @@ cpu_time_limit = 7200
 timeout = 14400
 nproc_per_isolation = 4
 max_cpus = 16
+stable_toolchain = ["gcc", "glibc", "binutils", "make", "bison", "flex",
+                    "perl", "python", "texinfo", "m4", "sed", "gawk"]
 
 [network]
 download_timeout = 300
@@ -60,10 +62,13 @@ retry_count = 3
 | `timeout` | unset | per-stage wall-clock seconds |
 | `nproc_per_isolation` | unset | fixed CPU budget exposed as `NPROC` |
 | `max_cpus` | unset | maximum total CPUs Wright may use |
+| `stable_toolchain` | (see below) | part names treated as stable for rebuild cascade decisions |
 | `download_timeout` | `300` | network timeout in seconds |
 | `retry_count` | `3` | download retry count |
 
 ## Notes
+
+- `stable_toolchain` lists part names that are never treated as "outdated" when computing dependency rebuild cascades. The default list covers the core LFS bootstrap toolchain (`gcc`, `glibc`, `binutils`, `make`, etc.). Add or replace entries when your distribution uses different package names (e.g. `gcc-14` or `musl`).
 
 - `plans_dir` does not automatically move to a user path; override it explicitly for non-root setups.
 - `extra_plans_dirs` are searched after `plans_dir`.

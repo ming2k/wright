@@ -3,7 +3,7 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{FileType, InstalledDb, InstalledPart};
+use crate::database::{FileType, InstalledDb, InstalledPart, TransactionOperation, TransactionStatus};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
@@ -28,18 +28,19 @@ pub async fn remove_part_with_ignored_dependents(
         .await?
         .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
 
+    let plan = db
+        .get_plan_by_id(part.plan_id)
+        .await?
+        .ok_or_else(|| WrightError::PartNotFound(format!("plan for {}", name)))?;
+
     let mut dependents = collect_removal_dependents(db, &part, name, ignored_dependents).await?;
 
     if !ignored_dependents.is_empty() {
-        dependents.retain(|(dep_name, _)| !ignored_dependents.contains(dep_name));
+        dependents.retain(|dep_name| !ignored_dependents.contains(dep_name));
     }
 
     if !dependents.is_empty() {
-        let deps_str: String = dependents
-            .iter()
-            .map(|(n, _)| n.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let deps_str: String = dependents.join(", ");
 
         if force {
             warn!(
@@ -64,7 +65,7 @@ pub async fn remove_part_with_ignored_dependents(
     }
 
     let tx_id = db
-        .record_transaction("remove", name, Some(&part.version), None, "pending", None)
+        .record_transaction(TransactionOperation::Remove, name, Some(&plan.version), None, TransactionStatus::Pending, None)
         .await?;
     let files = db.get_files(part.id).await?;
 
@@ -141,7 +142,7 @@ pub async fn remove_part_with_ignored_dependents(
     }
     let _ = db.remove_shadowed_records(part.id).await;
 
-    db.update_transaction_status(tx_id, "completed").await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
 
     info!("Removed {}", name);
     Ok(())
@@ -152,25 +153,21 @@ async fn collect_removal_dependents(
     part: &InstalledPart,
     name: &str,
     ignored_dependents: &HashSet<String>,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<String>> {
     let mut dependents = db.get_dependents(name).await?;
 
     let provides_list = db.get_provides(part.id).await?;
     for virtual_name in &provides_list {
         let virtual_dependents = db.get_dependents(virtual_name).await?;
-        for (dep_name, dep_type) in virtual_dependents {
+        for dep_name in virtual_dependents {
             let remaining_providers: Vec<String> = db
                 .find_providers(virtual_name)
                 .await?
                 .into_iter()
                 .filter(|p| p != name && !ignored_dependents.contains(p))
                 .collect();
-            if remaining_providers.is_empty()
-                && !dependents
-                    .iter()
-                    .any(|(existing_name, _)| existing_name == &dep_name)
-            {
-                dependents.push((dep_name, dep_type));
+            if remaining_providers.is_empty() && !dependents.contains(&dep_name) {
+                dependents.push(dep_name);
             }
         }
     }
@@ -227,7 +224,6 @@ fn visit_removal_target<'a>(
         let dependents = collect_removal_dependents(db, &part, name, &batch_ignored).await?;
         let mut next: Vec<String> = dependents
             .into_iter()
-            .map(|(dep_name, _)| dep_name)
             .filter(|dep_name| target_set.contains(dep_name))
             .collect();
         next.sort();

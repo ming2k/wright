@@ -65,7 +65,7 @@ pub(crate) fn collect_phase_deps(
         let (dep_plan_name, _) = version::parse_dep_ref(&dep_name);
 
         if let Some(parent_plan) = part_to_plan.get(&dep_plan_name) {
-            if parent_plan != &manifest.plan.name {
+            if parent_plan != &manifest.metadata.name {
                 deps.push(parent_plan.clone());
             }
         } else {
@@ -105,7 +105,7 @@ pub(crate) fn collect_phase_deps(
                                 .get(&rdep_plan_name)
                                 .cloned()
                                 .unwrap_or(rdep_plan_name);
-                            if rdep_plan != manifest.plan.name {
+                            if rdep_plan != manifest.metadata.name {
                                 deps.push(rdep_plan.clone());
                             }
                             queue.push_back(rdep_plan);

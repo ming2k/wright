@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [4.0.3] - 2026-05-05
+
+### Changed
+- **Database: fixed `UNIQUE` constraint on `parts`** — `UNIQUE(plan_id, name)` allowed two plans to produce a part with the same name, which is incorrect because part names are globally unique identifiers. Replaced with `UNIQUE(name)` (migration 008).
+- **Database: added `CHECK` constraint on `origin`** — `parts.origin` now enforces valid values at the database layer, not just the Rust layer.
+- **Removed `DepType` enum** — the `dep_type` column on the `dependencies` table was always `'runtime'` (runtime deps are already isolated to that table; build/link deps use separate tables). The column, the `DepType` enum, and the `dep_type` field on the `Dependency` struct have all been removed (migration 008).
+- **Typed transaction enums** — `record_transaction` and `update_transaction_status` now take `TransactionOperation` and `TransactionStatus` enums instead of raw `&str`. `TransactionRecord` fields are also typed. This eliminates a class of runtime bugs where typos in status/operation strings would silently produce incorrect state.
+- **`get_dependents` return type simplified** — changed from `Vec<(String, String)>` to `Vec<String>`; the second element (dep_type) was always `"runtime"` and was ignored by all callers.
+- **`remove_plan` error fixed** — previously returned `WrightError::PartNotFound` when a plan was not found; now returns `WrightError::DatabaseError` with a clear message.
+
 ## [4.0.2] - 2026-05-05
 
 ### Added

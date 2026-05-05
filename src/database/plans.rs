@@ -1,4 +1,4 @@
-use super::{InstalledDb, NewPlan, PART_COLUMNS};
+use super::{InstalledDb, NewPlan};
 use crate::error::{Result, WrightError};
 use crate::part::part::PartInfo;
 use sqlx::{query, query_as};
@@ -14,16 +14,14 @@ pub struct PlanRecord {
     pub arch: String,
     pub license: Option<String>,
     pub url: Option<String>,
-    pub build_deps: Option<String>,
-    pub link_deps: Option<String>,
     pub registered_at: Option<String>,
 }
 
 impl InstalledDb {
     pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
         let res = query(
-            "INSERT INTO plans (name, version, release, epoch, description, arch, license, url, build_deps, link_deps)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            "INSERT INTO plans (name, version, release, epoch, description, arch, license, url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(plan.name)
             .bind(plan.version)
             .bind(plan.release as i64)
@@ -32,8 +30,6 @@ impl InstalledDb {
             .bind(plan.arch)
             .bind(plan.license)
             .bind(plan.url)
-            .bind(plan.build_deps)
-            .bind(plan.link_deps)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -50,7 +46,7 @@ impl InstalledDb {
 
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, build_deps, link_deps, registered_at
+            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
              FROM plans WHERE name = ?")
             .bind(name)
             .fetch_optional(&self.pool)
@@ -60,7 +56,7 @@ impl InstalledDb {
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, build_deps, link_deps, registered_at
+            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
              FROM plans WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -70,7 +66,7 @@ impl InstalledDb {
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, build_deps, link_deps, registered_at
+            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
              FROM plans ORDER BY name")
             .fetch_all(&self.pool)
             .await
@@ -85,12 +81,13 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to remove plan: {}", e)))?;
 
         if res.rows_affected() == 0 {
-            return Err(WrightError::PartNotFound(name.to_string()));
+            return Err(WrightError::DatabaseError(format!("plan not found: {}", name)));
         }
         Ok(())
     }
 
     pub async fn get_parts_by_plan_id(&self, plan_id: i64) -> Result<Vec<super::InstalledPart>> {
+        use super::PART_COLUMNS;
         let sql = format!(
             "SELECT {} FROM parts WHERE plan_id = ? ORDER BY name",
             PART_COLUMNS
@@ -123,68 +120,109 @@ impl InstalledDb {
         }
     }
 
+    pub async fn get_plan_build_deps(&self, plan_id: i64) -> Result<Vec<String>> {
+        let rows = query("SELECT depends_on FROM plan_build_deps WHERE plan_id = ?")
+            .bind(plan_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get build deps: {}", e)))?;
+        
+        let mut deps = Vec::new();
+        for row in rows {
+            use sqlx::Row;
+            let dep: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            deps.push(dep);
+        }
+        Ok(deps)
+    }
+
+    pub async fn get_plan_link_deps(&self, plan_id: i64) -> Result<Vec<String>> {
+        let rows = query("SELECT depends_on FROM plan_link_deps WHERE plan_id = ?")
+            .bind(plan_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get link deps: {}", e)))?;
+        
+        let mut deps = Vec::new();
+        for row in rows {
+            use sqlx::Row;
+            let dep: String = row.try_get(0).map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            deps.push(dep);
+        }
+        Ok(deps)
+    }
+
+    async fn replace_plan_deps(
+        &self,
+        plan_id: i64,
+        table: &str,
+        deps: &[ String],
+    ) -> Result<()> {
+        query(&format!("DELETE FROM {} WHERE plan_id = ?", table))
+            .bind(plan_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to clear plan deps: {}", e)))?;
+
+        for dep in deps {
+            query(&format!("INSERT INTO {} (plan_id, depends_on) VALUES (?, ?)", table))
+                .bind(plan_id)
+                .bind(dep)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan dep: {}", e)))?;
+        }
+        Ok(())
+    }
+
     /// Ensure a plan is registered in the database from pack metadata.
     /// If the plan already exists, updates its version metadata to match the pack.
-    pub async fn ensure_plan_registered(&self, partinfo: &PartInfo) -> Result<i64> {
-        if let Some(existing) = self.get_plan(&partinfo.plan_name).await? {
-            let build_deps_json = if partinfo.build_deps.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&partinfo.build_deps).map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to serialize build_deps: {}", e))
-                })?)
-            };
-            let link_deps_json = if partinfo.link_deps.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&partinfo.link_deps).map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to serialize link_deps: {}", e))
-                })?)
-            };
+    pub async fn ensure_plan_registered(&self,
+        partinfo: &PartInfo,
+        version: &str,
+        release: u32,
+        epoch: u32,
+        description: &str,
+        arch: &str,
+        license: &str,
+    ) -> Result<i64> {
+        if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
             query(
-                "UPDATE plans SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ?, build_deps = ?, link_deps = ? WHERE id = ?"
+                "UPDATE plans SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ? WHERE id = ?"
             )
-            .bind(&partinfo.plan_version)
-            .bind(partinfo.plan_release as i64)
-            .bind(partinfo.plan_epoch as i64)
-            .bind(&partinfo.description)
-            .bind(&partinfo.arch)
-            .bind(&partinfo.license)
-            .bind(build_deps_json.as_deref())
-            .bind(link_deps_json.as_deref())
+            .bind(version)
+            .bind(release as i64)
+            .bind(epoch as i64)
+            .bind(description)
+            .bind(arch)
+            .bind(license)
             .bind(existing.id)
             .execute(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
+
+            // Update dependency tables
+            self.replace_plan_deps(existing.id, "plan_build_deps", &partinfo.plan.build_deps).await?;
+            self.replace_plan_deps(existing.id, "plan_link_deps", &partinfo.plan.link_deps).await?;
+
             Ok(existing.id)
         } else {
-            let build_deps_json = if partinfo.build_deps.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&partinfo.build_deps).map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to serialize build_deps: {}", e))
-                })?)
-            };
-            let link_deps_json = if partinfo.link_deps.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&partinfo.link_deps).map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to serialize link_deps: {}", e))
-                })?)
-            };
-            self.insert_plan(NewPlan {
-                name: &partinfo.plan_name,
-                version: &partinfo.plan_version,
-                release: partinfo.plan_release,
-                epoch: partinfo.plan_epoch,
-                description: &partinfo.description,
-                arch: &partinfo.arch,
-                license: &partinfo.license,
-                build_deps: build_deps_json.as_deref(),
-                link_deps: link_deps_json.as_deref(),
-                ..Default::default()
-            })
-            .await
+            let id = self.insert_plan(NewPlan {
+                name: &partinfo.plan.name,
+                version,
+                release,
+                epoch,
+                description,
+                arch,
+                license,
+                url: None,
+            }).await?;
+
+            // Insert dependency tables
+            self.replace_plan_deps(id, "plan_build_deps", &partinfo.plan.build_deps).await?;
+            self.replace_plan_deps(id, "plan_link_deps", &partinfo.plan.link_deps).await?;
+
+            Ok(id)
         }
     }
 }

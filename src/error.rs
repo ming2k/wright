@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 #[derive(Debug, thiserror::Error)]
 pub enum WrightError {
     #[error("parse error: {0}")]
@@ -37,9 +35,6 @@ pub enum WrightError {
 
     #[error("dependency error: {0}")]
     DependencyError(String),
-
-    #[error("file conflict: {path} is already owned by part {owner}")]
-    FileConflict { path: PathBuf, owner: String },
 
     #[error("part not found: {0}")]
     PartNotFound(String),

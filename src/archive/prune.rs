@@ -50,9 +50,9 @@ pub async fn plan_prune(
             };
             archives.push(ResolvedPartVersioned {
                 name: partinfo.name,
-                version: partinfo.version,
-                release: partinfo.release,
-                epoch: partinfo.epoch,
+                version: partinfo.plan.version,
+                release: partinfo.plan.release,
+                epoch: partinfo.plan.epoch,
                 path,
                 dependencies: partinfo.runtime_deps,
                 provides: partinfo.provides,

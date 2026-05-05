@@ -90,9 +90,9 @@ async fn test_build_and_archive_hello() {
     // Verify we can read PARTINFO from it
     let partinfo = part::read_partinfo(&archive_path).unwrap();
     assert_eq!(partinfo.name, "hello");
-    assert_eq!(partinfo.version, "1.0.0");
-    assert_eq!(partinfo.release, 1);
-    assert_eq!(partinfo.arch, "x86_64");
+    assert_eq!(partinfo.plan.version, "1.0.0");
+    assert_eq!(partinfo.plan.release, 1);
+    assert_eq!(partinfo.plan.arch, "x86_64");
 
     // Verify we can extract it
     let extract_dir = tempfile::tempdir().unwrap();
@@ -167,7 +167,7 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
     let extract_dir = tempfile::tempdir().unwrap();
     part::extract_part(&archive_path, extract_dir.path()).unwrap();
     let partinfo = std::fs::read_to_string(extract_dir.path().join(".PARTINFO")).unwrap();
-    assert!(partinfo.contains("runtime = [\"openssl:default\", \"zlib:default\"]"));
+    assert!(partinfo.contains("runtime_deps = [\"openssl:default\", \"zlib:default\"]"));
     assert!(!partinfo.contains("link ="));
 }
 
@@ -237,15 +237,15 @@ include = ["/usr/share/doc/.*"]
 async fn test_lint_hello_fixture() {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
-    assert_eq!(manifest.plan.name, "hello");
-    assert_eq!(manifest.plan.version.as_deref(), Some("1.0.0"));
+    assert_eq!(manifest.metadata.name, "hello");
+    assert_eq!(manifest.metadata.version.as_deref(), Some("1.0.0"));
 }
 
 #[tokio::test]
 async fn test_lint_nginx_fixture() {
     let manifest_path = fixture_path("nginx").join("plan.toml");
     let manifest = PlanManifest::from_file(&manifest_path).unwrap();
-    assert_eq!(manifest.plan.name, "nginx");
+    assert_eq!(manifest.metadata.name, "nginx");
     // Nginx uses output metadata on the main output plus an extra doc output.
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {

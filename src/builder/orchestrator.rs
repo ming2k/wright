@@ -201,8 +201,8 @@ fn expected_staging_dirs(build_dir: &Path, plan_path: &Path) -> Result<Vec<PathB
     let manifest = PlanManifest::from_file(plan_path)?;
     let build_root = build_dir.join(format!(
         "{}-{}",
-        manifest.plan.name,
-        manifest.plan.version.as_deref().unwrap_or("noversion")
+        manifest.metadata.name,
+        manifest.metadata.version.as_deref().unwrap_or("noversion")
     ));
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
@@ -258,7 +258,7 @@ pub fn resolve_explicit_plan_names(
     Ok(paths
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
-        .map(|m| m.plan.name)
+        .map(|m| m.metadata.name)
         .collect())
 }
 
@@ -306,6 +306,7 @@ pub async fn resolve_build_set(
                 &opts.match_policies,
                 domain,
                 actual_max,
+                &config.build.stable_toolchain,
             )
             .await?;
         }
@@ -320,7 +321,7 @@ pub async fn resolve_build_set(
                 }
                 if let Ok(m) = PlanManifest::from_file(&path) {
                     if crate::builder::orchestrator::planning::dependency_matches_policy(
-                        &m.plan.name,
+                        &m.metadata.name,
                         &all_plans,
                         &db,
                         &opts.match_policies,
@@ -351,6 +352,7 @@ pub async fn resolve_build_set(
                 domain,
                 actual_max,
                 &installed_names,
+                &config.build.stable_toolchain,
             )
             .await?;
         }
@@ -364,7 +366,7 @@ pub async fn resolve_build_set(
         .iter()
         .map(|p| {
             PlanManifest::from_file(p)
-                .map(|m| m.plan.name)
+                .map(|m| m.metadata.name)
                 .context(format!("failed to parse plan file: {}", p.display()))
         })
         .collect::<Result<Vec<String>>>()?;
@@ -390,7 +392,7 @@ pub fn create_execution_plan(
     let reasons: HashMap<String, RebuildReason> = plans_to_build
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
-        .map(|m| (m.plan.name, RebuildReason::Explicit))
+        .map(|m| (m.metadata.name, RebuildReason::Explicit))
         .collect();
 
     let mut graph = build_dep_map(
@@ -406,7 +408,7 @@ pub fn create_execution_plan(
     }
 
     let mut grouped_batches: Vec<Vec<String>> = Vec::new();
-    for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map) {
+    for (name, batch) in construction_plan_batches(&graph.build_set, &graph.deps_map)? {
         if grouped_batches.len() <= batch {
             grouped_batches.resize_with(batch + 1, Vec::new);
         }

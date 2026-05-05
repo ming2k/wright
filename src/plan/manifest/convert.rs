@@ -11,7 +11,7 @@ impl SubFabricateOutput {
         let description = self
             .description
             .clone()
-            .unwrap_or_else(|| parent.plan.description.clone());
+            .unwrap_or_else(|| parent.metadata.description.clone());
 
         let install_scripts = self.hooks.as_ref().map(|h| InstallScripts {
             pre_install: h.pre_install.clone(),
@@ -26,22 +26,22 @@ impl SubFabricateOutput {
         });
 
         PlanManifest {
-            plan: PlanMetadata {
+            metadata: PlanMetadata {
                 name: name.to_string(),
-                version: self.version.clone().or_else(|| parent.plan.version.clone()),
-                release: self.release.unwrap_or(parent.plan.release),
-                epoch: parent.plan.epoch,
+                version: self.version.clone().or_else(|| parent.metadata.version.clone()),
+                release: self.release.unwrap_or(parent.metadata.release),
+                epoch: parent.metadata.epoch,
                 description,
                 license: self
                     .license
                     .clone()
-                    .unwrap_or_else(|| parent.plan.license.clone()),
+                    .unwrap_or_else(|| parent.metadata.license.clone()),
                 arch: self
                     .arch
                     .clone()
-                    .unwrap_or_else(|| parent.plan.arch.clone()),
-                url: parent.plan.url.clone(),
-                maintainer: parent.plan.maintainer.clone(),
+                    .unwrap_or_else(|| parent.metadata.arch.clone()),
+                url: parent.metadata.url.clone(),
+                maintainer: parent.metadata.maintainer.clone(),
             },
             build_deps: Vec::new(),
             link_deps: Vec::new(),
@@ -59,7 +59,7 @@ impl SubFabricateOutput {
             outputs: None,
             install_scripts,
             backup,
-            source_plan: Some(parent.plan.name.clone()),
+            source_plan: Some(parent.metadata.name.clone()),
         }
     }
 }

@@ -1,6 +1,6 @@
 use wright::builder::orchestrator::{resolve_build_set, MatchPolicy, ResolveOptions};
 use wright::config::GlobalConfig;
-use wright::database::{InstalledDb, NewPart, Origin};
+use wright::database::{InstalledDb, NewPart, NewPlan, Origin};
 
 #[tokio::test]
 async fn test_apply_force_always_includes_explicit_targets() {
@@ -9,18 +9,24 @@ async fn test_apply_force_always_includes_explicit_targets() {
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
     let db = InstalledDb::open(&db_path).await.unwrap();
 
+    // 1. Register a plan for 'a'
+    let plan_id = db
+        .insert_plan(NewPlan {
+            name: "a",
+            version: "1.0.0",
+            release: 1,
+            epoch: 0,
+            description: "test",
+            arch: "x86_64",
+            license: "MIT",
+            url: None,
+        })
+        .await
+        .unwrap();
     // 1. Simulate a part 'a' already installed
     db.insert_part(NewPart {
         name: "a",
-        plan_id: 0,
-        version: "1.0.0",
-        release: 1,
-        epoch: 0,
-        description: "test",
-        arch: "x86_64",
-        license: "MIT",
-        url: None,
-        install_size: 100,
+        plan_id,
         part_hash: Some("oldhash"),
         install_scripts: None,
         origin: Origin::Manual,

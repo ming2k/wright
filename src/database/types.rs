@@ -35,12 +35,22 @@ impl TryFrom<&str> for FileType {
     }
 }
 
+/// How a part entered the system.
+///
+/// Variant order determines the upgrade priority used by `set_origin`:
+/// higher variants are never silently downgraded to lower ones.
+/// `External` sits above `Manual` so that `set_origin(name, Manual)` is
+/// always a no-op for externally provided parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, sqlx::Type)]
 #[sqlx(rename_all = "lowercase")]
 pub enum Origin {
     Dependency,
     Build,
     Manual,
+    /// Registered with `wright assume` — provided by the host system, not built
+    /// or installed by wright. Has no filesystem footprint; managed exclusively
+    /// via `wright assume` / `wright unassume`.
+    External,
 }
 
 impl Origin {
@@ -49,6 +59,7 @@ impl Origin {
             Self::Dependency => "dependency",
             Self::Build => "build",
             Self::Manual => "manual",
+            Self::External => "external",
         }
     }
 
@@ -71,36 +82,45 @@ impl TryFrom<&str> for Origin {
             "dependency" => Ok(Self::Dependency),
             "build" => Ok(Self::Build),
             "manual" => Ok(Self::Manual),
+            "external" => Ok(Self::External),
             _ => Err(WrightError::DatabaseError(format!("unknown origin: {}", s))),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "lowercase")]
-pub enum DepType {
-    Runtime,
+#[sqlx(rename_all = "snake_case")]
+pub enum TransactionOperation {
+    Install,
+    Upgrade,
+    Remove,
 }
 
-impl DepType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Runtime => "runtime",
-        }
+impl std::fmt::Display for TransactionOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Install => "install",
+            Self::Upgrade => "upgrade",
+            Self::Remove => "remove",
+        })
     }
 }
 
-impl TryFrom<&str> for DepType {
-    type Error = WrightError;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum TransactionStatus {
+    Pending,
+    Completed,
+    RolledBack,
+}
 
-    fn try_from(s: &str) -> Result<Self> {
-        match s {
-            "runtime" => Ok(Self::Runtime),
-            _ => Err(WrightError::DatabaseError(format!(
-                "unknown dep type: {}",
-                s
-            ))),
-        }
+impl std::fmt::Display for TransactionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::RolledBack => "rolled_back",
+        })
     }
 }
 
@@ -108,20 +128,31 @@ impl TryFrom<&str> for DepType {
 pub struct InstalledPart {
     pub id: i64,
     pub name: String,
+    pub plan_id: i64,
+    pub installed_at: Option<String>,
+    pub part_hash: Option<String>,
+    pub install_scripts: Option<String>,
+    pub origin: Origin,
+}
+
+/// Part combined with its plan metadata for display queries.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PartWithPlan {
+    pub id: i64,
+    pub name: String,
+    pub plan_id: i64,
+    pub installed_at: Option<String>,
+    pub part_hash: Option<String>,
+    pub install_scripts: Option<String>,
+    pub origin: Origin,
+    pub plan_name: String,
     pub version: String,
-    pub release: i64, // SQLite INTEGER is i64
+    pub release: i64,
     pub epoch: i64,
     pub description: Option<String>,
     pub arch: String,
     pub license: Option<String>,
     pub url: Option<String>,
-    pub installed_at: Option<String>,
-    pub install_size: Option<i64>,
-    pub part_hash: Option<String>,
-    pub install_scripts: Option<String>,
-    pub assumed: bool,
-    pub origin: Origin,
-    pub plan_id: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -138,14 +169,6 @@ pub struct FileEntry {
 pub struct NewPart<'a> {
     pub name: &'a str,
     pub plan_id: i64,
-    pub version: &'a str,
-    pub release: u32,
-    pub epoch: u32,
-    pub description: &'a str,
-    pub arch: &'a str,
-    pub license: &'a str,
-    pub url: Option<&'a str>,
-    pub install_size: u64,
     pub part_hash: Option<&'a str>,
     pub install_scripts: Option<&'a str>,
     pub origin: Origin,
@@ -156,14 +179,6 @@ impl<'a> Default for NewPart<'a> {
         Self {
             name: "",
             plan_id: 0,
-            version: "",
-            release: 0,
-            epoch: 0,
-            description: "",
-            arch: "",
-            license: "",
-            url: None,
-            install_size: 0,
             part_hash: None,
             install_scripts: None,
             origin: Origin::Manual,
@@ -181,8 +196,6 @@ pub struct NewPlan<'a> {
     pub arch: &'a str,
     pub license: &'a str,
     pub url: Option<&'a str>,
-    pub build_deps: Option<&'a str>,
-    pub link_deps: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -190,15 +203,14 @@ pub struct Dependency {
     #[sqlx(rename = "depends_on")]
     pub name: String,
     pub version_constraint: Option<String>,
-    pub dep_type: DepType,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TransactionRecord {
     pub timestamp: Option<String>,
-    pub operation: String,
+    pub operation: TransactionOperation,
     pub part_name: String,
     pub old_version: Option<String>,
     pub new_version: Option<String>,
-    pub status: String,
+    pub status: TransactionStatus,
 }

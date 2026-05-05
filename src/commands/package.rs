@@ -54,7 +54,7 @@ pub async fn execute_package(
             .with_context(|| format!("failed to read plan: {}", plan_path.display()))?;
 
         if !quiet {
-            tracing::info!("Packaging {}...", manifest.plan.name);
+            tracing::info!("Packaging {}...", manifest.metadata.name);
         }
 
         tokio::fs::create_dir_all(&config.general.parts_dir)
@@ -76,7 +76,7 @@ pub async fn execute_package(
                 if !quiet {
                     tracing::info!(
                         "{}",
-                        crate::builder::logging::plan_skipped_existing(&manifest.plan.name)
+                        crate::builder::logging::plan_skipped_existing(&manifest.metadata.name)
                     );
                 }
                 continue;
@@ -85,7 +85,7 @@ pub async fn execute_package(
 
         orchestrator::package_manifest(&manifest, config, args.print_parts, args.force)
             .await
-            .with_context(|| format!("failed to package {}", manifest.plan.name))?;
+            .with_context(|| format!("failed to package {}", manifest.metadata.name))?;
     }
 
     Ok(())

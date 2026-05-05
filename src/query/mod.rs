@@ -353,12 +353,12 @@ async fn write_reverse_dep_tree_inner(
     })?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
-        dependents.iter().filter(|(n, _)| n.contains(f)).collect()
+        dependents.iter().filter(|n| n.contains(f)).collect()
     } else {
         dependents.iter().collect()
     };
 
-    for (i, (dep_name, _dep_type)) in children.iter().enumerate() {
+    for (i, &dep_name) in children.iter().enumerate() {
         let is_last_child = i == children.len() - 1;
 
         // Check prune

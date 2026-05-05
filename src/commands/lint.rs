@@ -56,9 +56,9 @@ pub async fn execute_lint(
     for path in &plan_targets {
         match PlanManifest::from_file(path) {
             Ok(m) => {
-                info!("Plan [OK]: {} ({})", m.plan.name, path.display());
+                info!("Plan [OK]: {} ({})", m.metadata.name, path.display());
                 local_index.insert(
-                    m.plan.name.clone(),
+                    m.metadata.name.clone(),
                     LocalPlanOutputs {
                         path: path.clone(),
                         outputs: output_names(&m),
@@ -84,7 +84,7 @@ pub async fn execute_lint(
     // 3. Lint dependency graph when targets are specified
     let plan_names: Vec<String> = parsed_targets
         .iter()
-        .map(|(_, m)| m.plan.name.clone())
+        .map(|(_, m)| m.metadata.name.clone())
         .collect();
 
     if !plan_names.is_empty() {
@@ -144,7 +144,7 @@ fn build_local_plan_index(paths: &[PathBuf]) -> HashMap<String, LocalPlanOutputs
     for path in paths {
         if let Ok(manifest) = PlanManifest::from_file(path) {
             index.insert(
-                manifest.plan.name.clone(),
+                manifest.metadata.name.clone(),
                 LocalPlanOutputs {
                     path: path.clone(),
                     outputs: output_names(&manifest),
@@ -160,7 +160,7 @@ fn output_names(manifest: &PlanManifest) -> HashSet<String> {
         Some(OutputConfig::Multi(ref outputs)) => {
             outputs.iter().map(|(name, _)| name.clone()).collect()
         }
-        _ => HashSet::from([manifest.plan.name.clone()]),
+        _ => HashSet::from([manifest.metadata.name.clone()]),
     }
 }
 

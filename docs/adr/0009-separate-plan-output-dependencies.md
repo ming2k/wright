@@ -56,10 +56,13 @@ The `[dependencies]` table is **removed entirely** from `plan.toml`. `RawManifes
 
 ### Database schema
 
-- `plans` table: stores plan-level metadata including `build_deps` and `link_deps` as JSON arrays
+- `plans` table: stores plan-level metadata
+- `plan_build_deps` / `plan_link_deps` tables: separate normalized tables for plan-level dependency edges (migration 006 replaced the earlier JSON array columns)
 - `parts` table: links to `plans.id` via `plan_id` foreign key
-- `dependencies` table: stores only runtime dependencies (simplified `DepType` enum with only `Runtime`)
+- `dependencies` table: stores runtime dependency edges per installed part
 - ~~`optional_dependencies` table: removed~~
+
+**Note:** The `dep_type` column and `DepType` Rust enum (originally introduced to distinguish dependency kinds inside the `dependencies` table) were subsequently removed (migration 008) because the `dependencies` table already exclusively holds runtime deps — build and link deps live in their own tables. The column was dead from the start.
 
 ### Single-output plans
 

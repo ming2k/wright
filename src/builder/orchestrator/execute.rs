@@ -390,7 +390,7 @@ async fn build_one(
             .update_hashes(manifest, manifest_path)
             .await
             .context("failed to update hashes")?;
-        info!("Updated source hashes in plan {}", manifest.plan.name);
+        info!("Updated source hashes in plan {}", manifest.metadata.name);
         return Ok(());
     }
 
@@ -434,7 +434,7 @@ async fn build_one(
             }
         };
         if all_exist {
-            info!("{}", logging::plan_skipped_existing(&manifest.plan.name));
+            info!("{}", logging::plan_skipped_existing(&manifest.metadata.name));
             return Ok(());
         }
     }
@@ -445,7 +445,7 @@ async fn build_one(
             warn!(
                 "Plan '{}' has no mvp.toml; \
                  cannot compute MVP deps for cycle breaking.",
-                manifest.plan.name
+                manifest.metadata.name
             );
         }
         extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
@@ -459,11 +459,11 @@ async fn build_one(
         if !bootstrap_excl.is_empty() {
             info!(
                 "Executing MVP pass for plan {} without {}",
-                manifest.plan.name,
+                manifest.metadata.name,
                 bootstrap_excl.join(", ")
             );
         } else {
-            info!("Executing MVP pass for plan {}", manifest.plan.name);
+            info!("Executing MVP pass for plan {}", manifest.metadata.name);
         }
     }
 
@@ -537,10 +537,10 @@ pub async fn package_outputs(
         }
         _ => {
             if !manifest.options.skip_fhs_check {
-                fhs::validate(&result.output_dir, &manifest.plan.name)?;
+                fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
             let part_path = part::create_part(&result.output_dir, manifest, &output_dir, None)?;
-            info!("{}", logging::plan_packed(&manifest.plan.name, &part_path));
+            info!("{}", logging::plan_packed(&manifest.metadata.name, &part_path));
             if print_parts {
                 println!("{}", part_path.display());
             }

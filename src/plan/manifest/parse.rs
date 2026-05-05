@@ -260,7 +260,7 @@ impl PlanManifest {
     pub fn parse(content: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(content)?;
         let RawManifest {
-            plan,
+            plan: metadata,
             build_deps,
             link_deps,
             sources: raw_sources,
@@ -327,7 +327,7 @@ impl PlanManifest {
         } = output_section;
 
         let manifest = PlanManifest {
-            plan,
+            metadata,
             build_deps,
             link_deps,
             runtime_deps,

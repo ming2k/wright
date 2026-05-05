@@ -64,6 +64,12 @@ pub struct BuildConfig {
     /// Unset = use all available CPUs.
     #[serde(default)]
     pub max_cpus: Option<usize>,
+    /// Plans exempted from cascade-rebuild expansion when using `--rdeps`.
+    /// These are treated as stable base toolchain parts whose reverse-dependents
+    /// should not be rebuilt automatically. Override in `wright.toml` if your
+    /// distribution uses different package names.
+    #[serde(default = "default_stable_toolchain")]
+    pub stable_toolchain: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -169,6 +175,12 @@ fn default_build_dir() -> PathBuf {
 fn default_isolation() -> String {
     "strict".to_string()
 }
+fn default_stable_toolchain() -> Vec<String> {
+    ["gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed", "gawk"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
 fn default_timeout() -> u64 {
     300
 }
@@ -197,6 +209,7 @@ impl Default for BuildConfig {
             timeout: None,
             nproc_per_isolation: None,
             max_cpus: None,
+            stable_toolchain: default_stable_toolchain(),
         }
     }
 }

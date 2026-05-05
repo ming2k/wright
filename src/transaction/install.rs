@@ -6,7 +6,7 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::archive::resolver::LocalResolver;
-use crate::database::{DepType, Dependency, FileType, InstalledDb, NewPart, Origin};
+use crate::database::{Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation, TransactionStatus};
 use crate::error::{Result, WrightError};
 use crate::part::part;
 use crate::part::version::{self, Version};
@@ -16,6 +16,8 @@ use crate::transaction::rollback::RollbackState;
 
 use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
 
+/// Install a batch of parts. All are marked `Origin::Manual`.
+/// Use `install_parts_with_explicit_targets` when only a subset are user-requested.
 pub async fn install_parts(
     db: &InstalledDb,
     parts: &[PathBuf],
@@ -24,27 +26,6 @@ pub async fn install_parts(
     force: bool,
     nodeps: bool,
 ) -> Result<()> {
-    install_parts_with_plan_map(
-        db,
-        parts,
-        root_dir,
-        resolver,
-        force,
-        nodeps,
-        &HashMap::new(),
-    )
-    .await
-}
-
-pub async fn install_parts_with_plan_map(
-    db: &InstalledDb,
-    parts: &[PathBuf],
-    root_dir: &Path,
-    resolver: &LocalResolver,
-    force: bool,
-    nodeps: bool,
-    _plan_map: &HashMap<String, String>,
-) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
         .iter()
         .map(|path| resolver.read_part(path))
@@ -52,7 +33,7 @@ pub async fn install_parts_with_plan_map(
         .into_iter()
         .map(|resolved| resolved.name)
         .collect();
-    install_parts_with_explicit_targets_and_plan_map(
+    install_parts_with_explicit_targets(
         db,
         parts,
         &explicit_targets,
@@ -65,27 +46,6 @@ pub async fn install_parts_with_plan_map(
 }
 
 pub async fn install_parts_with_explicit_targets(
-    db: &InstalledDb,
-    parts: &[PathBuf],
-    explicit_targets: &HashSet<String>,
-    root_dir: &Path,
-    resolver: &LocalResolver,
-    force: bool,
-    nodeps: bool,
-) -> Result<()> {
-    install_parts_with_explicit_targets_and_plan_map(
-        db,
-        parts,
-        explicit_targets,
-        root_dir,
-        resolver,
-        force,
-        nodeps,
-    )
-    .await
-}
-
-pub async fn install_parts_with_explicit_targets_and_plan_map(
     db: &InstalledDb,
     parts: &[PathBuf],
     explicit_targets: &HashSet<String>,
@@ -196,10 +156,15 @@ async fn warn_about_runtime_dependencies(
             }
 
             if let Some(installed) = db.get_part(&output_name).await? {
+                let installed_version = if let Some(plan) = db.get_plan_by_id(installed.plan_id).await? {
+                    plan.version
+                } else {
+                    String::new()
+                };
                 warn_if_constraint_not_satisfied(
                     name,
                     &output_name,
-                    &installed.version,
+                    &installed_version,
                     constraint.as_ref(),
                 );
                 continue;
@@ -263,9 +228,9 @@ pub async fn install_part_with_origin(
 ) -> Result<()> {
     let overall_start = Instant::now();
 
-    let staging_dir = std::path::Path::new("/var/lib/wright/staging");
-    let _ = tokio::fs::create_dir_all(staging_dir).await;
-    let temp_dir = tempfile::tempdir_in(staging_dir)
+    let staging_dir = root_dir.join("var/lib/wright/staging");
+    let _ = tokio::fs::create_dir_all(&staging_dir).await;
+    let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::InstallError(format!("failed to create temp dir: {}", e)))?;
 
@@ -279,9 +244,15 @@ pub async fn install_part_with_origin(
     );
 
     for replaced_name in &partinfo.replaces {
-        if db.get_part(replaced_name).await?.is_some() {
+        if let Some(existing) = db.get_part(replaced_name).await? {
             info!("Replacing {} with {}", replaced_name, partinfo.name);
-            remove_part(db, replaced_name, root_dir, true).await?;
+            if existing.origin == crate::database::Origin::External {
+                // External parts have no filesystem footprint; go through
+                // unassume_part so the associated plan record is cleaned up.
+                db.unassume_part(replaced_name).await?;
+            } else {
+                remove_part(db, replaced_name, root_dir, true).await?;
+            }
         }
     }
 
@@ -393,11 +364,11 @@ pub async fn install_part_with_origin(
 
     let tx_id = db
         .record_transaction(
-            "install",
+            TransactionOperation::Install,
             &partinfo.name,
             None,
-            Some(&partinfo.version),
-            "pending",
+            Some(&partinfo.plan.version),
+            TransactionStatus::Pending,
             None,
         )
         .await?;
@@ -437,7 +408,7 @@ pub async fn install_part_with_origin(
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
             rollback_state.rollback();
-            db.update_transaction_status(tx_id, "rolled_back").await?;
+            db.update_transaction_status(tx_id, TransactionStatus::RolledBack).await?;
             return Err(e);
         }
     }
@@ -449,19 +420,19 @@ pub async fn install_part_with_origin(
     );
 
     phase_start = Instant::now();
-    let plan_id = db.ensure_plan_registered(&partinfo).await?;
+    let plan_id = db.ensure_plan_registered(
+        &partinfo,
+        &partinfo.plan.version,
+        partinfo.plan.release,
+        partinfo.plan.epoch,
+        &partinfo.plan.description,
+        &partinfo.plan.arch,
+        &partinfo.plan.license,
+    ).await?;
     let part_id = db
         .insert_part(NewPart {
             name: &partinfo.name,
             plan_id,
-            version: &partinfo.version,
-            release: partinfo.release,
-            epoch: partinfo.epoch,
-            description: &partinfo.description,
-            arch: &partinfo.arch,
-            license: &partinfo.license,
-            url: None,
-            install_size: partinfo.install_size,
             part_hash: Some(part_hash.as_str()),
             install_scripts: hooks_content.as_deref(),
             origin,
@@ -493,7 +464,6 @@ pub async fn install_part_with_origin(
         deps.push(Dependency {
             name,
             version_constraint: constraint.map(|c| c.to_string()),
-            dep_type: DepType::Runtime,
         });
     }
 
@@ -511,7 +481,7 @@ pub async fn install_part_with_origin(
         db.insert_replaces(part_id, &partinfo.replaces).await?;
     }
 
-    db.update_transaction_status(tx_id, "completed").await?;
+    db.update_transaction_status(tx_id, TransactionStatus::Completed).await?;
     log_debug_timing(
         "install",
         &partinfo.name,
@@ -537,10 +507,10 @@ pub async fn install_part_with_origin(
 
     rollback_state.commit();
 
-    let ver_rel = if partinfo.version.is_empty() {
-        format!("{}", partinfo.release)
+    let ver_rel = if partinfo.plan.version.is_empty() {
+        format!("{}", partinfo.plan.release)
     } else {
-        format!("{}-{}", partinfo.version, partinfo.release)
+        format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
     info!("Installed {}: {}", partinfo.name, ver_rel);
 

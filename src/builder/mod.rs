@@ -139,9 +139,9 @@ impl Builder {
     pub fn compute_build_key(&self, manifest: &PlanManifest) -> Result<String> {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(manifest.plan.name.as_bytes());
-        hasher.update(manifest.plan.version.as_deref().unwrap_or("").as_bytes());
-        hasher.update(manifest.plan.release.to_string().as_bytes());
+        hasher.update(manifest.metadata.name.as_bytes());
+        hasher.update(manifest.metadata.version.as_deref().unwrap_or("").as_bytes());
+        hasher.update(manifest.metadata.release.to_string().as_bytes());
         for source in &manifest.sources.entries {
             match source {
                 Source::Http(http) => {
@@ -193,10 +193,10 @@ impl Builder {
         let mut vars = std::collections::HashMap::new();
         variables::insert_metadata_variables(
             &mut vars,
-            &manifest.plan.name,
-            manifest.plan.version.as_deref().unwrap_or(""),
-            manifest.plan.release,
-            &manifest.plan.arch,
+            &manifest.metadata.name,
+            manifest.metadata.version.as_deref().unwrap_or(""),
+            manifest.metadata.release,
+            &manifest.metadata.arch,
         );
         variables::substitute(uri, &vars)
     }
@@ -209,11 +209,11 @@ impl Builder {
                 .map_err(|e| WrightError::BuildError(format!("failed to get cwd: {}", e)))?
                 .join(&self.config.build.build_dir)
         };
-        let ver = manifest.plan.version.as_deref().unwrap_or("");
+        let ver = manifest.metadata.version.as_deref().unwrap_or("");
         if ver.is_empty() {
-            Ok(build_dir.join(format!("{}-noversion", manifest.plan.name)))
+            Ok(build_dir.join(format!("{}-noversion", manifest.metadata.name)))
         } else {
-            Ok(build_dir.join(format!("{}-{}", manifest.plan.name, ver)))
+            Ok(build_dir.join(format!("{}-{}", manifest.metadata.name, ver)))
         }
     }
 
@@ -370,13 +370,13 @@ impl Builder {
             .unwrap_or(total_cpus);
 
         let mut vars = variables::standard_variables(variables::VariableContext {
-            name: &manifest.plan.name,
-            version: manifest.plan.version.as_deref().unwrap_or(""),
-            release: manifest.plan.release,
-            arch: &manifest.plan.arch,
+            name: &manifest.metadata.name,
+            version: manifest.metadata.version.as_deref().unwrap_or(""),
+            release: manifest.metadata.release,
+            arch: &manifest.metadata.arch,
             workdir: &work_dir.to_string_lossy(),
             part_dir: &staging_dir.to_string_lossy(),
-            main_part_name: &manifest.plan.name,
+            main_part_name: &manifest.metadata.name,
             main_part_dir: &staging_dir.to_string_lossy(),
         });
 
@@ -438,7 +438,7 @@ impl Builder {
             return Err(WrightError::BuildError(format!(
                 "staging directory does not exist: {}. Run `wright build {}` first.",
                 staging_dir.display(),
-                manifest.plan.name
+                manifest.metadata.name
             )));
         }
 
@@ -626,7 +626,7 @@ impl Builder {
             let filename = http
                 .r#as
                 .clone()
-                .unwrap_or_else(|| source_cache_filename(&manifest.plan.name, &processed_url));
+                .unwrap_or_else(|| source_cache_filename(&manifest.metadata.name, &processed_url));
             let path = cache_dir.join(&filename);
             if tokio::fs::metadata(&path).await.is_err() {
                 return Err(WrightError::ValidationError(format!(
@@ -712,7 +712,7 @@ impl Builder {
                 Source::Http(http) => {
                     let processed_url = self.process_uri(&http.url, manifest);
                     let filename = http.r#as.clone().unwrap_or_else(|| {
-                        source_cache_filename(&manifest.plan.name, &processed_url)
+                        source_cache_filename(&manifest.metadata.name, &processed_url)
                     });
                     let cache_path = cache_dir.join(&filename);
                     let final_dest = if let Some(ref sub) = http.extract_to {
@@ -733,7 +733,7 @@ impl Builder {
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source(&pb, &manifest.plan.name, &cache_path);
+                        progress::finish_source(&pb, &manifest.metadata.name, &cache_path);
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -746,7 +746,7 @@ impl Builder {
                 }
                 Source::Local(local) => {
                     let processed_path = self.process_uri(&local.path, manifest);
-                    let filename = source_cache_filename(&manifest.plan.name, &processed_path);
+                    let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
                     let cache_path = cache_dir.join(&filename);
                     let final_dest = if let Some(ref sub) = local.extract_to {
                         let p = dest_dir.join(sub);
@@ -766,7 +766,7 @@ impl Builder {
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source(&pb, &manifest.plan.name, &cache_path);
+                        progress::finish_source(&pb, &manifest.metadata.name, &cache_path);
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -795,7 +795,7 @@ impl Builder {
                 Source::Http(http) => {
                     let processed_url = self.process_uri(&http.url, manifest);
                     let cache_filename = http.r#as.clone().unwrap_or_else(|| {
-                        source_cache_filename(&manifest.plan.name, &processed_url)
+                        source_cache_filename(&manifest.metadata.name, &processed_url)
                     });
                     let cache_path = cache_dir.join(&cache_filename);
                     if tokio::fs::metadata(&cache_path).await.is_ok() {
@@ -806,7 +806,7 @@ impl Builder {
                             &processed_url,
                             &cache_path,
                             self.config.network.download_timeout,
-                            &manifest.plan.name,
+                            &manifest.metadata.name,
                         )?;
                     }
                     let hash = checksum::sha256_file(&cache_path)?;
@@ -1050,7 +1050,7 @@ impl Builder {
                             processed_ref.as_deref(),
                             git.depth,
                             &dest,
-                            &manifest.plan.name,
+                            &manifest.metadata.name,
                         )
                         .await?;
                     debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
@@ -1058,7 +1058,7 @@ impl Builder {
                 Source::Http(http) => {
                     let processed_url = self.process_uri(&http.url, manifest);
                     let filename = http.r#as.clone().unwrap_or_else(|| {
-                        source_cache_filename(&manifest.plan.name, &processed_url)
+                        source_cache_filename(&manifest.metadata.name, &processed_url)
                     });
                     let dest = cache_dir.join(&filename);
                     let skip_verify = http.sha256 == "SKIP";
@@ -1085,7 +1085,7 @@ impl Builder {
                             &processed_url,
                             &dest,
                             self.config.network.download_timeout,
-                            &manifest.plan.name,
+                            &manifest.metadata.name,
                         )?;
                         if !skip_verify {
                             let actual_hash = checksum::sha256_file(&dest)?;
@@ -1098,7 +1098,7 @@ impl Builder {
                 Source::Local(local) => {
                     let processed_path = self.process_uri(&local.path, manifest);
                     let local_path = validate_local_path(plan_dir, &processed_path)?;
-                    let filename = source_cache_filename(&manifest.plan.name, &processed_path);
+                    let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
                     let dest = cache_dir.join(&filename);
                     let label = progress::source_label(&processed_path);
                     let pb = progress::new_source_spinner(&label, "copying");
@@ -1109,7 +1109,7 @@ impl Builder {
                             e
                         ))
                     })?;
-                    progress::finish_source(&pb, &manifest.plan.name, &dest);
+                    progress::finish_source(&pb, &manifest.metadata.name, &dest);
                 }
             }
         }

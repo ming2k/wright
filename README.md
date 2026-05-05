@@ -19,7 +19,8 @@ replaced.
 
 ```sh
 cargo build --release
-install -Dm644 target/man/wright.1 /usr/share/man/man1/wright.1
+install -Dm755 target/release/wright /usr/local/bin/wright
+install -Dm644 target/man/*.1 /usr/share/man/man1/
 ```
 
 ## Quick Start

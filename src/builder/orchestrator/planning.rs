@@ -3,17 +3,12 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::builder::mvp::{collect_phase_deps, PlanGraph};
-use crate::database::{InstalledDb, InstalledPart};
-use crate::error::Result;
+use crate::database::InstalledDb;
+use crate::error::{Result, WrightError};
 use crate::part::version;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 use super::{BuildOptions, DependentsMode, MatchPolicy, RebuildReason};
-
-const SYSTEM_TOOLCHAIN: &[&str] = &[
-    "gcc", "glibc", "binutils", "make", "bison", "flex", "perl", "python", "texinfo", "m4", "sed",
-    "gawk",
-];
 
 pub(super) async fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
@@ -22,16 +17,20 @@ pub(super) async fn expand_missing_dependencies(
     policies: &[MatchPolicy],
     domain: DependentsMode,
     max_depth: usize,
+    stable_toolchain: &[String],
 ) -> Result<()> {
     let mut build_set: HashSet<String> = HashSet::new();
     let mut traversal_seen: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    let mut manifest_cache: HashMap<String, PlanManifest> = HashMap::new();
 
     for path in plans_to_build.iter() {
         if let Ok(m) = PlanManifest::from_file(path) {
-            build_set.insert(m.plan.name.clone());
-            traversal_seen.insert(m.plan.name.clone());
-            queue.push_back((m.plan.name.clone(), 0));
+            let name = m.metadata.name.clone();
+            build_set.insert(name.clone());
+            traversal_seen.insert(name.clone());
+            queue.push_back((name.clone(), 0));
+            manifest_cache.insert(name, m);
         }
     }
 
@@ -39,20 +38,25 @@ pub(super) async fn expand_missing_dependencies(
         let Some(path) = all_plans.get(&name) else {
             continue;
         };
-        let manifest = PlanManifest::from_file(path)?;
 
-        let mut deps_to_check = Vec::new();
+        if !manifest_cache.contains_key(&name) {
+            let m = PlanManifest::from_file(path)?;
+            manifest_cache.insert(name.clone(), m);
+        }
+        let manifest = manifest_cache.get(&name).unwrap();
+
+        let mut deps_to_check: Vec<String> = Vec::new();
         if matches!(domain, DependentsMode::All | DependentsMode::Build) {
-            deps_to_check.extend(manifest.build_deps.iter());
+            deps_to_check.extend(manifest.build_deps.iter().cloned());
         }
         if matches!(domain, DependentsMode::All | DependentsMode::Link) {
-            deps_to_check.extend(manifest.link_deps.iter());
+            deps_to_check.extend(manifest.link_deps.iter().cloned());
         }
         if matches!(domain, DependentsMode::All | DependentsMode::Runtime) {
-            deps_to_check.extend(manifest.runtime_deps.iter());
+            deps_to_check.extend(manifest.runtime_deps.iter().cloned());
         }
 
-        for dep in deps_to_check {
+        for dep in &deps_to_check {
             let dep_name = version::parse_dependency(dep)
                 .unwrap_or_else(|_| (dep.clone(), None))
                 .0;
@@ -68,23 +72,21 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if policies.contains(&MatchPolicy::All)
-                && SYSTEM_TOOLCHAIN.contains(&dep_plan_name.as_str())
+                && stable_toolchain.iter().any(|t| t == &dep_plan_name)
             {
                 continue;
             }
 
-            if !build_set.contains(&dep_plan_name)
-                && dependency_matches_policy(&dep_plan_name, all_plans, db, policies).await?
-            {
-                if let Some(plan_path) = all_plans.get(&dep_plan_name) {
-                    info!(
-                        "Scheduling dependency (depth {}, reason: {}): {}",
-                        dep_depth,
-                        dependency_reason_label(&dep_plan_name, all_plans, db, policies).await?,
-                        dep_plan_name,
-                    );
-                    plans_to_build.insert(plan_path.clone());
-                    build_set.insert(dep_plan_name.clone());
+            if !build_set.contains(&dep_plan_name) {
+                if let Some(label) = dependency_match_label(&dep_plan_name, all_plans, db, policies).await? {
+                    if let Some(plan_path) = all_plans.get(&dep_plan_name) {
+                        info!(
+                            "Scheduling dependency (depth {}, reason: {}): {}",
+                            dep_depth, label, dep_plan_name,
+                        );
+                        plans_to_build.insert(plan_path.clone());
+                        build_set.insert(dep_plan_name.clone());
+                    }
                 }
             }
         }
@@ -92,7 +94,12 @@ pub(super) async fn expand_missing_dependencies(
         if !policies.contains(&MatchPolicy::All)
             && matches!(domain, DependentsMode::All | DependentsMode::Build)
         {
-            for build_dep in &manifest.build_deps {
+            let build_deps: Vec<String> = manifest_cache
+                .get(&name)
+                .map(|m| m.build_deps.clone())
+                .unwrap_or_default();
+
+            for build_dep in &build_deps {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
                     .0;
@@ -111,13 +118,17 @@ pub(super) async fn expand_missing_dependencies(
                     let Some(cur_plan_path) = all_plans.get(&cur) else {
                         continue;
                     };
-                    let cur_manifest = match PlanManifest::from_file(cur_plan_path) {
-                        Ok(m) => m,
-                        Err(_) => continue,
-                    };
 
-                    for rdep in &cur_manifest.runtime_deps {
-                        let rdep_name = version::parse_dependency(rdep)
+                    if !manifest_cache.contains_key(&cur) {
+                        match PlanManifest::from_file(cur_plan_path) {
+                            Ok(m) => { manifest_cache.insert(cur.clone(), m); }
+                            Err(_) => continue,
+                        }
+                    }
+                    let cur_manifest = manifest_cache.get(&cur).unwrap();
+
+                    for rdep in cur_manifest.runtime_deps.clone() {
+                        let rdep_name = version::parse_dependency(&rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
                         let (rdep_plan_name, _) = version::parse_dep_ref(&rdep_name);
@@ -134,20 +145,16 @@ pub(super) async fn expand_missing_dependencies(
                             queue.push_back((rdep_plan_name.clone(), rdep_depth));
                         }
 
-                        if !build_set.contains(&rdep_plan_name)
-                            && dependency_matches_policy(&rdep_plan_name, all_plans, db, policies)
-                                .await?
-                        {
-                            if let Some(rdep_plan_path) = all_plans.get(&rdep_plan_name) {
-                                info!(
-                                    "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
-                                    build_dep_plan_name,
-                                    rdep_depth,
-                                    dependency_reason_label(&rdep_plan_name, all_plans, db, policies).await?,
-                                    rdep_plan_name,
-                                );
-                                plans_to_build.insert(rdep_plan_path.clone());
-                                build_set.insert(rdep_plan_name.clone());
+                        if !build_set.contains(&rdep_plan_name) {
+                            if let Some(label) = dependency_match_label(&rdep_plan_name, all_plans, db, policies).await? {
+                                if let Some(rdep_plan_path) = all_plans.get(&rdep_plan_name) {
+                                    info!(
+                                        "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
+                                        build_dep_plan_name, rdep_depth, label, rdep_plan_name,
+                                    );
+                                    plans_to_build.insert(rdep_plan_path.clone());
+                                    build_set.insert(rdep_plan_name.clone());
+                                }
                             }
                         }
 
@@ -161,25 +168,43 @@ pub(super) async fn expand_missing_dependencies(
     Ok(())
 }
 
-async fn dependency_reason_label(
+/// Returns the match reason label when the dependency matches any policy, or `None` if it doesn't.
+/// Combines the match check and label derivation into a single database round-trip.
+async fn dependency_match_label(
     dep_name: &str,
     all_plans: &HashMap<String, PathBuf>,
     db: &InstalledDb,
     policies: &[MatchPolicy],
-) -> Result<&'static str> {
-    if policies.contains(&MatchPolicy::All) {
-        Ok("--match=all")
-    } else if policies.contains(&MatchPolicy::Missing) {
-        Ok("missing")
-    } else if policies.contains(&MatchPolicy::Outdated) {
-        if dependency_plan_differs(dep_name, all_plans, db).await? {
-            Ok("outdated")
-        } else {
-            Ok("missing")
+) -> Result<Option<&'static str>> {
+    let installed = db.get_part(dep_name).await?;
+    for policy in policies {
+        let label = match policy {
+            MatchPolicy::All => Some("--match=all"),
+            MatchPolicy::Missing => {
+                if installed.is_none() { Some("missing") } else { None }
+            }
+            MatchPolicy::Installed => {
+                if installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db).await? {
+                    Some("installed")
+                } else {
+                    None
+                }
+            }
+            MatchPolicy::Outdated => {
+                if installed.is_none() {
+                    Some("missing")
+                } else if dependency_plan_differs(dep_name, all_plans, db).await? {
+                    Some("outdated")
+                } else {
+                    None
+                }
+            }
+        };
+        if label.is_some() {
+            return Ok(label);
         }
-    } else {
-        Ok("unknown")
     }
+    Ok(None)
 }
 
 pub(super) async fn dependency_matches_policy(
@@ -188,27 +213,7 @@ pub(super) async fn dependency_matches_policy(
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
-    let installed = db.get_part(dep_name).await?;
-    for policy in policies {
-        let matched = match policy {
-            MatchPolicy::All => true,
-            MatchPolicy::Missing => installed.is_none(),
-            MatchPolicy::Installed => {
-                installed.is_some() && !dependency_plan_differs(dep_name, all_plans, db).await?
-            }
-            MatchPolicy::Outdated => {
-                if installed.is_none() {
-                    true
-                } else {
-                    dependency_plan_differs(dep_name, all_plans, db).await?
-                }
-            }
-        };
-        if matched {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    Ok(dependency_match_label(dep_name, all_plans, db, policies).await?.is_some())
 }
 
 async fn dependency_plan_differs(
@@ -219,27 +224,32 @@ async fn dependency_plan_differs(
     let Some(installed) = db.get_part(dep_name).await? else {
         return Ok(true);
     };
+
+    // Assumed parts are explicitly declared as externally provided.
+    // They have no local build plan to compare against, so treat them as
+    // up-to-date — wright should never auto-schedule rebuilds for them.
+    if installed.origin == crate::database::Origin::External {
+        return Ok(false);
+    }
+
     let Some(plan_path) = all_plans.get(dep_name) else {
         return Ok(false);
     };
     let manifest = PlanManifest::from_file(plan_path)?;
-    Ok(!installed_matches_manifest(&installed, &manifest))
-}
 
-pub(super) fn installed_matches_manifest(
-    installed: &InstalledPart,
-    manifest: &PlanManifest,
-) -> bool {
-    let manifest_ver = manifest.plan.version.as_deref().unwrap_or("");
-    installed.epoch == manifest.plan.epoch as i64
-        && installed.version == manifest_ver
-        && installed.release == manifest.plan.release as i64
+    let Some(plan) = db.get_plan_by_id(installed.plan_id).await? else {
+        return Ok(true);
+    };
+    let manifest_ver = manifest.metadata.version.as_deref().unwrap_or("");
+    Ok(plan.epoch != manifest.metadata.epoch as i64
+        || plan.version != manifest_ver
+        || plan.release != manifest.metadata.release as i64)
 }
 
 pub(super) fn construction_plan_batches(
     build_set: &HashSet<String>,
     deps_map: &HashMap<String, Vec<String>>,
-) -> Vec<(String, usize)> {
+) -> Result<Vec<(String, usize)>> {
     let mut indegree: HashMap<String, usize> = build_set
         .iter()
         .map(|name| (name.clone(), 0usize))
@@ -298,18 +308,19 @@ pub(super) fn construction_plan_batches(
 
     if ordered.len() != build_set.len() {
         let ordered_set: HashSet<_> = ordered.iter().map(|(n, _)| n.clone()).collect();
-        let mut remaining: Vec<_> = build_set
+        let mut cycle_nodes: Vec<_> = build_set
             .iter()
             .filter(|name| !ordered_set.contains(*name))
             .cloned()
             .collect();
-        remaining.sort();
-        for name in remaining {
-            ordered.push((name, batch));
-        }
+        cycle_nodes.sort();
+        return Err(WrightError::BuildError(format!(
+            "dependency cycle detected among: {}",
+            cycle_nodes.join(", ")
+        )));
     }
 
-    ordered
+    Ok(ordered)
 }
 
 pub(super) fn construction_plan_label(
@@ -341,6 +352,7 @@ pub(super) async fn expand_rebuild_deps(
     mode: DependentsMode,
     max_depth: usize,
     installed_names: &HashSet<String>,
+    stable_toolchain: &[String],
 ) -> Result<HashMap<String, RebuildReason>> {
     let mut reasons = HashMap::new();
 
@@ -392,7 +404,7 @@ pub(super) async fn expand_rebuild_deps(
     let mut rebuild_set: HashSet<String> = HashSet::new();
     for path in plans_to_build.iter() {
         if let Ok(m) = PlanManifest::from_file(path) {
-            let name = m.plan.name.clone();
+            let name = m.metadata.name.clone();
             rebuild_set.insert(name.clone());
             reasons.insert(name, RebuildReason::Explicit);
         }
@@ -425,7 +437,7 @@ pub(super) async fn expand_rebuild_deps(
                     .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
 
             if link_changed || runtime_changed || build_changed {
-                if !matches!(mode, DependentsMode::All) && SYSTEM_TOOLCHAIN.contains(&name.as_str())
+                if !matches!(mode, DependentsMode::All) && stable_toolchain.iter().any(|t| t == name)
                 {
                     continue;
                 }
@@ -478,7 +490,7 @@ pub(super) fn build_dep_map(
 
     for path in plans_to_build {
         let manifest = PlanManifest::from_file(path)?;
-        let name = manifest.plan.name.clone();
+        let name = manifest.metadata.name.clone();
         name_to_path.insert(name.clone(), path.clone());
         build_set.insert(name.clone());
 

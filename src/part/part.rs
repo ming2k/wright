@@ -7,6 +7,21 @@ use walkdir::WalkDir;
 use crate::error::{Result, WrightError};
 use crate::plan::manifest::PlanManifest;
 
+/// Plan-level metadata extracted from the `[plan]` section of `.PARTINFO`.
+/// All outputs of a plan share these fields; they are stored in the `plans` table.
+#[derive(Debug, Clone)]
+pub struct PlanMetadata {
+    pub name: String,
+    pub version: String,
+    pub release: u32,
+    pub epoch: u32,
+    pub description: String,
+    pub arch: String,
+    pub license: String,
+    pub build_deps: Vec<String>,
+    pub link_deps: Vec<String>,
+}
+
 /// Metadata extracted from a .PARTINFO file.
 ///
 /// `.PARTINFO` intentionally carries install-time/runtime metadata only.
@@ -15,26 +30,13 @@ use crate::plan::manifest::PlanManifest;
 #[derive(Debug, Clone)]
 pub struct PartInfo {
     pub name: String,
-    pub version: String,
-    pub release: u32,
-    pub epoch: u32,
-    pub description: String,
-    pub arch: String,
-    pub license: String,
-    pub install_size: u64,
     pub build_date: String,
     pub runtime_deps: Vec<String>,
     pub replaces: Vec<String>,
     pub conflicts: Vec<String>,
     pub provides: Vec<String>,
     pub backup_files: Vec<String>,
-    /// Plan-level metadata (all outputs of a plan share these)
-    pub plan_name: String,
-    pub plan_version: String,
-    pub plan_release: u32,
-    pub plan_epoch: u32,
-    pub build_deps: Vec<String>,
-    pub link_deps: Vec<String>,
+    pub plan: PlanMetadata,
 }
 
 /// Files that should never be included in a part archive.
@@ -61,11 +63,8 @@ pub fn create_part(
 ) -> Result<PathBuf> {
     purge_excluded_files(part_dir);
 
-    // Calculate install size
-    let install_size = calculate_dir_size(part_dir)?;
-
     // Generate .PARTINFO
-    let partinfo = generate_partinfo(manifest, install_size, source_plan);
+    let partinfo = generate_partinfo(manifest, source_plan);
 
     // Generate .FILELIST
     let filelist = generate_filelist(part_dir)?;
@@ -153,7 +152,6 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
 
 fn generate_partinfo(
     manifest: &PlanManifest,
-    install_size: u64,
     source_plan: Option<&PlanManifest>,
 ) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -161,22 +159,17 @@ fn generate_partinfo(
     // Determine plan-level metadata: either from the original plan manifest
     // or from the current manifest itself (single-output plans).
     let plan = source_plan.unwrap_or(manifest);
-    let plan_name = &plan.plan.name;
-    let plan_version = plan.plan.version.as_deref().unwrap_or("");
-    let _plan_release = plan.plan.release;
-    let plan_epoch = plan.plan.epoch;
 
-    let mut deps_toml = String::new();
+    let mut runtime_deps_toml = String::new();
     if !manifest.runtime_deps.is_empty() {
-        deps_toml.push_str("\n[dependencies]\n");
-        deps_toml.push_str("runtime = [");
+        runtime_deps_toml.push_str("runtime_deps = [");
         for (i, dep) in manifest.runtime_deps.iter().enumerate() {
             if i > 0 {
-                deps_toml.push_str(", ");
+                runtime_deps_toml.push_str(", ");
             }
-            deps_toml.push_str(&format!("\"{}\"", dep));
+            runtime_deps_toml.push_str(&format!("\"{}\"", dep));
         }
-        deps_toml.push_str("]\n");
+        runtime_deps_toml.push_str("]\n");
     }
 
     let mut relations_toml = String::new();
@@ -231,84 +224,57 @@ fn generate_partinfo(
         }
     }
 
-    let epoch_line = if manifest.plan.epoch > 0 {
-        format!("epoch = {}\n", manifest.plan.epoch)
-    } else {
-        String::new()
-    };
-
-    let version_line = match manifest.plan.version.as_deref() {
-        Some(v) if !v.is_empty() => format!("version = \"{}\"\n", v),
-        _ => String::new(),
-    };
-
-    let plan_epoch_line = if plan_epoch > 0 {
-        format!("plan_epoch = {}\n", plan_epoch)
-    } else {
-        String::new()
-    };
-
-    let plan_version_line = if !plan_version.is_empty() {
-        format!("plan_version = \"{}\"\n", plan_version)
-    } else {
-        String::new()
-    };
-
-    let mut plan_deps_toml = String::new();
-    if !plan.build_deps.is_empty() || !plan.link_deps.is_empty() {
-        plan_deps_toml.push_str("\n[plan]\n");
-        if !plan.build_deps.is_empty() {
-            plan_deps_toml.push_str("build_deps = [");
-            for (i, d) in plan.build_deps.iter().enumerate() {
-                if i > 0 {
-                    plan_deps_toml.push_str(", ");
-                }
-                plan_deps_toml.push_str(&format!("\"{}\"", d));
-            }
-            plan_deps_toml.push_str("]\n");
+    let mut plan_toml = String::new();
+    plan_toml.push_str("\n[plan]\n");
+    plan_toml.push_str(&format!("name = \"{}\"\n", plan.metadata.name));
+    if let Some(ref v) = plan.metadata.version {
+        if !v.is_empty() {
+            plan_toml.push_str(&format!("version = \"{}\"\n", v));
         }
-        if !plan.link_deps.is_empty() {
-            plan_deps_toml.push_str("link_deps = [");
-            for (i, d) in plan.link_deps.iter().enumerate() {
-                if i > 0 {
-                    plan_deps_toml.push_str(", ");
-                }
-                plan_deps_toml.push_str(&format!("\"{}\"", d));
+    }
+    plan_toml.push_str(&format!("release = {}\n", plan.metadata.release));
+    if plan.metadata.epoch > 0 {
+        plan_toml.push_str(&format!("epoch = {}\n", plan.metadata.epoch));
+    }
+    plan_toml.push_str(&format!("description = \"{}\"\n", plan.metadata.description));
+    plan_toml.push_str(&format!("arch = \"{}\"\n", plan.metadata.arch));
+    plan_toml.push_str(&format!("license = \"{}\"\n", plan.metadata.license));
+
+    if !plan.build_deps.is_empty() {
+        plan_toml.push_str("build_deps = [");
+        for (i, d) in plan.build_deps.iter().enumerate() {
+            if i > 0 {
+                plan_toml.push_str(", ");
             }
-            plan_deps_toml.push_str("]\n");
+            plan_toml.push_str(&format!("\"{}\"", d));
         }
+        plan_toml.push_str("]\n");
+    }
+    if !plan.link_deps.is_empty() {
+        plan_toml.push_str("link_deps = [");
+        for (i, d) in plan.link_deps.iter().enumerate() {
+            if i > 0 {
+                plan_toml.push_str(", ");
+            }
+            plan_toml.push_str(&format!("\"{}\"", d));
+        }
+        plan_toml.push_str("]\n");
     }
 
     format!(
         r#"[part]
 name = "{name}"
-plan_name = "{plan_name}"
-{version}release = {release}
-{epoch}description = "{description}"
-arch = "{arch}"
-license = "{license}"
-install_size = {install_size}
 build_date = "{build_date}"
 packager = "wright {wright_version}"
-{plan_version}{plan_epoch}{deps}{relations}{backup}{plan_deps}
+{runtime_deps}{relations}{backup}{plan}
 "#,
-        name = manifest.plan.name,
-        plan_name = plan_name,
-        version = version_line,
-        release = manifest.plan.release,
-        epoch = epoch_line,
-        description = manifest.plan.description,
-        arch = manifest.plan.arch,
-        license = manifest.plan.license,
-        install_size = install_size,
+        name = manifest.metadata.name,
         build_date = build_date,
         wright_version = env!("CARGO_PKG_VERSION"),
-        plan_version = plan_version_line,
-        plan_epoch = plan_epoch_line,
-        deps = deps_toml,
+        runtime_deps = runtime_deps_toml,
         relations = relations_toml,
         backup = backup_toml,
-        plan_deps = plan_deps_toml,
+        plan = plan_toml,
     )
 }
 
@@ -375,18 +341,6 @@ fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> Strin
     content
 }
 
-fn calculate_dir_size(dir: &Path) -> Result<u64> {
-    let mut size = 0;
-    for entry in WalkDir::new(dir) {
-        let entry = entry
-            .map_err(|e| WrightError::PartError(format!("failed to walk directory: {}", e)))?;
-        if entry.file_type().is_file() {
-            size += entry.metadata().map(|m| m.len()).unwrap_or(0);
-        }
-    }
-    Ok(size)
-}
-
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
@@ -400,8 +354,6 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         #[serde(default)]
         plan: Option<PartInfoPlan>,
         #[serde(default)]
-        dependencies: Option<PartInfoDeps>,
-        #[serde(default)]
         relations: Option<PartInfoRelations>,
         #[serde(default)]
         backup: Option<PartInfoBackup>,
@@ -410,13 +362,15 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
     struct PartInfoMeta {
         name: String,
-        plan_name: String,
         #[serde(default)]
-        plan_version: String,
+        build_date: String,
         #[serde(default)]
-        plan_release: u32,
-        #[serde(default)]
-        plan_epoch: u32,
+        runtime_deps: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct PartInfoPlan {
+        name: String,
         #[serde(default)]
         version: String,
         release: u32,
@@ -426,24 +380,9 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
         arch: String,
         license: String,
         #[serde(default)]
-        install_size: u64,
-        #[serde(default)]
-        build_date: String,
-    }
-
-    #[derive(serde::Deserialize, Default)]
-    struct PartInfoPlan {
-        #[serde(default)]
         build_deps: Vec<String>,
         #[serde(default)]
         link_deps: Vec<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct PartInfoDeps {
-        #[serde(default)]
-        runtime: Vec<String>,
     }
 
     #[derive(serde::Deserialize, Default)]
@@ -465,32 +404,30 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     let parsed: PartInfoToml = toml::from_str(content)
         .map_err(|e| WrightError::PartError(format!("failed to parse .PARTINFO: {}", e)))?;
 
-    let runtime_deps = parsed.dependencies.map(|d| d.runtime).unwrap_or_default();
-
     let relations = parsed.relations.unwrap_or_default();
-    let plan_section = parsed.plan.unwrap_or_default();
+    let plan_section = parsed.plan.ok_or_else(|| {
+        WrightError::PartError(".PARTINFO missing required [plan] section".to_string())
+    })?;
 
     Ok(PartInfo {
         name: parsed.part.name,
-        version: parsed.part.version,
-        release: parsed.part.release,
-        epoch: parsed.part.epoch,
-        description: parsed.part.description,
-        arch: parsed.part.arch,
-        license: parsed.part.license,
-        install_size: parsed.part.install_size,
         build_date: parsed.part.build_date,
-        runtime_deps,
+        runtime_deps: parsed.part.runtime_deps,
         replaces: relations.replaces,
         conflicts: relations.conflicts,
         provides: relations.provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
-        plan_name: parsed.part.plan_name,
-        plan_version: parsed.part.plan_version,
-        plan_release: parsed.part.plan_release,
-        plan_epoch: parsed.part.plan_epoch,
-        build_deps: plan_section.build_deps,
-        link_deps: plan_section.link_deps,
+        plan: PlanMetadata {
+            name: plan_section.name,
+            version: plan_section.version,
+            release: plan_section.release,
+            epoch: plan_section.epoch,
+            description: plan_section.description,
+            arch: plan_section.arch,
+            license: plan_section.license,
+            build_deps: plan_section.build_deps,
+            link_deps: plan_section.link_deps,
+        },
     })
 }
 
@@ -504,19 +441,71 @@ mod tests {
             r#"
 [part]
 name = "demo"
-plan_name = "demo"
 version = "1.0.0"
 release = 1
 description = "demo"
 arch = "x86_64"
 license = "MIT"
+runtime_deps = ["bash"]
 
-[dependencies]
-runtime = ["bash"]
+[plan]
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+arch = "x86_64"
+license = "MIT"
 "#,
         )
         .unwrap();
 
         assert_eq!(info.runtime_deps, vec!["bash"]);
+        assert_eq!(info.plan.name, "demo");
+        assert_eq!(info.name, "demo");
+    }
+
+    #[test]
+    fn parse_partinfo_with_plan_section() {
+        let info = parse_partinfo_str(
+            r#"
+[part]
+name = "libstdc++"
+runtime_deps = ["libgcc:default"]
+
+[plan]
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "GNU Compiler Collection"
+arch = "x86_64"
+license = "GPL-3.0-or-later"
+build_deps = ["binutils:default"]
+link_deps = ["zlib:default"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.name, "libstdc++");
+        assert_eq!(info.plan.name, "gcc");
+        assert_eq!(info.plan.version, "14.2.0");
+        assert_eq!(info.plan.release, 1);
+        assert_eq!(info.runtime_deps, vec!["libgcc:default"]);
+        assert_eq!(info.plan.build_deps, vec!["binutils:default"]);
+        assert_eq!(info.plan.link_deps, vec!["zlib:default"]);
+    }
+
+    #[test]
+    fn parse_partinfo_missing_plan_section_fails() {
+        let result = parse_partinfo_str(
+            r#"
+[part]
+name = "demo"
+build_date = "2025-01-01"
+runtime_deps = ["bash"]
+"#,
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing required [plan]"));
     }
 }

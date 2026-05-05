@@ -14,10 +14,7 @@ use std::time::Duration;
 use tracing::debug;
 
 pub use hooks::get_hook;
-pub use install::{
-    install_part, install_part_with_origin, install_parts, install_parts_with_explicit_targets,
-    install_parts_with_explicit_targets_and_plan_map, install_parts_with_plan_map,
-};
+pub use install::{install_part, install_part_with_origin, install_parts, install_parts_with_explicit_targets};
 pub use remove::{
     cascade_remove_list, order_removal_batch, remove_part, remove_part_with_ignored_dependents,
 };

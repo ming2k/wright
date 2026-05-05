@@ -67,7 +67,7 @@ fn part_entries_for_plan(plan_path: &Path, parts_dir: &Path) -> Result<Vec<(Stri
             })
             .collect()),
         _ => Ok(vec![(
-            manifest.plan.name.clone(),
+            manifest.metadata.name.clone(),
             parts_dir.join(manifest.part_filename()),
         )]),
     }
@@ -493,27 +493,27 @@ async fn apply_targets(
             }
         }
 
-        // Remove old parts from the same plans before installing new ones
+        // Remove existing outputs from the same plans before installing new ones
         let plans_in_batch: HashSet<String> = plan_map.values().cloned().collect();
         for plan_name in &plans_in_batch {
-            let old_parts = db.get_parts_by_plan(plan_name).await?;
-            for old_part in old_parts {
-                if !batch_part_names.contains(&old_part.name) {
+            let existing_outputs = db.get_parts_by_plan(plan_name).await?;
+            for output in existing_outputs {
+                if !batch_part_names.contains(&output.name) {
                     tracing::info!(
-                        "Removing old part {} from plan {}",
-                        old_part.name,
+                        "Removing existing output {} from plan {}",
+                        output.name,
                         plan_name
                     );
                     if let Err(e) =
-                        transaction::remove_part(&db, &old_part.name, ctx.root_dir, true).await
+                        transaction::remove_part(&db, &output.name, ctx.root_dir, true).await
                     {
-                        tracing::warn!("Failed to remove old part {}: {}", old_part.name, e);
+                        tracing::warn!("Failed to remove existing output {}: {}", output.name, e);
                     }
                 }
             }
         }
 
-        transaction::install_parts_with_explicit_targets_and_plan_map(
+        transaction::install_parts_with_explicit_targets(
             &db,
             &parts,
             &explicit_targets,

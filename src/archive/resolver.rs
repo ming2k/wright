@@ -145,9 +145,9 @@ impl LocalResolver {
                     }
                     results.push(ResolvedPartVersioned {
                         name: partinfo.name,
-                        version: partinfo.version,
-                        release: partinfo.release,
-                        epoch: partinfo.epoch,
+                        version: partinfo.plan.version,
+                        release: partinfo.plan.release,
+                        epoch: partinfo.plan.epoch,
                         path,
                         dependencies: partinfo.runtime_deps,
                         provides: partinfo.provides,
@@ -164,7 +164,7 @@ impl LocalResolver {
         let partinfo = part::read_partinfo(path)?;
         Ok(ResolvedPart {
             name: partinfo.name,
-            version: partinfo.version,
+            version: partinfo.plan.version,
             path: path.to_path_buf(),
             dependencies: partinfo.runtime_deps,
             provides: partinfo.provides,
@@ -183,7 +183,7 @@ impl LocalResolver {
                     if let Ok(manifest) =
                         crate::plan::manifest::PlanManifest::from_file(entry.path())
                     {
-                        map.insert(manifest.plan.name, entry.path().to_path_buf());
+                        map.insert(manifest.metadata.name, entry.path().to_path_buf());
                     }
                 }
             }

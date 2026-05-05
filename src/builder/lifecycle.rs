@@ -199,7 +199,7 @@ impl<'a> LifecyclePipeline<'a> {
             let elapsed = t0.elapsed().as_secs_f64();
             info!(
                 "{}",
-                logging::stage_finished(&self.manifest.plan.name, stage_name, elapsed)
+                logging::stage_finished(&self.manifest.metadata.name, stage_name, elapsed)
             );
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
@@ -283,7 +283,7 @@ impl<'a> LifecyclePipeline<'a> {
         let t0 = std::time::Instant::now();
         info!(
             "{}",
-            logging::stage_started(&self.manifest.plan.name, stage_name, isolation_level)
+            logging::stage_started(&self.manifest.metadata.name, stage_name, isolation_level)
         );
         let mut result = executor::execute_script(
             executor,

@@ -133,19 +133,25 @@ wright resolve zlib --rdeps=all --depth=0 | wright build --force --package --pri
 ```
 
 **Install Origin Tracking**
-Wright tracks why each part was installed using the `origin` field:
+Wright tracks why each part is present using the `origin` field:
 
-- `manual`: The user directly requested this part via `wright install` — never auto-removable.
-- `dependency`: Automatically pulled in to satisfy another part's dependencies — eligible for orphan cleanup.
+| Origin | Set by | Meaning |
+|--------|--------|---------|
+| `dependency` | automatic | Pulled in to satisfy another part's dependency — eligible for orphan cleanup |
+| `build` | `wright apply` | Installed as part of a build wave by `wright apply` |
+| `manual` | `wright install` | Explicitly requested by the user — never auto-removable |
+| `external` | `wright assume` | Declared as provided by the host system; has no filesystem footprint |
 
-This distinction powers two features:
-
-- `wright remove --cascade`: When removing a part, also remove its dependencies that have `dependency` origin and are no longer needed by any other part.
-- `wright list --orphans`: Show `dependency`-origin parts that are no longer needed.
-
-Origins follow a promotion hierarchy: `dependency → manual`. If you explicitly
-install or apply a part that was previously pulled in as a dependency, Wright
+Origins follow a promotion hierarchy: `dependency < build < manual`. If you
+explicitly install a part that was previously pulled in as a dependency, Wright
 promotes it to `manual`. Upgrading via `wright upgrade` preserves the existing
-origin.
+origin. `external` parts are managed exclusively via `wright assume` /
+`wright unassume` and are never auto-promoted.
+
+This distinction powers three features:
+
+- `wright remove --cascade`: When removing a part, also remove its `dependency`-origin dependencies that are no longer needed by any other part.
+- `wright list --orphans`: Show `dependency`-origin parts that are no longer needed.
+- `wright list --assumed`: Show `external`-origin parts registered via `wright assume`.
 
 If you want a deeper view that maps these steps to code paths, see [Architecture](architecture.md).

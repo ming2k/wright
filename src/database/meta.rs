@@ -1,4 +1,4 @@
-use super::{InstalledDb, TransactionRecord};
+use super::{InstalledDb, TransactionOperation, TransactionRecord, TransactionStatus};
 use crate::error::{Result, WrightError};
 use sqlx::{query, query_as};
 use std::path::Path;
@@ -65,11 +65,11 @@ impl InstalledDb {
 
     pub async fn record_transaction(
         &self,
-        operation: &str,
+        operation: TransactionOperation,
         part_name: &str,
         old_version: Option<&str>,
         new_version: Option<&str>,
-        status: &str,
+        status: TransactionStatus,
         backup_path: Option<&str>,
     ) -> Result<i64> {
         let res = query(
@@ -113,7 +113,7 @@ impl InstalledDb {
         }
     }
 
-    pub async fn update_transaction_status(&self, id: i64, status: &str) -> Result<()> {
+    pub async fn update_transaction_status(&self, id: i64, status: TransactionStatus) -> Result<()> {
         query("UPDATE transactions SET status = ? WHERE id = ?")
             .bind(status)
             .bind(id)

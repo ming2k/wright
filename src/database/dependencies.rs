@@ -8,14 +8,13 @@ use std::collections::HashSet;
 impl InstalledDb {
     pub async fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
         for dep in deps {
-            query("INSERT INTO dependencies (part_id, depends_on, version_constraint, dep_type) VALUES (?, ?, ?, ?)")
+            query("INSERT INTO dependencies (part_id, depends_on, version_constraint) VALUES (?, ?, ?)")
                 .bind(part_id)
                 .bind(&dep.name)
                 .bind(&dep.version_constraint)
-                .bind(dep.dep_type)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert dependency: {}", e)))?;
+                .execute(&self.pool)
+                .await
+                .map_err(|e| WrightError::DatabaseError(format!("failed to insert dependency: {}", e)))?;
         }
         Ok(())
     }
@@ -65,9 +64,9 @@ impl InstalledDb {
         Ok(prov_count > 0)
     }
 
-    pub async fn get_dependents(&self, name: &str) -> Result<Vec<(String, String)>> {
+    pub async fn get_dependents(&self, name: &str) -> Result<Vec<String>> {
         let rows = query(
-            "SELECT DISTINCT p.name, d.dep_type FROM dependencies d
+            "SELECT DISTINCT p.name FROM dependencies d
              JOIN parts p ON d.part_id = p.id
              WHERE d.depends_on = ?",
         )
@@ -82,17 +81,14 @@ impl InstalledDb {
             let name: String = row
                 .try_get(0)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            let dep_type: String = row
-                .try_get(1)
-                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            result.push((name, dep_type));
+            result.push(name);
         }
         Ok(result)
     }
 
     pub async fn get_dependencies(&self, part_id: i64) -> Result<Vec<Dependency>> {
         query_as::<_, Dependency>(
-            "SELECT depends_on as \"depends_on\", version_constraint, dep_type FROM dependencies WHERE part_id = ?")
+            "SELECT depends_on as \"depends_on\", version_constraint FROM dependencies WHERE part_id = ?")
             .bind(part_id)
         .fetch_all(&self.pool)
         .await
@@ -101,7 +97,10 @@ impl InstalledDb {
 
     pub async fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<Dependency>> {
         query_as::<_, Dependency>(
-            "SELECT d.depends_on as \"depends_on\", d.version_constraint, d.dep_type\n             FROM dependencies d\n             JOIN parts p ON d.part_id = p.id\n             WHERE p.name = ?",
+            "SELECT d.depends_on as \"depends_on\", d.version_constraint
+             FROM dependencies d
+             JOIN parts p ON d.part_id = p.id
+             WHERE p.name = ?",
         )
         .bind(name)
         .fetch_all(&self.pool)
@@ -126,7 +125,7 @@ impl InstalledDb {
     ) -> BoxFuture<'a, Result<()>> {
         async move {
             let dependents = self.get_dependents(name).await?;
-            for (dep_name, _) in &dependents {
+            for dep_name in &dependents {
                 if visited.contains(dep_name) {
                     continue;
                 }

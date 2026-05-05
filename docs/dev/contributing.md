@@ -2,7 +2,7 @@
 
 ## Setup
 
-```
+```bash
 git clone <repo-url>
 cd wright
 cargo build
@@ -13,35 +13,36 @@ cargo test
 
 ```
 src/
-├── bin/wright.rs  # CLI entry point
-├── lib.rs     # Library root
-├── cli/      # clap schemas grouped by subcommand
-├── commands/    # command handlers grouped by subcommand
-├── config.rs    # Configuration
-├── part/      # Part part and version handling
-├── builder/    # Build pipeline, executors, variables
-├── database/    # SQLite layer
-├── inventory/   # Local part inventory and resolver
-├── transaction/  # Install/remove with rollback
-├── isolation/    # Isolation isolation
-├── query/     # Read-only system inspection
-└── util/      # Download, checksum, compression
+├── bin/wright.rs     # CLI entry point
+├── lib.rs            # Library root
+├── cli/              # clap argument schemas grouped by subcommand
+├── commands/         # command handlers grouped by subcommand
+├── config.rs         # global configuration
+├── archive/          # archive pruning and local part resolution
+├── builder/          # build orchestration and lifecycle execution
+├── database/         # SQLite state layer and migrations
+├── isolation/        # sandbox isolation (bubblewrap, sysroot)
+├── part/             # archive format, version parsing, FHS validation
+├── plan/             # plan manifest parsing and validation
+├── query/            # read-only system inspection and tree queries
+├── transaction/      # install / upgrade / remove with rollback journal
+└── util/             # helpers: download, checksum, compression, locking
 tests/
-├── integration.rs # Integration test entry point
-└── fixtures/    # Test plan data
+├── integration.rs    # integration test entry point
+└── fixtures/         # test plan data
 ```
 
-See [architecture.md](../explanation/architecture.md) for module details.
+See [Architecture](../explanation/architecture.md) and [Module Layout](module-layout.md) for details.
 
 ## Conventions
 
-- `anyhow::Result` for binaries, `thiserror`-based `WrightError` for library code
-- `tracing` macros for logging, not `println!` (except CLI output)
-- Any CLI/config/feature changes must update the relevant docs
+- `anyhow::Result` for binaries; `thiserror`-based `WrightError` for library code
+- `tracing` macros for logging, not `println!` (except for intentional CLI output)
+- Any CLI, config, or feature changes must update the relevant documentation
 - Run `cargo fmt` and `cargo clippy` before committing
 
 ## PR Process
 
-1. Feature branch from `main`
+1. Branch from `main`
 2. `cargo test && cargo clippy && cargo fmt --check` must pass
-3. PR with description of changes and motivation
+3. PR description should state what changed and why

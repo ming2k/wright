@@ -220,8 +220,8 @@ pub async fn execute(
                 // Check for assumed parts before attempting removal
                 for name in &parts {
                     if let Some(part) = db.get_part(name).await? {
-                        if part.assumed {
-                            eprintln!("'{}' is externally provided (assumed). Use 'wright unassume {}' instead of 'remove'.", name, name);
+                        if part.origin == crate::database::Origin::External {
+                            eprintln!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
                             std::process::exit(1);
                         }
                     }
@@ -323,7 +323,7 @@ pub async fn execute(
             }
         }
         SystemCommands::Query { part } => {
-            let installed_part = db.get_part(&part).await.context("failed to query part")?;
+            let installed_part = db.get_part_with_plan(&part).await.context("failed to query part")?;
             match installed_part {
                 Some(info) => {
                     println!("Name        : {}", info.name);
@@ -342,11 +342,8 @@ pub async fn execute(
                     if let Some(ref url) = info.url {
                         println!("URL         : {}", url);
                     }
-                    println!("Install Size: {} bytes", info.install_size.unwrap_or(0));
                     println!("Origin      : {}", info.origin);
-                    if info.plan_id > 0 {
-                        println!("Plan ID     : {}", info.plan_id);
-                    }
+                    println!("Plan        : {}", info.plan_name);
                     println!("Installed At: {}", info.installed_at.unwrap_or_default());
                     if let Some(ref hash) = info.part_hash {
                         println!("Part Hash   : {}", hash);
@@ -450,8 +447,8 @@ pub async fn execute(
                         if let Some(latest) = pick_latest(&all_versions) {
                             let is_newer = {
                                 let new_ver = Version::parse(&latest.version).ok();
-                                let old_ver = Version::parse(&part.version).ok();
-                                match (new_ver, old_ver) {
+                                let installed_ver = Version::parse(&part.version).ok();
+                                match (new_ver, installed_ver) {
                                     (Some(nv), Some(ov)) => {
                                         if latest.epoch != part.epoch as u32 {
                                             latest.epoch > part.epoch as u32
@@ -469,7 +466,7 @@ pub async fn execute(
                             };
 
                             if is_newer {
-                                let old_ver_rel = if part.version.is_empty() {
+                                let installed_ver_rel = if part.version.is_empty() {
                                     format!("{}", part.release)
                                 } else {
                                     format!("{}-{}", part.version, part.release)
@@ -481,7 +478,7 @@ pub async fn execute(
                                 };
                                 println!(
                                     "upgrade: {} {} -> {}",
-                                    part.name, old_ver_rel, new_ver_rel
+                                    part.name, installed_ver_rel, new_ver_rel
                                 );
                                 if !dry_run {
                                     if let Err(e) = transaction::upgrade_part(
@@ -629,7 +626,7 @@ pub async fn execute(
                         (Some(old), Some(new)) => format!("{} -> {}", old, new),
                         (None, None) => String::new(),
                     };
-                    let status = if r.status != "completed" {
+                    let status = if r.status != crate::database::TransactionStatus::Completed {
                         format!(" ({})", r.status)
                     } else {
                         String::new()
