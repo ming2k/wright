@@ -305,7 +305,7 @@ hard links, so `staging/` remains available for inspection.
 | `relaxed` | Mount, PID, and UTS namespaces. Network and IPC shared with host. |
 | `strict` (default) | Everything in `relaxed` plus network and IPC namespaces. |
 
-In `relaxed` and `strict` modes, the isolation pivots to a minimal root filesystem, bind-mounts system paths read-only, mounts `/build` and `/output` read-write, provides `/dev` with basic devices, mounts fresh `/proc` and `/tmp`, and sets hostname to `wright-isolation`.
+In `relaxed` and `strict` modes, the isolation pivots to a minimal root filesystem.  In `strict` mode, Wright mounts a pre-copied read-only sysroot as an overlayfs lower layer with per-task writable upper layers.  Both modes bind-mount `/build` and `/output` read-write, provide `/dev` with basic devices, mount fresh `/proc` and `/tmp`, and set hostname to `wright-isolation`.
 
 If the kernel does not support the required namespaces, falls back to direct execution with a warning.
 

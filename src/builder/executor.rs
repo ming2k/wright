@@ -173,23 +173,7 @@ pub async fn execute_script(
         task_id,
     );
 
-    // When running with namespace isolation, use a pre-copied read-only sysroot
-    // instead of the live host root.  This eliminates the ETXTBUSY race that
-    // occurs when multiple parallel tasks share an OverlayFS lowerdir=/.
-    if options.level != IsolationLevel::None && options.base_root == Path::new("/") {
-        match crate::isolation::sysroot::ensure_global_sysroot() {
-            Ok(sysroot) => config.base_root = sysroot,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to prepare sysroot, falling back to host root: {}",
-                    e
-                );
-                config.base_root = options.base_root.clone();
-            }
-        }
-    } else {
-        config.base_root = options.base_root.clone();
-    }
+    config.base_root = options.base_root.clone();
     config.rlimits = options.rlimits.clone();
     config.verbose = options.verbose;
     config.cpu_count = options.cpu_count;

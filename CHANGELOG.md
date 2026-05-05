@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.0.9] - 2026-05-05
+
+### Changed
+- **OverlayFS isolation with per-task upper layers** — strict isolation now mounts the pre-copied sysroot as an overlayfs lower layer with per-task writable upper/work directories.  The previous bind-mount approach (ADR-0010) still exhibited ETXTBSY races on shared inodes; overlayfs with a per-task upper layer eliminates the race because any write-contended file is copy-up'd to a task-private inode.
+- **Stage-level ETXTBUSY retry hardened** — bumped from 5 to 10 attempts, capped exponential backoff at ~1s base (was unbounded growth to 3.2s), added randomized jitter to each retry delay, and tagged retry log lines with the package name.  The deterministic backoff caused N parallel retriers to wake at the same instant and re-collide on the same shared inode; jitter de-synchronizes them so they spread across the recovery window.
+
+### Fixed
+- **ETXTBSY race in parallel builds** — multiple concurrent `execve()` calls on the same shared inode (e.g. `/bin/sh` as a shebang interpreter) no longer trigger "Text file busy" failures.
+- **Output slicing EXDEV fallback** — hard-link failures during output slicing (e.g. across btrfs subvolumes) now transparently fall back to copy instead of aborting the build.  This is documented as a pitfall in `docs/dev/isolation-pitfalls.md`.
+
 ## [4.0.8] - 2026-05-05
 
 ### Fixed

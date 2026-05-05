@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0012](0012-overlayfs-per-task-upper.md)
 
 ## Context
 

@@ -76,9 +76,9 @@ is `strict`. Each stage can override this via its `isolation` field.
 |-------|------------|-----------------|----------|
 | `none` | — | Host root | Debugging a broken plan; fastest but zero protection |
 | `relaxed` | PID, mount, UTS | Host root via bind mounts | Basic process isolation; still sees live host filesystem |
-| `strict` | PID, mount, UTS, IPC, net, user (when unprivileged) | **Pre-copied read-only sysroot** | Full sandbox; default and recommended |
+| `strict` | PID, mount, UTS, IPC, net, user (when unprivileged) | **OverlayFS with shared read-only sysroot lower layer** | Full sandbox; default and recommended |
 
-### Why strict isolation uses a pre-copied sysroot
+### Why strict isolation uses overlayfs with a shared sysroot lower layer
 
 Earlier designs used Linux OverlayFS with `lowerdir=/` as the sandbox root.
 This caused reproducible `ETXTBSY` ("Text file busy") failures when multiple
@@ -87,14 +87,14 @@ they shared the host's live inode cache.
 
 The current design copies `/usr`, `/bin`, `/lib` and essential `/etc` files into
 `/var/tmp/wright/sysroot/` once, makes the tree read-only (`chmod -R a-w`), and
-mounts that directory as the root for every strict-isolation task.  Because the
-copied inodes are never opened for writing by any host process, the kernel
-never raises `ETXTBSY`.
+uses it as a shared overlayfs lower layer.  Each task gets its own writable
+upper layer, so any file that becomes write-contended is automatically
+copy-up'd to a task-private inode by the kernel.
 
 ```text
 Host
 │
-├─ /var/tmp/wright/sysroot/           ← created once, read-only, reused
+├─ /var/tmp/wright/sysroot/           ← created once, read-only, shared lower
 │   ├── bin/sh
 │   ├── usr/bin/gcc
 │   ├── lib/
@@ -105,15 +105,17 @@ Host
         ├─ Task "bzip2"
         │   └─ fork → unshare(NEWNS|NEWPID|...)
         │       └─ fork → Grandchild (PID 1)
-        │           ├─ mount --rbind /var/tmp/wright/sysroot → /tmp/.../root
-        │           ├─ mount -o remount,ro root
+        │           ├─ mount -t overlay overlay
+        │           │     -o lowerdir=/var/tmp/wright/sysroot,
+        │           │        upperdir=.../upper,workdir=.../work
+        │           │     → root
         │           ├─ mount tmpfs → root/tmp, root/run
         │           ├─ bind mount work/  → root/build   (rw)
         │           ├─ bind mount output/ → root/output (rw)
         │           ├─ pivot_root
         │           └─ execve("/bin/sh", ...)
         └─ Task "expat"
-            └─ (same flow, same sysroot, independent mount namespace)
+            └─ (same flow, same lower layer, per-task upper, independent mount namespace)
 ```
 
 **Concurrency:** the first task to need the sysroot acquires an `flock(LOCK_EX)`
@@ -123,7 +125,7 @@ when the host system directories have newer mtimes.
 
 This approach is filesystem-agnostic (works on ext4, btrfs, xfs, tmpfs) and
 requires no external tools (`mksquashfs`, `btrfs`, etc.).  See
-[ADR-0010](../adr/0010-pre-copied-sysroot-isolation.md) for the full rationale
+[ADR-0012](../adr/0012-overlayfs-per-task-upper.md) for the full rationale
 and rejected alternatives.
 
 ## Concurrency Model

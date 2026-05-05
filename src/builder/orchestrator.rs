@@ -445,38 +445,6 @@ impl BuildExecutionPlan {
         task.trim_end_matches(":bootstrap")
     }
 
-    pub fn requires_sysroot_prewarm(&self) -> bool {
-        let mut seen_paths = HashSet::new();
-        for path in self.name_to_path.values() {
-            if !seen_paths.insert(path) {
-                continue;
-            }
-            let manifest = match PlanManifest::from_file(path) {
-                Ok(manifest) => manifest,
-                Err(_) => return true,
-            };
-
-            let uses_isolation = |stage: &crate::plan::manifest::LifecycleStage| {
-                stage
-                    .isolation
-                    .parse::<crate::isolation::IsolationLevel>()
-                    .map(|level| level != crate::isolation::IsolationLevel::None)
-                    .unwrap_or(true)
-            };
-
-            if manifest.lifecycle.values().any(uses_isolation) {
-                return true;
-            }
-            if let Some(ref mvp) = manifest.mvp {
-                if mvp.lifecycle.values().any(uses_isolation) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     pub async fn execute_batch(
         &self,
         config: &GlobalConfig,

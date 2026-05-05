@@ -410,16 +410,11 @@ pub fn run_in_isolation(
 
                     // --- Set up new root filesystem ---
                     //
-                    // We use a pre-copied sysroot (base_root != "/") instead of OverlayFS
-                    // to avoid the ETXTBUSY race condition.  When multiple parallel tasks
-                    // share an OverlayFS lowerdir=/ they contend on the host's live inode
-                    // cache.  A read-only sysroot copied once and bind-mounted per task
-                    // eliminates that race because the copied inodes are not opened for
-                    // writing by any process.
-                    //
-                    // When no sysroot is configured we fall back to tmpfs + manual bind
-                    // mounts from the host root (still safer than OverlayFS because we
-                    // avoid the shared lowerdir).
+                    // OverlayFS with multiple read-only lowerdirs (host system
+                    // directories) and a per-task writable upperdir.  Build
+                    // output goes to /build and /output (per-task bind mounts),
+                    // so any writes to system paths are captured in the per-task
+                    // upper layer via copy-up.
 
                     let scratch_base = isolation_scratch_base(config);
                     let newroot = scratch_base.join("root");
@@ -427,41 +422,72 @@ pub fn run_in_isolation(
                         die(format!("mkdir newroot: {e}"));
                     }
 
-                    let use_sysroot = config.base_root != Path::new("/");
+                    let upper = scratch_base.join("upper");
+                    let work = scratch_base.join("work");
 
-                    if use_sysroot {
-                        debug!("Using sysroot bind mount: {}", config.base_root.display());
-                        if let Err(e) = mount(
-                            Some(config.base_root.as_path()),
-                            &newroot,
-                            None::<&str>,
-                            MsFlags::MS_BIND | MsFlags::MS_REC,
-                            None::<&str>,
-                        ) {
-                            die(format!(
-                                "bind mount {} -> {}: {e}",
-                                config.base_root.display(),
-                                newroot.display()
-                            ));
-                        }
-                    } else {
-                        debug!("No sysroot configured; falling back to tmpfs + bind mounts");
-                        if let Err(e) = mount(
-                            Some("tmpfs"),
-                            &newroot,
-                            Some("tmpfs"),
-                            MsFlags::empty(),
-                            None::<&str>,
-                        ) {
-                            die(format!("mount tmpfs on newroot: {e}"));
-                        }
+                    if let Err(e) = std::fs::create_dir_all(&upper) {
+                        die(format!("mkdir overlay upper {}: {e}", upper.display()));
+                    }
+                    if let Err(e) = std::fs::create_dir_all(&work) {
+                        die(format!("mkdir overlay work {}: {e}", work.display()));
                     }
 
-                    // When using a sysroot we need to remount the newroot read-only
-                    // after all bind mounts are done, because the recursive bind mount
-                    // above brings the sysroot in as read-write (even though the
-                    // underlying files are chmod a-w, the mount itself is rw).
-                    let session_root_bind = use_sysroot;
+                    let lowerdir = if config.base_root == Path::new("/") {
+                        let system_dirs = ["/usr", "/bin", "/sbin", "/lib", "/lib64"];
+                        let mut seen = std::collections::HashSet::new();
+                        let mut parts: Vec<PathBuf> = Vec::new();
+                        for d in system_dirs {
+                            let p = Path::new(d);
+                            if !p.exists() {
+                                continue;
+                            }
+                            let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                            if seen.insert(resolved.clone()) {
+                                parts.push(resolved);
+                            }
+                        }
+                        // Drop subdirectories: on merged-/usr systems /bin→/usr/bin
+                        // sits under /usr, so /usr alone suffices.
+                        let mut keep: Vec<&PathBuf> = Vec::new();
+                        for r in &parts {
+                            if !keep.iter().any(|q| r.starts_with(q)) {
+                                keep.push(r);
+                            }
+                        }
+                        keep.iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    } else {
+                        config.base_root.display().to_string()
+                    };
+
+                    let opts = format!(
+                        "lowerdir={},upperdir={},workdir={}",
+                        lowerdir,
+                        upper.display(),
+                        work.display(),
+                    );
+
+                    debug!(
+                        "Mounting overlayfs: lowerdir={} upperdir={} workdir={}",
+                        lowerdir,
+                        upper.display(),
+                        work.display(),
+                    );
+
+                    if let Err(e) = mount(
+                        Some("overlay"),
+                        &newroot,
+                        Some("overlay"),
+                        MsFlags::empty(),
+                        Some(opts.as_str()),
+                    ) {
+                        die(format!(
+                            "overlayfs mount on {}: {e}",
+                            newroot.display(),
+                        ));
+                    }
 
                     // Helper to bind-mount a path into the new root.
                     let bind = |src: &Path,
@@ -517,31 +543,6 @@ pub fn run_in_isolation(
                         }
                         Ok(())
                     };
-
-                    // When falling back to tmpfs (no sysroot) we must manually bind
-                    // system dirs from the host.  With a sysroot these are already
-                    // present because the entire sysroot was recursively bind-mounted.
-                    if !use_sysroot {
-                        for dir in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
-                            let p = Path::new(dir);
-                            let dest = newroot.join(dir.trim_start_matches('/'));
-                            if let Ok(target) = std::fs::read_link(p) {
-                                if let Err(e) = std::os::unix::fs::symlink(&target, &dest) {
-                                    if e.kind() != std::io::ErrorKind::AlreadyExists {
-                                        die(format!(
-                                            "symlink {} -> {}: {e}",
-                                            dest.display(),
-                                            target.display()
-                                        ));
-                                    }
-                                }
-                            } else if p.exists() {
-                                if let Err(e) = bind(p, dir, true) {
-                                    die(e);
-                                }
-                            }
-                        }
-                    }
 
                     // Build and output directories (read-write).
                     if let Err(e) = bind(&config.src_dir, "/build", false) {
@@ -674,18 +675,6 @@ pub fn run_in_isolation(
                         }
                     }
 
-                    if session_root_bind {
-                        if let Err(e) = mount(
-                            None::<&str>,
-                            &newroot,
-                            None::<&str>,
-                            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
-                            None::<&str>,
-                        ) {
-                            die(format!("remount ro {}: {e}", newroot.display()));
-                        }
-                    }
-
                     if let Err(e) = pivot_root(&newroot, &old_root) {
                         die(format!("pivot_root: {e}"));
                     }
@@ -757,7 +746,7 @@ pub fn run_in_isolation(
                         apply_cpu_affinity(n);
                     }
 
-                    // Defensive retry for ETXTBUSY: even with a sysroot, certain
+                    // Defensive retry for ETXTBUSY: multiple lowerdirs may
                     // kernels or filesystem configurations may briefly report the
                     // file as busy.  A short exponential backoff covers the window.
                     for attempt in 0..8 {

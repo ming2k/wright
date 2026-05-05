@@ -20,7 +20,7 @@ src/
 ├── config.rs         # global configuration
 ├── builder/          # build orchestration and lifecycle execution
 ├── database/         # SQLite state layer and migrations
-├── isolation/        # sandbox isolation (bubblewrap, sysroot)
+├── isolation/        # sandbox isolation (overlayfs, sysroot, Linux namespaces)
 ├── part/             # archive format, local part store, pruning, version parsing, FHS validation
 ├── plan/             # plan discovery, manifest parsing, and validation
 ├── query/            # read-only system inspection and tree queries

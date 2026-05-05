@@ -90,7 +90,9 @@ fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> 
     Ok(resolved)
 }
 
-/// Recursively hard-link all files from src_dir to dest_dir, preserving directory structure.
+/// Recursively hard-link all files from src_dir to dest_dir, preserving directory
+/// structure.  Falls back to copy when a hard-link fails (e.g. across btrfs
+/// subvolumes — see [`link_or_copy`]).
 async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
     let mut dirs_to_visit = vec![src_dir.to_path_buf()];
     while let Some(dir) = dirs_to_visit.pop() {
@@ -108,9 +110,9 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                     if let Some(parent) = dest_path.parent() {
                         let _ = tokio::fs::create_dir_all(parent).await;
                     }
-                    if let Err(e) = tokio::fs::hard_link(&path, &dest_path).await {
+                    if let Err(e) = link_or_copy(&path, &dest_path).await {
                         return Err(WrightError::BuildError(format!(
-                            "failed to hard-link {} to {}: {}",
+                            "failed to link {} to {}: {}",
                             path.display(),
                             dest_path.display(),
                             e
@@ -121,6 +123,37 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Hard-link `src` to `dest`, falling back to copy on EXDEV.
+///
+/// ## btrfs subvolume pitfall
+///
+/// Hard links fail with `EXDEV` across btrfs subvolume boundaries even when
+/// both paths appear to be on the same filesystem (`st_dev` may differ even
+/// within a single `btrfs` mount tree).  This is commonly triggered when:
+///
+/// 1. The host uses separate btrfs subvolumes for `/` and `/var`.
+/// 2. The build staging directory sits under `/var/tmp/wright/...`.
+/// 3. Strict-isolation overlayfs creates its upper layer on `/` (root subvolume).
+/// 4. `make install` inside the isolation writes a directory through the
+///    overlayfs merged view rather than through the `/output` bind-mount,
+///    placing that directory's inode on the root subvolume while the staging
+///    directory itself is on the `/var` subvolume.
+/// 5. Output slicing attempts to hard-link files from staging into outputs/ —
+///    the per-file inodes live on different subvolumes → `EXDEV`.
+///
+/// Falling back to `copy` is safe and functionally equivalent; it only costs
+/// extra disk space for affected files (typically a small fraction of the
+/// total build output).
+async fn link_or_copy(src: &Path, dest: &Path) -> std::io::Result<()> {
+    match tokio::fs::hard_link(src, dest).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            tokio::fs::copy(src, dest).await.map(|_| ())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 impl Builder {
@@ -653,9 +686,9 @@ impl Builder {
                 if let Some(parent) = dest_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                if let Err(e) = tokio::fs::hard_link(&file_path, &dest_path).await {
+                if let Err(e) = link_or_copy(&file_path, &dest_path).await {
                     return Err(WrightError::BuildError(format!(
-                        "failed to hard-link {} to {}: {}",
+                        "failed to link {} to {}: {}",
                         file_path.display(),
                         dest_path.display(),
                         e

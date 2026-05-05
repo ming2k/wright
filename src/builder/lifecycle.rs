@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::builder::logging;
@@ -255,7 +255,7 @@ impl<'a> LifecyclePipeline<'a> {
         let expanded_script = crate::builder::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{}.log", stage_name));
 
-        let stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
+        let mut stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
             use std::io::Write;
             let ok = write!(
                 f,
@@ -267,33 +267,96 @@ impl<'a> LifecyclePipeline<'a> {
             if ok { Some(f) } else { None }
         });
 
-        let mut options = ExecutorOptions {
-            level: isolation_level,
-            base_root: self.base_root.clone(),
-            work_dir: self.work_dir.clone(),
-            output_dir: self.output_dir.clone(),
-            rlimits: self.rlimits.clone(),
-            main_part_dir: None,
-            verbose: self.verbose,
-            cpu_count: Some(cpu_count),
-            log_stdout: stdout_log_file,
-            dep_mounts: Vec::new(),
-        };
+        let stdout_log_path_owned = PathBuf::from(&log_path);
 
         let t0 = std::time::Instant::now();
         info!(
             "{}",
             logging::stage_started(&self.manifest.metadata.name, stage_name, isolation_level)
         );
-        let mut result = executor::execute_script(
-            executor,
-            &stage.script,
-            self.working_dir,
-            &stage.env,
-            &self.vars,
-            &mut options,
-        )
-        .await?;
+
+        // Stage-level ETXTBUSY retry.  This is the only defense that catches
+        // ETXTBSY raised by *bash's* exec of a shebang interpreter (e.g. when
+        // `./configure` resolves `#!/bin/sh` to the lowerdir's shared `/bin/sh`
+        // inode while N parallel tasks are racing on the same overlay
+        // lower-layer dentry).  The in-namespace `execvp` retry only catches
+        // the top-level command and never sees this case.
+        //
+        // With 14 parallel tasks colliding on the shared inode, a
+        // deterministic exponential backoff causes all retriers to wake
+        // simultaneously and re-collide.  Capped backoff with randomized
+        // jitter de-synchronizes them so they spread across the recovery
+        // window instead of stacking on the same instant.
+        let max_etxtbsy_retries: u32 = 10;
+        let mut attempt: u32 = 0;
+        let (result, final_attempt) = loop {
+            let log_stdout = if attempt > 0 {
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&stdout_log_path_owned)
+                    .ok()
+            } else {
+                stdout_log_file.take()
+            };
+
+            let mut options = ExecutorOptions {
+                level: isolation_level,
+                base_root: self.base_root.clone(),
+                work_dir: self.work_dir.clone(),
+                output_dir: self.output_dir.clone(),
+                rlimits: self.rlimits.clone(),
+                main_part_dir: None,
+                verbose: self.verbose,
+                cpu_count: Some(cpu_count),
+                log_stdout,
+                dep_mounts: Vec::new(),
+            };
+
+            let res = executor::execute_script(
+                executor,
+                &stage.script,
+                self.working_dir,
+                &stage.env,
+                &self.vars,
+                &mut options,
+            )
+            .await?;
+
+            let code = res.status.code().unwrap_or(-1);
+            let is_etxtbsy = code == 126
+                && (res.stderr.tail.contains("Text file busy")
+                    || res.stdout.tail.contains("Text file busy"));
+
+            if is_etxtbsy && attempt < max_etxtbsy_retries {
+                attempt += 1;
+                let exp_base = 200_u64
+                    .saturating_mul(1_u64 << attempt.min(2))
+                    .min(1000);
+                let delay_ms = exp_base + jitter_ms(exp_base);
+                warn!(
+                    "[{}] ETXTBUSY in stage '{}', retrying in {}ms (attempt {}/{})",
+                    self.manifest.metadata.name,
+                    stage_name,
+                    delay_ms,
+                    attempt,
+                    max_etxtbsy_retries,
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+            break (res, attempt);
+        };
+
+        let mut result = result;
+        if final_attempt > 0 {
+            info!(
+                "[{}] Stage '{}' succeeded after {} ETXTBUSY retries",
+                self.manifest.metadata.name,
+                stage_name,
+                final_attempt,
+            );
+        }
+
         let elapsed = t0.elapsed().as_secs_f64();
 
         let exit_code = result.status.code().unwrap_or(-1);
@@ -338,4 +401,23 @@ impl<'a> LifecyclePipeline<'a> {
 
         Ok(())
     }
+}
+
+/// Return a pseudo-random value in `0..max_ms`, seeded from the current time.
+///
+/// Used to add jitter to ETXTBUSY retry backoffs so that parallel tasks
+/// hitting the same shared-inode race wake up at different moments instead of
+/// re-colliding at the next deterministic checkpoint.  Quality is irrelevant —
+/// only de-synchronization matters — so we deliberately avoid pulling in a
+/// PRNG dependency.
+fn jitter_ms(max_ms: u64) -> u64 {
+    if max_ms == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let pid = std::process::id() as u64;
+    nanos.wrapping_mul(2654435761).wrapping_add(pid) % max_ms
 }

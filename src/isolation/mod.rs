@@ -1,5 +1,4 @@
 pub mod native;
-pub mod sysroot;
 
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;

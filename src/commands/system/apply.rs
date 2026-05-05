@@ -429,18 +429,6 @@ async fn apply_targets(
         tracing::info!("{}", describe_build_resources(resources));
     }
 
-    if plan.requires_sysroot_prewarm() {
-        // Pre-warm the sysroot cache before any isolated builds start.
-        // This avoids a thundering-herd where N parallel tasks all try to
-        // create the sysroot simultaneously on the first apply invocation.
-        if let Err(e) = crate::isolation::sysroot::ensure_global_sysroot() {
-            tracing::warn!(
-                "Sysroot preparation failed, builds may encounter ETXTBUSY: {}",
-                e
-            );
-        }
-    }
-
     for (batch_idx, tasks) in plan.batches().iter().enumerate() {
         if !ctx.quiet {
             tracing::info!(
