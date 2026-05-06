@@ -151,10 +151,14 @@ impl Step for InstallBatchStep {
                             // Translate manual pack filenames -> part names by
                             // reading each archive's authoritative PARTINFO.
                             if self.inputs.explicit_pack_files.contains(f) {
-                                let info = crate::part::archive::read_partinfo(&p)
-                                    .map_err(|e| WorkflowError::Other(format!(
-                                        "read PARTINFO from {}: {}", p.display(), e
-                                    )))?;
+                                let info =
+                                    crate::part::archive::read_partinfo(&p).map_err(|e| {
+                                        WorkflowError::Other(format!(
+                                            "read PARTINFO from {}: {}",
+                                            p.display(),
+                                            e
+                                        ))
+                                    })?;
                                 batch_part_names.push(info.name);
                             }
                         }
@@ -166,9 +170,10 @@ impl Step for InstallBatchStep {
 
             // Reconcile outdated outputs of touched plans before install.
             for plan_name in &self.inputs.plans_to_reconcile {
-                let existing = db.get_parts_by_plan(plan_name).await.map_err(|e| {
-                    WorkflowError::Other(format!("get_parts_by_plan: {}", e))
-                })?;
+                let existing = db
+                    .get_parts_by_plan(plan_name)
+                    .await
+                    .map_err(|e| WorkflowError::Other(format!("get_parts_by_plan: {}", e)))?;
                 for output in existing {
                     if !batch_part_names.contains(&output.name) {
                         info!(

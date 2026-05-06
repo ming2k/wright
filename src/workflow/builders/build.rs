@@ -10,9 +10,7 @@ use crate::config::GlobalConfig;
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::spec::{WorkflowBuilder, WorkflowSpec};
-use crate::workflow::steps::{
-    BuildOptionsCanonical, BuildPlanInputs, BuildPlanStep, PlanRef,
-};
+use crate::workflow::steps::{BuildOptionsCanonical, BuildPlanInputs, BuildPlanStep, PlanRef};
 
 #[derive(Serialize)]
 struct BuildWorkflowInputs {
@@ -30,9 +28,8 @@ pub fn build_build_workflow(
     targets: Vec<String>,
     options: BuildOptions,
 ) -> Result<WorkflowSpec> {
-    let plan = create_execution_plan(&config, targets.clone(), &options).map_err(|e| {
-        WorkflowError::Other(format!("create_execution_plan: {}", e))
-    })?;
+    let plan = create_execution_plan(&config, targets.clone(), &options)
+        .map_err(|e| WorkflowError::Other(format!("create_execution_plan: {}", e)))?;
 
     let mut sorted_targets = targets;
     sorted_targets.sort();

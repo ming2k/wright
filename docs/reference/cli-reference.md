@@ -196,6 +196,7 @@ Slices existing staging directories into output archives and writes them to `par
 | Flag | Description |
 |------|-------------|
 | `--force` | Re-slice outputs from staging and overwrite existing archives |
+| `--out-dir <PATH>` | Write produced archives to this directory instead of `parts_dir` |
 | `--print-parts` | Print produced archive paths on stdout |
 
 ### `wright resolve <TARGET...>`

@@ -60,7 +60,8 @@ pub(super) async fn expand_missing_dependencies(
             let dep_name = version::parse_dependency(dep)
                 .unwrap_or_else(|_| (dep.clone(), None))
                 .0;
-            let (dep_plan_name, dep_output_name) = version::parse_dep_ref(&dep_name).to_plan_output();
+            let (dep_plan_name, dep_output_name) =
+                version::parse_dep_ref(&dep_name).to_plan_output();
             let dep_depth = depth + 1;
 
             if dep_depth > max_depth {
@@ -111,7 +112,8 @@ pub(super) async fn expand_missing_dependencies(
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
                     .0;
-                let build_dep_plan_name = version::parse_dep_ref(&build_dep_name).plan().to_string();
+                let build_dep_plan_name =
+                    version::parse_dep_ref(&build_dep_name).plan().to_string();
                 let build_dep_depth = depth + 1;
                 if build_dep_depth >= max_depth {
                     continue;
@@ -141,7 +143,8 @@ pub(super) async fn expand_missing_dependencies(
                         let rdep_name = version::parse_dependency(&rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
-                        let (rdep_plan_name, rdep_output_name) = version::parse_dep_ref(&rdep_name).to_plan_output();
+                        let (rdep_plan_name, rdep_output_name) =
+                            version::parse_dep_ref(&rdep_name).to_plan_output();
                         if !runtime_seen.insert(rdep_plan_name.clone()) {
                             continue;
                         }

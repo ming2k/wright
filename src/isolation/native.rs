@@ -441,7 +441,8 @@ pub fn run_in_isolation(
                             if !p.exists() {
                                 continue;
                             }
-                            let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                            let resolved =
+                                std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
                             if seen.insert(resolved.clone()) {
                                 parts.push(resolved);
                             }
@@ -483,10 +484,7 @@ pub fn run_in_isolation(
                         MsFlags::empty(),
                         Some(opts.as_str()),
                     ) {
-                        die(format!(
-                            "overlayfs mount on {}: {e}",
-                            newroot.display(),
-                        ));
+                        die(format!("overlayfs mount on {}: {e}", newroot.display(),));
                     }
 
                     // Helper to bind-mount a path into the new root.

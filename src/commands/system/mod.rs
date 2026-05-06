@@ -69,7 +69,14 @@ pub async fn execute(
     } = command
     {
         return install::execute_install(
-            parts, force, nodeps, path, config, db_path, root_dir, &part_store,
+            parts,
+            force,
+            nodeps,
+            path,
+            config,
+            db_path,
+            root_dir,
+            &part_store,
         )
         .await;
     }

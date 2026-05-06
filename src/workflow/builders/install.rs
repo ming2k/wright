@@ -105,8 +105,9 @@ pub fn build_install_targets_workflow(
 
     for target in &targets {
         let one = vec![target.clone()];
-        let plan_paths = crate::builder::orchestrator::resolve_targets(&one, &all_plans, &plan_dirs)
-            .map_err(|e| WorkflowError::Other(format!("resolve {}: {}", target, e)))?;
+        let plan_paths =
+            crate::builder::orchestrator::resolve_targets(&one, &all_plans, &plan_dirs)
+                .map_err(|e| WorkflowError::Other(format!("resolve {}: {}", target, e)))?;
         for plan_path in plan_paths {
             let manifest = PlanManifest::from_file(&plan_path)
                 .map_err(|e| WorkflowError::Other(format!("read plan: {}", e)))?;
@@ -133,10 +134,7 @@ pub fn build_install_targets_workflow(
     )
 }
 
-fn archive_entries(
-    manifest: &PlanManifest,
-    parts_dir: &std::path::Path,
-) -> Vec<(String, PathBuf)> {
+fn archive_entries(manifest: &PlanManifest, parts_dir: &std::path::Path) -> Vec<(String, PathBuf)> {
     match manifest.outputs {
         Some(OutputConfig::Multi(ref outputs)) => outputs
             .iter()

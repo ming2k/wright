@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.1.1] - 2026-05-07
+
+### Added
+- **Package output directory override** — `wright package --out-dir <PATH>` writes produced archives to a command-specific directory instead of `general.parts_dir`, and the path is part of the package workflow identity so reruns with different output directories do not reuse stale package steps.
+
 ## [4.1.0] - 2026-05-07
 
 ### Breaking Changes

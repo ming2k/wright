@@ -144,10 +144,7 @@ impl Step for BuildPlanStep {
         &self.deps
     }
 
-    fn execute(
-        self: Arc<Self>,
-        _ctx: StepContext,
-    ) -> BoxFuture<'static, Result<BuildPlanOutputs>> {
+    fn execute(self: Arc<Self>, _ctx: StepContext) -> BoxFuture<'static, Result<BuildPlanOutputs>> {
         Box::pin(async move {
             let manifest = PlanManifest::from_file(&self.inputs.plan.canonical_path)
                 .map_err(|e| WorkflowError::Other(format!("read plan: {}", e)))?;

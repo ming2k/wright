@@ -17,9 +17,7 @@ pub async fn execute_runs(args: RunsArgs, db_path: &Path) -> Result<()> {
 }
 
 async fn list(db_path: &Path, limit: i64) -> Result<()> {
-    let db = InstalledDb::open(db_path)
-        .await
-        .context("open database")?;
+    let db = InstalledDb::open(db_path).await.context("open database")?;
     let runs = list_runs(&db, limit)
         .await
         .map_err(|e| anyhow::anyhow!("list runs: {}", e))?;
@@ -52,9 +50,7 @@ async fn list(db_path: &Path, limit: i64) -> Result<()> {
 }
 
 async fn show(db_path: &Path, run_prefix: &str) -> Result<()> {
-    let db = InstalledDb::open(db_path)
-        .await
-        .context("open database")?;
+    let db = InstalledDb::open(db_path).await.context("open database")?;
 
     // Resolve a possibly-shortened run id to the full id by scanning recent runs.
     let recent = list_runs(&db, 200)
@@ -117,9 +113,7 @@ async fn show(db_path: &Path, run_prefix: &str) -> Result<()> {
 }
 
 async fn gc(db_path: &Path, days: i64) -> Result<()> {
-    let db = InstalledDb::open(db_path)
-        .await
-        .context("open database")?;
+    let db = InstalledDb::open(db_path).await.context("open database")?;
     let removed = gc_workflows(&db, days * 24 * 3600 * 1000)
         .await
         .map_err(|e| anyhow::anyhow!("gc: {}", e))?;

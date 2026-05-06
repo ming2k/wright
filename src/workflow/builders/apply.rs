@@ -17,8 +17,8 @@ use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::spec::{WorkflowBuilder, WorkflowSpec};
 use crate::workflow::steps::{
-    BuildOptionsCanonical, BuildPlanInputs, BuildPlanStep, InstallBatchInputs,
-    InstallBatchStep, InstallSource, PackagePlanInputs, PackagePlanStep, PlanRef,
+    BuildOptionsCanonical, BuildPlanInputs, BuildPlanStep, InstallBatchInputs, InstallBatchStep,
+    InstallSource, PackagePlanInputs, PackagePlanStep, PlanRef,
 };
 
 #[derive(Serialize)]
@@ -81,9 +81,8 @@ pub async fn build_apply_workflow(
         .map_err(|e| WorkflowError::Other(format!("explicit plan names: {}", e)))?;
 
     // Compute the dep graph + batches over the build set.
-    let plan = create_execution_plan(&config, build_set, &options).map_err(|e| {
-        WorkflowError::Other(format!("create_execution_plan: {}", e))
-    })?;
+    let plan = create_execution_plan(&config, build_set, &options)
+        .map_err(|e| WorkflowError::Other(format!("create_execution_plan: {}", e)))?;
 
     // Workflow inputs derive from the user's stable intent, not from the
     // resolver's output. Different system state may produce a different
@@ -91,7 +90,12 @@ pub async fn build_apply_workflow(
     let mut sorted_targets = targets;
     sorted_targets.sort();
     sorted_targets.dedup();
-    let mut sorted_match: Vec<&str> = resolve_opts.match_policies.iter().copied().map(match_str).collect();
+    let mut sorted_match: Vec<&str> = resolve_opts
+        .match_policies
+        .iter()
+        .copied()
+        .map(match_str)
+        .collect();
     sorted_match.sort();
     sorted_match.dedup();
 
@@ -199,6 +203,7 @@ pub async fn build_apply_workflow(
                 PackagePlanInputs {
                     plan: plan_ref,
                     force: false,
+                    out_dir: config.general.parts_dir.clone(),
                 },
                 deps,
                 config.clone(),

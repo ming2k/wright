@@ -47,14 +47,9 @@ impl<'a> WorkflowStore<'a> {
 
     /// Insert the step row if absent. Existing rows are left untouched —
     /// that's what makes resume preserve `succeeded` status across runs.
-    pub async fn upsert_step(
-        &self,
-        workflow_id: &WorkflowId,
-        s: &ScheduledStep,
-    ) -> Result<()> {
-        let depends_on_json = serde_json::to_string(
-            &s.depends_on.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
-        )?;
+    pub async fn upsert_step(&self, workflow_id: &WorkflowId, s: &ScheduledStep) -> Result<()> {
+        let depends_on_json =
+            serde_json::to_string(&s.depends_on.iter().map(|d| d.as_str()).collect::<Vec<_>>())?;
         sqlx::query(
             "INSERT INTO workflow_steps \
              (id, workflow_id, kind, inputs_json, depends_on_json, status, attempt) \
@@ -71,32 +66,24 @@ impl<'a> WorkflowStore<'a> {
         Ok(())
     }
 
-    pub async fn load_attempts(
-        &self,
-        workflow_id: &WorkflowId,
-    ) -> Result<HashMap<StepId, i32>> {
-        let rows: Vec<(String, i32)> = sqlx::query_as(
-            "SELECT id, attempt FROM workflow_steps WHERE workflow_id = ?",
-        )
-        .bind(workflow_id.as_str())
-        .fetch_all(&self.db.pool)
-        .await?;
+    pub async fn load_attempts(&self, workflow_id: &WorkflowId) -> Result<HashMap<StepId, i32>> {
+        let rows: Vec<(String, i32)> =
+            sqlx::query_as("SELECT id, attempt FROM workflow_steps WHERE workflow_id = ?")
+                .bind(workflow_id.as_str())
+                .fetch_all(&self.db.pool)
+                .await?;
         Ok(rows
             .into_iter()
             .map(|(id, attempt)| (StepId::from(id), attempt))
             .collect())
     }
 
-    pub async fn load_statuses(
-        &self,
-        workflow_id: &WorkflowId,
-    ) -> Result<HashMap<StepId, Status>> {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT id, status FROM workflow_steps WHERE workflow_id = ?",
-        )
-        .bind(workflow_id.as_str())
-        .fetch_all(&self.db.pool)
-        .await?;
+    pub async fn load_statuses(&self, workflow_id: &WorkflowId) -> Result<HashMap<StepId, Status>> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, status FROM workflow_steps WHERE workflow_id = ?")
+                .bind(workflow_id.as_str())
+                .fetch_all(&self.db.pool)
+                .await?;
         Ok(rows
             .into_iter()
             .filter_map(|(id, st)| Status::parse(&st).map(|s| (StepId::from(id), s)))

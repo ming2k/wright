@@ -615,6 +615,130 @@ retry_count = 3
 }
 
 #[test]
+fn test_package_out_dir_overrides_parts_dir_for_this_run() {
+    let root = tempfile::tempdir().unwrap();
+    let plans_dir = root.path().join("plans");
+    let parts_dir = root.path().join("parts");
+    let out_dir = root.path().join("custom-parts");
+    let source_dir = root.path().join("sources");
+    let state_dir = root.path().join("wright");
+    let logs_dir = root.path().join("logs");
+    let build_dir = root.path().join("build");
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    std::fs::create_dir_all(&build_dir).unwrap();
+
+    let plan_dir = plans_dir.join("custom-out-dir");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "custom-out-dir"
+version = "1.0.0"
+release = 1
+description = "verify package --out-dir"
+license = "MIT"
+arch = "x86_64"
+
+link_deps = []
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/custom-out-dir
+"""
+"#,
+    )
+    .unwrap();
+
+    let config_path = root.path().join("wright.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+parts_dir = "{}"
+source_dir = "{}"
+db_path = "{}"
+logs_dir = "{}"
+executors_dir = "/etc/wright/executors"
+
+[build]
+build_dir = "{}"
+default_isolation = "none"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans_dir.display(),
+            parts_dir.display(),
+            source_dir.display(),
+            state_dir.join("wright.db").display(),
+            logs_dir.display(),
+            build_dir.display(),
+        ),
+    )
+    .unwrap();
+
+    let default_package = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("package")
+        .arg("custom-out-dir")
+        .output()
+        .unwrap();
+
+    assert!(
+        default_package.status.success(),
+        "default package failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&default_package.stdout),
+        String::from_utf8_lossy(&default_package.stderr)
+    );
+
+    let default_archive = parts_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
+    assert!(
+        default_archive.exists(),
+        "default parts_dir archive missing"
+    );
+
+    let custom_package = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("package")
+        .arg("custom-out-dir")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--print-parts")
+        .output()
+        .unwrap();
+
+    assert!(
+        custom_package.status.success(),
+        "custom package failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&custom_package.stdout),
+        String::from_utf8_lossy(&custom_package.stderr)
+    );
+
+    let custom_archive = out_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
+    assert!(custom_archive.exists(), "--out-dir archive missing");
+
+    let stdout = String::from_utf8_lossy(&custom_package.stdout);
+    let stdout_lines: Vec<_> = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let expected_stdout = custom_archive.to_string_lossy().to_string();
+    assert_eq!(stdout_lines, vec![expected_stdout.as_str()]);
+}
+
+#[test]
 fn test_until_stage_stops_before_packing_parts() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");

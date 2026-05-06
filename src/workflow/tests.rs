@@ -47,10 +47,7 @@ impl Step for CountingStep {
         &self.deps
     }
 
-    fn execute(
-        self: Arc<Self>,
-        _ctx: StepContext,
-    ) -> BoxFuture<'static, Result<Self::Outputs>> {
+    fn execute(self: Arc<Self>, _ctx: StepContext) -> BoxFuture<'static, Result<Self::Outputs>> {
         Box::pin(async move {
             let n = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
             if n <= self.fail_first_n {
@@ -106,14 +103,14 @@ async fn drives_a_simple_workflow_to_success() {
     let db = fresh_db().await;
     let counter = Arc::new(AtomicUsize::new(0));
 
-    let mut b = WorkflowBuilder::new(
-        "test",
-        &serde_json::json!({"case": "simple"}),
-    )
-    .unwrap();
+    let mut b = WorkflowBuilder::new("test", &serde_json::json!({"case": "simple"})).unwrap();
     let a = b.add(make_step("a", vec![], counter.clone(), 0)).unwrap();
-    let b_id = b.add(make_step("b", vec![a.clone()], counter.clone(), 0)).unwrap();
-    let _c = b.add(make_step("c", vec![b_id], counter.clone(), 0)).unwrap();
+    let b_id = b
+        .add(make_step("b", vec![a.clone()], counter.clone(), 0))
+        .unwrap();
+    let _c = b
+        .add(make_step("c", vec![b_id], counter.clone(), 0))
+        .unwrap();
     let spec = b.build();
 
     let outcome = drive(
@@ -221,11 +218,7 @@ async fn does_not_run_dependents_of_failed_step() {
     let db = fresh_db().await;
     let counter = Arc::new(AtomicUsize::new(0));
 
-    let mut b = WorkflowBuilder::new(
-        "test",
-        &serde_json::json!({"case": "fail-cascade"}),
-    )
-    .unwrap();
+    let mut b = WorkflowBuilder::new("test", &serde_json::json!({"case": "fail-cascade"})).unwrap();
     let a = b.add(make_step("a", vec![], counter.clone(), 99)).unwrap(); // always fails
     let _b_step = b
         .add(make_step("b", vec![a.clone()], counter.clone(), 0))
@@ -269,11 +262,7 @@ async fn parallel_independent_steps() {
     let counter = Arc::new(AtomicUsize::new(0));
 
     // 8 independent steps; with cpu_concurrency=4 they run in two waves of 4.
-    let mut b = WorkflowBuilder::new(
-        "test",
-        &serde_json::json!({"case": "parallel"}),
-    )
-    .unwrap();
+    let mut b = WorkflowBuilder::new("test", &serde_json::json!({"case": "parallel"})).unwrap();
     for i in 0..8 {
         b.add(make_step(&format!("s{}", i), vec![], counter.clone(), 0))
             .unwrap();
@@ -358,17 +347,12 @@ async fn upstream_outputs_are_visible_to_dependents() {
         const RESOURCE_CLASS: ResourceClass = ResourceClass::Trivial;
         fn inputs(&self) -> &Self::Inputs {
             static IN: std::sync::OnceLock<CIn> = std::sync::OnceLock::new();
-            IN.get_or_init(|| CIn {
-                marker: "c".into(),
-            })
+            IN.get_or_init(|| CIn { marker: "c".into() })
         }
         fn depends_on(&self) -> &[StepId] {
             &self.deps
         }
-        fn execute(
-            self: Arc<Self>,
-            ctx: StepContext,
-        ) -> BoxFuture<'static, Result<Self::Outputs>> {
+        fn execute(self: Arc<Self>, ctx: StepContext) -> BoxFuture<'static, Result<Self::Outputs>> {
             let captured = self.captured.clone();
             Box::pin(async move {
                 let mut g = captured.0.lock().unwrap();
@@ -380,11 +364,7 @@ async fn upstream_outputs_are_visible_to_dependents() {
         }
     }
 
-    let mut b = WorkflowBuilder::new(
-        "test",
-        &serde_json::json!({"case": "upstream"}),
-    )
-    .unwrap();
+    let mut b = WorkflowBuilder::new("test", &serde_json::json!({"case": "upstream"})).unwrap();
     let p = b.add(Producer).unwrap();
     b.add(Consumer {
         deps: vec![p.clone()],

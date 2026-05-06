@@ -11,9 +11,7 @@ use crate::plan::manifest::PlanManifest;
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::spec::{WorkflowBuilder, WorkflowSpec};
-use crate::workflow::steps::{
-    BuildOptionsCanonical, PackagePlanInputs, PackagePlanStep, PlanRef,
-};
+use crate::workflow::steps::{BuildOptionsCanonical, PackagePlanInputs, PackagePlanStep, PlanRef};
 
 use super::build::add_build_steps;
 
@@ -22,6 +20,7 @@ struct PackageWorkflowInputs {
     targets: Vec<String>,
     options: BuildOptionsCanonical,
     force: bool,
+    out_dir: std::path::PathBuf,
 }
 
 /// Build a workflow for `wright package`: build → package per plan.
@@ -32,9 +31,8 @@ pub fn build_package_workflow(
     force_repack: bool,
     print_parts: bool,
 ) -> Result<WorkflowSpec> {
-    let plan = create_execution_plan(&config, targets.clone(), &options).map_err(|e| {
-        WorkflowError::Other(format!("create_execution_plan: {}", e))
-    })?;
+    let plan = create_execution_plan(&config, targets.clone(), &options)
+        .map_err(|e| WorkflowError::Other(format!("create_execution_plan: {}", e)))?;
 
     let mut sorted_targets = targets;
     sorted_targets.sort();
@@ -46,6 +44,7 @@ pub fn build_package_workflow(
             targets: sorted_targets,
             options: BuildOptionsCanonical::from_options(&options),
             force: force_repack,
+            out_dir: config.general.parts_dir.clone(),
         },
     )?;
 
@@ -64,7 +63,14 @@ pub fn build_package_workflow(
         Vec::new(),
     )?;
 
-    add_package_steps(&plan, &mut wfb, &config, force_repack, print_parts, &build_ids)?;
+    add_package_steps(
+        &plan,
+        &mut wfb,
+        &config,
+        force_repack,
+        print_parts,
+        &build_ids,
+    )?;
 
     Ok(wfb.build())
 }
@@ -107,6 +113,7 @@ pub(super) fn add_package_steps(
                 PackagePlanInputs {
                     plan: plan_ref,
                     force: force_repack,
+                    out_dir: config.general.parts_dir.clone(),
                 },
                 deps,
                 config.clone(),

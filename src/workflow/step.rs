@@ -120,10 +120,7 @@ pub trait Step: Send + Sync + 'static {
         &[]
     }
 
-    fn execute(
-        self: Arc<Self>,
-        ctx: StepContext,
-    ) -> BoxFuture<'static, WfResult<Self::Outputs>>;
+    fn execute(self: Arc<Self>, ctx: StepContext) -> BoxFuture<'static, WfResult<Self::Outputs>>;
 }
 
 /// Type-erased shape of a `Step` ready for the runner.
@@ -136,11 +133,8 @@ pub struct ScheduledStep {
     pub inputs_json: String,
     pub depends_on: Vec<StepId>,
     pub class: ResourceClass,
-    pub run: Box<
-        dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>>
-            + Send
-            + Sync,
-    >,
+    pub run:
+        Box<dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>> + Send + Sync>,
 }
 
 impl ScheduledStep {
@@ -151,9 +145,7 @@ impl ScheduledStep {
         let class = S::RESOURCE_CLASS;
         let arc = Arc::new(step);
         let run: Box<
-            dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>>
-                + Send
-                + Sync,
+            dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>> + Send + Sync,
         > = Box::new(move |ctx: StepContext| {
             let arc = arc.clone();
             Box::pin(async move {

@@ -7,9 +7,7 @@ use super::apply::collect_install_args;
 use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
 use crate::part::store::LocalPartStore;
-use crate::workflow::builders::{
-    build_install_archives_workflow, build_install_targets_workflow,
-};
+use crate::workflow::builders::{build_install_archives_workflow, build_install_targets_workflow};
 
 fn looks_like_archive_path(arg: &str) -> bool {
     arg.ends_with(".wright.tar.zst")

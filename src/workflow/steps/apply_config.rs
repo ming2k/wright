@@ -61,12 +61,7 @@ impl Step for ApplyConfigStep {
                 let link = root.join("etc/localtime");
                 let _ = std::fs::remove_file(&link);
                 if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
-                    warn!(
-                        "failed to symlink {} -> {}: {}",
-                        link.display(),
-                        target,
-                        e
-                    );
+                    warn!("failed to symlink {} -> {}: {}", link.display(), target, e);
                 }
             }
             if let Some(ref locale) = self.inputs.locale {

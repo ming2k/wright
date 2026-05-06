@@ -325,10 +325,7 @@ impl BuildExecutionPlan {
     }
 
     pub fn deps_for_task(&self, task: &str) -> &[String] {
-        self.deps_map
-            .get(task)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.deps_map.get(task).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     pub fn bootstrap_excluded_for(&self, task: &str) -> &[String] {
@@ -339,10 +336,8 @@ impl BuildExecutionPlan {
     }
 
     pub fn is_post_bootstrap_full(&self, task: &str) -> bool {
-        !task.ends_with(":bootstrap")
-            && self.build_set.contains(&format!("{}:bootstrap", task))
+        !task.ends_with(":bootstrap") && self.build_set.contains(&format!("{}:bootstrap", task))
     }
-
 }
 
 pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary {

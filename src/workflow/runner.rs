@@ -102,24 +102,17 @@ pub async fn drive(
 
     // Index steps by id for cheap lookup. Move out of the spec so we can call
     // their `run` closures.
-    let mut by_id: HashMap<StepId, ScheduledStep> = spec
-        .steps
-        .into_iter()
-        .map(|s| (s.id.clone(), s))
-        .collect();
+    let mut by_id: HashMap<StepId, ScheduledStep> =
+        spec.steps.into_iter().map(|s| (s.id.clone(), s)).collect();
     let total_steps = by_id.len();
 
-    let mut statuses: HashMap<StepId, Status> = store
-        .load_statuses(&spec.workflow_id)
-        .await?;
+    let mut statuses: HashMap<StepId, Status> = store.load_statuses(&spec.workflow_id).await?;
     // Steps not yet in the DB don't show up in load_statuses; treat as pending.
     for id in by_id.keys() {
         statuses.entry(id.clone()).or_insert(Status::Pending);
     }
 
-    let attempts: HashMap<StepId, i32> = store
-        .load_attempts(&spec.workflow_id)
-        .await?;
+    let attempts: HashMap<StepId, i32> = store.load_attempts(&spec.workflow_id).await?;
 
     let max_attempts = policy.max_attempts.map(|n| n as i32);
 
@@ -137,8 +130,7 @@ pub async fn drive(
         }
     }
 
-    let outputs: HashMap<StepId, serde_json::Value> =
-        store.load_outputs(&spec.workflow_id).await?;
+    let outputs: HashMap<StepId, serde_json::Value> = store.load_outputs(&spec.workflow_id).await?;
     // Outputs are read-only in the runner once loaded; in-flight steps push
     // their results through the channel, and the loop owns the merged map.
     let mut outputs = outputs;
@@ -225,19 +217,21 @@ pub async fn drive(
                 tokio::spawn(async move {
                     let _permit = permit; // released on drop, after step finishes
                     let result = (step.run)(ctx).await;
-                    let _ = tx.send(StepDone { id: step.id, result }).await;
+                    let _ = tx
+                        .send(StepDone {
+                            id: step.id,
+                            result,
+                        })
+                        .await;
                 });
             }
         }
 
         // 2. Termination conditions.
         if in_flight == 0 {
-            let any_pending = statuses
-                .iter()
-                .any(|(id, s)| {
-                    matches!(s, Status::Pending | Status::Failed)
-                        && !permanent_failures.contains(id)
-                });
+            let any_pending = statuses.iter().any(|(id, s)| {
+                matches!(s, Status::Pending | Status::Failed) && !permanent_failures.contains(id)
+            });
             if !any_pending || stop_launching {
                 break;
             }
@@ -343,10 +337,7 @@ fn by_id_keys(
     statuses.keys().cloned().collect()
 }
 
-fn describe_unmet_deps(
-    all: &[StepId],
-    statuses: &HashMap<StepId, Status>,
-) -> String {
+fn describe_unmet_deps(all: &[StepId], statuses: &HashMap<StepId, Status>) -> String {
     let mut lines: Vec<String> = all
         .iter()
         .filter(|id| {
@@ -355,7 +346,13 @@ fn describe_unmet_deps(
                 Status::Pending | Status::Failed
             )
         })
-        .map(|id| format!("{} ({:?})", id.short(), statuses.get(id).copied().unwrap_or(Status::Pending)))
+        .map(|id| {
+            format!(
+                "{} ({:?})",
+                id.short(),
+                statuses.get(id).copied().unwrap_or(Status::Pending)
+            )
+        })
         .collect();
     lines.sort();
     lines.join(", ")

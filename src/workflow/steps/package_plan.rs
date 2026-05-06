@@ -18,6 +18,7 @@ use super::PlanRef;
 pub struct PackagePlanInputs {
     pub plan: PlanRef,
     pub force: bool,
+    pub out_dir: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -37,11 +38,7 @@ pub struct PackagePlanStep {
 }
 
 impl PackagePlanStep {
-    pub fn new(
-        inputs: PackagePlanInputs,
-        deps: Vec<StepId>,
-        config: Arc<GlobalConfig>,
-    ) -> Self {
+    pub fn new(inputs: PackagePlanInputs, deps: Vec<StepId>, config: Arc<GlobalConfig>) -> Self {
         Self {
             inputs,
             deps,
@@ -79,14 +76,13 @@ impl Step for PackagePlanStep {
         Box::pin(async move {
             let manifest = PlanManifest::from_file(&self.inputs.plan.canonical_path)
                 .map_err(|e| WorkflowError::Other(format!("read plan: {}", e)))?;
-            let parts_dir = self.config.general.parts_dir.clone();
+            let parts_dir = self.inputs.out_dir.clone();
             tokio::fs::create_dir_all(&parts_dir)
                 .await
-                .map_err(|e| WorkflowError::Other(format!("create parts_dir: {}", e)))?;
+                .map_err(|e| WorkflowError::Other(format!("create out_dir: {}", e)))?;
 
             let expected = expected_archive_paths(&manifest, &parts_dir);
-            let must_pack = self.inputs.force
-                || expected.iter().any(|(_, p)| !p.exists());
+            let must_pack = self.inputs.force || expected.iter().any(|(_, p)| !p.exists());
 
             if must_pack {
                 package_manifest(&manifest, &self.config, self.print_parts, self.inputs.force)
@@ -124,7 +120,10 @@ fn expected_archive_paths(
             .iter()
             .map(|(sub_name, sub_part)| {
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                (sub_name.clone(), parts_dir.join(sub_manifest.part_filename()))
+                (
+                    sub_name.clone(),
+                    parts_dir.join(sub_manifest.part_filename()),
+                )
             })
             .collect(),
         _ => vec![(

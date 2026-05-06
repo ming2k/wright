@@ -458,10 +458,7 @@ mod tests {
             parse_dep_ref("glibc:glibc"),
             DepRef::Specific("glibc".into(), "glibc".into())
         );
-        assert_eq!(
-            parse_dep_ref("cmake"),
-            DepRef::Wildcard("cmake".into())
-        );
+        assert_eq!(parse_dep_ref("cmake"), DepRef::Wildcard("cmake".into()));
     }
 
     #[test]

@@ -41,7 +41,15 @@ pub async fn execute_launch(
         }
     };
 
-    launch_from_pack(pack_path, args.dry_run, args.force, config, db_path, root_dir).await
+    launch_from_pack(
+        pack_path,
+        args.dry_run,
+        args.force,
+        config,
+        db_path,
+        root_dir,
+    )
+    .await
 }
 
 async fn launch_from_pack(
@@ -84,7 +92,10 @@ async fn launch_from_pack(
         }
         if !manifest.assumes.is_empty() {
             println!();
-            println!("[dry-run] would assume {} external(s):", manifest.assumes.len());
+            println!(
+                "[dry-run] would assume {} external(s):",
+                manifest.assumes.len()
+            );
             for a in &manifest.assumes {
                 println!("  {} {}", a.name, a.version);
             }

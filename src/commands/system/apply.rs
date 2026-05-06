@@ -127,7 +127,11 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
 
     if dry_run {
         println!("Apply plan (dry-run):");
-        println!("  workflow {} ({} steps)", spec.workflow_id.short(), spec.steps.len());
+        println!(
+            "  workflow {} ({} steps)",
+            spec.workflow_id.short(),
+            spec.steps.len()
+        );
         for s in &spec.steps {
             println!("  {:<14} {}", s.kind, s.id.short());
         }
