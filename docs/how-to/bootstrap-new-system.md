@@ -1,102 +1,158 @@
 # How to Bootstrap a New System
 
-When deploying Wright onto a fresh LFS-based system, the core parts (glibc, gcc, binutils, linux, etc.) are already installed but unknown to Wright's database. Any part whose `plan.toml` lists them as dependencies will fail with an unresolved dependency error until they are registered.
+Wright covers two starting points when filling a fresh target root: a packaged
+**pack** of parts, or a directory of **plans**. Both go through `wright launch`
+and produce a coherent, origin-aware Wright system on the target.
 
-## Seed the Database
+For the rationale behind the launch + pack design, see
+[ADR-0014](../adr/0014-launch-and-pack-format.md).
 
-Use `wright assume` to register the parts that already exist.
+## Prerequisites
 
-### Single entry
+Before launching, prepare the target root yourself: partition the disk, format
+it, and mount it (e.g. at `/mnt/new`). `wright launch` does not partition
+disks — it fills a mounted root.
 
-```sh
-wright assume glibc 2.41
+If the target is hosted on infrastructure that supplies a kernel and bootloader
+(VPS, container image), declare those as `[[assume]]` entries in your pack
+manifest so dependency checks pass without Wright trying to install them.
+
+## Path A: Launch from a Pack
+
+A **pack** (`.wright.pack.tar`) is a single artifact that bundles every part
+needed to fill a target, plus an optional `overlay/` configuration tree and a
+small declarative `[config]` block. It is the simplest way to install a Wright
+system on a fresh machine.
+
+```bash
+wright launch --root /mnt/new ./wright-base-2026.05.wright.pack.tar
 ```
 
-### Bulk from a file
+What launch does:
 
-Create a file (e.g. `/etc/wright/bootstrap.txt`):
+1. Initializes `/mnt/new/var/lib/wright/` (database, parts dir, lock dir).
+2. Records every `[[assume]]` entry from the pack so dependency checks pass.
+3. Installs every `[[part]]` archive in dependency order, preserving the
+   `origin` (manual or dependency) declared in the manifest.
+4. Extracts the pack's `overlay/` tree into the target, refusing to clobber
+   files owned by an installed part.
+5. Applies the declarative `[config]` block (hostname, timezone, locale,
+   runit service symlinks).
 
+After launch, the target has a fully populated `wright.db`. `wright list
+--root /mnt/new` will show every installed part with the right origin.
+
+### Re-running launch
+
+`wright launch` is convergent. If a previous run was interrupted (network,
+power, disk-full), re-running on the same root resumes: parts that already
+match the manifest are skipped, missing ones are added, mismatched ones are
+upgraded.
+
+### Inspecting a pack
+
+```bash
+wright pack inspect ./wright-base-2026.05.wright.pack.tar
 ```
-# Core toolchain
-glibc 2.41
-gcc 14.2.0
-binutils 2.43
-linux 6.12.0
 
-# Base utilities
-bash 5.2
-coreutils 9.5
-sed 4.9
-grep 3.11
-awk 5.3.0
-tar 1.35
-gzip 1.13
+prints the manifest, the part archives it carries, the overlay file count,
+and the SHA-256 hashes used for verification.
+
+## Path B: Launch from Plans (Source-First)
+
+When you have a directory of plans rather than a prebuilt pack, point `launch`
+at it with `--plans`. Wright builds in dependency waves on the host (using the
+host's existing toolchain) and installs each completed wave into the target
+root.
+
+```bash
+wright launch --root /mnt/new --plans ./plans bash coreutils glibc gcc
 ```
 
-Then import it:
+This reuses `wright apply`'s wave engine end-to-end. The only difference from
+a normal `apply` is that installs target `--root` instead of `/`.
 
-```sh
+Because the host builds, the host must already have a working toolchain. If
+you are filling a target with a different libc or arch from the host, build a
+seed pack from a host that matches first, then use Path A on the bare target.
+
+## Path C: Drop a Pack into a Profile Directory
+
+For repeatable installs, place packs in one of the configured `pack_dirs`
+(default: `/var/lib/wright/packs`). Then refer to them by name:
+
+```bash
+wright launch --root /mnt/new --profile minimal
+```
+
+Wright resolves `minimal` to the newest matching pack in `pack_dirs`.
+
+## Building a Pack
+
+To create a pack from your own parts, write a `pack.toml` manifest in a
+directory alongside a `parts/` subdirectory holding the archives, then run:
+
+```bash
+wright pack ./my-base/
+```
+
+A minimal `pack.toml`:
+
+```toml
+[pack]
+name        = "my-base"
+version     = "1"
+description = "My minimal base system"
+arch        = "x86_64"
+
+[[part]]
+file   = "parts/glibc-2.41-1-x86_64.wright.tar.zst"
+origin = "manual"
+
+[[part]]
+file   = "parts/bash-5.2-1-x86_64.wright.tar.zst"
+origin = "manual"
+
+[config]
+hostname = "wright"
+timezone = "UTC"
+```
+
+`wright pack` walks the `[[part]]` list, verifies that each file exists,
+records its SHA-256 in the manifest, optionally tars an `overlay/` directory,
+and writes a single `.wright.pack.tar` artifact.
+
+## When to Use `wright assume` Instead
+
+`wright launch` is for filling a fresh target. If Wright is being added to an
+**existing** LFS-style system that you built by hand and you only need to
+register what is already on disk, use `wright assume` directly. See
+[`wright assume` in the CLI reference](../reference/cli-reference.md#wright-assume-name-version).
+
+```bash
+# Existing system; only register what's already there.
 wright assume --file /etc/wright/bootstrap.txt
 ```
 
-### Pipe multiple entries
+## Verifying the Result
 
-```sh
-cat <<EOF | wright assume
-glibc 2.41
-gcc 14.2.0
-binutils 2.43
-linux 6.12.0
-bash 5.2
-coreutils 9.5
-EOF
+```bash
+wright list --root /mnt/new --long
+wright doctor --root /mnt/new
+wright verify --root /mnt/new
 ```
 
-## Install Parts Normally
+`doctor` walks the new database for integrity, dependency, and shadow-file
+issues. `verify` recomputes file hashes. Both should report clean immediately
+after a successful launch.
 
-After seeding, install parts normally:
+## Replacing Assumed Parts
 
-```sh
-wright install man-db-2.12.1-1.wright.tar.zst
-wright install python-3.13.0-1.wright.tar.zst
+If your pack declared `[[assume]]` entries (e.g. a host-supplied kernel) and
+you later build a Wright-managed replacement, install it normally:
+
+```bash
+wright install --root /mnt/new linux
 ```
 
-## Verify Assumed Parts
-
-Assumed parts appear with an `[external]` tag in `wright list`:
-
-```
-external     bash                     5.2
-external     binutils                 2.43
-external     coreutils                9.5
-external     gcc                      14.2.0
-external     glibc                    2.41
-manual       man-db                   2.12.1-1-x86_64
-manual       python                   3.13.0-1-x86_64
-```
-
-Or filter to assumed-only:
-
-```sh
-wright list --assumed
-```
-
-## Replace Assumed Parts
-
-Once you have a Wright-built part ready to replace a stub, simply install it:
-
-```sh
-wright install glibc-2.41-1.wright.tar.zst
-```
-
-After that, `wright list` will show the fully managed part entry and `wright verify glibc` will check its file integrity as normal.
-
-## Remove an Assumption
-
-To remove an assumed record without installing a replacement:
-
-```sh
-wright unassume glibc
-```
-
-If you try to `wright remove` an assumed part, Wright will refuse and tell you to use `unassume` instead, because assumed parts are not managed by Wright and have no tracked files to delete.
+The assumed record is replaced by a fully-managed part entry.

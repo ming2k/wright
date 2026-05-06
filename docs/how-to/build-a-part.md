@@ -50,11 +50,21 @@ wright apply zlib
 When tuning a stage without re-extracting sources every time, use `--stage` to run specific stages against the existing build tree:
 
 ```bash
-# Full first build (extracts, configures, compiles, packages parts)
+# Full first build (extracts, configures, compiles, and stages outputs)
 wright build mypart
 
 # Edit lifecycle.staging in plan.toml, then re-run the output phases:
 wright build mypart --stage=staging
+```
+
+When you repeat a full `wright build mypart` without changes (same build key),
+Wright skips stages that already completed successfully (they have
+`.wright-stage-<name>` sentinels in `work/`).  Use `--force` when you want to
+re-run all lifecycle stages — for example after a toolchain update that should
+invalidate cached compilation results:
+
+```bash
+wright build mypart --force
 ```
 
 To run a normal build from the start but stop after a stage so you can inspect the current `${STAGING_DIR}` contents, use `--until-stage`:

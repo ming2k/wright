@@ -76,7 +76,7 @@ runtime_deps = ["wayland"]
 
     let cmd = SystemCommands::Apply {
         targets: vec!["wayland-utils".to_string()],
-        resume: None,
+        fresh: false,
         deps: Some(DomainArg::All),
         rdeps: None,
         match_policies: vec![MatchPolicyArg::Missing],
@@ -221,6 +221,8 @@ retry_count = 3
 
     fs::write(&signal_path, "ok").unwrap();
 
+    // Rerunning the same command auto-resumes — no --resume flag needed
+    // under the workflow model.
     let second = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
@@ -229,7 +231,6 @@ retry_count = 3
         .arg("apply")
         .arg("apply-resume-main")
         .arg("--deps")
-        .arg("--resume")
         .output()
         .unwrap();
 

@@ -12,9 +12,9 @@ subcommands, and a single state database.
 
 ## Tool Boundaries
 
-- `wright build` builds parts from plans and creates `.wright.tar.zst` archives
+- `wright build` builds plans into staging and output directories
 - `wright package` slices staging directories into output directories (`outputs/`) and packages them into `.wright.tar.zst` archives
-- `wright install` installs locally available archives to the live system
+- `wright install` installs locally available plan outputs to the live system
 - `wright apply` resolves, builds, and installs plans in dependency waves
 
 The main workflows are:
@@ -22,7 +22,7 @@ The main workflows are:
 ```bash
 wright build curl
 wright package curl
-wright install ./curl-8.0-1-x86_64.wright.tar.zst
+wright install curl
 
 # Or the all-in-one apply workflow:
 wright apply curl
@@ -38,8 +38,8 @@ plans/curl/plan.toml
 
 ## Output Model
 
-Each build produces one or more `.wright.tar.zst` archives under `parts_dir`. A plan
-can have multiple outputs (e.g. `gcc` and `gcc-libs`) defined by `[[output]]` tables.
+Each package step produces one or more `.wright.tar.zst` archives under `parts_dir`.
+A plan can have multiple outputs (e.g. `gcc` and `gcc-libs`) defined by `[[output]]` tables.
 
 ## State Model
 
@@ -56,7 +56,7 @@ can have multiple outputs (e.g. `gcc` and `gcc-libs`) defined by `[[output]]` ta
 wright build   →  build plans
 wright package →  slice staging into outputs and package
 wright apply   →  resolve + build + install
-wright install →  install archives
+wright install →  install plan outputs
 wright upgrade →  upgrade installed parts
 wright remove  →  remove installed parts
 wright list    →  list installed parts

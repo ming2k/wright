@@ -15,15 +15,17 @@ build-side and system-side workflows.
 
 ## System Commands
 
-### `wright install <PART...>`
+### `wright install <TARGET...>`
 
-Installs archive paths or part names resolved by scanning `parts_dir`. Runtime
+Installs outputs produced by plan names or plan directories. Wright reads the
+plan manifests and installs the expected archives from `parts_dir`. Runtime
 dependency problems are reported as warnings, not errors.
 
 | Flag | Description |
 |------|-------------|
 | `--force` | Reinstall even if the part is already installed and up to date |
 | `--nodeps` | Suppress runtime dependency warnings |
+| `--path` | Treat arguments and stdin as explicit archive paths |
 
 ### `wright upgrade <PART...>`
 
@@ -60,7 +62,7 @@ upgrades each wave before continuing.
 | `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
 | `--depth <N>` | Maximum expansion depth |
 | `-f`, `--force` | Force rebuild and reinstall |
-| `--resume [HASH]` | Resume an interrupted session |
+| `--fresh` | Discard prior workflow state and start from scratch |
 | `--dry-run` | Print the plan without executing it |
 
 ### `wright list`
@@ -133,32 +135,68 @@ Changes the recorded origin of one or more installed parts.
 | `--as-manual` | Mark as `manual` (user-requested; not auto-removable) |
 | `--as-dependency` | Mark as `dependency` (eligible for orphan cleanup) |
 
+### `wright launch <SOURCE>`
+
+Converges a target root from a pack file or from plans. Initializes
+`<root>/var/lib/wright/`, installs each part wave with `--root` set, applies
+the optional overlay, and applies declarative `[config]` (hostname, timezone,
+locale, services).
+
+```bash
+wright launch --root /mnt/new ./base.wright.pack
+wright launch --root /mnt/new --plans ./plans bash coreutils glibc
+```
+
+| Flag | Description |
+|------|-------------|
+| `--root <PATH>` | Required. The target root to fill. |
+| `--plans <DIR>` | Source path: take plans from this directory and apply them into `--root`. |
+| `--profile <NAME>` | Resolve a pack by name from configured pack search dirs. |
+| `--dry-run` | Print install order and overlay actions without writing anything. |
+| `--force` | Reinstall parts that are already present in the target. |
+
+When `<SOURCE>` is a `.wright.pack.tar` path it takes precedence over
+`--plans`/`--profile`. Re-running `launch` on the same root converges drift
+rather than erroring.
+
+### `wright pack <DIR>`
+
+Bundles a directory containing a `pack.toml` manifest into a single
+`.wright.pack.tar` artifact. Verifies that every referenced part exists and
+records SHA-256 hashes in the manifest.
+
+| Flag | Description |
+|------|-------------|
+| `-o`, `--output <PATH>` | Output file (defaults to `<name>-<version>.wright.pack.tar`) |
+
 ---
 
 ## Build Commands
 
 ### `wright build <TARGET...>`
 
-Builds plans and, with `--package`, writes archives to `parts_dir`.
+Builds plans into staging and output directories under `build_dir`.
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Rebuild even if a cached archive exists |
+| `--force` | Rebuild even if staged outputs already exist; force re-run of all lifecycle stages even when stage sentinels exist |
 | `--clean` | Remove the build workspace before building |
-| `--resume [HASH]` | Resume an interrupted build session |
+| `--fresh` | Discard prior workflow state and start from scratch |
 | `--stage <NAME>` | Start execution at this stage (skip earlier stages) |
-| `--until-stage <NAME>` | Stop after this stage without packaging |
+| `--until-stage <NAME>` | Stop after this stage |
 | `--skip-check` | Skip the `check` lifecycle stage |
 | `--mvp` | Run the MVP (bootstrap) build pass only |
-| `--package` | Create archives after staging; implies `--print-parts` when combined with `--print-parts` |
-| `--print-parts` | Print produced archive paths on stdout (logs go to stderr — safe for piping into `wright install`) |
 | `--fetch` | Only run the `fetch` and `verify` stages |
 | `--checksum` | Verify source checksums only |
 
 ### `wright package <TARGET...>`
 
 Slices existing staging directories into output archives and writes them to `parts_dir`.
-Normally invoked via `wright build --package`.
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Re-slice outputs from staging and overwrite existing archives |
+| `--print-parts` | Print produced archive paths on stdout |
 
 ### `wright resolve <TARGET...>`
 
@@ -206,7 +244,8 @@ lints all plans found under `plans_dir`.
 Build a part and install it:
 
 ```bash
-wright build curl --package
+wright build curl
+wright package curl
 wright install curl
 ```
 
@@ -219,7 +258,9 @@ wright apply curl
 Rebuild all ABI-sensitive reverse dependents and install:
 
 ```bash
-wright resolve zlib --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
+wright resolve zlib --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright build --force $(cat /tmp/wright-rebuild)
+wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
 ```
 
 Mark a previously auto-installed part as user-requested:

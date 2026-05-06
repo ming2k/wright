@@ -22,6 +22,6 @@ If you explicitly install a part that was previously pulled in as a dependency, 
 
 ```bash
 # pcre was auto-installed as a dependency of nginx (origin: dependency)
-wright install pcre-8.45-1-x86_64.wright.tar.zst
+wright install pcre
 # pcre is now "manual" — cascade won't touch it
 ```

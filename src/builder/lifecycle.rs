@@ -26,6 +26,36 @@ pub const DEFAULT_STAGES: &[&str] = &[
 
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
+const STAGING_DEPENDENT_STAGES: &[&str] = &["staging", "fabricate"];
+
+fn stage_sentinel_path(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) -> PathBuf {
+    let prefix = match build_phase {
+        Some("mvp") => ".wright-stage-mvp",
+        _ => ".wright-stage",
+    };
+    work_dir.join(format!("{prefix}-{stage_name}"))
+}
+
+fn write_stage_sentinel(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) {
+    let path = stage_sentinel_path(work_dir, stage_name, build_phase);
+    if let Err(e) = std::fs::write(&path, "") {
+        warn!("Failed to write stage sentinel {}: {}", path.display(), e);
+    }
+}
+
+fn has_stage_completed(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) -> bool {
+    stage_sentinel_path(work_dir, stage_name, build_phase).exists()
+}
+
+pub fn clean_staging_sentinels(work_dir: &Path, build_phase: Option<&str>) {
+    for stage_name in STAGING_DEPENDENT_STAGES {
+        let path = stage_sentinel_path(work_dir, stage_name, build_phase);
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
     if build_phase == Some("mvp") {
         if let Some(ref cfg) = manifest.mvp {
@@ -51,10 +81,12 @@ pub struct LifecyclePipeline<'a> {
     stages: Vec<String>,
     stop_after_stage: Option<String>,
     skip_check: bool,
+    force: bool,
     executors: &'a ExecutorRegistry,
     rlimits: ResourceLimits,
     verbose: bool,
     cpu_count: u32,
+    configure_lock: Option<Arc<Mutex<()>>>,
     compile_cpu_count: Option<u32>,
     compile_lock: Option<Arc<Mutex<()>>>,
     progress: Option<ProgressBar>,
@@ -71,10 +103,12 @@ pub struct LifecycleContext<'a> {
     pub stages: Vec<String>,
     pub stop_after_stage: Option<String>,
     pub skip_check: bool,
+    pub force: bool,
     pub executors: &'a ExecutorRegistry,
     pub rlimits: ResourceLimits,
     pub verbose: bool,
     pub cpu_count: Option<u32>,
+    pub configure_lock: Option<Arc<Mutex<()>>>,
     pub compile_cpu_count: Option<u32>,
     pub compile_lock: Option<Arc<Mutex<()>>>,
     pub progress: Option<ProgressBar>,
@@ -93,14 +127,24 @@ impl<'a> LifecyclePipeline<'a> {
             stages: ctx.stages,
             stop_after_stage: ctx.stop_after_stage,
             skip_check: ctx.skip_check,
+            force: ctx.force,
             executors: ctx.executors,
             rlimits: ctx.rlimits,
             verbose: ctx.verbose,
             cpu_count: ctx.cpu_count.unwrap_or(1),
+            configure_lock: ctx.configure_lock,
             compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
             progress: ctx.progress,
         }
+    }
+
+    fn build_phase(&self) -> Option<&str> {
+        self.vars.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str())
+    }
+
+    fn can_checkpoint(&self) -> bool {
+        self.stages.is_empty() && !self.force
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -123,8 +167,7 @@ impl<'a> LifecyclePipeline<'a> {
             }
             for stage_name in &pipeline {
                 if self.stages.contains(stage_name) {
-                    self.run_stage_with_hooks(stage_name, self.cpu_count)
-                        .await?;
+                    self.run_ordered_stage(stage_name).await?;
                 }
             }
             return Ok(());
@@ -146,6 +189,8 @@ impl<'a> LifecyclePipeline<'a> {
             None
         };
 
+        let checkpoint_enabled = self.can_checkpoint();
+
         for (idx, stage_name) in pipeline.iter().enumerate() {
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
                 debug!("Built-in stage {} is handled by Builder", stage_name);
@@ -162,17 +207,23 @@ impl<'a> LifecyclePipeline<'a> {
                 continue;
             }
 
-            if stage_name == "compile" {
-                let _guard = if let Some(ref l) = self.compile_lock {
-                    Some(l.lock().await)
-                } else {
-                    None
-                };
-                let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
-                self.run_stage_with_hooks(stage_name, effective_cpu).await?;
-            } else {
-                self.run_stage_with_hooks(stage_name, self.cpu_count)
-                    .await?;
+            if checkpoint_enabled
+                && has_stage_completed(&self.work_dir, stage_name, self.build_phase())
+            {
+                info!(
+                    "{}",
+                    logging::stage_skipped(&self.manifest.metadata.name, stage_name)
+                );
+                if stop_after_index == Some(idx) {
+                    return Ok(());
+                }
+                continue;
+            }
+
+            self.run_ordered_stage(stage_name).await?;
+
+            if checkpoint_enabled {
+                write_stage_sentinel(&self.work_dir, stage_name, self.build_phase());
             }
 
             if stop_after_index == Some(idx) {
@@ -181,6 +232,27 @@ impl<'a> LifecyclePipeline<'a> {
         }
 
         Ok(())
+    }
+
+    async fn run_ordered_stage(&self, stage_name: &str) -> Result<()> {
+        if stage_name == "configure" {
+            let _guard = if let Some(ref l) = self.configure_lock {
+                Some(l.lock().await)
+            } else {
+                None
+            };
+            self.run_stage_with_hooks(stage_name, self.cpu_count).await
+        } else if stage_name == "compile" {
+            let _guard = if let Some(ref l) = self.compile_lock {
+                Some(l.lock().await)
+            } else {
+                None
+            };
+            let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
+            self.run_stage_with_hooks(stage_name, effective_cpu).await
+        } else {
+            self.run_stage_with_hooks(stage_name, self.cpu_count).await
+        }
     }
 
     async fn run_stage_with_hooks(&self, stage_name: &str, cpu_count: u32) -> Result<()> {
@@ -329,17 +401,11 @@ impl<'a> LifecyclePipeline<'a> {
 
             if is_etxtbsy && attempt < max_etxtbsy_retries {
                 attempt += 1;
-                let exp_base = 200_u64
-                    .saturating_mul(1_u64 << attempt.min(2))
-                    .min(1000);
+                let exp_base = 200_u64.saturating_mul(1_u64 << attempt.min(2)).min(1000);
                 let delay_ms = exp_base + jitter_ms(exp_base);
                 warn!(
                     "[{}] ETXTBUSY in stage '{}', retrying in {}ms (attempt {}/{})",
-                    self.manifest.metadata.name,
-                    stage_name,
-                    delay_ms,
-                    attempt,
-                    max_etxtbsy_retries,
+                    self.manifest.metadata.name, stage_name, delay_ms, attempt, max_etxtbsy_retries,
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 continue;
@@ -351,9 +417,7 @@ impl<'a> LifecyclePipeline<'a> {
         if final_attempt > 0 {
             info!(
                 "[{}] Stage '{}' succeeded after {} ETXTBUSY retries",
-                self.manifest.metadata.name,
-                stage_name,
-                final_attempt,
+                self.manifest.metadata.name, stage_name, final_attempt,
             );
         }
 

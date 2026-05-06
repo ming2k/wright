@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.1.0] - 2026-05-07
+
+### Breaking Changes
+- **`wright build` no longer packages** — removed `wright build --package` and `wright build --print-parts`. Use `wright build` for staging/output generation, then `wright package [--print-parts]` to create archives.
+- **`wright install` is plan-first** — bare install targets are now plan names or plan directories. Wright derives each plan's expected output archive names from the manifest and installs those archives from `parts_dir`. Explicit archive-path installs now use `wright install --path`.
+- **Legacy `--resume [HASH]` removed** — the V3 execution-session resume mechanism has been fully replaced by content-addressed workflows. Re-running the same command automatically resumes. Use `--fresh` to discard prior state and start over.
+
+### Added
+- **`wright launch` and the pack format** — bare-target bootstrap is now first-class. A `.wright.pack.tar` artifact bundles a `pack.toml` manifest, the part archives it references, and an optional `overlay/` configuration tree. `wright launch --root /mnt/new <pack>` initializes the target's `wright.db`, registers `[[assume]]` entries, installs every `[[part]]` in dependency order with the recorded origin, applies the overlay without clobbering files owned by installed parts, and applies declarative `[config]` (hostname, timezone, locale, runit services). Re-running launch is a convergence operation. `wright launch --plans <DIR>` reuses the `apply` wave engine to fill the target from source. New `wright pack <DIR>` builds packs and `wright pack <FILE> --inspect` reads them. See [ADR-0014](docs/adr/0014-launch-and-pack-format.md).
+- **Auto-redirect of `--db` under `--root`** — when `--root` is set without `--db`, the database path now defaults to `<root>/var/lib/wright/wright.db` instead of the host's database, eliminating a footgun where target installs were silently recorded against the host.
+- **Workflow-driven resume** — the `build`, `package`, `install`, `launch`, and `apply` commands now share a content-addressed workflow model backed by the `workflows`, `workflow_steps`, `workflow_runs`, and `workflow_step_events` tables. Workflow IDs are `SHA-256(kind, canonical_json(inputs))`, so the same command always maps to the same workflow. Re-running a command automatically skips succeeded steps and retries failed/pending ones — no `--resume` flag needed.
+- **Retry limit** — failed steps are retried up to 3 times across all runs. Steps that hit the limit are considered permanently failed and reported as errors.
+- **SIGINT handling** — `Ctrl+C` during a workflow run now propagates cancellation through all in-flight steps and records the run as aborted.
+- **`wright runs` subcommand** — `wright runs list`, `wright runs show <run-id>`, and `wright runs gc --days 30` for inspecting and pruning run history.
+
+### Changed
+- **Operator log cleanup** — source fetch completion logs now show the source label instead of Wright's internal cache filename, avoiding duplicated names such as `xray-xray-tproxy.service`. Install hook stdout/stderr is now routed through structured CLI logs and common `:: ` hook prefixes are normalized.
+- **Configure-stage serialization** — parallel build tasks now run `configure` stages one at a time, matching compile-stage handoff behavior and reducing remaining ETXTBSY exposure in shebang-heavy configure scripts.
+- **Stage-level incremental builds** — lifecycle stages that completed successfully now write a `.wright-stage-<name>` sentinel in `work/`. On the next build with a matching build key, completed stages are skipped (including their pre/post hooks). This makes repeated `wright build <plan>` nearly instant when nothing changed. `--force` disables sentinel checking and re-runs all lifecycle stages. Staging-dependent sentinels (`staging`, `fabricate`) are invalidated when `staging/` is recreated.
+
+### Removed
+- **Dropped `build_sessions` table** — the legacy V1 build progress table (migration 011). It was recreated in migration 005 but never read or written by any Rust code. The `execution_sessions` and `execution_session_items` tables were already dropped in migration 010.
+- **Fixed error messages** — "session hash" references in error text corrected to "plan fingerprint".
+
 ## [4.0.10] - 2026-05-05
 
 ### Fixed

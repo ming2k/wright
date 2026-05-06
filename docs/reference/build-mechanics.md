@@ -45,8 +45,12 @@ Each part gets its own working directory under `build_dir`
 `staging/`, `outputs/`, and `logs/` are recreated clean at the start of every build. `work/` is
 **reused** when the build key has not changed (same version, sources, and
 lifecycle scripts), enabling incremental builds — the fetch/verify/extract
-steps are skipped entirely. When the build key changes (e.g. a version bump),
-`work/` is cleaned and sources are re-extracted automatically. `--clean`
+steps are skipped entirely. When `work/` is reused, lifecycle stages that have a
+`.wright-stage-<name>` sentinel file (written after successful completion) are
+also skipped, making a repeated `wright build` nearly instant when nothing
+changed. When the build key changes (e.g. a version bump),
+`work/` is cleaned and sources are re-extracted automatically — all sentinels
+are cleared with it. `--clean`
 always removes the entire working directory including `work/`.
 
 If multiple outputs are defined in `plan.toml` (split-parts), additional
@@ -116,13 +120,13 @@ path.
 
 ### Directory lifecycle rules
 
-| Operation | `work/` | `staging/` | `outputs/` | `logs/` |
-|-----------|:------:|:------:|:------:|:------:|
-| Full build (key match) | **preserved** | recreated | recreated | recreated |
-| Full build (key mismatch) | recreated | recreated | recreated | recreated |
-| `--stage=<s>` | preserved | recreated | recreated | recreated |
-| `--clean` then build | deleted first | recreated | recreated | recreated |
-| Cache hit | recreated empty | restored | restored | restored |
+| Operation | `work/` | `staging/` | `outputs/` | `logs/` | Stage sentinels |
+|-----------|:------:|:------:|:------:|:------:|:------:|
+| Full build (key match) | **preserved** | recreated | recreated | recreated | **honored** |
+| Full build (key mismatch) | recreated | recreated | recreated | recreated | cleared |
+| `--stage=<s>` | preserved | recreated | recreated | recreated | ignored |
+| `--force` build | reuse if key matches | recreated | recreated | recreated | **ignored** |
+| `--clean` then build | deleted first | recreated | recreated | recreated | cleared |
 
 On a build-cache hit, Wright recreates the working directories first, then
 extracts the cached snapshot into `build_root`. Because `work/` is not part of
@@ -226,18 +230,18 @@ intact for inspection after the build completes.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Output part | `work/` | `staging/` / `outputs/` / `logs/` |
-|------|:---:|:---:|:---:|:---:|
-| (default) | reuse | skip if exists | reuse if key matches | recreated |
-| `--force` | reuse | overwrite | reuse if key matches | recreated |
-| `--clean` | reuse | skip if exists | **deleted** | recreated |
-| `--clean --force` | reuse | overwrite | **deleted** | recreated |
-| `--stage=<s>` | reuse | skip | preserved | recreated |
+| Flag | Source cache | Output part | `work/` | `staging/` / `outputs/` / `logs/` | Stage sentinels |
+|------|:---:|:---:|:---:|:---:|:---:|
+| (default) | reuse | skip if exists | reuse if key matches | recreated | **honored** |
+| `--force` | reuse | overwrite | reuse if key matches | recreated | **ignored** |
+| `--clean` | reuse | skip if exists | **deleted** | recreated | cleared |
+| `--clean --force` | reuse | overwrite | **deleted** | recreated | cleared |
+| `--stage=<s>` | reuse | skip | preserved | recreated | ignored |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — force a clean `work/` re-extraction
-- `--force` — bypass the output part skip check (always produce a new part)
-- `--clean --force` — "start completely from scratch": re-extract sources and always write a new part
+- `--clean` — force a clean `work/` re-extraction; clears all stage sentinels
+- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all lifecycle stages even when their sentinels exist
+- `--clean --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
 
 ### Incremental builds
 
@@ -246,6 +250,15 @@ changed. This allows plan authors to write lifecycle scripts that support
 incremental compilation (e.g. `make` without `make clean` first). The
 fetch/verify/extract steps are skipped entirely when `work/` is reused.
 
+When the build key matches, Wright also checks for per-stage sentinel files
+(`.wright-stage-<name>` in `work/`). Each stage writes its sentinel after
+completing successfully. On the next build, any stage whose sentinel exists
+is skipped (including its pre/post hooks). This means a repeated `wright build`
+with no changes completes almost instantly — only stages whose outputs were
+invalidated (e.g. `staging/` was cleaned) re-execute.
+
 When the build key changes — because the version, sources, or lifecycle scripts
 were modified — `work/` is automatically cleaned and sources are re-extracted.
-To force a clean re-extraction without changing the plan, use `--clean`.
+All sentinels are cleared with `work/`. To force a clean re-extraction without
+changing the plan, use `--clean`. To re-run all lifecycle stages while keeping
+`work/` intact, use `--force`.

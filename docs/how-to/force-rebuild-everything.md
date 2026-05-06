@@ -12,7 +12,9 @@ Or rebuild specific plans:
 wright build zlib openssl --force
 ```
 
-`--force` bypasses the archive skip check for every part in the set.
+`--force` bypasses the archive skip check and **re-runs all lifecycle stages**
+even when their sentinels exist (i.e. even when a previous build of the same
+plan already completed).
 
 ## Clean Rebuild
 

@@ -226,7 +226,9 @@ pub async fn upgrade_part(
         if let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir).await {
+            if let Err(e) =
+                run_install_script(script, root_dir, &partinfo.name, "pre_install").await
+            {
                 warn!("pre_install script failed: {}", e);
             }
             log_debug_timing(
@@ -398,7 +400,9 @@ pub async fn upgrade_part(
         if let Some(ref script) = hooks.post_upgrade {
             log_running_hook(&partinfo.name, "post_upgrade");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir).await {
+            if let Err(e) =
+                run_install_script(script, root_dir, &partinfo.name, "post_upgrade").await
+            {
                 warn!("post_upgrade script failed: {}", e);
             }
             log_debug_timing(

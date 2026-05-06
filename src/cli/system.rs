@@ -4,18 +4,20 @@ use clap::{ArgAction, Parser, Subcommand};
 
 const WRIGHT_AFTER_HELP: &str = "\
 Workflows:
-  Install from archive:     wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst
+  Install plan outputs:     wright install zlib
+  Install from archive:     wright install --path ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Apply plans:              wright apply zlib openssl
   Upgrade everything:       wright sysupgrade
   Inspect dependencies:     wright resolve zlib --tree
   Change install reason:    wright mark zlib --as-dependency
 
-Use `wright build` to build parts from plans.";
+Use `wright build` to build plans.";
 const WRIGHT_INSTALL_AFTER_HELP: &str = "\
 Examples:
   wright install zlib
   wright install zlib openssl
-  wright install ./zlib-1.3.1-1-x86_64.wright.tar.zst";
+  wright install ./plans/zlib
+  wright install --path ./zlib-1.3.1-1-x86_64.wright.tar.zst";
 const WRIGHT_APPLY_AFTER_HELP: &str = "\
 Examples:
   wright apply zlib
@@ -119,14 +121,14 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Install parts from archive files or names found in parts_dir
+    /// Install plan outputs from parts_dir
     #[command(
-        long_about = "Install parts from archive files or part names found in parts_dir.\n\nInstall applies the selected archives to the target root. Runtime dependencies are checked for warnings and recorded in the database, but missing runtime dependencies do not block installation.",
+        long_about = "Install outputs produced by plans.\n\nBy default, arguments are plan names or plan directories. Wright reads each plan manifest, derives the expected output archive names, and installs those archives from parts_dir. Use --path to install explicit archive paths instead. Runtime dependencies are checked for warnings and recorded in the database, but missing runtime dependencies do not block installation.",
         after_help = WRIGHT_INSTALL_AFTER_HELP
     )]
     Install {
-        /// Part files or locally registered part names
-        #[arg(value_name = "PART")]
+        /// Plan names/directories, or archive paths when using --path
+        #[arg(value_name = "TARGET")]
         parts: Vec<String>,
 
         /// Force reinstall even if already installed
@@ -136,6 +138,10 @@ pub enum Commands {
         /// Skip runtime dependency warnings
         #[arg(long)]
         nodeps: bool,
+
+        /// Treat arguments and stdin as explicit archive paths
+        #[arg(long)]
+        path: bool,
     },
     /// Build and apply plan-driven installs/upgrades for plans
     #[command(
@@ -147,10 +153,10 @@ pub enum Commands {
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
-        /// Resume a previous apply session using the same targets and scope flags.
-        /// Optionally pass the session hash printed on failure.
-        #[arg(long, num_args = 0..=1, default_missing_value = "")]
-        resume: Option<String>,
+        /// Discard any prior workflow state for these inputs and start from
+        /// scratch. By default, rerunning the same command resumes.
+        #[arg(long)]
+        fresh: bool,
 
         /// Expand dependencies.
         /// `link` follows ABI-sensitive link dependencies.

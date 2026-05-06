@@ -6,13 +6,11 @@ mod migrations;
 mod parts;
 mod plans;
 pub mod schema;
-mod sessions;
 mod types;
 
 pub use core::InstalledDb;
 use core::PART_COLUMNS;
 pub use plans::PlanRecord;
-pub use sessions::ExecutionSession;
 pub use types::{
     Dependency, FileEntry, FileType, InstalledPart, NewPart, NewPlan, Origin, PartWithPlan,
     TransactionOperation, TransactionRecord, TransactionStatus,

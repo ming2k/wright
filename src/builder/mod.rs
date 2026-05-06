@@ -267,9 +267,11 @@ impl Builder {
         until_stage: Option<&str>,
         fetch_only: bool,
         skip_check: bool,
+        force: bool,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
         nproc_per_isolation: Option<u32>,
+        configure_lock: Option<Arc<Mutex<()>>>,
         compile_lock: Option<Arc<Mutex<()>>>,
         progress: Option<indicatif::ProgressBar>,
     ) -> Result<BuildResult> {
@@ -282,6 +284,7 @@ impl Builder {
         let output_dir = staging_dir.clone();
         let partial = !stages.is_empty() || fetch_only;
         let build_key = self.compute_build_key(manifest)?;
+        let build_phase = extra_env.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str());
 
         if !stages.is_empty() && until_stage.is_some() {
             return Err(WrightError::BuildError(
@@ -290,10 +293,7 @@ impl Builder {
         }
 
         if let Some(stage_name) = until_stage {
-            let pipeline = lifecycle::stage_order_for_manifest(
-                manifest,
-                extra_env.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str()),
-            );
+            let pipeline = lifecycle::stage_order_for_manifest(manifest, build_phase);
             if !pipeline.iter().any(|stage| stage == stage_name) {
                 return Err(WrightError::BuildError(format!(
                     "stage '{}' not found in lifecycle pipeline",
@@ -309,6 +309,7 @@ impl Builder {
                 ));
             }
             ensure_clean_dir(&staging_dir).await?;
+            lifecycle::clean_staging_sentinels(&work_dir, build_phase);
             ensure_clean_dir(&logs_dir).await?;
         } else {
             let key_file = build_root.join(".build_key");
@@ -322,6 +323,7 @@ impl Builder {
             if work_reusable {
                 debug!("Source tree unchanged (build key match) — reusing work/");
                 ensure_clean_dir(&staging_dir).await?;
+                lifecycle::clean_staging_sentinels(&work_dir, build_phase);
                 ensure_clean_dir(&logs_dir).await?;
             } else {
                 ensure_clean_dir(&work_dir).await?;
@@ -436,10 +438,12 @@ impl Builder {
             stages: stages.to_vec(),
             stop_after_stage: until_stage.map(str::to_string),
             skip_check,
+            force,
             executors: &self.executors,
             rlimits: rlimits.clone(),
             verbose,
             cpu_count: Some(cpu_count),
+            configure_lock,
             compile_cpu_count: Some(total_cpus),
             compile_lock,
             progress,
@@ -667,10 +671,7 @@ impl Builder {
                     for p in &unmatched {
                         let _ = writeln!(f, "{}", p);
                     }
-                    tracing::info!(
-                        "Full unmatched file list written to {}",
-                        log_path.display()
-                    );
+                    tracing::info!("Full unmatched file list written to {}", log_path.display());
                 }
 
                 return Err(WrightError::BuildError(format!(
@@ -847,7 +848,12 @@ impl Builder {
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source(&pb, &manifest.metadata.name, &cache_path);
+                        progress::finish_source_with_label(
+                            &pb,
+                            &manifest.metadata.name,
+                            "Extracted",
+                            &label,
+                        );
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -880,7 +886,12 @@ impl Builder {
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source(&pb, &manifest.metadata.name, &cache_path);
+                        progress::finish_source_with_label(
+                            &pb,
+                            &manifest.metadata.name,
+                            "Extracted",
+                            &label,
+                        );
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -1133,7 +1144,7 @@ impl Builder {
         if let Err(e) = fetch_result {
             return Err(WrightError::BuildError(format!("git fetch failed: {e}")));
         }
-        progress::finish_source(&pb, scope, dest);
+        progress::finish_source_with_label(&pb, scope, "Fetched", &label);
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
             WrightError::BuildError(format!("failed to resolve git ref '{}': {}", actual_ref, e))
         })?;
@@ -1223,7 +1234,12 @@ impl Builder {
                             e
                         ))
                     })?;
-                    progress::finish_source(&pb, &manifest.metadata.name, &dest);
+                    progress::finish_source_with_label(
+                        &pb,
+                        &manifest.metadata.name,
+                        "Fetched",
+                        &label,
+                    );
                 }
             }
         }

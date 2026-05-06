@@ -185,15 +185,13 @@ wright build <part> --checksum
 INFO skipping batch 0: zlib (completed in previous run)
 ```
 
-Wright found an existing archive in `parts_dir` and skipped the build. This happens after a plan edit if the version and release number were not bumped.
+Wright found existing staged outputs in `build_dir` and skipped the build. This happens after a plan edit if the output directory still looks complete.
 
 **Fix:**
 
 ```bash
-# Force rebuild regardless of existing archives
+# Force rebuild regardless of existing staged outputs
 wright build <part> --force
-
-# Or bump the top-level release in plan.toml to invalidate the archive skip check
 ```
 
 ---

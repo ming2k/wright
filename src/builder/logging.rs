@@ -69,11 +69,19 @@ pub fn plan_skipped_existing(plan_name: &str) -> String {
     )
 }
 
+pub fn stage_skipped(plan_name: &str, stage_name: &str) -> String {
+    format!(
+        "{} {} skipped (already completed)",
+        plan_scope(plan_name),
+        stage_name
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_finished, build_started, describe_batch, describe_build_capacity, plan_packed,
-        plan_scope, plan_skipped_existing, stage_finished, stage_started,
+        plan_scope, plan_skipped_existing, stage_finished, stage_skipped, stage_started,
     };
     use crate::isolation::IsolationLevel;
     use std::path::Path;
@@ -114,6 +122,10 @@ mod tests {
         assert_eq!(
             plan_skipped_existing("linux"),
             "[linux] skipped: parts already exist (use --force to rebuild)"
+        );
+        assert_eq!(
+            stage_skipped("linux", "compile"),
+            "[linux] compile skipped (already completed)"
         );
     }
 }

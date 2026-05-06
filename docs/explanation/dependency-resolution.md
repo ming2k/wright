@@ -88,7 +88,7 @@ If Wright detects a dependency cycle, it tries to resolve it in a user-friendly 
   Wright performs a two-pass build.
 - The first pass is an **MVP build** (labeled `build:mvp` in the scheduling log).
  It excludes the dependencies listed in that MVP override.
-- The second pass is a full build, forced to rebuild even if a partial archive exists.
+- The second pass is a full build, forced to rebuild even if partial staged outputs exist.
 
 This results in two scheduled entries for that part:
 
@@ -100,8 +100,8 @@ If no MVP definition exists, Wright stops and reports the cycle.
 **Applying Plans to the Live System**
 Wright exposes separate build and install flows:
 
-- `wright build` creates archives from plans.
-- `wright install` installs selected archives onto the live system and warns
+- `wright build` creates staging and output directories from plans.
+- `wright install` installs selected plan outputs onto the live system and warns
   when recorded runtime dependencies are missing or version-mismatched.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
@@ -134,7 +134,9 @@ Example: Rebuild all reverse dependents (ABI-sensitive), then install the
 resulting archives from stdin.
 
 ```bash
-wright resolve zlib --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
+wright resolve zlib --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright build --force $(cat /tmp/wright-rebuild)
+wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
 ```
 
 **Install Origin Tracking**

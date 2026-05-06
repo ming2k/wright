@@ -1,55 +1,61 @@
 # How to Resume a Failed Build
 
-When a large cascade build fails partway through, use `--resume` to continue without re-building parts that already succeeded.
+Wright V4 uses **content-addressed workflows** — no `--resume` flag needed.
+Re-running the same command automatically skips already-succeeded steps and
+retries only the failed or pending work.
 
 ## Resume After a Failed Build
 
 ```bash
 # First run — fails on package 15 of 30:
-wright resolve pcre2 --rdeps --depth=0 | wright build --force
-# Output: Build session: a1b2c3... (resume with: --resume a1b2c3...)
+wright apply curl --deps
 
-# Resume — skips the 14 already-completed packages:
-wright resolve pcre2 --rdeps --depth=0 | wright build --resume
+# Re-run exactly the same command:
+wright apply curl --deps
+# Already-succeeded steps are skipped; failed/pending steps are resumed.
 ```
 
-`--resume` tracks progress in a build session stored in the database. Each successfully built part is recorded. On resume, those parts are skipped and the rest are rebuilt.
+The workflow model creates a content-addressed plan from your inputs (targets,
+flags, dependency scope). On re-invocation, the same inputs produce the same
+workflow ID, so the runner finds the prior state and picks up where it left off.
 
-## Resume and Install
+## Start Fresh
 
-If you need to install the rebuilt outputs afterward, print the archive paths and feed them to `wright install`:
+Use `--fresh` to discard all prior workflow state and start from scratch:
 
 ```bash
-wright resolve pcre2 --rdeps --depth=0 | wright build --resume --package --print-parts | wright install
+wright apply curl --deps --fresh
 ```
 
-## Auto-Detect the Session
+## How It Works
 
-The session hash is deterministic — running the same `wright resolve | wright build` pipeline produces the same hash, so `--resume` auto-detects the session. You can also pass the hash explicitly:
+1. **Workflow ID**: Computed as `SHA-256(kind, canonical_json(inputs))`.
+   Same command = same ID every time.
+
+2. **Step State**: Each build/package/install step is a row in `workflow_steps`
+   with a status (`pending`, `running`, `succeeded`, `failed`). Step IDs are
+   also content-addressed from their inputs, making them deterministic.
+
+3. **Resume**: On each run, the scheduler loads the current status of every
+   step. Steps with `succeeded` status are skipped. Steps with `failed` or
+   `pending` status are re-attempted.
+
+4. **Crash Recovery**: If Wright is killed mid-run, any `running` steps are
+   reset to `pending` on the next invocation (the database lock guarantees no
+   other process owns them).
+
+5. **Retry Limit**: Failed steps are retried up to 3 times across all runs.
+   After that, they are considered permanently failed.
+
+## Inspect Runs
 
 ```bash
-wright resolve pcre2 --rdeps --depth=0 | wright build --resume a1b2c3...
+# List recent runs
+wright runs list
+
+# Inspect a failed run
+wright runs show <run-id>
+
+# Clean up old runs
+wright runs gc --days 30
 ```
-
-Sessions are cleaned up automatically when all parts complete successfully.
-
-## Resume a Failed Apply
-
-`wright apply` can also resume, but its behavior is intentionally split across two layers:
-
-- The live system state determines which batches are already converged.
-- The execution session remembers which build tasks already finished, so a resumed apply does not rebuild archives that were completed before the failure.
-
-Re-run the same apply request with `--resume`:
-
-```bash
-wright apply zlib openssl --deps --resume
-```
-
-Or pass the explicit hash printed on failure:
-
-```bash
-wright apply zlib openssl --deps --resume a1b2c3...
-```
-
-`apply --resume` must be used with the same targets and scope flags (`--deps/--rdeps/--match/--depth/--force`) as the original run.

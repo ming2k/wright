@@ -1,18 +1,20 @@
 use anyhow::{Context, Result};
 use std::io::BufRead;
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::builder::orchestrator;
+use crate::builder::orchestrator::BuildOptions;
 use crate::cli::package::PackageArgs;
+use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
 use crate::error::WrightError;
-use crate::plan::manifest::PlanManifest;
+use crate::workflow::builders::build_package_workflow;
 
 pub async fn execute_package(
     args: PackageArgs,
     config: &GlobalConfig,
     db_path: &Path,
-    _verbose: u8,
+    verbose: u8,
     quiet: bool,
 ) -> Result<()> {
     let _command_lock = crate::util::lock::acquire_lock(
@@ -38,55 +40,32 @@ pub async fn execute_package(
         return Err(WrightError::BuildError("No targets specified to package.".to_string()).into());
     }
 
-    let plan_dirs = orchestrator::plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
-    let plan_paths = orchestrator::resolve_targets(&all_targets, &all_plans, &plan_dirs)?;
+    let options = BuildOptions {
+        verbose: verbose > 0,
+        quiet,
+        nproc_per_isolation: config.build.nproc_per_isolation,
+        force: args.force,
+        ..Default::default()
+    };
 
-    if plan_paths.is_empty() {
-        return Err(WrightError::BuildError(
-            "No targets found matching the requested names.".to_string(),
-        )
-        .into());
-    }
+    let spec = build_package_workflow(
+        Arc::new(config.clone()),
+        all_targets,
+        options,
+        args.force,
+        args.print_parts,
+    )
+    .map_err(|e| anyhow::anyhow!("package workflow: {}", e))?;
 
-    for plan_path in plan_paths {
-        let manifest = PlanManifest::from_file(&plan_path)
-            .with_context(|| format!("failed to read plan: {}", plan_path.display()))?;
-
-        if !quiet {
-            tracing::info!("Packaging {}...", manifest.metadata.name);
-        }
-
-        tokio::fs::create_dir_all(&config.general.parts_dir)
-            .await
-            .with_context(|| format!("failed to create {}", config.general.parts_dir.display()))?;
-        let parts_dir = config.general.parts_dir.clone();
-
-        if !args.force {
-            let all_exist = match manifest.outputs {
-                Some(crate::plan::manifest::OutputConfig::Multi(ref parts)) => {
-                    parts.iter().all(|(sub_name, sub_part)| {
-                        let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
-                        parts_dir.join(sub_manifest.part_filename()).exists()
-                    })
-                }
-                _ => parts_dir.join(manifest.part_filename()).exists(),
-            };
-            if all_exist {
-                if !quiet {
-                    tracing::info!(
-                        "{}",
-                        crate::builder::logging::plan_skipped_existing(&manifest.metadata.name)
-                    );
-                }
-                continue;
-            }
-        }
-
-        orchestrator::package_manifest(&manifest, config, args.print_parts, args.force)
-            .await
-            .with_context(|| format!("failed to package {}", manifest.metadata.name))?;
-    }
-
-    Ok(())
+    drive_command(
+        spec,
+        DriveOptions {
+            config,
+            db_path,
+            fresh: false,
+            quiet,
+        },
+    )
+    .await
+    .map(|_| ())
 }

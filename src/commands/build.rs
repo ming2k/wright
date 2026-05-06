@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
 use std::io::BufRead;
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::builder::orchestrator::{self, BuildOptions};
+use crate::builder::orchestrator::BuildOptions;
 use crate::cli::build::BuildArgs;
+use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
+use crate::workflow::builders::build_build_workflow;
 
 pub async fn execute_build(
     args: BuildArgs,
@@ -21,15 +23,6 @@ pub async fn execute_build(
     )
     .context("failed to acquire build command lock")?;
 
-    if args.clear_sessions {
-        let db = InstalledDb::open(db_path)
-            .await
-            .context("failed to open database")?;
-        let count = db.clear_all_sessions().await?;
-        tracing::info!("Cleared {} execution session(s)", count);
-        return Ok(());
-    }
-
     let mut all_targets = args.targets;
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
@@ -42,28 +35,32 @@ pub async fn execute_build(
         }
     }
 
-    orchestrator::run_build(
-        config,
-        all_targets,
-        BuildOptions {
-            stages: args.stage,
-            until_stage: args.until_stage,
-            fetch_only: args.fetch,
-            clean: args.clean,
-            force: args.force,
-            resume: args
-                .resume
-                .map(|h| if h.is_empty() { None } else { Some(h) }),
-            checksum: args.checksum,
-            skip_check: args.skip_check,
-            verbose: verbose > 0,
+    let options = BuildOptions {
+        stages: args.stage,
+        until_stage: args.until_stage,
+        fetch_only: args.fetch,
+        clean: args.clean,
+        force: args.force,
+        checksum: args.checksum,
+        skip_check: args.skip_check,
+        verbose: verbose > 0,
+        quiet,
+        mvp: args.mvp,
+        nproc_per_isolation: config.build.nproc_per_isolation,
+    };
+
+    let spec = build_build_workflow(Arc::new(config.clone()), all_targets, options)
+        .map_err(|e| anyhow::anyhow!("build workflow: {}", e))?;
+
+    drive_command(
+        spec,
+        DriveOptions {
+            config,
+            db_path,
+            fresh: args.fresh,
             quiet,
-            mvp: args.mvp,
-            print_parts: args.print_parts,
-            nproc_per_isolation: config.build.nproc_per_isolation,
-            package: args.package,
         },
     )
-    .await?;
-    Ok(())
+    .await
+    .map(|_| ())
 }

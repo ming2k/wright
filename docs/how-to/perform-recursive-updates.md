@@ -73,7 +73,7 @@ find /usr/bin -type f -executable -exec ldd {} \; | grep "not found"
 
 - **Don't Trust Version Numbers**: Some libraries change ABIs in minor releases. Always verify the `soname`.
 - **Leverage Link Classification**: Use `link_deps` in your `plan.toml` instead of only `runtime_deps`. This allows Wright to distinguish between "I am compiled against this library" and "I need this part after installation."
-- **Wave Installation**: Prefer `wright apply` over manual `build --package` and `install`. `apply` installs completed dependency waves in order and leaves clear resume state if a later rebuild fails.
+- **Wave Installation**: Prefer `wright apply` over manual `build`, `package`, and `install`. `apply` installs completed dependency waves in order and leaves clear resume state if a later rebuild fails.
 - **Assume External Parts**: Use `wright assume <name> <version>` (or `wright assume --file` for bulk) for external/bootstrap packages to satisfy the dependency graph without managing them via Wright.
 
 ## 5. Database Maintenance & Migration

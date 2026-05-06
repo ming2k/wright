@@ -15,3 +15,4 @@
 | [ADR-0011](0011-plan-name-only-dep-all-outputs.md) | Plan-name-only dependency references resolve to all outputs | Accepted |
 | [ADR-0012](0012-overlayfs-per-task-upper.md) | OverlayFS with per-task writable upper layers | Superseded by ADR-0013 |
 | [ADR-0013](0013-multi-lowerdir-isolation.md) | Multi-lowerdir OverlayFS isolation | Accepted |
+| [ADR-0014](0014-launch-and-pack-format.md) | `wright launch` and the pack format | Accepted |

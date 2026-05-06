@@ -6,9 +6,9 @@ This tutorial walks you through the core Wright workflows after you have complet
 
 Wright is source-first:
 
-- `wright build` manufactures local `.wright.tar.zst` parts from plans.
+- `wright build` manufactures staging and output directories from plans.
 - `wright package` slices staging into output directories and creates archives.
-- `wright install` applies archives to the live system.
+- `wright install` applies packaged plan outputs to the live system.
 
 ## Build Your First Part
 
@@ -64,7 +64,7 @@ wright apply hello --dry-run
 ## Install and Upgrade
 
 ```bash
-wright install ./hello-1.0.0-1-x86_64.wright.tar.zst
+wright install hello
 wright upgrade hello
 wright sysupgrade
 ```
@@ -95,7 +95,7 @@ wright prune --latest --apply
 ```bash
 wright build hello
 wright package hello
-wright install ./hello-1.0.0-1-x86_64.wright.tar.zst
+wright install hello
 ```
 
 ### Source-First Maintenance
@@ -109,7 +109,8 @@ wright prune --latest --apply
 ### Explicit Rebuild Scope
 
 ```bash
-wright resolve openssl --rdeps=all --depth=0 | wright build --force --package
+wright resolve openssl --rdeps=all --depth=0 | wright build --force
+wright resolve openssl --rdeps=all --depth=0 | wright package
 wright upgrade openssl
 ```
 

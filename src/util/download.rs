@@ -36,7 +36,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64, scope: &str) -> Resul
         } else {
             std::fs::copy(src_path, dest).map_err(WrightError::IoError)?;
         }
-        progress::finish_source(&pb, scope, dest);
+        progress::finish_source_with_label(&pb, scope, "Fetched", &label);
         return Ok(());
     }
 
@@ -139,7 +139,7 @@ fn try_download_http(
     tmp_file
         .persist(dest)
         .map_err(|e| WrightError::IoError(e.error))?;
-    progress::finish_source(&pb, scope, dest);
+    progress::finish_source_with_label(&pb, scope, "Fetched", label);
 
     Ok(())
 }

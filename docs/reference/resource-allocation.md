@@ -45,6 +45,14 @@ dependency graph:
 Even on a machine with many CPUs, Wright cannot exceed the number of currently
 independent tasks in the graph.
 
+## Serialized Lifecycle Stages
+
+| Stage | Concurrency |
+|-------|-------------|
+| `configure` | One at a time across active build tasks |
+| `compile` | One at a time across active build tasks |
+| Other lifecycle stages | Parallel, subject to dependency ordering and CPU budget |
+
 ## CPU Affinity Isolation
 
 Wright pins each build task process to its computed CPU share using

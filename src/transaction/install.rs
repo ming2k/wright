@@ -503,7 +503,9 @@ pub async fn install_part_with_origin(
         if let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir).await {
+            if let Err(e) =
+                run_install_script(script, root_dir, &partinfo.name, "pre_install").await
+            {
                 warn!("pre_install script failed: {}", e);
             }
             log_debug_timing(
@@ -620,7 +622,9 @@ pub async fn install_part_with_origin(
         if let Some(ref script) = hooks.post_install {
             log_running_hook(&partinfo.name, "post_install");
             phase_start = Instant::now();
-            if let Err(e) = run_install_script(script, root_dir).await {
+            if let Err(e) =
+                run_install_script(script, root_dir, &partinfo.name, "post_install").await
+            {
                 warn!("post_install script failed: {}", e);
             }
             log_debug_timing(

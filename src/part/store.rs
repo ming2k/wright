@@ -9,6 +9,7 @@ pub fn sanitize_cache_filename(raw: &str) -> String {
     crate::util::sanitize_filename(raw)
 }
 
+#[derive(Debug, Clone)]
 pub struct LocalPartStore {
     pub search_dirs: Vec<PathBuf>,
 }

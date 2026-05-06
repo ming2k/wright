@@ -47,20 +47,24 @@ wright resolve <changed-part> --rdeps=all --depth=0 | wright build --force
 Build, then install the resulting archives:
 
 ```bash
-wright resolve <changed-part> --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
+wright resolve <changed-part> --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright build --force $(cat /tmp/wright-rebuild)
+wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
 ```
 
 When you also want a deep dependency refresh, include dependency force-rebuild:
 
 ```bash
-wright resolve <changed-part> --deps=all --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
+wright resolve <changed-part> --deps=all --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright build --force $(cat /tmp/wright-rebuild)
+wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
 ```
 
 ## 4. Practical Workflow
 
 1. Choose the user-facing part you actually want to improve.
 2. Update its plan/version/source as needed.
-3. Run conservative rebuild with `wright resolve <part> --rdeps | wright build --force --package --print-parts | wright install` first; switch to `--rdeps=all --depth=0` only when the change is broader than link-ABI impact.
+3. Run conservative rebuild with `wright resolve <part> --rdeps`, then `wright build --force`, `wright package --print-parts`, and `wright install --path`; switch to `--rdeps=all --depth=0` only when the change is broader than link-ABI impact.
 4. Install the printed artifacts if this is a live system update.
 5. Run health checks:
 

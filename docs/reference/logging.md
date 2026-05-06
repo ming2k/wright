@@ -86,9 +86,9 @@ To stream subprocess output to the terminal instead of capturing it:
 wright build -v <target>
 ```
 
-Verbose subprocess output is mirrored to stderr, not stdout. This keeps
-`wright build --package --print-parts` safe to pipe into `wright install` while still
-showing live build logs.
+Verbose subprocess output is mirrored to stderr, not stdout. `wright build`
+does not print archive paths; use `wright package --print-parts` when you need
+pipe-safe archive paths for `wright install --path`.
 
 When Wright runs multiple build tasks in parallel, `-v` still keeps subprocess
 output captured per task to avoid interleaving noise. For fully live output,

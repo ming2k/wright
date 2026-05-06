@@ -26,7 +26,8 @@ install -Dm644 target/man/*.1 /usr/share/man/man1/
 ## Quick Start
 
 ```bash
-wright build hello --package
+wright build hello
+wright package hello
 wright install hello
 wright apply hello
 wright prune --latest --apply

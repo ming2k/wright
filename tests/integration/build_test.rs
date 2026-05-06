@@ -39,8 +39,10 @@ async fn test_build_hello_fixture() {
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -70,8 +72,10 @@ async fn test_build_and_archive_hello() {
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -145,8 +149,10 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -159,10 +165,7 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
         archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
     let partinfo = archive::read_partinfo(&archive_path).unwrap();
 
-    assert_eq!(
-        partinfo.runtime_deps,
-        vec!["openssl", "zlib"]
-    );
+    assert_eq!(partinfo.runtime_deps, vec!["openssl", "zlib"]);
 
     let extract_dir = tempfile::tempdir().unwrap();
     archive::extract_part(&archive_path, extract_dir.path()).unwrap();
@@ -218,8 +221,10 @@ include = ["/usr/share/doc/.*"]
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -275,8 +280,10 @@ include = ["/usr/bin/.*"]
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -338,8 +345,10 @@ reason = "documentation is intentionally not packaged"
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -402,8 +411,10 @@ async fn test_build_single_stage() {
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -421,8 +432,10 @@ async fn test_build_single_stage() {
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -454,8 +467,10 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
             Some("staging"),
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -471,7 +486,7 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
 }
 
 #[tokio::test]
-async fn test_print_parts_keeps_verbose_build_output_off_stdout() {
+async fn test_package_print_parts_keeps_verbose_build_output_off_stdout() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("components");
@@ -494,7 +509,7 @@ async fn test_print_parts_keeps_verbose_build_output_off_stdout() {
 name = "verbose-pipe-test"
 version = "1.0.0"
 release = 1
-description = "verify stdout/stderr split for --print-parts"
+description = "verify stdout/stderr split for package --print-parts"
 license = "MIT"
 arch = "x86_64"
 
@@ -545,26 +560,40 @@ retry_count = 3
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+    let build_output = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
         .arg("-v")
         .arg("build")
         .arg("verbose-pipe-test")
-        .arg("--package")
+        .output()
+        .unwrap();
+
+    assert!(
+        build_output.status.success(),
+        "wright build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("package")
+        .arg("verbose-pipe-test")
         .arg("--print-parts")
         .output()
         .unwrap();
 
     assert!(
         output.status.success(),
-        "wright build failed: stdout={:?}, stderr={:?}",
+        "wright package failed: stdout={:?}, stderr={:?}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
     let stdout_lines: Vec<_> = stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -677,7 +706,6 @@ retry_count = 3
         .arg("stop-at-staging")
         .arg("--until-stage")
         .arg("staging")
-        .arg("--print-parts")
         .output()
         .unwrap();
 
@@ -834,13 +862,13 @@ retry_count = 3
 
     std::fs::write(&signal_path, "ok").unwrap();
 
+    // Rerunning auto-resumes; --resume was dropped in favor of implicit resume.
     let second = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
         .arg("build")
         .arg("resume-dep")
         .arg("resume-main")
-        .arg("--resume")
         .output()
         .unwrap();
 

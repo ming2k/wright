@@ -7,7 +7,10 @@ Examples:
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
   wright resolve openssl --rdeps | wright build
-  echo -e 'curl\\nwget' | wright build --force";
+  echo -e 'curl\\nwget' | wright build --force
+
+Resume: rerunning the same command resumes any incomplete run automatically.
+Use --fresh to discard prior state and start over.";
 
 #[derive(Parser, Debug, Clone)]
 pub struct BuildArgs {
@@ -36,31 +39,21 @@ pub struct BuildArgs {
     #[arg(long, short = 'c')]
     pub clean: bool,
 
-    /// Force rebuild: bypass the build cache and re-run the pipeline
+    /// Force rebuild: bypass the build cache, re-run all lifecycle
+    /// stages, and overwrite existing output parts
     #[arg(long, short)]
     pub force: bool,
 
-    /// Resume a previous build session: skip parts that were already
-    /// successfully built and installed. Optionally pass a session hash
-    /// (printed on failure); without a hash, auto-detects from the
-    /// current build set.
-    #[arg(long, short, num_args = 0..=1, default_missing_value = "")]
-    pub resume: Option<String>,
+    /// Discard any prior workflow state for these inputs and start from
+    /// scratch. By default, rerunning the same command resumes the prior
+    /// run (skipping completed steps).
+    #[arg(long)]
+    pub fresh: bool,
 
     /// Build using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it
     #[arg(long)]
     pub mvp: bool,
-
-    /// Print produced archive paths to stdout after packaging.
-    /// Only has effect when combined with `--package`.
-    /// Human-readable logs continue to go to stderr so this remains pipe-safe.
-    #[arg(long)]
-    pub print_parts: bool,
-
-    /// Remove all saved build sessions and exit
-    #[arg(long)]
-    pub clear_sessions: bool,
 
     /// Download sources only; do not build
     #[arg(long, conflicts_with = "checksum")]
@@ -69,8 +62,4 @@ pub struct BuildArgs {
     /// Compute and update SHA256 checksums in plan.toml
     #[arg(long, conflicts_with = "fetch")]
     pub checksum: bool,
-
-    /// Package outputs into `.wright.tar.zst` archives after build
-    #[arg(long)]
-    pub package: bool,
 }

@@ -6,7 +6,8 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 
 - `wright build` builds plans into staging directories (`work/` and `staging/`)
 - `wright package` slices `staging/` into `outputs/` (using the plan's `[[output]]` rules) and creates `.wright.tar.zst` archives
-- `wright install` reads `.PARTINFO` metadata directly from archives
+- `wright install` resolves plan names to expected archives in `parts_dir`
+- `wright install --path` reads explicit archive paths and their `.PARTINFO` metadata
 - `wright install` rejects mixed-revision archives from the same plan in one batch
 - `wright install` rejects plan revision changes that would leave installed outputs from the old revision
 
@@ -15,7 +16,7 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 ```bash
 wright build curl
 wright package curl
-wright install ./curl-8.0-1-x86_64.wright.tar.zst
+wright install curl
 ```
 
 Or use `wright apply` for plan-driven maintenance:
@@ -40,7 +41,9 @@ wright prune --latest --apply
 For explicit control over build and install phases:
 
 ```bash
-wright resolve openssl --rdeps=all --depth=0 | wright build --force --package --print-parts | wright install
+wright resolve openssl --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright build --force $(cat /tmp/wright-rebuild)
+wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
 ```
 
 `--print-parts` keeps stdout reserved for archive paths. Human-readable logs stay on stderr.

@@ -3456,7 +3456,7 @@ dependencies = [
 
 [[package]]
 name = "wright"
-version = "4.0.10"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "bzip2",

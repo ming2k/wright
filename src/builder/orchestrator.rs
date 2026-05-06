@@ -1,13 +1,12 @@
 //! Build orchestrator — parallel build scheduling, dependency resolution,
 //! cascade expansion, and automatic bootstrap cycle detection/resolution.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::builder::logging;
 use crate::builder::mvp::inject_bootstrap_passes;
 use crate::error::{Result, WrightError, WrightResultExt};
-use tracing::{info, warn};
 
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
@@ -17,7 +16,6 @@ mod execute;
 mod planning;
 mod resolver;
 
-use execute::execute_builds;
 use planning::{
     build_dep_map, construction_plan_batches, construction_plan_label, expand_missing_dependencies,
     expand_rebuild_deps,
@@ -25,8 +23,6 @@ use planning::{
 
 pub use execute::package_manifest;
 pub use resolver::{plan_search_dirs, resolve_targets, setup_part_store};
-
-use crate::plan::manifest::OutputConfig;
 
 #[derive(Debug, Clone)]
 pub struct BuildExecutionPlan {
@@ -81,16 +77,12 @@ pub struct BuildOptions {
     pub fetch_only: bool,
     pub clean: bool,
     pub force: bool,
-    pub resume: Option<Option<String>>,
     pub checksum: bool,
     pub skip_check: bool,
     pub verbose: bool,
     pub quiet: bool,
     pub mvp: bool,
-    pub print_parts: bool,
     pub nproc_per_isolation: Option<u32>,
-    /// Whether to package outputs into `.wright.tar.zst` archives after build.
-    pub package: bool,
 }
 
 impl BuildOptions {
@@ -99,7 +91,7 @@ impl BuildOptions {
     }
 }
 
-fn plan_file_fingerprint(path: &Path) -> Result<String> {
+pub fn plan_file_fingerprint(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
@@ -108,7 +100,7 @@ fn plan_file_fingerprint(path: &Path) -> Result<String> {
     hasher.update(b"\n-- plan.toml --\n");
     let content = std::fs::read(path).map_err(|e| {
         WrightError::BuildError(format!(
-            "failed to read {} for session hash: {}",
+            "failed to read {} for plan fingerprint: {}",
             path.display(),
             e
         ))
@@ -120,7 +112,7 @@ fn plan_file_fingerprint(path: &Path) -> Result<String> {
         hasher.update(b"\n-- mvp.toml --\n");
         let mvp_content = std::fs::read(&mvp_path).map_err(|e| {
             WrightError::BuildError(format!(
-                "failed to read {} for session hash: {}",
+                "failed to read {} for plan fingerprint: {}",
                 mvp_path.display(),
                 e
             ))
@@ -129,123 +121,6 @@ fn plan_file_fingerprint(path: &Path) -> Result<String> {
     }
 
     Ok(format!("{:x}", hasher.finalize()))
-}
-
-pub fn task_fingerprints(plan: &BuildExecutionPlan) -> Result<BTreeMap<String, String>> {
-    let mut fingerprints = BTreeMap::new();
-    let mut tasks: Vec<_> = plan.name_to_path.iter().collect();
-    tasks.sort_by(|a, b| a.0.cmp(b.0));
-
-    for (task_name, path) in tasks {
-        fingerprints.insert(task_name.clone(), plan_file_fingerprint(path)?);
-    }
-
-    Ok(fingerprints)
-}
-
-pub fn compute_build_session_hash(
-    plan: &BuildExecutionPlan,
-    opts: &BuildOptions,
-    session_scope: &str,
-) -> Result<String> {
-    use sha2::{Digest, Sha256};
-
-    let fingerprints = task_fingerprints(plan)?;
-    let mut hasher = Sha256::new();
-    hasher.update(b"wright-session-v2\n");
-    hasher.update(session_scope.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(format!("force={}\n", opts.force).as_bytes());
-    hasher.update(format!("clean={}\n", opts.clean).as_bytes());
-    hasher.update(format!("mvp={}\n", opts.mvp).as_bytes());
-    hasher.update(format!("fetch_only={}\n", opts.fetch_only).as_bytes());
-    hasher.update(format!("skip_check={}\n", opts.skip_check).as_bytes());
-    hasher.update(format!("checksum={}\n", opts.checksum).as_bytes());
-    hasher.update(format!("package={}\n", opts.package).as_bytes());
-    hasher.update(format!("until_stage={:?}\n", opts.until_stage).as_bytes());
-    hasher.update(format!("stages={:?}\n", opts.stages).as_bytes());
-
-    for (batch_idx, tasks) in plan.batches.iter().enumerate() {
-        hasher.update(format!("batch:{}\n", batch_idx).as_bytes());
-        let mut batch_tasks = tasks.clone();
-        batch_tasks.sort();
-        for task in batch_tasks {
-            hasher.update(task.as_bytes());
-            hasher.update(b"\n");
-            if let Some(fingerprint) = fingerprints.get(&task) {
-                hasher.update(fingerprint.as_bytes());
-                hasher.update(b"\n");
-            }
-        }
-    }
-
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn expected_task_artifacts(parts_dir: &Path, plan_path: &Path) -> Result<Vec<PathBuf>> {
-    let manifest = PlanManifest::from_file(plan_path)?;
-    match manifest.outputs {
-        Some(OutputConfig::Multi(ref parts)) => Ok(parts
-            .iter()
-            .map(|(sub_name, sub_part)| {
-                let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
-                parts_dir.join(sub_manifest.part_filename())
-            })
-            .collect()),
-        _ => Ok(vec![parts_dir.join(manifest.part_filename())]),
-    }
-}
-
-fn expected_staging_dirs(build_dir: &Path, plan_path: &Path) -> Result<Vec<PathBuf>> {
-    let manifest = PlanManifest::from_file(plan_path)?;
-    let build_root = build_dir.join(format!(
-        "{}-{}",
-        manifest.metadata.name,
-        manifest.metadata.version.as_deref().unwrap_or("noversion")
-    ));
-    match manifest.outputs {
-        Some(OutputConfig::Multi(ref parts)) => {
-            let mut dirs = Vec::new();
-            for (sub_name, sub_part) in parts {
-                if sub_part.include.is_none() {
-                    dirs.push(build_root.join("outputs").join("default"));
-                } else {
-                    dirs.push(build_root.join("outputs").join(sub_name));
-                }
-            }
-            Ok(dirs)
-        }
-        _ => Ok(vec![build_root.join("outputs").join("default")]),
-    }
-}
-
-pub async fn load_completed_build_tasks(
-    db: &InstalledDb,
-    config: &GlobalConfig,
-    plan: &BuildExecutionPlan,
-    session_hash: &str,
-    package: bool,
-) -> Result<HashSet<String>> {
-    let completed = db
-        .get_execution_session_completed_items(session_hash)
-        .await?;
-    let mut reusable = HashSet::new();
-
-    for task_name in completed {
-        let Some(plan_path) = plan.name_to_path.get(&task_name) else {
-            continue;
-        };
-        let artifacts = if package {
-            expected_task_artifacts(&config.general.parts_dir, plan_path)?
-        } else {
-            expected_staging_dirs(&config.build.build_dir, plan_path)?
-        };
-        if artifacts.iter().all(|path| path.exists()) {
-            reusable.insert(task_name);
-        }
-    }
-
-    Ok(reusable)
 }
 
 pub fn resolve_explicit_plan_names(
@@ -445,32 +320,29 @@ impl BuildExecutionPlan {
         task.trim_end_matches(":bootstrap")
     }
 
-    pub async fn execute_batch(
-        &self,
-        config: &GlobalConfig,
-        batch_index: usize,
-        opts: &BuildOptions,
-        session_hash: Option<&str>,
-        session_db: Option<&InstalledDb>,
-        session_completed: &HashSet<String>,
-    ) -> Result<()> {
-        let batch = self.batches.get(batch_index).ok_or_else(|| {
-            WrightError::BuildError(format!("unknown build batch {}", batch_index))
-        })?;
-        let batch_set: HashSet<String> = batch.iter().cloned().collect();
-        execute_builds(
-            config,
-            &self.name_to_path,
-            &self.deps_map,
-            &batch_set,
-            opts,
-            &self.bootstrap_excluded,
-            session_hash,
-            session_db,
-            session_completed,
-        )
-        .await
+    pub fn build_set(&self) -> &HashSet<String> {
+        &self.build_set
     }
+
+    pub fn deps_for_task(&self, task: &str) -> &[String] {
+        self.deps_map
+            .get(task)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn bootstrap_excluded_for(&self, task: &str) -> &[String] {
+        self.bootstrap_excluded
+            .get(task)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn is_post_bootstrap_full(&self, task: &str) -> bool {
+        !task.ends_with(":bootstrap")
+            && self.build_set.contains(&format!("{}:bootstrap", task))
+    }
+
 }
 
 pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary {
@@ -529,156 +401,6 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
     let graph = planning::build_dep_map(&plans_to_build, false, false, HashMap::new(), &all_plans)?;
 
     execute::lint_dependency_graph(&graph)
-}
-
-pub async fn run_build(
-    config: &GlobalConfig,
-    targets: Vec<String>,
-    opts: BuildOptions,
-) -> Result<()> {
-    let plan = create_execution_plan(config, targets, &opts)?;
-
-    let session_hash = if opts.resume.is_some() || opts.is_build_op() {
-        Some(compute_build_session_hash(&plan, &opts, "build")?)
-    } else {
-        None
-    };
-
-    let (_effective_resume, session_completed) = match &opts.resume {
-        Some(explicit_hash) => {
-            let hash = match explicit_hash {
-                Some(h) => h.clone(),
-                None => session_hash.clone().unwrap_or_default(),
-            };
-            if hash.is_empty() {
-                (false, HashSet::new())
-            } else {
-                let db = InstalledDb::open(&config.general.db_path)
-                    .await
-                    .context("failed to open database for resume")?;
-                if let Some(session) = db.get_execution_session(&hash).await? {
-                    if session.command_kind != "build" {
-                        return Err(WrightError::BuildError(format!(
-                            "session {} is for '{}', not 'build'",
-                            &hash[..12.min(hash.len())],
-                            session.command_kind
-                        )));
-                    }
-                    let completed = load_completed_build_tasks(
-                        &db,
-                        config,
-                        &plan,
-                        session.task_session_hash.as_deref().unwrap_or(&hash),
-                        opts.package,
-                    )
-                    .await?;
-                    info!(
-                        "resuming session {} ({}/{} completed)",
-                        &hash[..12.min(hash.len())],
-                        completed.len(),
-                        plan.build_set.len()
-                    );
-                    (true, completed)
-                } else {
-                    warn!(
-                        "no existing session {} found, starting fresh build",
-                        &hash[..12.min(hash.len())]
-                    );
-                    (false, HashSet::new())
-                }
-            }
-        }
-        None => (false, HashSet::new()),
-    };
-
-    if !opts.quiet {
-        let resources = summarize_build_resources(config);
-        info!("{}", describe_build_resources(resources));
-    }
-
-    if !opts.quiet {
-        for (batch, tasks) in plan.batches.iter().enumerate() {
-            let pending: Vec<String> = tasks
-                .iter()
-                .filter(|name| !session_completed.contains(*name))
-                .cloned()
-                .collect();
-
-            for name in tasks {
-                if session_completed.contains(name) {
-                    info!(
-                        "Skipping batch {}: plan {} was already completed in a previous run.",
-                        batch + 1,
-                        name.trim_end_matches(":bootstrap"),
-                    );
-                }
-            }
-
-            if !pending.is_empty() {
-                info!(
-                    "{}",
-                    logging::describe_batch(
-                        "Build",
-                        batch + 1,
-                        plan.batches.len(),
-                        &describe_batch_actions(&plan, &pending, &opts),
-                    ),
-                );
-            }
-        }
-    }
-
-    let mut session_db = None;
-    let active_session_hash = if let Some(ref hash) = session_hash {
-        if opts.is_build_op() {
-            if let Ok(db) = InstalledDb::open(&config.general.db_path).await {
-                let packages: Vec<String> = plan.name_to_path.keys().cloned().collect();
-                let _ = db
-                    .ensure_execution_session(hash, "build", Some(hash), None)
-                    .await;
-                let _ = db.ensure_execution_session_items(hash, &packages).await;
-                session_db = Some(db);
-            }
-            Some(hash.clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let result = execute_builds(
-        config,
-        &plan.name_to_path,
-        &plan.deps_map,
-        &plan.build_set,
-        &opts,
-        &plan.bootstrap_excluded,
-        active_session_hash.as_deref(),
-        session_db.as_ref(),
-        &session_completed,
-    )
-    .await;
-
-    match &result {
-        Ok(()) => {
-            if let Some(ref hash) = active_session_hash {
-                if let Some(db) = session_db.as_ref() {
-                    let _ = db.clear_execution_session(hash).await;
-                }
-            }
-        }
-        Err(_) => {
-            if let Some(ref hash) = active_session_hash {
-                info!(
-                    "Build session saved as {}. Resume with --resume {}.",
-                    hash, hash
-                );
-            }
-        }
-    }
-
-    result
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

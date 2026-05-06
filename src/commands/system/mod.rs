@@ -33,7 +33,7 @@ pub async fn execute(
 
     if let SystemCommands::Apply {
         targets,
-        resume,
+        fresh,
         deps,
         rdeps,
         match_policies,
@@ -44,7 +44,7 @@ pub async fn execute(
     {
         return apply::execute_apply(apply::ApplyArgs {
             targets,
-            resume,
+            fresh,
             deps,
             rdeps,
             match_policies,
@@ -61,19 +61,26 @@ pub async fn execute(
         .await;
     }
 
+    if let SystemCommands::Install {
+        parts,
+        force,
+        nodeps,
+        path,
+    } = command
+    {
+        return install::execute_install(
+            parts, force, nodeps, path, config, db_path, root_dir, &part_store,
+        )
+        .await;
+    }
+
     let db = InstalledDb::open(db_path)
         .await
         .context("failed to open database")?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
-        SystemCommands::Install {
-            parts,
-            force,
-            nodeps,
-        } => {
-            install::execute_install(&db, parts, force, nodeps, root_dir, &part_store).await?;
-        }
+        SystemCommands::Install { .. } => unreachable!(),
         SystemCommands::List {
             long,
             roots,

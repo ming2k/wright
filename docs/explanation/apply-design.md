@@ -11,7 +11,7 @@ The lower-level commands remain important:
 - `wright build` manufactures staging directories from plans.
 - `wright package` creates archives from staging directories.
 - `wright resolve` expands a build set.
-- `wright install` applies chosen archives to the live system.
+- `wright install` applies chosen plan outputs to the live system.
 
 `wright apply` exists because day-to-day maintenance usually wants one higher
 level policy:
@@ -214,9 +214,9 @@ explicitly.
 
 Use this rule of thumb:
 
-- use `wright build` when you want archives
+- use `wright build` when you want staging and output directories
 - use `wright resolve` when you want to shape rebuild scope
-- use `wright install` when you already know which archives to apply
+- use `wright install` when you already know which plan outputs to apply
 - use `wright apply` when you want the live system to converge toward the
   current plans with Wright's default install/upgrade/dependency combo policy
 

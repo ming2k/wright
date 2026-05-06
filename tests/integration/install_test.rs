@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use wright::builder::Builder;
+use wright::cli::system::Commands as SystemCommands;
+use wright::commands::system;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
 use wright::part::archive;
@@ -36,8 +38,10 @@ async fn build_hello_archive() -> PathBuf {
             None,
             false,
             false,
+            false,
             &std::collections::HashMap::new(),
             false,
+            None,
             None,
             None,
             None,
@@ -73,7 +77,12 @@ fn persistent_archive_path(name: &str) -> PathBuf {
 }
 
 fn build_split_archive(version: &str, output_name: &str) -> PathBuf {
-    let manifest = PlanManifest::parse(&format!(
+    let manifest = split_manifest(version);
+    create_split_archive_from_manifest(&manifest, output_name, None)
+}
+
+fn split_manifest(version: &str) -> PlanManifest {
+    PlanManifest::parse(&format!(
         r#"
 name = "split-plan"
 version = "{version}"
@@ -93,8 +102,14 @@ description = "y output"
 include = ["/usr/bin/y"]
 "#
     ))
-    .unwrap();
+    .unwrap()
+}
 
+fn create_split_archive_from_manifest(
+    manifest: &PlanManifest,
+    output_name: &str,
+    output_dir: Option<&Path>,
+) -> PathBuf {
     let OutputConfig::Multi(outputs) = manifest.outputs.as_ref().unwrap();
     let sub = outputs
         .iter()
@@ -112,18 +127,49 @@ include = ["/usr/bin/y"]
     )
     .unwrap();
 
-    let output_dir = tempfile::tempdir().unwrap();
-    let archive = archive::create_part(
-        part_dir.path(),
-        &sub_manifest,
-        output_dir.path(),
-        Some(&manifest),
+    let temp_output_dir = tempfile::tempdir().unwrap();
+    let output_dir = output_dir.unwrap_or(temp_output_dir.path());
+    let archive =
+        archive::create_part(part_dir.path(), &sub_manifest, output_dir, Some(&manifest)).unwrap();
+
+    if output_dir == temp_output_dir.path() {
+        let version = manifest.metadata.version.as_deref().unwrap_or("noversion");
+        let persistent = persistent_archive_path(&format!("{}-{}", output_name, version));
+        std::fs::copy(&archive, &persistent).unwrap();
+        persistent
+    } else {
+        archive
+    }
+}
+
+fn write_split_plan(plans_dir: &Path, version: &str) -> PathBuf {
+    let plan_dir = plans_dir.join("split-plan");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        format!(
+            r#"
+name = "split-plan"
+version = "{version}"
+release = 1
+description = "split plan"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "x"
+description = "x output"
+include = ["/usr/bin/x"]
+
+[[output]]
+name = "y"
+description = "y output"
+include = ["/usr/bin/y"]
+"#
+        ),
     )
     .unwrap();
-
-    let persistent = persistent_archive_path(&format!("{}-{}", output_name, version));
-    std::fs::copy(&archive, &persistent).unwrap();
-    persistent
+    plan_dir
 }
 
 #[tokio::test]
@@ -208,6 +254,89 @@ async fn test_install_accepts_same_revision_split_outputs() {
 
     let _ = std::fs::remove_file(&x);
     let _ = std::fs::remove_file(&y);
+}
+
+#[tokio::test]
+async fn test_install_command_resolves_plan_name_to_all_outputs() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans_dir = temp.path().join("plans");
+    let parts_dir = temp.path().join("parts");
+    let state_dir = temp.path().join("state");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+
+    write_split_plan(&plans_dir, "1.0.0");
+    let manifest = split_manifest("1.0.0");
+    let x_archive = create_split_archive_from_manifest(&manifest, "x", Some(&parts_dir));
+    let y_archive = create_split_archive_from_manifest(&manifest, "y", Some(&parts_dir));
+    assert_eq!(
+        x_archive.file_name().and_then(|name| name.to_str()),
+        Some("x-1.0.0-1-x86_64.wright.tar.zst")
+    );
+    assert_eq!(
+        y_archive.file_name().and_then(|name| name.to_str()),
+        Some("y-1.0.0-1-x86_64.wright.tar.zst")
+    );
+
+    let db_path = state_dir.join("wright.db");
+    let mut config = GlobalConfig::default();
+    config.general.plans_dir = plans_dir;
+    config.general.parts_dir = parts_dir;
+    config.general.db_path = db_path.clone();
+
+    let cmd = SystemCommands::Install {
+        parts: vec!["split-plan".to_string()],
+        force: false,
+        nodeps: false,
+        path: false,
+    };
+    system::execute(cmd, &config, &db_path, &root, 0, false)
+        .await
+        .unwrap();
+
+    assert!(root.join("usr/bin/x").exists());
+    assert!(root.join("usr/bin/y").exists());
+
+    let db = InstalledDb::open(&db_path).await.unwrap();
+    assert!(db.get_part("x").await.unwrap().is_some());
+    assert!(db.get_part("y").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn test_install_command_requires_path_flag_for_archive_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans_dir = temp.path().join("plans");
+    let parts_dir = temp.path().join("parts");
+    let state_dir = temp.path().join("state");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    std::fs::create_dir_all(&parts_dir).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+
+    let archive_path = temp.path().join("hello-1.0.0-1-x86_64.wright.tar.zst");
+    std::fs::write(&archive_path, b"not a real archive").unwrap();
+
+    let db_path = state_dir.join("wright.db");
+    let mut config = GlobalConfig::default();
+    config.general.plans_dir = plans_dir;
+    config.general.parts_dir = parts_dir;
+    config.general.db_path = db_path.clone();
+
+    let cmd = SystemCommands::Install {
+        parts: vec![archive_path.display().to_string()],
+        force: false,
+        nodeps: false,
+        path: false,
+    };
+    let err = system::execute(cmd, &config, &db_path, &root, 0, false)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("--path"));
 }
 
 #[tokio::test]
