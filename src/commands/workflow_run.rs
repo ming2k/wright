@@ -10,7 +10,6 @@ use tokio::sync::watch;
 
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
-use crate::workflow::runs::delete_workflow;
 use crate::workflow::{drive, RunOutcome, SchedulerPolicy, TerminalStatus, WorkflowSpec};
 
 pub struct DriveOptions<'a> {
@@ -26,7 +25,8 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
         .context("open database")?;
 
     if opts.fresh {
-        delete_workflow(&db, &spec.workflow_id)
+        crate::workflow::WorkflowStore::new(&db)
+            .clear_workflow(&spec.workflow_id)
             .await
             .map_err(|e| anyhow::anyhow!("--fresh: {}", e))?;
     }
@@ -39,7 +39,7 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
         max_attempts: Some(3),
     };
 
-    let log_dir = opts.config.general.logs_dir.join("runs");
+    let log_dir = opts.config.general.logs_dir.join("workflow");
     std::fs::create_dir_all(&log_dir).ok();
 
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -57,7 +57,7 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
     match outcome.status {
         TerminalStatus::Succeeded => {
             if !opts.quiet {
-                tracing::info!("run {} succeeded", outcome.run_id.as_str());
+                tracing::info!("workflow {} succeeded", outcome.workflow_id.short());
             }
         }
         TerminalStatus::Failed => {
@@ -65,13 +65,16 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
                 eprintln!("step {} failed: {}", step_id.short(), msg);
             }
             eprintln!(
-                "run {} failed; rerun the same command to resume, or `wright runs show {}`",
-                outcome.run_id, outcome.run_id
+                "workflow {} failed; rerun the same command to resume, or use --fresh to discard active workflow state",
+                outcome.workflow_id.short()
             );
             std::process::exit(1);
         }
         TerminalStatus::Aborted => {
-            eprintln!("run {} aborted", outcome.run_id);
+            eprintln!(
+                "workflow {} aborted; rerun the same command to resume",
+                outcome.workflow_id.short()
+            );
             std::process::exit(1);
         }
     }

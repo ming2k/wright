@@ -21,12 +21,11 @@ pub const DEFAULT_STAGES: &[&str] = &[
     "compile",
     "check",
     "staging",
-    "fabricate",
 ];
 
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
-const STAGING_DEPENDENT_STAGES: &[&str] = &["staging", "fabricate"];
+const STAGING_DEPENDENT_STAGES: &[&str] = &["staging"];
 
 fn stage_sentinel_path(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) -> PathBuf {
     let prefix = match build_phase {

@@ -5,4 +5,4 @@ Documentation for contributors and maintainers.
 - [Contributing](contributing.md)
 - [Logging Design](logging-design.md)
 - [Module Layout](module-layout.md)
-- [Isolation Pitfalls](isolation-pitfalls.md) — known traps in the isolation subsystem
+- [Isolation Race Handling](isolation-pitfalls.md) — ETXTBSY, OverlayFS, and mount-ordering traps

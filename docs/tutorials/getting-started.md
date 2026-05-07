@@ -4,7 +4,7 @@
 
 - Rust stable
 - Linux x86_64
-- `bubblewrap`
+- Linux namespaces and OverlayFS support
 - `bash`
 - a C compiler for the sample plan
 

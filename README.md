@@ -10,7 +10,7 @@ replaced.
 ## Features
 
 - Declarative TOML plans
-- Sandboxed builds via bubblewrap
+- Sandboxed builds via Linux namespaces and OverlayFS
 - Transactional install / upgrade / remove
 - Local part inventory for reuse and rollback
 - Source-first maintenance through wave-aware `wright apply`

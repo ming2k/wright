@@ -4,16 +4,16 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::database::{
-    Dependency, FileType, InstalledDb, NewPart, TransactionOperation, TransactionStatus,
+    Dependency, FileType, InstalledDb, NewPart, TransactionOperation,
 };
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::version::{self, Version};
+use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
-use crate::transaction::rollback::RollbackState;
 
-use super::{journal_path_from_db, log_debug_timing, self_replace_provides_conflicts};
+use super::{log_debug_timing, self_replace_provides_conflicts};
 
 pub async fn upgrade_part(
     db: &InstalledDb,
@@ -150,21 +150,14 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    let mut rollback_state = match journal_path_from_db(db) {
-        Some(jp) => RollbackState::with_journal(jp),
-        None => RollbackState::new(),
-    };
-
-    let tx_id = db
-        .record_transaction(
-            TransactionOperation::Upgrade,
-            &partinfo.name,
-            Some(&installed_plan.version),
-            Some(&partinfo.plan.version),
-            TransactionStatus::Pending,
-            None,
-        )
-        .await?;
+    let mut tx = TransactionContext::begin(
+        db,
+        TransactionOperation::Upgrade,
+        &partinfo.name,
+        Some(&installed_plan.version),
+        Some(&partinfo.plan.version),
+    )
+    .await?;
 
     let existing_files = db.get_files(installed_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
@@ -204,7 +197,7 @@ pub async fn upgrade_part(
 
             match result {
                 Ok(()) => {
-                    rollback_state.record_backup(full_path, backup_path);
+                    tx.rollback_state().record_backup(full_path, backup_path);
                 }
                 Err(e) => {
                     return Err(WrightError::UpgradeError(format!(
@@ -216,7 +209,7 @@ pub async fn upgrade_part(
             }
         } else if file.file_type == FileType::Symlink {
             if let Ok(target) = tokio::fs::read_link(&full_path).await {
-                rollback_state
+                tx.rollback_state()
                     .record_symlink_backup(full_path, target.to_string_lossy().to_string());
             }
         }
@@ -250,7 +243,7 @@ pub async fn upgrade_part(
         &new_entries,
         temp_dir.path(),
         root_dir,
-        &mut rollback_state,
+        tx.rollback_state(),
         None,
         &config_paths,
         &divert_paths,
@@ -260,9 +253,7 @@ pub async fn upgrade_part(
         Ok(paths) => paths,
         Err(e) => {
             warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
-            rollback_state.rollback();
-            db.update_transaction_status(tx_id, TransactionStatus::RolledBack)
-                .await?;
+            tx.rollback().await?;
             return Err(e);
         }
     };
@@ -387,8 +378,7 @@ pub async fn upgrade_part(
 
     self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed)
-        .await?;
+    tx.commit().await?;
     log_debug_timing(
         "upgrade",
         &partinfo.name,
@@ -413,8 +403,6 @@ pub async fn upgrade_part(
             );
         }
     }
-
-    rollback_state.commit();
 
     log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
     let installed_ver_rel = if installed_plan.version.is_empty() {

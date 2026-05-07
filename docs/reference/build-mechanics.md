@@ -45,13 +45,15 @@ Each part gets its own working directory under `build_dir`
 `staging/`, `outputs/`, and `logs/` are recreated clean at the start of every build. `work/` is
 **reused** when the build key has not changed (same version, sources, and
 lifecycle scripts), enabling incremental builds — the fetch/verify/extract
-steps are skipped entirely. When `work/` is reused, lifecycle stages that have a
-`.wright-stage-<name>` sentinel file (written after successful completion) are
-also skipped, making a repeated `wright build` nearly instant when nothing
-changed. When the build key changes (e.g. a version bump),
-`work/` is cleaned and sources are re-extracted automatically — all sentinels
-are cleared with it. `--clean`
-always removes the entire working directory including `work/`.
+steps are skipped entirely. The build key is committed as soon as sources are
+successfully extracted, so a first build that later fails in a lifecycle stage
+can still reuse `work/` on retry. When `work/` is reused, lifecycle stages that
+have a `.wright-stage-<name>` sentinel file (written after successful
+completion) are also skipped, making a repeated `wright build` nearly instant
+when nothing changed. When the build key changes (e.g. a version bump), `work/`
+is cleaned and sources are re-extracted automatically — all sentinels are
+cleared with it. `--clean` always removes the entire working directory including
+`work/`.
 
 If multiple outputs are defined in `plan.toml` (split-parts), additional
 output directories are created:

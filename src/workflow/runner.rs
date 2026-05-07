@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, watch, Mutex, OwnedMutexGuard, OwnedSemaphorePermit, Sem
 use tracing::{info, warn};
 
 use super::errors::{Result, WorkflowError};
-use super::id::{RunId, StepId, WorkflowId};
+use super::id::{StepId, WorkflowId};
 use super::spec::WorkflowSpec;
 use super::step::{ResourceClass, ScheduledStep, Status, StepContext, TerminalStatus};
 use super::store::WorkflowStore;
@@ -23,9 +23,9 @@ pub struct SchedulerPolicy {
     /// independent branches). Defaults to true; the build orchestrator
     /// behaves the same way today.
     pub fail_fast: bool,
-    /// Maximum attempts per step across runs.  A step whose `attempt` count
+    /// Maximum attempts per step across drive attempts.  A step whose `attempt` count
     /// reaches this limit is treated as permanently failed and will not be
-    /// re-attempted on future runs.  `None` means unlimited retries.
+    /// re-attempted on future attempts.  `None` means unlimited retries.
     pub max_attempts: Option<u32>,
 }
 
@@ -44,7 +44,6 @@ impl Default for SchedulerPolicy {
 /// summary for the caller.
 #[derive(Debug)]
 pub struct RunOutcome {
-    pub run_id: RunId,
     pub workflow_id: WorkflowId,
     pub status: TerminalStatus,
     pub failed: Vec<(StepId, String)>,
@@ -52,6 +51,8 @@ pub struct RunOutcome {
 
 struct StepDone {
     id: StepId,
+    kind: &'static str,
+    inputs_json: String,
     result: Result<serde_json::Value>,
 }
 
@@ -64,8 +65,9 @@ enum Permit {
 
 /// Drive a workflow to a terminal state.
 ///
-/// Idempotent across invocations: rerunning with the same `WorkflowSpec`
-/// preserves succeeded steps and only re-attempts pending/failed work.
+/// Idempotent while a workflow is incomplete: rerunning with the same
+/// `WorkflowSpec` preserves succeeded upstream steps until the workflow
+/// reaches success. Successful workflows clear their step state before return.
 pub async fn drive(
     db: Arc<InstalledDb>,
     spec: WorkflowSpec,
@@ -86,14 +88,11 @@ pub async fn drive(
     // database lock guarantees no other process owns them, so reset to pending.
     store.reset_running(&spec.workflow_id).await?;
 
-    let run_id = RunId::new();
-    store.start_run(&run_id, &spec.workflow_id).await?;
     info!(
         workflow = %spec.workflow_id.short(),
-        run = %run_id,
         kind = %spec.kind,
         steps = spec.steps.len(),
-        "starting workflow run"
+        "starting workflow"
     );
 
     let cpu = Arc::new(Semaphore::new(policy.cpu_concurrency.max(1)));
@@ -197,13 +196,7 @@ pub async fn drive(
 
                 statuses.insert(step.id.clone(), Status::Running);
                 store.mark_running(&step.id).await?;
-                store
-                    .record_event(&run_id, &step.id, "started", None)
-                    .await?;
-                let _ = store.heartbeat(&run_id).await;
-
                 let ctx = StepContext {
-                    run_id: run_id.clone(),
                     workflow_id: spec.workflow_id.clone(),
                     step_id: step.id.clone(),
                     db: db.clone(),
@@ -214,12 +207,17 @@ pub async fn drive(
 
                 in_flight += 1;
                 let tx = tx.clone();
+                let done_id = step.id.clone();
+                let done_kind = step.kind;
+                let done_inputs_json = step.inputs_json.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // released on drop, after step finishes
                     let result = (step.run)(ctx).await;
                     let _ = tx
                         .send(StepDone {
-                            id: step.id,
+                            id: done_id,
+                            kind: done_kind,
+                            inputs_json: done_inputs_json,
                             result,
                         })
                         .await;
@@ -252,19 +250,13 @@ pub async fn drive(
                 statuses.insert(done.id.clone(), Status::Succeeded);
                 outputs.insert(done.id.clone(), out.clone());
                 store.mark_succeeded(&done.id, &out).await?;
-                store
-                    .record_event(&run_id, &done.id, "succeeded", None)
-                    .await?;
-                let _ = store.heartbeat(&run_id).await;
             }
             Err(e) => {
                 let msg = format!("{:#}", e);
                 warn!(step = %done.id.short(), error = %msg, "step failed");
                 statuses.insert(done.id.clone(), Status::Failed);
-                store.mark_failed(&done.id, &msg).await?;
-                store
-                    .record_event(&run_id, &done.id, "failed", Some(&msg))
-                    .await?;
+                let failure = failure_json(done.kind, &done.inputs_json, &msg);
+                store.mark_failed(&done.id, &failure).await?;
                 failed.push((done.id, msg));
                 if policy.fail_fast {
                     stop_launching = true;
@@ -282,17 +274,12 @@ pub async fn drive(
                     Ok(out) => {
                         statuses.insert(done.id.clone(), Status::Succeeded);
                         store.mark_succeeded(&done.id, &out).await?;
-                        store
-                            .record_event(&run_id, &done.id, "succeeded", None)
-                            .await?;
                     }
                     Err(e) => {
                         let msg = format!("{:#}", e);
                         statuses.insert(done.id.clone(), Status::Failed);
-                        store.mark_failed(&done.id, &msg).await?;
-                        store
-                            .record_event(&run_id, &done.id, "failed", Some(&msg))
-                            .await?;
+                        let failure = failure_json(done.kind, &done.inputs_json, &msg);
+                        store.mark_failed(&done.id, &failure).await?;
                         failed.push((done.id, msg));
                     }
                 }
@@ -319,10 +306,11 @@ pub async fn drive(
     } else {
         TerminalStatus::Failed
     };
-    store.finish_run(&run_id, terminal).await?;
+    if terminal == TerminalStatus::Succeeded {
+        store.clear_workflow(&spec.workflow_id).await?;
+    }
 
     Ok(RunOutcome {
-        run_id,
         workflow_id: spec.workflow_id,
         status: terminal,
         failed,
@@ -356,4 +344,119 @@ fn describe_unmet_deps(all: &[StepId], statuses: &HashMap<StepId, Status>) -> St
         .collect();
     lines.sort();
     lines.join(", ")
+}
+
+fn failure_json(kind: &str, inputs_json: &str, message: &str) -> serde_json::Value {
+    let inputs = serde_json::from_str::<serde_json::Value>(inputs_json)
+        .unwrap_or_else(|_| serde_json::Value::Null);
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "reason".to_string(),
+        serde_json::Value::String(reason_for(kind, message)),
+    );
+    obj.insert(
+        "message".to_string(),
+        serde_json::Value::String(bounded_message(kind, message)),
+    );
+
+    if let Some(plan) = inputs
+        .get("plan")
+        .and_then(|p| p.get("name"))
+        .and_then(|v| v.as_str())
+    {
+        obj.insert(
+            "plan".to_string(),
+            serde_json::Value::String(plan.to_string()),
+        );
+    }
+    if let Some(label) = inputs.get("label").and_then(|v| v.as_str()) {
+        obj.insert(
+            "label".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+    if let Some(root_dir) = inputs.get("root_dir").and_then(|v| v.as_str()) {
+        obj.insert(
+            "root_dir".to_string(),
+            serde_json::Value::String(root_dir.to_string()),
+        );
+    }
+    if let Some(stage) = extract_between(message, "stage '", "'") {
+        obj.insert("stage".to_string(), serde_json::Value::String(stage));
+    }
+    if let Some(exit_status) = extract_exit_status(message) {
+        obj.insert(
+            "exit_status".to_string(),
+            serde_json::Value::Number(exit_status.into()),
+        );
+    }
+
+    serde_json::Value::Object(obj)
+}
+
+fn reason_for(kind: &str, message: &str) -> String {
+    match kind {
+        "build_plan" if message.contains("stage '") && message.contains("exit code") => {
+            "stage_failed"
+        }
+        "package_plan" if message.contains("expected archive not produced") => "archive_missing",
+        "install_batch" if message.contains("conflict") => "file_conflict",
+        "extract_pack" if message.contains("integrity check failed") => "integrity_failed",
+        _ => "step_failed",
+    }
+    .to_string()
+}
+
+fn bounded_message(kind: &str, message: &str) -> String {
+    let msg = if kind == "build_plan" {
+        if let Some(stage) = extract_between(message, "stage '", "'") {
+            if let Some(code) = extract_exit_status(message) {
+                format!("stage '{}' failed with exit status {}", stage, code)
+            } else {
+                format!("stage '{}' failed", stage)
+            }
+        } else {
+            first_non_log_line(message)
+        }
+    } else {
+        first_non_log_line(message)
+    };
+    truncate_chars(&msg, 512)
+}
+
+fn first_non_log_line(message: &str) -> String {
+    message
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("Log: "))
+        .unwrap_or("step failed")
+        .to_string()
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    for ch in s.chars().take(max) {
+        out.push(ch);
+    }
+    if s.chars().count() > max {
+        out.push_str("...");
+    }
+    out
+}
+
+fn extract_between(message: &str, start: &str, end: &str) -> Option<String> {
+    let start_idx = message.find(start)? + start.len();
+    let rest = &message[start_idx..];
+    let end_idx = rest.find(end)?;
+    Some(rest[..end_idx].to_string())
+}
+
+fn extract_exit_status(message: &str) -> Option<i64> {
+    let marker = "exit code ";
+    let idx = message.find(marker)? + marker.len();
+    let digits: String = message[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    digits.parse().ok()
 }

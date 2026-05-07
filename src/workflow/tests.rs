@@ -129,12 +129,13 @@ async fn drives_a_simple_workflow_to_success() {
 }
 
 #[tokio::test]
-async fn skips_succeeded_steps_on_resume() {
+async fn clears_step_state_after_success() {
     let db = fresh_db().await;
     let counter = Arc::new(AtomicUsize::new(0));
 
-    // Build the same workflow twice with the same inputs; the second drive
-    // should not invoke any step's execute().
+    // Successful workflows do not keep step rows forever. Repeating the same
+    // command should re-run the workflow layer and let lower-level idempotence
+    // checks decide what can be skipped.
     let inputs = serde_json::json!({"case": "resume"});
 
     let make_spec = |counter: Arc<AtomicUsize>| -> WorkflowSpec {
@@ -155,6 +156,13 @@ async fn skips_succeeded_steps_on_resume() {
     .unwrap();
     let after_first = counter.load(Ordering::SeqCst);
     assert_eq!(after_first, 2);
+    let workflow_id = make_spec(counter.clone()).workflow_id;
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = ?")
+        .bind(workflow_id.as_str())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "successful workflows should clear step rows");
 
     drive(
         db.clone(),
@@ -167,8 +175,8 @@ async fn skips_succeeded_steps_on_resume() {
     .unwrap();
     let after_second = counter.load(Ordering::SeqCst);
     assert_eq!(
-        after_second, 2,
-        "second drive should not re-invoke succeeded steps"
+        after_second, 4,
+        "second drive should rebuild workflow step state after success"
     );
 }
 
@@ -211,6 +219,37 @@ async fn re_runs_failed_step_on_next_drive() {
     assert_eq!(outcome.status, TerminalStatus::Succeeded);
     assert!(outcome.failed.is_empty());
     assert_eq!(counter.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn failed_step_records_structured_failure_json() {
+    let db = fresh_db().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    let mut b = WorkflowBuilder::new("test", &serde_json::json!({"case": "failure-json"})).unwrap();
+    let step_id = b.add(make_step("a", vec![], counter, 1)).unwrap();
+    let outcome = drive(
+        db.clone(),
+        b.build(),
+        policy(),
+        std::env::temp_dir(),
+        never_cancelled(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.status, TerminalStatus::Failed);
+
+    let raw: String = sqlx::query_scalar("SELECT failure_json FROM workflow_steps WHERE id = ?")
+        .bind(step_id.as_str())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    let failure: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(failure["reason"], "step_failed");
+    assert!(failure["message"]
+        .as_str()
+        .unwrap()
+        .contains("forced failure"));
 }
 
 #[tokio::test]

@@ -194,7 +194,7 @@ pub struct PlanManifest {
     pub outputs: Option<OutputConfig>,
     /// Explicitly ignored staging files for multi-output slicing.
     pub discard: Vec<DiscardRule>,
-    /// Derived archive metadata populated from `fabricate`.
+    /// Derived archive metadata populated from outputs.
     pub install_scripts: Option<InstallScripts>,
     pub backup: Option<BackupConfig>,
     /// For sub-outputs, the original plan name. Used to write plan-level
@@ -388,7 +388,7 @@ impl PlanManifest {
 
         // Each source entry is self-contained (uri + sha256), no positional check needed
 
-        // Validate fabricate config
+        // Validate output config
         if let Some(ref part) = self.outputs {
             match part {
                 OutputConfig::Multi(ref parts) => {
@@ -850,7 +850,7 @@ runtime_deps = ["libgcc"]
                     "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
                 );
             }
-            _ => panic!("expected Multi fabricate config"),
+            _ => panic!("expected Multi output config"),
         }
     }
 
@@ -895,7 +895,7 @@ include = ["/usr/share/doc/.*"]
                 assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
                 assert!(doc_manifest.relations.conflicts.is_empty());
             }
-            _ => panic!("expected Multi fabricate config"),
+            _ => panic!("expected Multi output config"),
         }
     }
 
@@ -932,7 +932,7 @@ include = ["/usr/share/doc/.*"]
                 assert_eq!(doc_manifest.metadata.arch, "any");
                 assert_eq!(doc_manifest.metadata.license, "MIT"); // inherited
             }
-            _ => panic!("expected Multi fabricate config"),
+            _ => panic!("expected Multi output config"),
         }
     }
 
@@ -1525,7 +1525,7 @@ post_install = "ldconfig"
     }
 
     #[test]
-    fn test_parse_lifecycle_fabricate() {
+    fn test_parse_lifecycle_outputs_rejected() {
         let toml_str = r#"
 name = "test"
 version = "1.0.0"
@@ -1540,13 +1540,12 @@ script = "true"
 [lifecycle.outputs]
 script = "strip ${STAGING_DIR}/usr/bin/test"
 "#;
-        let manifest = PlanManifest::parse(toml_str).unwrap();
-        assert_eq!(
-            manifest
-                .lifecycle
-                .get("fabricate")
-                .map(|stage| stage.script.as_str()),
-            Some("strip ${STAGING_DIR}/usr/bin/test")
+        let err = PlanManifest::parse(toml_str).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("unknown lifecycle stage 'outputs'"),
+            "expected validation error for 'outputs' stage, got: {}",
+            msg
         );
     }
 }

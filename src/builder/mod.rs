@@ -279,7 +279,7 @@ impl Builder {
         let work_dir = build_root.join("work");
         let staging_dir = build_root.join("staging");
         let outputs_dir = build_root.join("outputs");
-        let default_output_dir = outputs_dir.join("default");
+        let _default_output_dir = outputs_dir.join("default");
         let logs_dir = build_root.join("logs");
         let output_dir = staging_dir.clone();
         let partial = !stages.is_empty() || fetch_only;
@@ -340,7 +340,7 @@ impl Builder {
                 self.fetch(manifest, plan_dir).await?;
                 if until_stage == Some("fetch") {
                     return Ok(BuildResult {
-                        output_dir: default_output_dir.clone(),
+                        output_dir: staging_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -349,17 +349,29 @@ impl Builder {
                 self.verify(manifest).await?;
                 if until_stage == Some("verify") {
                     return Ok(BuildResult {
-                        output_dir: default_output_dir.clone(),
+                        output_dir: staging_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
                     });
                 }
                 self.extract(manifest, &work_dir).await?;
-                let _ = tokio::fs::write(work_dir.join(".extracted"), "").await;
+                tokio::fs::write(work_dir.join(".extracted"), "")
+                    .await
+                    .map_err(|e| {
+                        WrightError::BuildError(format!(
+                            "failed to write extraction marker in {}: {}",
+                            work_dir.display(),
+                            e
+                        ))
+                    })?;
+                let key_file = build_root.join(".build_key");
+                if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
+                    warn!("Failed to write build key: {}", e);
+                }
                 if until_stage == Some("extract") {
                     return Ok(BuildResult {
-                        output_dir: default_output_dir.clone(),
+                        output_dir: staging_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -369,7 +381,7 @@ impl Builder {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
                 if matches!(until_stage, Some("fetch" | "verify" | "extract")) {
                     return Ok(BuildResult {
-                        output_dir: default_output_dir.clone(),
+                        output_dir: staging_dir.clone(),
                         work_dir,
                         logs_dir,
                         split_part_dirs: std::collections::HashMap::new(),
@@ -380,7 +392,7 @@ impl Builder {
 
         if fetch_only {
             return Ok(BuildResult {
-                output_dir: default_output_dir.clone(),
+                output_dir: staging_dir.clone(),
                 work_dir,
                 logs_dir,
                 split_part_dirs: std::collections::HashMap::new(),
@@ -451,8 +463,6 @@ impl Builder {
 
         pipeline.run().await?;
 
-        let result = self.slice_outputs(manifest, &build_root).await?;
-
         if !partial {
             let key_file = build_root.join(".build_key");
             if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
@@ -460,7 +470,12 @@ impl Builder {
             }
         }
 
-        Ok(result)
+        Ok(BuildResult {
+            output_dir: staging_dir,
+            work_dir,
+            logs_dir,
+            split_part_dirs: std::collections::HashMap::new(),
+        })
     }
 
     /// Re-slice the staging directory into output directories based on the

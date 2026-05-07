@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::watch;
 
 use super::errors::{Result as WfResult, WorkflowError};
-use super::id::{RunId, StepId, WorkflowId};
+use super::id::{StepId, WorkflowId};
 use crate::database::InstalledDb;
 
 /// Coarse-grained scheduling resource. The runner enforces per-class concurrency
@@ -58,7 +58,7 @@ impl Status {
     }
 }
 
-/// Final state of a run, persisted in the `workflow_runs` table.
+/// Final state of a workflow drive attempt.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalStatus {
@@ -82,7 +82,6 @@ impl TerminalStatus {
 /// Carries everything the step needs to run: db handle, log destination,
 /// cancellation signal, and the JSON outputs of upstream steps.
 pub struct StepContext {
-    pub run_id: RunId,
     pub workflow_id: WorkflowId,
     pub step_id: StepId,
     pub db: Arc<InstalledDb>,

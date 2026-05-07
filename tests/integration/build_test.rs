@@ -108,6 +108,106 @@ async fn test_build_and_archive_hello() {
 }
 
 #[tokio::test]
+async fn test_failed_first_build_preserves_work_for_stage_resume() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.build_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.build_dir).unwrap();
+
+    let allow_staging = root.path().join("allow-staging");
+    let manifest = PlanManifest::parse(&format!(
+        r#"
+name = "stage-resume"
+version = "1.0.0"
+release = 1
+description = "stage resume test"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.prepare]
+executor = "shell"
+isolation = "none"
+script = "printf x >> ${{WORKDIR}}/prepare-count"
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+if [ ! -f "{}" ]; then
+    exit 17
+fi
+install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
+"""
+"#,
+        allow_staging.display()
+    ))
+    .unwrap();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let builder = Builder::new(config);
+
+    let first = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[],
+            None,
+            false,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert!(first.is_err(), "first build should fail in staging");
+
+    let build_root = builder.build_root(&manifest).unwrap();
+    assert!(
+        build_root.join(".build_key").exists(),
+        "build key should be committed after extraction, before later stages"
+    );
+    assert!(build_root.join("work/.extracted").exists());
+    assert!(build_root.join("work/.wright-stage-prepare").exists());
+    assert_eq!(
+        std::fs::read_to_string(build_root.join("work/prepare-count")).unwrap(),
+        "x"
+    );
+
+    std::fs::write(&allow_staging, "ok").unwrap();
+    let second = builder
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[],
+            None,
+            false,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(second.output_dir.join("usr/share/stage-resume").exists());
+    assert_eq!(
+        std::fs::read_to_string(build_root.join("work/prepare-count")).unwrap(),
+        "x",
+        "successful prepare stage should be skipped on retry"
+    );
+}
+
+#[tokio::test]
 async fn test_archive_records_runtime_but_not_link_dependencies() {
     let manifest = PlanManifest::parse(
         r#"
@@ -212,7 +312,7 @@ include = ["/usr/share/doc/.*"]
 
     let plan_dir = tempfile::tempdir().unwrap();
     let builder = Builder::new(config);
-    let result = builder
+    builder
         .build(
             &manifest,
             plan_dir.path(),
@@ -229,6 +329,12 @@ include = ["/usr/share/doc/.*"]
             None,
             None,
         )
+        .await
+        .unwrap();
+
+    let build_root = builder.build_root(&manifest).unwrap();
+    let result = builder
+        .slice_outputs(&manifest, &build_root)
         .await
         .unwrap();
 
@@ -271,7 +377,7 @@ include = ["/usr/bin/.*"]
 
     let plan_dir = tempfile::tempdir().unwrap();
     let builder = Builder::new(config);
-    let result = builder
+    builder
         .build(
             &manifest,
             plan_dir.path(),
@@ -288,6 +394,12 @@ include = ["/usr/bin/.*"]
             None,
             None,
         )
+        .await
+        .unwrap();
+
+    let build_root = builder.build_root(&manifest).unwrap();
+    let result = builder
+        .slice_outputs(&manifest, &build_root)
         .await;
 
     let err = match result {
@@ -336,7 +448,7 @@ reason = "documentation is intentionally not packaged"
 
     let plan_dir = tempfile::tempdir().unwrap();
     let builder = Builder::new(config);
-    let result = builder
+    builder
         .build(
             &manifest,
             plan_dir.path(),
@@ -353,6 +465,12 @@ reason = "documentation is intentionally not packaged"
             None,
             None,
         )
+        .await
+        .unwrap();
+
+    let build_root = builder.build_root(&manifest).unwrap();
+    let result = builder
+        .slice_outputs(&manifest, &build_root)
         .await
         .unwrap();
 

@@ -19,7 +19,7 @@ pub struct BuildArgs {
 
     /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
     /// Skips fetch/verify/extract — requires a previous full build.
-    /// Example: --stage=check --stage=staging --stage=fabricate
+    /// Example: --stage=check --stage=staging
     #[arg(long, conflicts_with = "until_stage")]
     pub stage: Vec<String>,
 

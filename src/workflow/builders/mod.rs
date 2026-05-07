@@ -9,7 +9,8 @@
 //! what's installed) appear as steps, not as inputs. This means rerunning
 //! the same command after the system state has changed yields the same
 //! workflow id but possibly a different set of step ids; orphaned step
-//! rows from previous runs remain harmless.
+//! rows from previous attempts remain harmless until the workflow succeeds and
+//! the active workflow row is deleted.
 
 mod apply;
 mod build;

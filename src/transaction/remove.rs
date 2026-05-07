@@ -3,12 +3,11 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{
-    FileType, InstalledDb, InstalledPart, TransactionOperation, TransactionStatus,
-};
+use crate::database::{FileType, InstalledDb, InstalledPart, TransactionOperation};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
+use crate::transaction::context::TransactionContext;
 use crate::transaction::hooks::{log_running_hook, run_install_script};
 
 use futures_util::future::BoxFuture;
@@ -66,23 +65,63 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    let tx_id = db
-        .record_transaction(
-            TransactionOperation::Remove,
-            name,
-            Some(&plan.version),
-            None,
-            TransactionStatus::Pending,
-            None,
-        )
-        .await?;
-    let files = db.get_files(part.id).await?;
+    // Create backup directory BEFORE transaction context so it outlives the tx
+    // on the error/panic path (tx drops first and can still read backups).
+    let backup_dir = tempfile::tempdir()
+        .map_err(|e| WrightError::RemoveError(format!("failed to create backup dir: {}", e)))?;
 
+    let mut tx = TransactionContext::begin(
+        db,
+        TransactionOperation::Remove,
+        name,
+        Some(&plan.version),
+        None,
+    )
+    .await?;
+
+    let files = db.get_files(part.id).await?;
     let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     let other_owners_map = db.get_other_owners_batch(part.id, &file_paths).await?;
 
+    // Phase 1: Backup deletable files so they can be restored on rollback.
+    for file in &files {
+        let full_path = root_dir.join(file.path.trim_start_matches('/'));
+
+        if file.is_config {
+            continue;
+        }
+
+        let other_owners = other_owners_map
+            .get(&file.path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        if !other_owners.is_empty() {
+            continue;
+        }
+
+        if tokio::fs::symlink_metadata(&full_path).await.is_ok() {
+            let backup_path = backup_dir.path().join(file.path.trim_start_matches('/'));
+            if let Some(parent) = backup_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
+            // Prefer rename (O(1) on same fs); fallback to copy+remove.
+            let renamed = tokio::fs::rename(&full_path, &backup_path).await.is_ok();
+            if !renamed {
+                if tokio::fs::copy(&full_path, &backup_path).await.is_ok() {
+                    let _ = tokio::fs::remove_file(&full_path).await;
+                } else {
+                    continue;
+                }
+            }
+            tx.rollback_state().record_backup(full_path, backup_path);
+        }
+    }
+
+    // Phase 2: Delete anything that is still on disk (dirs, symlinks skipped above, etc.).
     for file in files.iter().rev() {
         let full_path = root_dir.join(file.path.trim_start_matches('/'));
+
         if file.is_config {
             info!("Preserving config file: {}", file.path);
             continue;
@@ -98,6 +137,11 @@ pub async fn remove_part_with_ignored_dependents(
                 file.path,
                 other_owners.join(", ")
             );
+            continue;
+        }
+
+        // Skip if already backed up (renamed away).
+        if tokio::fs::symlink_metadata(&full_path).await.is_err() {
             continue;
         }
 
@@ -123,20 +167,13 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = part.install_scripts {
-        if let Some(script) = get_hook(content, "post_remove") {
-            log_running_hook(name, "post_remove");
-            if let Err(e) = run_install_script(&script, root_dir, name, "post_remove").await {
-                warn!("post_remove script failed (continuing removal): {}", e);
-            }
-        }
-    }
-
+    // Phase 3: Database mutation.
     let diversions = db.get_all_diverted_files(part.id).await.unwrap_or_default();
 
     db.remove_part(name).await?;
+    let _ = db.remove_shadowed_records(part.id).await;
 
-    // Restore diverted files
+    // Phase 4: Restore diverted files.
     for (original_path, diverted_path) in diversions {
         let full_original = root_dir.join(original_path.trim_start_matches('/'));
         let full_diverted = root_dir.join(diverted_path.trim_start_matches('/'));
@@ -149,10 +186,17 @@ pub async fn remove_part_with_ignored_dependents(
             }
         }
     }
-    let _ = db.remove_shadowed_records(part.id).await;
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed)
-        .await?;
+    if let Some(ref content) = part.install_scripts {
+        if let Some(script) = get_hook(content, "post_remove") {
+            log_running_hook(name, "post_remove");
+            if let Err(e) = run_install_script(&script, root_dir, name, "post_remove").await {
+                warn!("post_remove script failed (continuing removal): {}", e);
+            }
+        }
+    }
+
+    tx.commit().await?;
 
     info!("Removed {}", name);
     Ok(())

@@ -1,7 +1,12 @@
-# Isolation Pitfalls
+# Isolation Race Handling
 
-Known traps in the isolation subsystem that every contributor should
-understand before touching `src/isolation/` or the build output slicing code.
+Known race conditions and filesystem traps that every contributor should
+understand before touching `src/isolation/`, lifecycle execution, or build
+output slicing.
+
+For the user-facing architecture model, see
+[Isolation Model](../explanation/isolation-model.md).  The accepted design
+record is [ADR-0013](../adr/0013-multi-lowerdir-isolation.md).
 
 ## btrfs subvolume EXDEV (hard-link across subvolumes)
 
@@ -49,7 +54,7 @@ duplicated data of the affected files.
 - When changing overlayfs upper/work directory placement, verify that
   the upper layer is on the same filesystem as the staging directory.
 
-## ETXTBUSY (Text file busy) with shebang scripts
+## ETXTBSY (Text file busy) with shebang scripts
 
 ### Symptom
 
@@ -65,17 +70,23 @@ When multiple parallel build tasks exec the same interpreter binary (e.g.
 `/bin/sh`) through shebang resolution, the kernel's `deny_write_access()`
 can fail on the shared inode.  This is a per-inode race, not a per-path race.
 
-Overlayfs with a shared lowerdir mitigates this (the lower layer is immutable,
-so `i_writecount` stays 0), but edge cases remain: simultaneous overlayfs
-mount operations with the same lowerdir, or certain kernel/filesystem
-configurations.
+Strict isolation uses OverlayFS with host system directories as read-only lower
+layers and a per-task writable upper layer.  OverlayFS prevents writes through
+the overlay path from mutating lower-layer files; those writes copy up into the
+task-private upper layer instead.
+
+That removes the shared writable-inode failure mode from the normal build path,
+but an edge case remains: a host process can briefly hold a direct write
+reference to a lower-layer inode at the exact moment a build task tries to
+execute it.  Certain kernel/filesystem combinations can also report ETXTBSY
+during tight parallel exec windows.
 
 ### Fix layered defence
 
-1. **Overlayfs with per-task upper** (`src/isolation/native.rs`): the shared
-   sysroot lower layer is immutable and never opened for writing.  If a
-   file does become contended, overlayfs copy-up moves it to the per-task
-   upper layer, permanently isolating its inode.
+1. **Multi-lowerdir OverlayFS with per-task upper** (`src/isolation/native.rs`):
+   host system directories are mounted as lower layers and each task gets a
+   private upper/work pair.  If a file is opened for writing through the
+   overlay path, copy-up moves it to the task-private upper layer.
 
 2. **execvp retry loop** (`src/isolation/native.rs`): 8 retries with
    exponential backoff for the top-level `execvp(command)` call.
@@ -83,7 +94,7 @@ configurations.
 3. **Stage-level retry** (`src/builder/lifecycle.rs`): when a build stage
    exits with code 126 and its output contains "Text file busy", the stage
    is retried up to 10 times with capped exponential backoff (200ms-1000ms
-   base) and randomized jitter on each delay.  This catches ETXTBUSY from
+   base) and randomized jitter on each delay.  This catches ETXTBSY from
    shebang-level execs that happen inside the shell (e.g. `./configure`
    → kernel resolves `#!/bin/sh` → `/bin/sh` busy) — a path the lower-level
    `execvp` retry loop never sees, because that retry only fires for the
@@ -99,7 +110,9 @@ configurations.
 - When adding new exec sites inside isolation, consider whether the
   exec'd binary could be a shebang script that chains to a shared
   interpreter.
-- Do not remove or weaken the stage-level ETXTBUSY retry.
+- Do not remove or weaken the stage-level ETXTBSY retry.
+- Preserve jitter in retry delays.  Deterministic backoff can synchronize
+  parallel retriers and recreate the collision.
 
 ## Bind-mount ordering vs overlayfs directory shadowing
 

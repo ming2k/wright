@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+## [4.1.2] - 2026-05-07
+
+### Changed
+- **Transaction layer unified under `TransactionContext`** — introduced a single `TransactionContext` type that coordinates filesystem rollback state (`RollbackState`) and audit logging (`transactions` table) for every install, upgrade, and remove operation. Previously each operation manually created a `RollbackState`, recorded a pending transaction, and scattered `update_transaction_status` calls across the success and error paths. This is now centralized: `TransactionContext::begin()` starts the operation, `tx.commit()` finalizes it, and `tx.rollback()` undoes filesystem changes and records the failure.
+- **`remove` now supports filesystem rollback** — `remove_part` previously deleted files irreversibly with no recovery path if the database update or a later step failed. It now backs up deletable files to a temporary directory (via rename or copy) before deletion, registers them with `RollbackState`, and restores them on rollback. This brings `remove` to parity with `install` and `upgrade`.
+- **Drop-safe transaction guard** — if a `TransactionContext` is dropped without explicit `commit()` or `rollback()`, the filesystem is automatically rolled back via the `Drop` impl, preventing half-finished operations from leaving the target root in an inconsistent state.
+
+### Fixed
+- **Database-audit mismatch on partial failure** — in the old install/upgrade paths, a filesystem failure would call `rollback_state.rollback()` and then separately `update_transaction_status(..., RolledBack)`. If the process crashed between those two calls, the database would show `Pending` while the filesystem had already been restored. `TransactionContext::rollback()` performs both atomically from the caller's perspective.
+
 ## [4.1.1] - 2026-05-07
 
 ### Added
@@ -23,7 +35,7 @@
 ### Changed
 - **Operator log cleanup** — source fetch completion logs now show the source label instead of Wright's internal cache filename, avoiding duplicated names such as `xray-xray-tproxy.service`. Install hook stdout/stderr is now routed through structured CLI logs and common `:: ` hook prefixes are normalized.
 - **Configure-stage serialization** — parallel build tasks now run `configure` stages one at a time, matching compile-stage handoff behavior and reducing remaining ETXTBSY exposure in shebang-heavy configure scripts.
-- **Stage-level incremental builds** — lifecycle stages that completed successfully now write a `.wright-stage-<name>` sentinel in `work/`. On the next build with a matching build key, completed stages are skipped (including their pre/post hooks). This makes repeated `wright build <plan>` nearly instant when nothing changed. `--force` disables sentinel checking and re-runs all lifecycle stages. Staging-dependent sentinels (`staging`, `fabricate`) are invalidated when `staging/` is recreated.
+- **Stage-level incremental builds** — lifecycle stages that completed successfully now write a `.wright-stage-<name>` sentinel in `work/`. On the next build with a matching build key, completed stages are skipped (including their pre/post hooks). This makes repeated `wright build <plan>` nearly instant when nothing changed. `--force` disables sentinel checking and re-runs all lifecycle stages. The `staging` sentinel is invalidated when `staging/` is recreated.
 
 ### Removed
 - **Dropped `build_sessions` table** — the legacy V1 build progress table (migration 011). It was recreated in migration 005 but never read or written by any Rust code. The `execution_sessions` and `execution_session_items` tables were already dropped in migration 010.

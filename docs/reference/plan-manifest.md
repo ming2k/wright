@@ -16,6 +16,14 @@ Reference for every key, table, and field in a Wright plan manifest.
 | `url` | string | no | — | Upstream project URL |
 | `maintainer` | string | no | — | Maintainer name and email |
 
+## Version Policy
+
+| Field | Rule |
+|-------|------|
+| `version` | Tracks upstream release. Keep it identical to the upstream version string when one exists. |
+| `release` | Increments **within** the same `version` when the plan changes (patches, build flags, dependencies). Resets to `1` on every `version` bump. |
+| `epoch` | Increments **only** when upstream changes its versioning scheme so the new `version` would sort lower than the old one (e.g. `2024.1` → `1.0.0`). Never decreases. Default `0` can be omitted for normal releases. |
+
 ### `epoch`
 
 Forces a part to be considered newer than any version with a lower epoch, regardless of the version string. Used when upstream changes their versioning scheme in a way that makes the new version sort lower (e.g. renaming from `2024.1` to `1.0.0`).

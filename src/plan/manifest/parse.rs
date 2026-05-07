@@ -233,13 +233,7 @@ impl PlanManifest {
                         key, e
                     ))
                 })?;
-                // "outputs" is the user-facing alias for the internal "fabricate" stage
-                let canonical_key = if key == "outputs" {
-                    "fabricate".to_string()
-                } else {
-                    key
-                };
-                lifecycle_stages.insert(canonical_key, stage);
+                lifecycle_stages.insert(key, stage);
             }
         }
 

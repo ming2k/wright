@@ -26,6 +26,25 @@ The directory name should match the `name` field in `plan.toml`. Local files ref
 
 If a plan needs a separate bootstrap/MVP override, place it in a sibling `mvp.toml`. The base file remains `plan.toml`; do not rename it to `main.toml` or `base.toml`.
 
+## Version, Release, and Epoch
+
+Three fields in `[plan]` metadata control how Wright orders and names archives:
+
+| Field | Purpose | Rule |
+|-------|---------|------|
+| `version` | Upstream release identifier | Copy the upstream version string exactly. Omit only for rolling or VCS builds with no static version. |
+| `release` | Build revision within the same `version` | Bump when the plan changes (patches, build flags, dependencies) while upstream stays the same. **Reset to `1` on every `version` bump.** |
+| `epoch` | Forced ordering override | Bump **only** when upstream changes its versioning scheme so the new `version` would sort lower than the old one (e.g. `2024.1` → `1.0.0`). Never decreases. Omit (default `0`) for normal releases. |
+
+Example lifecycle:
+
+```
+Upstream releases 1.0.0  → version = "1.0.0", release = 1
+Add a patch              → version = "1.0.0", release = 2
+Upstream releases 1.1.0  → version = "1.1.0", release = 1 (reset)
+Upstream renames to 2.0  → version = "2.0",   release = 1, epoch = 1
+```
+
 ## Define Dependencies
 
 ### Build-Time Dependencies

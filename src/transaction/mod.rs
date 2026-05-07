@@ -1,3 +1,4 @@
+mod context;
 mod fs;
 mod hooks;
 mod install;
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tracing::debug;
 
+pub use context::TransactionContext;
 pub use hooks::get_hook;
 pub use install::{
     install_part, install_part_with_origin, install_parts, install_parts_with_explicit_targets,

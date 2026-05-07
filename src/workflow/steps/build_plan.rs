@@ -174,16 +174,16 @@ impl Step for BuildPlanStep {
                     .map_err(|e| WorkflowError::Other(format!("clean: {}", e)))?;
             }
 
-            // Intra-step idempotence: skip when outputs/ is already populated.
+            // Intra-step idempotence: skip when staging/ is already populated.
             // (LifecyclePipeline maintains finer-grained sentinels too.)
             let opts = &self.inputs.options;
             let can_short_circuit = !opts.force
                 && opts.stages.is_empty()
                 && opts.until_stage.is_none()
                 && !opts.fetch_only;
-            if can_short_circuit && all_outputs_populated(&manifest, &build_root) {
+            if can_short_circuit && staging_is_populated(&build_root) {
                 info!(
-                    "{} already built; reusing populated outputs/",
+                    "{} already built; reusing populated staging/",
                     self.inputs.plan.name
                 );
                 return Ok(BuildPlanOutputs {
@@ -264,24 +264,24 @@ impl Step for BuildPlanStep {
 }
 
 fn compute_output_dirs(manifest: &PlanManifest, build_root: &std::path::Path) -> Vec<PathBuf> {
+    let staging_dir = build_root.join("staging");
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => parts
             .iter()
             .map(|(sub_name, sub_part)| {
                 if sub_part.include.is_none() {
-                    build_root.join("outputs").join("default")
+                    staging_dir.clone()
                 } else {
                     build_root.join("outputs").join(sub_name)
                 }
             })
             .collect(),
-        _ => vec![build_root.join("outputs").join("default")],
+        _ => vec![staging_dir],
     }
 }
 
-fn all_outputs_populated(manifest: &PlanManifest, build_root: &std::path::Path) -> bool {
-    let dirs = compute_output_dirs(manifest, build_root);
-    dirs.iter().all(|d| dir_is_populated(d))
+fn staging_is_populated(build_root: &std::path::Path) -> bool {
+    dir_is_populated(&build_root.join("staging"))
 }
 
 fn dir_is_populated(dir: &std::path::Path) -> bool {

@@ -33,14 +33,21 @@ current build set have finished**. Dependency ordering is enforced
 automatically. The concurrency limit is internal and derived from the usable
 CPU budget, not from a user-configured `isolations` value.
 
+```mermaid
+flowchart LR
+    A --> D
+    B --> D
+    C --> D
+    C --> E
+    D --> F
 ```
-dependency graph:
- A ─┐
- B ─┼─► D ─► F     step 1: A, B, C may start together if CPU budget allows
- C ─┘             step 2: D waits for A and B
-                  step 3: E waits for C
- C ──► E          step 4: F waits for D
-```
+
+| Step | Ready work |
+|------|------------|
+| 1 | `A`, `B`, and `C` may start together if CPU budget allows |
+| 2 | `D` waits for `A` and `B` |
+| 3 | `E` waits for `C` |
+| 4 | `F` waits for `D` |
 
 Even on a machine with many CPUs, Wright cannot exceed the number of currently
 independent tasks in the graph.

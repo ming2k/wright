@@ -11,20 +11,28 @@ Wright is a single CLI binary backed by one core library.
 
 ## Data Flow
 
-```text
-plan.toml -> wright build -> staging/ -> wright package -> .wright.tar.zst -> wright install/upgrade/apply
+```mermaid
+flowchart LR
+    Plan["plan.toml"] --> Build["wright build"]
+    Build --> Staging["staging/"]
+    Staging --> Package["wright package"]
+    Package --> Archive[".wright.tar.zst"]
+    Archive --> System["wright install / upgrade / apply"]
 ```
+
+`wright apply` drives the same lower-level pieces as a source-first convergence
+workflow: resolve the requested plans, build each dependency-safe wave, package
+the resulting outputs, and install each completed wave before continuing.
 
 ## Responsibilities
 
-### `wright build` / `wright resolve` / `wright prune`
+### Build-side commands
 
-- resolve plans
-- expand dependency and rebuild scope
-- execute sandboxed stages
-- create `.wright.tar.zst` archives
-- write archives to `parts_dir`
-- prune stale archives
+- `wright resolve` expands dependency and rebuild scope.
+- `wright build` executes sandboxed stages and writes `staging/` and `outputs/`.
+- `wright package` slices staging output and writes `.wright.tar.zst` archives to `parts_dir`.
+- `wright prune` removes stale archives.
+- `wright pack` bundles archives and overlay content for launch.
 
 ### `wright`
 
@@ -49,4 +57,6 @@ Detailed database schemas and their roles are documented in [Database Design](..
 | `wright.db` | `wright` | `wright`, `wright resolve`, `wright build`, `wright apply` |
 | `pack.toml` + `.wright.pack.tar` | `wright pack` | `wright launch` |
 
+For resumable command execution, see [Build Resume Model](build-resume-model.md).
+For build sandboxing, see [Isolation Model](isolation-model.md).
 For module-level code organization, see [Module Layout](../dev/module-layout.md).

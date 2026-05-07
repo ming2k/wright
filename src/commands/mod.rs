@@ -5,7 +5,6 @@ pub mod pack;
 pub mod package;
 pub mod prune;
 pub mod resolve;
-pub mod runs;
 pub mod system;
 pub mod workflow_run;
 
@@ -45,7 +44,6 @@ pub async fn dispatch(
         crate::cli::Commands::Launch(args) => {
             launch::execute_launch(args, config, &db_path, &root_dir, cli.verbose, cli.quiet).await
         }
-        crate::cli::Commands::Runs(args) => runs::execute_runs(args, &db_path).await,
     }
 }
 

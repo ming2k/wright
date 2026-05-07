@@ -1,5 +1,4 @@
 use std::fmt::{self, Write as _};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,15 +20,6 @@ pub struct WorkflowId(String);
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct StepId(String);
-
-/// Sortable, unique identity for one attempt to drive a workflow forward.
-///
-/// Format: `<unix_millis_hex>-<pid_hex>-<counter_hex>`. Sortable by start time;
-/// unique across processes via pid; unique within a process via the counter.
-/// Avoids adding a `ulid` / `uuid` dependency.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RunId(String);
 
 impl WorkflowId {
     pub fn derive(kind: &str, canonical_inputs: &str) -> Self {
@@ -80,39 +70,6 @@ impl StepId {
 impl fmt::Display for StepId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl RunId {
-    pub fn new() -> Self {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id() as u64;
-        Self(format!("{:013x}-{:08x}-{:08x}", ms, pid, n))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn from_string(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl fmt::Display for RunId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Default for RunId {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -237,14 +194,5 @@ mod tests {
             StepId::derive(&wf, "resolve", "{}"),
             StepId::derive(&wf, "build_plan", "{}"),
         );
-    }
-
-    #[test]
-    fn run_ids_are_unique_and_sortable() {
-        let mut ids: Vec<RunId> = (0..16).map(|_| RunId::new()).collect();
-        let count = ids.len();
-        ids.sort_by(|a, b| a.0.cmp(&b.0));
-        ids.dedup_by(|a, b| a.0 == b.0);
-        assert_eq!(ids.len(), count, "RunId collisions detected");
     }
 }

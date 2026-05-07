@@ -38,6 +38,9 @@ See [Architecture](../explanation/architecture.md) and [Module Layout](module-la
 - `anyhow::Result` for binaries; `thiserror`-based `WrightError` for library code
 - `tracing` macros for logging, not `println!` (except for intentional CLI output)
 - Any CLI, config, or feature changes must update the relevant documentation
+- Use Mermaid for semantic diagrams such as flows, DAGs, state transitions, and
+  entity relationships; use `text` fences for literal output, directory trees,
+  path lists, and copyable command examples
 - Run `cargo fmt` and `cargo clippy` before committing
 
 ## PR Process

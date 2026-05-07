@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use serde_json::Value as JsonValue;
 
 use super::errors::Result;
-use super::id::{RunId, StepId, WorkflowId};
-use super::step::{ScheduledStep, Status, TerminalStatus};
+use super::id::{StepId, WorkflowId};
+use super::step::{ScheduledStep, Status};
 use crate::database::InstalledDb;
 
-/// Sole owner of the `workflows` / `workflow_steps` / `workflow_runs` /
-/// `workflow_step_events` tables. No other module talks to them directly.
+/// Sole owner of the `workflows` and `workflow_steps` tables. No other module
+/// talks to them directly.
 pub struct WorkflowStore<'a> {
     db: &'a InstalledDb,
 }
@@ -46,7 +46,7 @@ impl<'a> WorkflowStore<'a> {
     }
 
     /// Insert the step row if absent. Existing rows are left untouched —
-    /// that's what makes resume preserve `succeeded` status across runs.
+    /// that's what makes resume preserve `succeeded` status across attempts.
     pub async fn upsert_step(&self, workflow_id: &WorkflowId, s: &ScheduledStep) -> Result<()> {
         let depends_on_json =
             serde_json::to_string(&s.depends_on.iter().map(|d| d.as_str()).collect::<Vec<_>>())?;
@@ -124,47 +124,11 @@ impl<'a> WorkflowStore<'a> {
         Ok(())
     }
 
-    pub async fn start_run(&self, run: &RunId, workflow_id: &WorkflowId) -> Result<()> {
-        let now = Self::now_ms();
-        sqlx::query(
-            "INSERT INTO workflow_runs (id, workflow_id, started_at, last_active_at, terminal_status) \
-             VALUES (?, ?, ?, ?, NULL)",
-        )
-        .bind(run.as_str())
-        .bind(workflow_id.as_str())
-        .bind(now)
-        .bind(now)
-        .execute(&self.db.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn finish_run(&self, run: &RunId, terminal: TerminalStatus) -> Result<()> {
-        sqlx::query(
-            "UPDATE workflow_runs SET terminal_status = ?, last_active_at = ? WHERE id = ?",
-        )
-        .bind(terminal.as_str())
-        .bind(Self::now_ms())
-        .bind(run.as_str())
-        .execute(&self.db.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn heartbeat(&self, run: &RunId) -> Result<()> {
-        sqlx::query("UPDATE workflow_runs SET last_active_at = ? WHERE id = ?")
-            .bind(Self::now_ms())
-            .bind(run.as_str())
-            .execute(&self.db.pool)
-            .await?;
-        Ok(())
-    }
-
     pub async fn mark_running(&self, step: &StepId) -> Result<()> {
         sqlx::query(
             "UPDATE workflow_steps \
              SET status = 'running', started_at = ?, attempt = attempt + 1, \
-                 finished_at = NULL, error_text = NULL \
+                 finished_at = NULL, outputs_json = NULL, failure_json = NULL \
              WHERE id = ?",
         )
         .bind(Self::now_ms())
@@ -178,7 +142,7 @@ impl<'a> WorkflowStore<'a> {
         let outputs_json = serde_json::to_string(outputs)?;
         sqlx::query(
             "UPDATE workflow_steps \
-             SET status = 'succeeded', finished_at = ?, outputs_json = ?, error_text = NULL \
+             SET status = 'succeeded', finished_at = ?, outputs_json = ?, failure_json = NULL \
              WHERE id = ?",
         )
         .bind(Self::now_ms())
@@ -189,38 +153,26 @@ impl<'a> WorkflowStore<'a> {
         Ok(())
     }
 
-    pub async fn mark_failed(&self, step: &StepId, error: &str) -> Result<()> {
+    pub async fn mark_failed(&self, step: &StepId, failure: &JsonValue) -> Result<()> {
+        let failure_json = serde_json::to_string(failure)?;
         sqlx::query(
             "UPDATE workflow_steps \
-             SET status = 'failed', finished_at = ?, error_text = ? \
+             SET status = 'failed', finished_at = ?, failure_json = ? \
              WHERE id = ?",
         )
         .bind(Self::now_ms())
-        .bind(error)
+        .bind(failure_json)
         .bind(step.as_str())
         .execute(&self.db.pool)
         .await?;
         Ok(())
     }
 
-    pub async fn record_event(
-        &self,
-        run: &RunId,
-        step: &StepId,
-        event: &str,
-        detail: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT OR IGNORE INTO workflow_step_events (run_id, step_id, event, at, detail) \
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(run.as_str())
-        .bind(step.as_str())
-        .bind(event)
-        .bind(Self::now_ms())
-        .bind(detail)
-        .execute(&self.db.pool)
-        .await?;
+    pub async fn clear_workflow(&self, workflow_id: &WorkflowId) -> Result<()> {
+        sqlx::query("DELETE FROM workflows WHERE id = ?")
+            .bind(workflow_id.as_str())
+            .execute(&self.db.pool)
+            .await?;
         Ok(())
     }
 }

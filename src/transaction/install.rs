@@ -6,18 +6,18 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::database::{
-    Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation, TransactionStatus,
+    Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation,
 };
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::archive::PartInfo;
 use crate::part::store::LocalPartStore;
 use crate::part::version::{self, Version};
+use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
-use crate::transaction::rollback::RollbackState;
 
-use super::{journal_path_from_db, log_debug_timing, remove_part, upgrade_part};
+use super::{log_debug_timing, remove_part, upgrade_part};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanRevision {
@@ -480,21 +480,14 @@ pub async fn install_part_with_origin(
         phase_start.elapsed(),
     );
 
-    let mut rollback_state = match journal_path_from_db(db) {
-        Some(jp) => RollbackState::with_journal(jp),
-        None => RollbackState::new(),
-    };
-
-    let tx_id = db
-        .record_transaction(
-            TransactionOperation::Install,
-            &partinfo.name,
-            None,
-            Some(&partinfo.plan.version),
-            TransactionStatus::Pending,
-            None,
-        )
-        .await?;
+    let mut tx = TransactionContext::begin(
+        db,
+        TransactionOperation::Install,
+        &partinfo.name,
+        None,
+        Some(&partinfo.plan.version),
+    )
+    .await?;
 
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::InstallError(format!("failed to create backup dir: {}", e)))?;
@@ -522,7 +515,7 @@ pub async fn install_part_with_origin(
         &file_entries,
         temp_dir.path(),
         root_dir,
-        &mut rollback_state,
+        tx.rollback_state(),
         Some(backup_dir.path()),
         &HashSet::new(),
         &divert_paths,
@@ -532,9 +525,7 @@ pub async fn install_part_with_origin(
         Ok(_) => {}
         Err(e) => {
             warn!("Installation failed, rolling back: {}", e);
-            rollback_state.rollback();
-            db.update_transaction_status(tx_id, TransactionStatus::RolledBack)
-                .await?;
+            tx.rollback().await?;
             return Err(e);
         }
     }
@@ -609,8 +600,7 @@ pub async fn install_part_with_origin(
         db.insert_replaces(part_id, &partinfo.replaces).await?;
     }
 
-    db.update_transaction_status(tx_id, TransactionStatus::Completed)
-        .await?;
+    tx.commit().await?;
     log_debug_timing(
         "install",
         &partinfo.name,
@@ -635,8 +625,6 @@ pub async fn install_part_with_origin(
             );
         }
     }
-
-    rollback_state.commit();
 
     let ver_rel = if partinfo.plan.version.is_empty() {
         format!("{}", partinfo.plan.release)

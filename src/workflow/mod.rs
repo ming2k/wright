@@ -6,9 +6,10 @@
 //!   Recomputed every invocation; never read back from disk.
 //! * **Step** — one resumable unit of work. Identified by a hash of
 //!   `(workflow_id, kind, canonical_step_inputs)`. Idempotent.
-//! * **Run** — one attempt to drive a workflow forward. Multiple runs share
-//!   the workflow's steps; the steps' status rows accumulate progress across
-//!   runs (this is what makes resume work without explicit flags).
+//! * **Drive attempt** — one process attempt to drive a workflow forward.
+//!   Failed or aborted attempts leave active step rows for resume; a succeeded
+//!   attempt clears step rows so future invocations revalidate through
+//!   lower-level idempotence checks.
 //!
 //! ## Design principles
 //!
@@ -32,7 +33,6 @@ pub mod builders;
 mod errors;
 mod id;
 mod runner;
-pub mod runs;
 mod spec;
 mod step;
 pub mod steps;
@@ -42,7 +42,7 @@ mod store;
 mod tests;
 
 pub use errors::{Result, WorkflowError};
-pub use id::{canonical_json, RunId, StepId, WorkflowId};
+pub use id::{canonical_json, StepId, WorkflowId};
 pub use runner::{drive, RunOutcome, SchedulerPolicy};
 pub use spec::{WorkflowBuilder, WorkflowSpec};
 pub use step::{ResourceClass, ScheduledStep, Status, Step, StepContext, TerminalStatus};

@@ -16,6 +16,7 @@ wright.toml
 *.pyc
 
 # AI assistants
+.claude/
 .codex/
 .gemini/
 .kimi/

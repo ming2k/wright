@@ -37,10 +37,8 @@
 | `replaces` | automatic replacement metadata |
 | `shadowed_files` | file collision records used for divert and safe removal |
 | `transactions` | install, upgrade, remove history |
-| `workflows` | content-addressed workflow definitions |
-| `workflow_steps` | per-step build/package/install state (idempotent resume) |
-| `workflow_runs` | per-invocation run metadata |
-| `workflow_step_events` | step lifecycle event log |
+| `workflows` | active content-addressed workflow identities for incomplete work |
+| `workflow_steps` | active per-step resume state for incomplete workflows |
 
 ## Entity Relationship Diagram
 
@@ -57,9 +55,6 @@ erDiagram
     parts ||--o{ shadowed_files : "original owner"
     parts ||--o{ shadowed_files : "shadowed by"
     workflows ||--o{ workflow_steps : contains
-    workflows ||--o{ workflow_runs : tracks
-    workflow_runs ||--o{ workflow_step_events : logs
-
     plans {
         INTEGER id PK
         TEXT name UK
@@ -167,26 +162,11 @@ erDiagram
         TEXT status
         INTEGER attempt
         TEXT outputs_json
-        TEXT error_text
+        TEXT failure_json
         INTEGER started_at
         INTEGER finished_at
     }
 
-    workflow_runs {
-        TEXT id PK
-        TEXT workflow_id FK
-        INTEGER started_at
-        INTEGER last_active_at
-        TEXT terminal_status
-    }
-
-    workflow_step_events {
-        TEXT run_id
-        TEXT step_id
-        TEXT event
-        INTEGER at
-        TEXT detail
-    }
 ```
 
 ## Key Constraints
@@ -198,10 +178,9 @@ erDiagram
 | `plans.name` | `UNIQUE` | Each plan name maps to exactly one plan record |
 | `plan_build_deps` | `UNIQUE(plan_id, depends_on)` | Prevents duplicate build dependency edges per plan |
 | `plan_link_deps` | `UNIQUE(plan_id, depends_on)` | Prevents duplicate link dependency edges per plan |
-| `workflows.id` | `PRIMARY KEY` | Content-addressed workflow IDs are immutable |
+| `workflows.id` | `PRIMARY KEY` | Active content-addressed workflow IDs are immutable |
 | `workflow_steps.id` | `PRIMARY KEY` | Content-addressed step IDs are immutable |
 | `workflow_steps.status` | `CHECK(status IN ('pending','running','succeeded','failed','skipped'))` | Enforces valid step lifecycle states |
-| `workflow_step_events` | `PRIMARY KEY (run_id, step_id, at, event)` | Ensures at most one event per timestamp per step per run |
 
 ## Non-Foreign-Key References
 
