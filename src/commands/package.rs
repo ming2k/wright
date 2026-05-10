@@ -3,11 +3,11 @@ use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::builder::orchestrator::BuildOptions;
 use crate::cli::package::PackageArgs;
-use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
 use crate::error::WrightError;
+use crate::operations::drive::{drive_command, DriveOptions};
+use crate::planning::BuildOptions;
 use crate::workflow::builders::build_package_workflow;
 
 pub async fn execute_package(
@@ -68,7 +68,7 @@ pub async fn execute_package(
         DriveOptions {
             config: &command_config,
             db_path,
-            fresh: false,
+            invalidate: false,
             quiet,
         },
     )

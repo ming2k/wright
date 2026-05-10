@@ -333,10 +333,7 @@ include = ["/usr/share/doc/.*"]
         .unwrap();
 
     let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder
-        .slice_outputs(&manifest, &build_root)
-        .await
-        .unwrap();
+    let result = builder.slice_outputs(&manifest, &build_root).await.unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(result.split_part_dirs["split-vars-doc"]
@@ -398,9 +395,7 @@ include = ["/usr/bin/.*"]
         .unwrap();
 
     let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder
-        .slice_outputs(&manifest, &build_root)
-        .await;
+    let result = builder.slice_outputs(&manifest, &build_root).await;
 
     let err = match result {
         Ok(_) => panic!("expected unclaimed staging files to fail slicing"),
@@ -469,10 +464,7 @@ reason = "documentation is intentionally not packaged"
         .unwrap();
 
     let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder
-        .slice_outputs(&manifest, &build_root)
-        .await
-        .unwrap();
+    let result = builder.slice_outputs(&manifest, &build_root).await.unwrap();
 
     assert!(result.split_part_dirs["coverage"]
         .join("usr/bin/coverage")

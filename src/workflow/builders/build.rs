@@ -4,9 +4,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use crate::builder::orchestrator::{create_execution_plan, BuildExecutionPlan, BuildOptions};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
+use crate::planning::{create_execution_plan, BuildExecutionPlan, BuildOptions};
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::spec::{WorkflowBuilder, WorkflowSpec};
@@ -93,9 +93,11 @@ pub(super) fn add_build_steps(
 
             let mut effective = BuildOptionsCanonical::from_options(options);
             if !is_bootstrap && plan.is_post_bootstrap_full(task) {
-                // Force a fresh full build after the mvp bootstrap pass; the
-                // mvp pass produces stage sentinels we must invalidate.
-                effective.force = true;
+                // After the mvp bootstrap pass the full build must re-run
+                // stages that the mvp pass may have checkpointed.  Rather than
+                // forcing the entire pipeline (which loses *all* checkpoints),
+                // we invalidate only the mvp checkpoints inside the step.
+                effective.invalidate_mvp_checkpoints = true;
             }
 
             let plan_ref = PlanRef::from_path(plan_path, base.to_string())?;

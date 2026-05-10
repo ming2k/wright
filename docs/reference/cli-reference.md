@@ -144,9 +144,10 @@ infrastructure:
 
 1. Creates the directory skeleton (`var/lib/wright/`, `var/log/wright/`,
    `etc/wright/`, ...).
-2. Copies all source plans into `<root>/var/lib/wright/plans/` so the target
-   can self-maintain later.
-3. Copies referenced group manifests into `<root>/var/lib/wright/groups/`.
+2. **Syncs** all source plans into `<root>/var/lib/wright/plans/` so the
+   target can self-maintain later.  Files are compared by size and mtime;
+   only changed files are copied, and stale files in the target are removed.
+3. **Syncs** referenced group manifests into `<root>/var/lib/wright/groups/`.
 4. Writes a minimal `/etc/wright/wright.toml` pointing at the target-local
    directories.
 5. Initialises the SQLite database with the full schema.

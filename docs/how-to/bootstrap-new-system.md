@@ -72,6 +72,22 @@ wright launch --root /mnt/new --plans ./plans bash coreutils glibc gcc
 This reuses `wright apply`'s wave engine end-to-end. The only difference from
 a normal `apply` is that installs target `--root` instead of `/`.
 
+### Plan and group synchronisation
+
+`launch` keeps the target's plan definitions in sync with the host so the
+target can self-maintain later.  During every run it:
+
+1. Compares each source plan file against the copy in
+   `<root>/var/lib/wright/plans/` (by size and mtime).
+2. Copies only the files that have changed.
+3. Removes files or directories in the target that no longer exist on the
+   host.
+
+The same logic applies to group manifests in `<root>/var/lib/wright/groups/`.
+This means you can edit a plan on the host and re-run `launch`; the target
+will receive the updated definition without a full rebuild of plans that
+have not changed.
+
 Because the host builds, the host must already have a working toolchain. If
 you are filling a target with a different libc or arch from the host, build a
 seed pack from a host that matches first, then use Path A on the bare target.

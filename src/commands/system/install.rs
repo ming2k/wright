@@ -4,8 +4,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::apply::collect_install_args;
-use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
+use crate::operations::drive::{drive_command, DriveOptions};
 use crate::part::store::LocalPartStore;
 use crate::workflow::builders::{build_install_archives_workflow, build_install_targets_workflow};
 
@@ -93,7 +93,7 @@ pub async fn execute_install(
         DriveOptions {
             config,
             db_path,
-            fresh: false,
+            invalidate: false,
             quiet: false,
         },
     )

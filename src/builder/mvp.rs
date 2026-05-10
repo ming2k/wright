@@ -12,7 +12,7 @@ pub(crate) struct PlanGraph {
     pub(crate) name_to_path: HashMap<String, PathBuf>,
     pub(crate) deps_map: HashMap<String, Vec<String>>,
     pub(crate) build_set: HashSet<String>,
-    pub(crate) rebuild_reasons: HashMap<String, crate::builder::orchestrator::RebuildReason>,
+    pub(crate) rebuild_reasons: HashMap<String, crate::planning::RebuildReason>,
     pub(crate) part_to_plan: HashMap<String, String>,
     /// For bootstrap tasks (key = "{part}:bootstrap"), the deps that were
     /// excluded so the cycle could be broken.

@@ -23,6 +23,10 @@ pub struct GeneralConfig {
     pub arch: String,
     #[serde(default = "default_plans_dir")]
     pub plans_dir: PathBuf,
+    /// Directory containing group manifest files (`<name>.toml`).
+    /// Defaults to the `groups` sibling of `plans_dir`.
+    #[serde(default = "default_groups_dir")]
+    pub groups_dir: PathBuf,
     /// Additional plan search directories consulted after `plans_dir`.
     /// Relative paths are resolved against the working directory at runtime.
     #[serde(default)]
@@ -87,6 +91,7 @@ fn default_general() -> GeneralConfig {
     GeneralConfig {
         arch: default_arch(),
         plans_dir: default_plans_dir(),
+        groups_dir: default_groups_dir(),
         extra_plans_dirs: Vec::new(),
         parts_dir: default_parts_dir(),
         source_dir: if use_xdg {
@@ -153,6 +158,9 @@ fn default_arch() -> String {
 }
 fn default_plans_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/plans")
+}
+fn default_groups_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/groups")
 }
 fn default_parts_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/parts")

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use crate::builder::checkpoint::StageCheckpoint;
 use crate::builder::executor::{self, ExecutorOptions, ExecutorRegistry};
 use crate::builder::logging;
 use crate::error::{Result, WrightError};
@@ -24,36 +25,6 @@ pub const DEFAULT_STAGES: &[&str] = &[
 ];
 
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
-
-const STAGING_DEPENDENT_STAGES: &[&str] = &["staging"];
-
-fn stage_sentinel_path(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) -> PathBuf {
-    let prefix = match build_phase {
-        Some("mvp") => ".wright-stage-mvp",
-        _ => ".wright-stage",
-    };
-    work_dir.join(format!("{prefix}-{stage_name}"))
-}
-
-fn write_stage_sentinel(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) {
-    let path = stage_sentinel_path(work_dir, stage_name, build_phase);
-    if let Err(e) = std::fs::write(&path, "") {
-        warn!("Failed to write stage sentinel {}: {}", path.display(), e);
-    }
-}
-
-fn has_stage_completed(work_dir: &Path, stage_name: &str, build_phase: Option<&str>) -> bool {
-    stage_sentinel_path(work_dir, stage_name, build_phase).exists()
-}
-
-pub fn clean_staging_sentinels(work_dir: &Path, build_phase: Option<&str>) {
-    for stage_name in STAGING_DEPENDENT_STAGES {
-        let path = stage_sentinel_path(work_dir, stage_name, build_phase);
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-}
 
 pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
     if build_phase == Some("mvp") {
@@ -78,6 +49,7 @@ pub struct LifecyclePipeline<'a> {
     work_dir: PathBuf,
     output_dir: PathBuf,
     stages: Vec<String>,
+    force_stage: Vec<String>,
     stop_after_stage: Option<String>,
     skip_check: bool,
     force: bool,
@@ -89,6 +61,8 @@ pub struct LifecyclePipeline<'a> {
     compile_cpu_count: Option<u32>,
     compile_lock: Option<Arc<Mutex<()>>>,
     progress: Option<ProgressBar>,
+    checkpoint: StageCheckpoint,
+    plan_fingerprint: String,
 }
 
 pub struct LifecycleContext<'a> {
@@ -100,6 +74,7 @@ pub struct LifecycleContext<'a> {
     pub work_dir: PathBuf,
     pub output_dir: PathBuf,
     pub stages: Vec<String>,
+    pub force_stage: Vec<String>,
     pub stop_after_stage: Option<String>,
     pub skip_check: bool,
     pub force: bool,
@@ -111,10 +86,15 @@ pub struct LifecycleContext<'a> {
     pub compile_cpu_count: Option<u32>,
     pub compile_lock: Option<Arc<Mutex<()>>>,
     pub progress: Option<ProgressBar>,
+    /// Content-addressed fingerprint of the plan (e.g. build key or content hash).
+    /// Used to verify that stage checkpoints are still valid.
+    pub plan_fingerprint: String,
 }
 
 impl<'a> LifecyclePipeline<'a> {
     pub fn new(ctx: LifecycleContext<'a>) -> Self {
+        let phase = ctx.vars.get("WRIGHT_BUILD_PHASE").cloned();
+        let checkpoint = StageCheckpoint::new(ctx.work_dir.clone(), phase);
         Self {
             manifest: ctx.manifest,
             vars: ctx.vars,
@@ -124,6 +104,7 @@ impl<'a> LifecyclePipeline<'a> {
             work_dir: ctx.work_dir,
             output_dir: ctx.output_dir,
             stages: ctx.stages,
+            force_stage: ctx.force_stage,
             stop_after_stage: ctx.stop_after_stage,
             skip_check: ctx.skip_check,
             force: ctx.force,
@@ -135,11 +116,9 @@ impl<'a> LifecyclePipeline<'a> {
             compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
             progress: ctx.progress,
+            checkpoint,
+            plan_fingerprint: ctx.plan_fingerprint,
         }
-    }
-
-    fn build_phase(&self) -> Option<&str> {
-        self.vars.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str())
     }
 
     fn can_checkpoint(&self) -> bool {
@@ -206,8 +185,12 @@ impl<'a> LifecyclePipeline<'a> {
                 continue;
             }
 
+            let is_forced = self.force_stage.contains(stage_name);
             if checkpoint_enabled
-                && has_stage_completed(&self.work_dir, stage_name, self.build_phase())
+                && !is_forced
+                && self
+                    .checkpoint
+                    .is_complete(stage_name, &self.plan_fingerprint)
             {
                 info!(
                     "{}",
@@ -222,7 +205,8 @@ impl<'a> LifecyclePipeline<'a> {
             self.run_ordered_stage(stage_name).await?;
 
             if checkpoint_enabled {
-                write_stage_sentinel(&self.work_dir, stage_name, self.build_phase());
+                self.checkpoint
+                    .mark_complete(stage_name, &self.plan_fingerprint);
             }
 
             if stop_after_index == Some(idx) {
@@ -436,29 +420,11 @@ impl<'a> LifecyclePipeline<'a> {
         }
 
         if exit_code != 0 {
-            let output_snippet = {
-                let relevant = if !result.stderr.tail.trim().is_empty() {
-                    result.stderr.tail.trim()
-                } else {
-                    result.stdout.tail.trim()
-                };
-                let lines: Vec<&str> = relevant.lines().collect();
-                if lines.len() > 40 {
-                    format!(
-                        "... ({} lines omitted) ...\n{}",
-                        lines.len() - 40,
-                        lines[lines.len() - 40..].join("\n")
-                    )
-                } else {
-                    relevant.to_string()
-                }
-            };
             return Err(WrightError::BuildError(format!(
-                "stage '{}' failed with exit code {}\nLog: {}\n\n{}",
+                "stage '{}' failed with exit code {} (see log: {})",
                 stage_name,
                 exit_code,
                 log_path.display(),
-                output_snippet
             )));
         }
 

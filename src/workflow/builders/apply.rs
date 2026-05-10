@@ -5,14 +5,14 @@ use std::sync::Arc;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use crate::builder::orchestrator::{
-    create_execution_plan, resolve_build_set, resolve_explicit_plan_names, BuildExecutionPlan,
-    BuildOptions, DependentsMode, MatchPolicy, ResolveOptions,
-};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::part::store::LocalPartStore;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
+use crate::planning::{
+    create_execution_plan, resolve_build_set, resolve_explicit_plan_names, BuildExecutionPlan,
+    BuildOptions, DependentsMode, MatchPolicy, ResolveOptions,
+};
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::spec::{WorkflowBuilder, WorkflowSpec};
@@ -69,14 +69,13 @@ pub async fn build_apply_workflow(
     force_install: bool,
     nodeps: bool,
 ) -> Result<WorkflowSpec> {
-    // Compute the build set with the same dependency expansion the legacy
-    // path used; the workflow only builds and installs what the resolver
-    // says is needed.
+    // Compute the build set from the planning layer; the workflow only builds
+    // and installs what the resolver says is needed.
     let build_set: Vec<String> = resolve_build_set(&config, targets.clone(), resolve_opts.clone())
         .await
         .map_err(|e| WorkflowError::Other(format!("resolve_build_set: {}", e)))?;
 
-    let plan_dirs = crate::builder::orchestrator::plan_search_dirs(&config);
+    let plan_dirs = crate::planning::plan_search_dirs(&config);
     let explicit_plan_names = resolve_explicit_plan_names(&plan_dirs, &targets)
         .map_err(|e| WorkflowError::Other(format!("explicit plan names: {}", e)))?;
 

@@ -1,16 +1,14 @@
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
-use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
-use crate::part::group;
+use crate::operations::apply::{build_apply_spec, ApplyRequest};
+use crate::operations::drive::{drive_command, DriveOptions};
 use crate::part::store::LocalPartStore;
-use crate::workflow::builders::build_apply_workflow;
+use crate::planning::{DependentsMode, MatchPolicy};
 
 pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     use std::io::IsTerminal;
@@ -28,7 +26,7 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
 
 pub struct ApplyArgs<'a> {
     pub targets: Vec<String>,
-    pub fresh: bool,
+    pub invalidate: bool,
     pub deps: Option<DomainArg>,
     pub rdeps: Option<DomainArg>,
     pub match_policies: Vec<MatchPolicyArg>,
@@ -43,28 +41,28 @@ pub struct ApplyArgs<'a> {
     pub part_store: &'a LocalPartStore,
 }
 
-fn map_resolve_domain(d: DomainArg) -> crate::builder::orchestrator::DependentsMode {
+fn map_resolve_domain(d: DomainArg) -> DependentsMode {
     match d {
-        DomainArg::Link => crate::builder::orchestrator::DependentsMode::Link,
-        DomainArg::Runtime => crate::builder::orchestrator::DependentsMode::Runtime,
-        DomainArg::Build => crate::builder::orchestrator::DependentsMode::Build,
-        DomainArg::All => crate::builder::orchestrator::DependentsMode::All,
+        DomainArg::Link => DependentsMode::Link,
+        DomainArg::Runtime => DependentsMode::Runtime,
+        DomainArg::Build => DependentsMode::Build,
+        DomainArg::All => DependentsMode::All,
     }
 }
 
-fn map_match_policy(m: MatchPolicyArg) -> crate::builder::orchestrator::MatchPolicy {
+fn map_match_policy(m: MatchPolicyArg) -> MatchPolicy {
     match m {
-        MatchPolicyArg::All => crate::builder::orchestrator::MatchPolicy::All,
-        MatchPolicyArg::Missing => crate::builder::orchestrator::MatchPolicy::Missing,
-        MatchPolicyArg::Outdated => crate::builder::orchestrator::MatchPolicy::Outdated,
-        MatchPolicyArg::Installed => crate::builder::orchestrator::MatchPolicy::Installed,
+        MatchPolicyArg::All => MatchPolicy::All,
+        MatchPolicyArg::Missing => MatchPolicy::Missing,
+        MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+        MatchPolicyArg::Installed => MatchPolicy::Installed,
     }
 }
 
 pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
     let ApplyArgs {
         targets,
-        fresh,
+        invalidate,
         deps,
         rdeps,
         match_policies,
@@ -88,69 +86,21 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         anyhow::bail!("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)");
     }
 
-    // Build the list of plan directories used for group resolution.
-    let mut plan_dirs: Vec<std::path::PathBuf> = vec![config.general.plans_dir.clone()];
-    plan_dirs.extend(config.general.extra_plans_dirs.iter().cloned());
-
-    // Expand any @group references into their constituent plan names.
-    let (targets, group_assumes, _group_config) =
-        group::expand_group_references(targets, &plan_dirs)?;
-
-    if targets.is_empty() {
-        anyhow::bail!("no plans to build after expanding groups");
-    }
-
-    // Pre-register any assumptions collected from groups.
-    if !group_assumes.is_empty() {
-        let db = InstalledDb::open(db_path)
-            .await
-            .context("failed to open database for group assumptions")?;
-        for assume in &group_assumes {
-            db.assume_part(&assume.name, &assume.version)
-                .await
-                .with_context(|| format!("failed to assume {}", assume.name))?;
-        }
-        drop(db);
-    }
-
-    let resolve_opts = crate::builder::orchestrator::ResolveOptions {
-        deps: Some(
-            deps.map(map_resolve_domain)
-                .unwrap_or(crate::builder::orchestrator::DependentsMode::All),
-        ),
-        rdeps: rdeps.map(map_resolve_domain),
-        match_policies: if match_policies.is_empty() {
-            vec![crate::builder::orchestrator::MatchPolicy::Outdated]
-        } else {
-            match_policies.into_iter().map(map_match_policy).collect()
-        },
-        depth: Some(depth.unwrap_or(0)),
-        include_targets: true,
-        preserve_targets: force,
-    };
-
-    let build_opts = crate::builder::orchestrator::BuildOptions {
-        clean: force,
-        force,
-        verbose: verbose > 0,
-        quiet,
-        nproc_per_isolation: config.build.nproc_per_isolation,
-        ..Default::default()
-    };
-
-    let part_store_arc = Arc::new((*part_store).clone());
-    let spec = build_apply_workflow(
-        Arc::new(config.clone()),
+    let spec = build_apply_spec(ApplyRequest {
         targets,
-        resolve_opts,
-        build_opts,
-        root_dir.to_path_buf(),
-        part_store_arc,
+        deps: deps.map(map_resolve_domain),
+        rdeps: rdeps.map(map_resolve_domain),
+        match_policies: match_policies.into_iter().map(map_match_policy).collect(),
+        depth,
         force,
-        false,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("apply workflow: {}", e))?;
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        part_store,
+    })
+    .await?;
 
     if dry_run {
         println!("Apply plan (dry-run):");
@@ -170,7 +120,7 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         DriveOptions {
             config,
             db_path,
-            fresh,
+            invalidate,
             quiet,
         },
     )

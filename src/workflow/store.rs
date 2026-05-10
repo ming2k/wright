@@ -7,6 +7,23 @@ use super::id::{StepId, WorkflowId};
 use super::step::{ScheduledStep, Status};
 use crate::database::InstalledDb;
 
+/// Summary of a workflow row, for diagnostic commands like `wright ps`.
+#[derive(Debug)]
+pub struct WorkflowSummary {
+    pub id: WorkflowId,
+    pub kind: String,
+}
+
+/// Summary of a workflow step row, for diagnostic commands.
+#[derive(Debug)]
+pub struct StepSummary {
+    pub id: StepId,
+    pub status: Status,
+    pub attempt: i32,
+    pub plan_name: Option<String>,
+    pub label: Option<String>,
+}
+
 /// Sole owner of the `workflows` and `workflow_steps` tables. No other module
 /// talks to them directly.
 pub struct WorkflowStore<'a> {
@@ -16,6 +33,57 @@ pub struct WorkflowStore<'a> {
 impl<'a> WorkflowStore<'a> {
     pub fn new(db: &'a InstalledDb) -> Self {
         Self { db }
+    }
+
+    /// List all workflows in the database.
+    pub async fn list_workflows(&self,
+    ) -> Result<Vec<WorkflowSummary>> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, kind FROM workflows ORDER BY created_at DESC")
+                .fetch_all(&self.db.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, kind)| WorkflowSummary {
+                id: WorkflowId::from(id),
+                kind,
+            })
+            .collect())
+    }
+
+    /// List all steps for a workflow, including basic metadata for display.
+    pub async fn list_steps(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<StepSummary>> {
+        let rows: Vec<(String, String, i32, String, String)> = sqlx::query_as(
+            "SELECT id, status, attempt, inputs_json, kind \
+             FROM workflow_steps \
+             WHERE workflow_id = ? \
+             ORDER BY id",
+        )
+        .bind(workflow_id.as_str())
+        .fetch_all(&self.db.pool)
+        .await?;
+
+        let mut out = Vec::new();
+        for (id, status_str, attempt, inputs_json, kind) in rows {
+            let status = Status::parse(&status_str).unwrap_or(Status::Pending);
+            let inputs: JsonValue = serde_json::from_str(&inputs_json).unwrap_or(JsonValue::Null);
+            let plan_name = extract_plan_name(&inputs, &kind);
+            let label = inputs
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            out.push(StepSummary {
+                id: StepId::from(id),
+                status,
+                attempt,
+                plan_name,
+                label,
+            });
+        }
+        Ok(out)
     }
 
     fn now_ms() -> i64 {
@@ -168,11 +236,46 @@ impl<'a> WorkflowStore<'a> {
         Ok(())
     }
 
+    pub async fn load_failures(
+        &self,
+        workflow_id: &WorkflowId,
+    ) -> Result<HashMap<StepId, JsonValue>> {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, failure_json FROM workflow_steps \
+             WHERE workflow_id = ? AND status = 'failed'",
+        )
+        .bind(workflow_id.as_str())
+        .fetch_all(&self.db.pool)
+        .await?;
+        let mut out = HashMap::new();
+        for (id, json) in rows {
+            if let Some(json) = json {
+                let v: JsonValue = serde_json::from_str(&json)?;
+                out.insert(StepId::from(id), v);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn clear_workflow(&self, workflow_id: &WorkflowId) -> Result<()> {
         sqlx::query("DELETE FROM workflows WHERE id = ?")
             .bind(workflow_id.as_str())
             .execute(&self.db.pool)
             .await?;
         Ok(())
+    }
+}
+
+/// Extract a human-readable plan name from step inputs_json, if present.
+fn extract_plan_name(inputs: &JsonValue, kind: &str) -> Option<String> {
+    // build_plan and package_plan steps embed the plan name under inputs.plan.name
+    if kind == "build_plan" || kind == "package_plan" {
+        inputs
+            .get("plan")
+            .and_then(|p| p.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
     }
 }

@@ -3,9 +3,9 @@ pub mod launch;
 pub mod lint;
 pub mod package;
 pub mod prune;
+pub mod ps;
 pub mod resolve;
 pub mod system;
-pub mod workflow_run;
 
 use crate::cli::Cli;
 use crate::config::GlobalConfig;
@@ -43,10 +43,13 @@ pub async fn dispatch(
         crate::cli::Commands::Launch(args) => {
             launch::execute_launch(args, config, &db_path, &root_dir, cli.verbose, cli.quiet).await
         }
+        crate::cli::Commands::Ps(args) => {
+            ps::execute_ps(&db_path, args.all, args.status.as_deref()).await
+        }
     }
 }
 
 /// Helper function to setup the local part store for commands that need it.
 pub(crate) fn setup_local_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
-    crate::builder::orchestrator::setup_part_store(config).map_err(Into::into)
+    crate::planning::setup_part_store(config).map_err(Into::into)
 }

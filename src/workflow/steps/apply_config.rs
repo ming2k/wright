@@ -18,7 +18,7 @@ pub struct ApplyConfigInputs {
     pub services: Vec<String>, // sorted
 }
 
-/// Apply the `[config]` block from a pack manifest: hostname, timezone,
+/// Apply the `[config]` block from a group manifest: hostname, timezone,
 /// locale, and runit service symlinks. Pure file mutations; no DB writes.
 pub struct ApplyConfigStep {
     inputs: ApplyConfigInputs,
@@ -43,6 +43,10 @@ impl Step for ApplyConfigStep {
 
     fn depends_on(&self) -> &[StepId] {
         &self.deps
+    }
+
+    fn label(&self) -> Option<&str> {
+        Some("config")
     }
 
     fn execute(

@@ -11,8 +11,8 @@ pub enum WorkflowError {
     #[error("step failed: {0}")]
     StepFailed(String),
 
-    #[error("workflow deadlock: unmet dependencies remain: {0}")]
-    Deadlock(String),
+    #[error("workflow blocked by failed dependencies:\n{0}")]
+    BlockedByFailures(String),
 
     #[error("step result channel closed unexpectedly")]
     ChannelClosed,

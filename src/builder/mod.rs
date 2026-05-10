@@ -1,8 +1,8 @@
+pub mod checkpoint;
 pub mod executor;
 pub mod lifecycle;
 pub mod logging;
 pub mod mvp;
-pub mod orchestrator;
 pub mod variables;
 
 use indicatif::HumanBytes;
@@ -264,6 +264,7 @@ impl Builder {
         plan_dir: &Path,
         base_root: &Path,
         stages: &[String],
+        force_stage: &[String],
         until_stage: Option<&str>,
         fetch_only: bool,
         skip_check: bool,
@@ -302,6 +303,11 @@ impl Builder {
             }
         }
 
+        let checkpoint = checkpoint::StageCheckpoint::new(
+            work_dir.clone(),
+            build_phase.map(|s| s.to_string()),
+        );
+
         if !stages.is_empty() {
             if !work_dir.exists() {
                 return Err(WrightError::BuildError(
@@ -309,7 +315,7 @@ impl Builder {
                 ));
             }
             ensure_clean_dir(&staging_dir).await?;
-            lifecycle::clean_staging_sentinels(&work_dir, build_phase);
+            checkpoint.invalidate_from("staging");
             ensure_clean_dir(&logs_dir).await?;
         } else {
             let key_file = build_root.join(".build_key");
@@ -323,7 +329,7 @@ impl Builder {
             if work_reusable {
                 debug!("Source tree unchanged (build key match) — reusing work/");
                 ensure_clean_dir(&staging_dir).await?;
-                lifecycle::clean_staging_sentinels(&work_dir, build_phase);
+                checkpoint.invalidate_from("staging");
                 ensure_clean_dir(&logs_dir).await?;
             } else {
                 ensure_clean_dir(&work_dir).await?;
@@ -448,6 +454,7 @@ impl Builder {
             work_dir: work_dir.clone(),
             output_dir: output_dir.clone(),
             stages: stages.to_vec(),
+            force_stage: force_stage.to_vec(),
             stop_after_stage: until_stage.map(str::to_string),
             skip_check,
             force,
@@ -459,6 +466,7 @@ impl Builder {
             compile_cpu_count: Some(total_cpus),
             compile_lock,
             progress,
+            plan_fingerprint: build_key.clone(),
         });
 
         pipeline.run().await?;

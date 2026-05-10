@@ -1,6 +1,6 @@
-use wright::builder::orchestrator::{resolve_build_set, MatchPolicy, ResolveOptions};
 use wright::config::GlobalConfig;
 use wright::database::{InstalledDb, NewPart, NewPlan, Origin};
+use wright::planning::{resolve_build_set, MatchPolicy, ResolveOptions};
 
 #[tokio::test]
 async fn test_apply_force_always_includes_explicit_targets() {

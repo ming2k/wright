@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::util::progress::SUPPRESS_INFO_LOGS;
+use std::sync::atomic::Ordering;
 use tokio::sync::{mpsc, watch, Mutex, OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
@@ -20,7 +22,7 @@ pub struct SchedulerPolicy {
     pub network_concurrency: usize,
     /// On the first failed step, drain in-flight work and stop launching new
     /// steps. Set false to fail-soft (record the failure, keep going on
-    /// independent branches). Defaults to true; the build orchestrator
+    /// independent branches). Defaults to true; the planning layer
     /// behaves the same way today.
     pub fail_fast: bool,
     /// Maximum attempts per step across drive attempts.  A step whose `attempt` count
@@ -53,6 +55,8 @@ pub struct RunOutcome {
 struct StepDone {
     id: StepId,
     kind: &'static str,
+    plan_name: Option<String>,
+    label: Option<String>,
     inputs_json: String,
     result: Result<serde_json::Value>,
 }
@@ -74,7 +78,7 @@ pub async fn drive(
     spec: WorkflowSpec,
     policy: SchedulerPolicy,
     log_dir: PathBuf,
-    cancel: watch::Receiver<bool>,
+    mut cancel: watch::Receiver<bool>,
 ) -> Result<RunOutcome> {
     let store = WorkflowStore::new(&db);
 
@@ -105,6 +109,12 @@ pub async fn drive(
     let mut by_id: HashMap<StepId, ScheduledStep> =
         spec.steps.into_iter().map(|s| (s.id.clone(), s)).collect();
     let total_steps = by_id.len();
+
+    // Keep lightweight metadata for diagnostics after steps are removed from `by_id`.
+    let step_metadata: HashMap<StepId, (Option<String>, Option<String>, Vec<StepId>)> = by_id
+        .iter()
+        .map(|(id, s)| (id.clone(), (s.plan_name.clone(), s.label.clone(), s.depends_on.clone())))
+        .collect();
 
     let mut statuses: HashMap<StepId, Status> = store.load_statuses(&spec.workflow_id).await?;
     // Steps not yet in the DB don't show up in load_statuses; treat as pending.
@@ -210,6 +220,8 @@ pub async fn drive(
                 let tx = tx.clone();
                 let done_id = step.id.clone();
                 let done_kind = step.kind;
+                let done_plan_name = step.plan_name.clone();
+                let done_label = step.label.clone();
                 let done_inputs_json = step.inputs_json.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // released on drop, after step finishes
@@ -218,6 +230,8 @@ pub async fn drive(
                         .send(StepDone {
                             id: done_id,
                             kind: done_kind,
+                            plan_name: done_plan_name,
+                            label: done_label,
                             inputs_json: done_inputs_json,
                             result,
                         })
@@ -237,13 +251,20 @@ pub async fn drive(
             // Pending exist but nothing in flight and nothing was launched =>
             // remaining steps have unmet deps (cycle, or dep on a permanently-
             // failed step). Report and exit.
-            let unmet = describe_unmet_deps(&by_id_keys(&statuses, &outputs), &statuses);
-            return Err(WorkflowError::Deadlock(unmet));
+            let failures = store.load_failures(&spec.workflow_id).await.unwrap_or_default();
+            let unmet = describe_unmet_deps(
+                &statuses,
+                &step_metadata,
+                &failures,
+                &permanent_failures,
+            );
+            return Err(WorkflowError::BlockedByFailures(unmet));
         }
 
-        // 3. Wait for one completion.
-        let Some(done) = rx.recv().await else {
-            return Err(WorkflowError::ChannelClosed);
+        // 3. Wait for one completion, but also honour cancellation.
+        let done = tokio::select! {
+            Some(done) = rx.recv() => done,
+            _ = wait_cancelled(&mut cancel) => break,
         };
         in_flight -= 1;
         match done.result {
@@ -254,14 +275,28 @@ pub async fn drive(
             }
             Err(e) => {
                 let msg = format!("{:#}", e);
-                let (plan, label) = extract_plan_label(&done.inputs_json);
-                warn!(step = %done.id.short(), plan = ?plan, label = ?label, error = %msg, "step failed");
+                let plan = done.plan_name.clone();
+                let label = done.label.clone();
                 statuses.insert(done.id.clone(), Status::Failed);
                 let failure = failure_json(done.kind, &done.inputs_json, &msg);
                 store.mark_failed(&done.id, &failure).await?;
-                failed.push((done.id, msg, plan, label));
+                failed.push((done.id.clone(), msg.clone(), plan.clone(), label.clone()));
                 if policy.fail_fast {
+                    let first_failure = !stop_launching;
                     stop_launching = true;
+                    if first_failure {
+                        SUPPRESS_INFO_LOGS.store(true, Ordering::Relaxed);
+                        let ctx = match (&plan, &label) {
+                            (Some(p), Some(l)) => format!(" [{} / {}]", p, l),
+                            (Some(p), None) => format!(" [{}]", p),
+                            (None, Some(l)) => format!(" [{}]", l),
+                            (None, None) => String::new(),
+                        };
+                        warn!("step {} failed{}: {}", done.id.short(), ctx, msg);
+                        if in_flight > 0 {
+                            warn!("halting: no new steps will be launched, waiting for {} already-running task(s) to finish", in_flight - 1);
+                        }
+                    }
                 }
             }
         }
@@ -269,25 +304,25 @@ pub async fn drive(
 
     // Drain any remaining in-flight after we stopped launching.
     while in_flight > 0 {
-        match rx.recv().await {
-            Some(done) => {
-                in_flight -= 1;
-                match done.result {
-                    Ok(out) => {
-                        statuses.insert(done.id.clone(), Status::Succeeded);
-                        store.mark_succeeded(&done.id, &out).await?;
-                    }
-                    Err(e) => {
-                        let msg = format!("{:#}", e);
-                        let (plan, label) = extract_plan_label(&done.inputs_json);
-                        statuses.insert(done.id.clone(), Status::Failed);
-                        let failure = failure_json(done.kind, &done.inputs_json, &msg);
-                        store.mark_failed(&done.id, &failure).await?;
-                        failed.push((done.id, msg, plan, label));
-                    }
-                }
+        let done = tokio::select! {
+            Some(done) = rx.recv() => done,
+            _ = wait_cancelled(&mut cancel) => break,
+        };
+        in_flight -= 1;
+        match done.result {
+            Ok(out) => {
+                statuses.insert(done.id.clone(), Status::Succeeded);
+                store.mark_succeeded(&done.id, &out).await?;
             }
-            None => break,
+            Err(e) => {
+                let msg = format!("{:#}", e);
+                let plan = done.plan_name.clone();
+                let label = done.label.clone();
+                statuses.insert(done.id.clone(), Status::Failed);
+                let failure = failure_json(done.kind, &done.inputs_json, &msg);
+                store.mark_failed(&done.id, &failure).await?;
+                failed.push((done.id, msg, plan, label));
+            }
         }
     }
 
@@ -320,33 +355,121 @@ pub async fn drive(
     })
 }
 
-/// Used only for diagnostic Deadlock messages; cheap and rare.
-fn by_id_keys(
-    statuses: &HashMap<StepId, Status>,
-    _outputs: &HashMap<StepId, serde_json::Value>,
-) -> Vec<StepId> {
-    statuses.keys().cloned().collect()
+async fn wait_cancelled(cancel: &mut watch::Receiver<bool>) {
+    loop {
+        if *cancel.borrow() {
+            return;
+        }
+        if cancel.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
-fn describe_unmet_deps(all: &[StepId], statuses: &HashMap<StepId, Status>) -> String {
-    let mut lines: Vec<String> = all
-        .iter()
-        .filter(|id| {
-            matches!(
-                statuses.get(*id).copied().unwrap_or(Status::Pending),
-                Status::Pending | Status::Failed
-            )
-        })
-        .map(|id| {
-            format!(
-                "{} ({:?})",
-                id.short(),
-                statuses.get(id).copied().unwrap_or(Status::Pending)
-            )
-        })
-        .collect();
-    lines.sort();
-    lines.join(", ")
+fn describe_unmet_deps(
+    statuses: &HashMap<StepId, Status>,
+    step_metadata: &HashMap<StepId, (Option<String>, Option<String>, Vec<StepId>)>,
+    failures: &HashMap<StepId, serde_json::Value>,
+    permanent_failures: &std::collections::HashSet<StepId>,
+) -> String {
+    use std::fmt::Write;
+
+    let mut failed_steps: Vec<(StepId, String)> = Vec::new();
+    let mut pending_steps: Vec<(StepId, Vec<StepId>)> = Vec::new();
+
+    for (id, status) in statuses {
+        if permanent_failures.contains(id) {
+            let name = step_display_name(id, step_metadata.get(id));
+            failed_steps.push((
+                id.clone(),
+                format!("{} — permanently failed (max attempts reached)", name),
+            ));
+        } else if *status == Status::Failed {
+            let name = step_display_name(id, step_metadata.get(id));
+            let err_msg = failures
+                .get(id)
+                .and_then(|f| f.get("message").and_then(|m| m.as_str()))
+                .unwrap_or("unknown error");
+            failed_steps.push((
+                id.clone(),
+                format!("{} — {}", name, err_msg),
+            ));
+        } else if *status == Status::Pending {
+            let deps = step_metadata
+                .get(id)
+                .map(|m| &m.2)
+                .cloned()
+                .unwrap_or_default();
+            let blocked_by: Vec<StepId> = deps
+                .into_iter()
+                .filter(|d| {
+                    matches!(
+                        statuses.get(d).copied().unwrap_or(Status::Pending),
+                        Status::Failed
+                    ) || permanent_failures.contains(d)
+                })
+                .collect();
+            if !blocked_by.is_empty() {
+                pending_steps.push((id.clone(), blocked_by));
+            }
+        }
+    }
+
+    let mut out = String::new();
+
+    if !failed_steps.is_empty() {
+        writeln!(&mut out, "\n=== failed steps ({} total) ===", failed_steps.len()).ok();
+        for (_, msg) in &failed_steps {
+            writeln!(&mut out, "  {}", msg).ok();
+        }
+    }
+
+    if !pending_steps.is_empty() {
+        writeln!(
+            &mut out,
+            "\n=== pending steps blocked by failed dependencies ({} total) ===",
+            pending_steps.len()
+        )
+        .ok();
+        for (id, blocked_by) in &pending_steps {
+            let name = step_display_name(id, step_metadata.get(id));
+            let blockers: Vec<String> = blocked_by
+                .iter()
+                .map(|b| {
+                    let b_name = step_display_name(b, step_metadata.get(b));
+                    format!("{} ({})", b_name, b.short())
+                })
+                .collect();
+            writeln!(&mut out, "  {} blocked by: {}", name, blockers.join(", ")).ok();
+        }
+    }
+
+    if out.is_empty() {
+        out = "no pending or failed steps found (possible cycle)".to_string();
+    } else {
+        write!(
+            &mut out,
+            "\nuse --invalidate to discard failed workflow state and retry from scratch"
+        )
+        .ok();
+    }
+
+    out
+}
+
+fn step_display_name(
+    id: &StepId,
+    meta: Option<&(Option<String>, Option<String>, Vec<StepId>)>,
+) -> String {
+    let (plan, label) = meta
+        .map(|m| (m.0.as_deref(), m.1.as_deref()))
+        .unwrap_or((None, None));
+    match (plan, label) {
+        (Some(p), Some(l)) => format!("{} [{} / {}]", id.short(), p, l),
+        (Some(p), None) => format!("{} [{}]", id.short(), p),
+        (None, Some(l)) => format!("{} [{}]", id.short(), l),
+        (None, None) => id.short().to_string(),
+    }
 }
 
 fn failure_json(kind: &str, inputs_json: &str, message: &str) -> serde_json::Value {
@@ -395,21 +518,6 @@ fn failure_json(kind: &str, inputs_json: &str, message: &str) -> serde_json::Val
     }
 
     serde_json::Value::Object(obj)
-}
-
-fn extract_plan_label(inputs_json: &str) -> (Option<String>, Option<String>) {
-    let inputs = serde_json::from_str::<serde_json::Value>(inputs_json)
-        .unwrap_or_else(|_| serde_json::Value::Null);
-    let plan = inputs
-        .get("plan")
-        .and_then(|p| p.get("name"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let label = inputs
-        .get("label")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    (plan, label)
 }
 
 fn reason_for(kind: &str, message: &str) -> String {

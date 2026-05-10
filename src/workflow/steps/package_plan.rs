@@ -4,9 +4,9 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
-use crate::builder::orchestrator::package_manifest;
 use crate::config::GlobalConfig;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
+use crate::planning::package_manifest;
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::step::{ResourceClass, Step, StepContext};
@@ -67,6 +67,10 @@ impl Step for PackagePlanStep {
 
     fn depends_on(&self) -> &[StepId] {
         &self.deps
+    }
+
+    fn plan_name(&self) -> Option<&str> {
+        Some(&self.inputs.plan.name)
     }
 
     fn execute(

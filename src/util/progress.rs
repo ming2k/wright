@@ -1,5 +1,6 @@
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use tracing::info;
 
@@ -8,6 +9,10 @@ use tracing::info;
 /// flickering.  Log output is routed here via [`MultiProgressWriter`] so that
 /// `tracing` lines are inserted above active progress bars.
 pub static MULTI: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
+
+/// When set, suppress INFO-level tracing output so that fail-fast failures
+/// are not buried under logs from tasks already in flight.
+pub static SUPPRESS_INFO_LOGS: AtomicBool = AtomicBool::new(false);
 
 fn source_prefix(label: &str) -> String {
     format!("fetch {}", label)
@@ -95,6 +100,13 @@ pub struct MultiProgressWriter;
 
 impl std::io::Write for MultiProgressWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if SUPPRESS_INFO_LOGS.load(Ordering::Relaxed) {
+            let s = String::from_utf8_lossy(buf);
+            let trimmed = s.trim_start();
+            if trimmed.starts_with("INFO ") || trimmed.starts_with("INFO\t") {
+                return Ok(buf.len());
+            }
+        }
         let s = String::from_utf8_lossy(buf);
         let _ = MULTI.println(s.trim_end());
         Ok(buf.len())

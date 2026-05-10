@@ -94,6 +94,10 @@ impl Step for InstallBatchStep {
         &self.deps
     }
 
+    fn label(&self) -> Option<&str> {
+        Some(&self.inputs.label)
+    }
+
     fn execute(
         self: Arc<Self>,
         ctx: StepContext,

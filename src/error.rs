@@ -68,7 +68,7 @@ pub type Result<T> = std::result::Result<T, WrightError>;
 
 /// Extension trait that adds `.context()` to any Result,
 /// converting errors into WrightError::BuildError with a context message.
-/// Mirrors anyhow::Context so orchestrator/query can use familiar syntax.
+/// Mirrors anyhow::Context so planning/query code can use familiar syntax.
 pub trait WrightResultExt<T> {
     fn context(self, msg: impl std::fmt::Display) -> Result<T>;
 }

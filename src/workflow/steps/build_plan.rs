@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::info;
 
-use crate::builder::lifecycle::clean_staging_sentinels;
-use crate::builder::orchestrator::{plan_file_fingerprint, BuildOptions};
+use crate::planning::{plan_file_fingerprint, BuildOptions};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::error::WrightError;
@@ -49,6 +48,7 @@ impl PlanRef {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BuildOptionsCanonical {
     pub stages: Vec<String>,
+    pub force_stage: Vec<String>,
     pub until_stage: Option<String>,
     pub fetch_only: bool,
     pub clean: bool,
@@ -56,6 +56,10 @@ pub struct BuildOptionsCanonical {
     pub mvp: bool,
     pub skip_check: bool,
     pub checksum: bool,
+    /// When true, the step will invalidate mvp-phase checkpoints before
+    /// starting the lifecycle pipeline.  Set for post-bootstrap full builds
+    /// so that stages checkpointed by the preceding mvp pass are re-run.
+    pub invalidate_mvp_checkpoints: bool,
 }
 
 impl BuildOptionsCanonical {
@@ -66,6 +70,11 @@ impl BuildOptionsCanonical {
                 v.sort();
                 v
             },
+            force_stage: {
+                let mut v = o.force_stage.clone();
+                v.sort();
+                v
+            },
             until_stage: o.until_stage.clone(),
             fetch_only: o.fetch_only,
             clean: o.clean,
@@ -73,6 +82,7 @@ impl BuildOptionsCanonical {
             mvp: o.mvp,
             skip_check: o.skip_check,
             checksum: o.checksum,
+            invalidate_mvp_checkpoints: false,
         }
     }
 }
@@ -144,6 +154,10 @@ impl Step for BuildPlanStep {
         &self.deps
     }
 
+    fn plan_name(&self) -> Option<&str> {
+        Some(&self.inputs.plan.name)
+    }
+
     fn execute(self: Arc<Self>, _ctx: StepContext) -> BoxFuture<'static, Result<BuildPlanOutputs>> {
         Box::pin(async move {
             let manifest = PlanManifest::from_file(&self.inputs.plan.canonical_path)
@@ -207,16 +221,27 @@ impl Step for BuildPlanStep {
                 extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
             }
 
-            // A post-bootstrap full build always needs to clean its mvp staging
-            // sentinels — outputs/ from the mvp pass would otherwise be reused.
-            // Detected as: same plan name without bootstrap, but a sibling
-            // bootstrap step exists (encoded in the inputs as a separate
-            // workflow node at construction time). The step itself can't see
-            // siblings, so we rely on the caller passing options.force=true
-            // for the post-bootstrap full step at workflow construction.
+            // A post-bootstrap full build must invalidate mvp-phase checkpoints
+            // so that stages completed during the bootstrap pass are re-run
+            // with the full dependency set.
+            if self.inputs.options.invalidate_mvp_checkpoints {
+                let work_dir = build_root.join("work");
+                let ck = crate::builder::checkpoint::StageCheckpoint::new(
+                    work_dir,
+                    Some("mvp".to_string()),
+                );
+                ck.invalidate_all();
+            }
+
+            // After a bootstrap pass, clear staging checkpoints so the next
+            // (full) build does not mistakenly reuse mvp staging outputs.
             if self.inputs.is_bootstrap {
                 let work_dir = build_root.join("work");
-                clean_staging_sentinels(&work_dir, Some("mvp"));
+                let ck = crate::builder::checkpoint::StageCheckpoint::new(
+                    work_dir,
+                    Some("mvp".to_string()),
+                );
+                ck.invalidate_from("staging");
             }
 
             let plan_dir = self
@@ -241,6 +266,7 @@ impl Step for BuildPlanStep {
                     &plan_dir,
                     std::path::Path::new("/"),
                     &opts.stages,
+                    &opts.force_stage,
                     opts.until_stage.as_deref(),
                     opts.fetch_only,
                     opts.skip_check,

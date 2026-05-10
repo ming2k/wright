@@ -76,20 +76,14 @@ pub fn parse_manifest(content: &str) -> Result<GroupManifest> {
     toml::from_str(content).map_err(|e| group_err(format!("invalid group.toml: {}", e)))
 }
 
-/// Search for a group manifest by name under the given plans directories.
+/// Search for a group manifest by name under the given groups directories.
 ///
-/// Searches each directory in order.  Within a single directory looks for
-/// `<dir>/groups/<name>.toml` first, then falls back to
-/// `<dir>/<name>/group.toml`.
-pub fn find_group_manifest(plan_dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
-    for plans_dir in plan_dirs {
-        let direct = plans_dir.join("groups").join(format!("{}.toml", name));
-        if direct.is_file() {
-            return Some(direct);
-        }
-        let nested = plans_dir.join(name).join(GROUP_MANIFEST_NAME);
-        if nested.is_file() {
-            return Some(nested);
+/// Searches each directory in order, looking for `<dir>/<name>.toml`.
+pub fn find_group_manifest(groups_dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
+    for groups_dir in groups_dirs {
+        let path = groups_dir.join(format!("{}.toml", name));
+        if path.is_file() {
+            return Some(path);
         }
     }
     None
@@ -100,7 +94,7 @@ pub fn find_group_manifest(plan_dirs: &[PathBuf], name: &str) -> Option<PathBuf>
 /// referenced, the merged assumptions and the last group's config.
 pub fn expand_group_references(
     targets: Vec<String>,
-    plan_dirs: &[PathBuf],
+    groups_dirs: &[PathBuf],
 ) -> Result<(Vec<String>, Vec<GroupAssume>, Option<GroupConfig>)> {
     let mut expanded = Vec::new();
     let mut all_assumes = Vec::new();
@@ -108,14 +102,17 @@ pub fn expand_group_references(
 
     for target in targets {
         if let Some(group_name) = target.strip_prefix('@') {
-            let group_path = find_group_manifest(plan_dirs, group_name)
-                .ok_or_else(|| {
-                    group_err(format!(
-                        "group '{}' not found in {}",
-                        group_name,
-                        plan_dirs.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-                    ))
-                })?;
+            let group_path = find_group_manifest(groups_dirs, group_name).ok_or_else(|| {
+                group_err(format!(
+                    "group '{}' not found in {}",
+                    group_name,
+                    groups_dirs
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
             let manifest = read_manifest(&group_path)
                 .map_err(|e| group_err(format!("read group {}: {}", group_path.display(), e)))?;
             expanded.extend(manifest.group.plans);

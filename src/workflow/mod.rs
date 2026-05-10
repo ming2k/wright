@@ -46,4 +46,4 @@ pub use id::{canonical_json, StepId, WorkflowId};
 pub use runner::{drive, RunOutcome, SchedulerPolicy};
 pub use spec::{WorkflowBuilder, WorkflowSpec};
 pub use step::{ResourceClass, ScheduledStep, Status, Step, StepContext, TerminalStatus};
-pub use store::WorkflowStore;
+pub use store::{StepSummary, WorkflowStore, WorkflowSummary};

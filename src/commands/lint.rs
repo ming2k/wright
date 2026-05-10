@@ -1,8 +1,8 @@
-use crate::builder::orchestrator;
 use crate::config::GlobalConfig;
 use crate::error::Result;
 use crate::part::version;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
+use crate::planning;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
@@ -12,7 +12,7 @@ pub async fn execute_lint(
     _recursive: bool,
     config: &GlobalConfig,
 ) -> Result<()> {
-    let plan_dirs = orchestrator::plan_search_dirs(config);
+    let plan_dirs = planning::plan_search_dirs(config);
     let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
     let all_plan_paths = crate::plan::discovery::collect_plan_files(&plan_dirs)?;
     let mut local_index = build_local_plan_index(&all_plan_paths);
@@ -93,7 +93,7 @@ pub async fn execute_lint(
         .collect();
 
     if !plan_names.is_empty() {
-        if let Err(e) = orchestrator::lint_dependency_graph_for_targets(config, &plan_names) {
+        if let Err(e) = planning::lint_dependency_graph_for_targets(config, &plan_names) {
             report_lint_error(format!("Dependency graph analysis failed: {}", e));
             failed += 1;
         }

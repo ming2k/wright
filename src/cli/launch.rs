@@ -7,13 +7,14 @@ Examples:
   wright launch --root /mnt/new --group ./groups/core.toml
   wright launch --root /mnt/new --plans ./plans bash coreutils glibc
   wright launch --root /mnt/new --plans ./plans @core
+  wright launch --root /mnt/new @base @maintenance @desktop
 
 Launch fills a target root from a group manifest or from explicit plan names.
 When --group is given, the manifest names the plans to resolve, build, and
-install.  When --plans is given, the positional arguments are plan names;
-a name starting with '@' is treated as a group name resolved under the plans
-directory.  Re-running launch on the same root converges drift rather than
-erroring.";
+install.  When positional arguments are given, they are plan names or group
+names prefixed with '@'.  If --plans is omitted, the default plans directory
+from wright.toml is used.  Re-running launch on the same root converges drift
+rather than erroring.";
 
 #[derive(Args, Debug)]
 pub struct LaunchArgs {
@@ -28,7 +29,7 @@ pub struct LaunchArgs {
 
     /// Plan or group names to launch when using --plans.
     /// Names starting with '@' are resolved as groups under the plans directory.
-    #[arg(value_name = "TARGET", requires = "plans")]
+    #[arg(value_name = "TARGET")]
     pub plan_targets: Vec<String>,
 
     /// Print install order and config actions without writing anything.
@@ -38,4 +39,11 @@ pub struct LaunchArgs {
     /// Rebuild and reinstall parts that already exist in the target root.
     #[arg(long, short = 'f')]
     pub force: bool,
+
+    /// Discard cached workflow progress and re-execute from scratch.
+    /// Build-stage and install caches are still subject to their own
+    /// content-addressed checks; use the plan's own rebuild flags for
+    /// deeper invalidation.
+    #[arg(long)]
+    pub invalidate: bool,
 }

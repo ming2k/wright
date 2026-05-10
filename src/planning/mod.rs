@@ -1,5 +1,10 @@
-//! Build orchestrator — parallel build scheduling, dependency resolution,
-//! cascade expansion, and automatic bootstrap cycle detection/resolution.
+//! Planning layer for command workflows.
+//!
+//! This module owns target resolution, dependency expansion, build graph
+//! construction, batch planning, resource summaries, and packaging entry
+//! points used by workflow steps. It intentionally sits above `builder`,
+//! which executes a single plan, and below `workflow`, which schedules
+//! resumable command DAGs.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -13,10 +18,10 @@ use crate::database::InstalledDb;
 use crate::plan::manifest::PlanManifest;
 
 mod execute;
-mod planning;
+mod graph;
 mod resolver;
 
-use planning::{
+use graph::{
     build_dep_map, construction_plan_batches, construction_plan_label, expand_missing_dependencies,
     expand_rebuild_deps,
 };
@@ -73,6 +78,7 @@ pub struct ResolveOptions {
 #[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     pub stages: Vec<String>,
+    pub force_stage: Vec<String>,
     pub until_stage: Option<String>,
     pub fetch_only: bool,
     pub clean: bool,
@@ -194,7 +200,7 @@ pub async fn resolve_build_set(
                     continue;
                 }
                 if let Ok(m) = PlanManifest::from_file(&path) {
-                    if crate::builder::orchestrator::planning::dependency_matches_policy(
+                    if graph::dependency_matches_policy(
                         &m.metadata.name,
                         &all_plans,
                         &db,
@@ -393,7 +399,7 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
         return Ok(());
     }
 
-    let graph = planning::build_dep_map(&plans_to_build, false, false, HashMap::new(), &all_plans)?;
+    let graph = graph::build_dep_map(&plans_to_build, false, false, HashMap::new(), &all_plans)?;
 
     execute::lint_dependency_graph(&graph)
 }

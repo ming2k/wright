@@ -3,14 +3,14 @@ use clap::Parser;
 pub const BUILD_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
-  wright build zlib --force --clean
+  wright build zlib --rebuild --clean
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
   wright resolve openssl --rdeps | wright build
-  echo -e 'curl\\nwget' | wright build --force
+  echo -e 'curl\\nwget' | wright build --rebuild
 
 Resume: rerunning the same command resumes any incomplete run automatically.
-Use --fresh to discard prior state and start over.";
+Use --invalidate to discard cached progress and re-compute.";
 
 #[derive(Parser, Debug, Clone)]
 pub struct BuildArgs {
@@ -22,6 +22,12 @@ pub struct BuildArgs {
     /// Example: --stage=check --stage=staging
     #[arg(long, conflicts_with = "until_stage")]
     pub stage: Vec<String>,
+
+    /// Force re-run of a specific stage even if its checkpoint is valid.
+    /// Other stages still obey normal checkpoint rules.
+    /// Example: --force-stage=check
+    #[arg(long)]
+    pub force_stage: Vec<String>,
 
     /// Run a normal build pipeline and stop after the specified lifecycle stage.
     /// Unlike `--stage`, this still runs all prior stages in order.
@@ -35,20 +41,22 @@ pub struct BuildArgs {
 
     /// Clear the build cache, source tree, and working directory before
     /// starting. Without --clean, work/ is preserved for incremental builds
-    /// when the build key is unchanged. Composable with --force.
+    /// when the build key is unchanged. Composable with --rebuild.
     #[arg(long, short = 'c')]
     pub clean: bool,
 
-    /// Force rebuild: bypass the build cache, re-run all lifecycle
-    /// stages, and overwrite existing output parts
-    #[arg(long, short)]
-    pub force: bool,
+    /// Rebuild from scratch: bypass stage checkpoints and re-run all
+    /// lifecycle stages. Use this when you have modified a plan's build
+    /// script or dependencies and need a clean rebuild.
+    #[arg(long, short = 'R')]
+    pub rebuild: bool,
 
-    /// Discard any prior workflow state for these inputs and start from
-    /// scratch. By default, rerunning the same command resumes the prior
-    /// run (skipping completed steps).
+    /// Discard cached workflow progress and re-execute from scratch.
+    /// Build-stage and install caches are still subject to their own
+    /// content-addressed checks; use the plan's own rebuild flags for
+    /// deeper invalidation.
     #[arg(long)]
-    pub fresh: bool,
+    pub invalidate: bool,
 
     /// Build using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it

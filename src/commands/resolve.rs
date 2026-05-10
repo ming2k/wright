@@ -4,12 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::builder::orchestrator::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::part::version;
 use crate::plan::manifest::PlanManifest;
+use crate::planning::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::query::{self, PrefixMode, TreeOptions};
 
 pub async fn execute_resolve(
@@ -112,7 +112,7 @@ async fn render_build_view(args: ResolveArgs, config: &GlobalConfig) -> Result<(
 }
 
 async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
-    let plan_dirs = orchestrator::plan_search_dirs(config);
+    let plan_dirs = planning::plan_search_dirs(config);
     let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
 
     let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -239,7 +239,7 @@ async fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<
         None => Some(0),
     };
 
-    let names = orchestrator::resolve_build_set(
+    let names = planning::resolve_build_set(
         config,
         args.targets,
         ResolveOptions {

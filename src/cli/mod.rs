@@ -2,6 +2,7 @@ pub mod build;
 pub mod launch;
 pub mod package;
 pub mod prune;
+pub mod ps;
 pub mod resolve;
 pub mod system;
 
@@ -80,4 +81,7 @@ pub enum Commands {
     /// Fill a target root from a group manifest or from plans
     #[command(after_help = LAUNCH_AFTER_HELP)]
     Launch(launch::LaunchArgs),
+
+    /// Show active workflows and their step statuses
+    Ps(ps::PsArgs),
 }

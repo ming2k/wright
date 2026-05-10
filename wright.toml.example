@@ -3,6 +3,7 @@
 [general]
 arch = "x86_64"
 plans_dir = "/var/lib/wright/plans"
+groups_dir = "/var/lib/wright/groups"
 # extra_plans_dirs = ["/opt/my-plans", "./plans"]
 parts_dir = "/var/lib/wright/parts"
 source_dir = "/var/lib/wright/sources"

@@ -119,6 +119,18 @@ pub trait Step: Send + Sync + 'static {
         &[]
     }
 
+    /// Human-readable plan name for this step, if any.
+    /// Used for diagnostic messages (e.g. "glibc [build] failed").
+    fn plan_name(&self) -> Option<&str> {
+        None
+    }
+
+    /// Human-readable label for this step, if any.
+    /// Used for diagnostic messages (e.g. "install-wave-3").
+    fn label(&self) -> Option<&str> {
+        None
+    }
+
     fn execute(self: Arc<Self>, ctx: StepContext) -> BoxFuture<'static, WfResult<Self::Outputs>>;
 }
 
@@ -132,6 +144,11 @@ pub struct ScheduledStep {
     pub inputs_json: String,
     pub depends_on: Vec<StepId>,
     pub class: ResourceClass,
+    /// Human-readable plan name, extracted at construction time for stable
+    /// diagnostics even after the step has been consumed by the runner.
+    pub plan_name: Option<String>,
+    /// Human-readable label, extracted at construction time.
+    pub label: Option<String>,
     pub run:
         Box<dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>> + Send + Sync>,
 }
@@ -142,6 +159,8 @@ impl ScheduledStep {
         let id = StepId::derive(workflow_id, S::KIND, &inputs_json);
         let depends_on = step.depends_on().to_vec();
         let class = S::RESOURCE_CLASS;
+        let plan_name = step.plan_name().map(|s| s.to_string());
+        let label = step.label().map(|s| s.to_string());
         let arc = Arc::new(step);
         let run: Box<
             dyn Fn(StepContext) -> BoxFuture<'static, WfResult<serde_json::Value>> + Send + Sync,
@@ -158,6 +177,8 @@ impl ScheduledStep {
             inputs_json,
             depends_on,
             class,
+            plan_name,
+            label,
             run,
         })
     }
