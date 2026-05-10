@@ -1,4 +1,6 @@
-use tracing::info;
+use std::path::Path;
+
+use tracing::{info, warn};
 
 use crate::builder::logging;
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
@@ -6,6 +8,7 @@ use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::fhs;
+use crate::part::lint::{lint_runtime_deps, LintReport, SonameIndex};
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 pub fn lint_dependency_graph(graph: &crate::builder::mvp::PlanGraph) -> Result<()> {
@@ -72,6 +75,21 @@ pub async fn package_outputs(
         .map_err(WrightError::IoError)?;
     let output_dir = config.general.parts_dir.clone();
 
+    // SONAME index is built once per package run, scoped to the plan's
+    // declared link_deps closure. Per ADR-0017 this is a lint input only,
+    // never written back into PARTINFO. When link_deps is empty the
+    // index is also empty — a part that links nothing should not have
+    // any DT_NEEDED edges to begin with, and any that appear surface as
+    // "unmapped" warnings.
+    let soname_index =
+        SonameIndex::scan_for_link_deps(&output_dir, &manifest.link_deps).unwrap_or_else(|e| {
+            warn!(
+                "elf-lint: failed to build SONAME index ({}); lint will proceed best-effort",
+                e
+            );
+            SonameIndex::default()
+        });
+
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
             for (sub_name, sub_part) in parts {
@@ -86,6 +104,7 @@ pub async fn package_outputs(
                     fhs::validate(part_dir, sub_name)?;
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
+                run_elf_lint(part_dir, &sub_manifest, &soname_index)?;
                 let sub_part_path =
                     archive::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
@@ -98,6 +117,7 @@ pub async fn package_outputs(
             if !manifest.options.skip_fhs_check {
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
+            run_elf_lint(&result.output_dir, manifest, &soname_index)?;
             let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
             info!(
                 "{}",
@@ -110,6 +130,67 @@ pub async fn package_outputs(
     }
 
     Ok(())
+}
+
+/// Run the ADR-0017 ELF lint against a staged output. Errors fail the
+/// package step (forgotten declarations); warnings (stale, unmapped) are
+/// logged but allowed.
+fn run_elf_lint(
+    part_dir: &Path,
+    sub_manifest: &PlanManifest,
+    index: &SonameIndex,
+) -> Result<()> {
+    let report = lint_runtime_deps(
+        part_dir,
+        &sub_manifest.runtime_deps,
+        &sub_manifest.metadata.name,
+        index,
+    )?;
+    log_lint_warnings(&sub_manifest.metadata.name, &report);
+    if report.has_errors() {
+        return Err(elf_lint_error(&sub_manifest.metadata.name, &report));
+    }
+    Ok(())
+}
+
+fn log_lint_warnings(part_name: &str, report: &LintReport) {
+    for stale in &report.stale {
+        warn!(
+            "elf-lint[{}]: declared runtime_dep '{}' has no DT_NEEDED edge \
+             — keep if dlopen/data-file dep, otherwise remove",
+            part_name, stale
+        );
+    }
+    for u in &report.unmapped {
+        warn!(
+            "elf-lint[{}]: SONAME {} (in {}) is not provided by any indexed \
+             archive (vendored, host-provided, or missing)",
+            part_name,
+            u.soname,
+            u.seen_in.display()
+        );
+    }
+}
+
+fn elf_lint_error(part_name: &str, report: &LintReport) -> WrightError {
+    let mut msg = format!(
+        "elf-lint[{}]: forgotten runtime_deps detected — the binary needs \
+         libraries that are not declared:\n",
+        part_name
+    );
+    for f in &report.forgotten {
+        msg.push_str(&format!(
+            "  - {} (provided by '{}', linked by {})\n",
+            f.soname,
+            f.providing_output,
+            f.seen_in.display()
+        ));
+    }
+    msg.push_str(
+        "Add the listed providers to runtime_deps in plan source (PARTINFO \
+         and the registry remain plan-driven; this lint never auto-injects).",
+    );
+    WrightError::BuildError(msg)
 }
 
 /// Package a plan from its existing staging directories.

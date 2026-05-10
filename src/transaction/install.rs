@@ -5,9 +5,7 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
-use crate::database::{
-    Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation,
-};
+use crate::database::{Dependency, FileType, InstalledDb, NewPart, Origin, TransactionOperation};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::archive::PartInfo;
@@ -234,11 +232,7 @@ async fn warn_about_runtime_dependencies(
     db: &InstalledDb,
     resolved_map: &HashMap<String, crate::part::store::ResolvedPart>,
 ) -> Result<()> {
-    let mut provided_in_batch = HashSet::new();
-    for part in resolved_map.values() {
-        provided_in_batch.insert(part.name.clone());
-        provided_in_batch.extend(part.provides.iter().cloned());
-    }
+    let in_batch: HashSet<String> = resolved_map.values().map(|p| p.name.clone()).collect();
 
     for (name, part) in resolved_map {
         for dep in &part.dependencies {
@@ -273,7 +267,7 @@ async fn warn_about_runtime_dependencies(
                 continue;
             }
 
-            if provided_in_batch.contains(&output_name) {
+            if in_batch.contains(&output_name) {
                 continue;
             }
 
@@ -290,10 +284,6 @@ async fn warn_about_runtime_dependencies(
                     &installed_version,
                     constraint.as_ref(),
                 );
-                continue;
-            }
-
-            if !db.find_providers(&output_name).await?.is_empty() {
                 continue;
             }
 
@@ -388,16 +378,6 @@ pub async fn install_part_with_origin(
                     partinfo.name, conflict_name
                 )));
             }
-            let providers = db.find_providers(conflict_name).await?;
-            if !providers.is_empty() {
-                return Err(WrightError::DependencyError(format!(
-                    "part conflict detected: '{}' conflicts with '{}' (provided by {}). \
-                     Please remove it first or use --force.",
-                    partinfo.name,
-                    conflict_name,
-                    providers.join(", ")
-                )));
-            }
         }
 
         let reverse_conflicts = db.find_conflicting_parts(&partinfo.name).await?;
@@ -408,19 +388,6 @@ pub async fn install_part_with_origin(
                 reverse_conflicts.join(", "),
                 partinfo.name
             )));
-        }
-
-        for prov in &partinfo.provides {
-            let reverse = db.find_conflicting_parts(prov).await?;
-            if !reverse.is_empty() {
-                return Err(WrightError::DependencyError(format!(
-                    "part conflict detected: installed part(s) {} conflict with '{}' (provided by '{}'). \
-                     Please remove them first or use --force.",
-                    reverse.join(", "),
-                    prov,
-                    partinfo.name
-                )));
-            }
         }
     }
 
@@ -590,9 +557,6 @@ pub async fn install_part_with_origin(
         db.insert_dependencies(part_id, &deps).await?;
     }
 
-    if !partinfo.provides.is_empty() {
-        db.insert_provides(part_id, &partinfo.provides).await?;
-    }
     if !partinfo.conflicts.is_empty() {
         db.insert_conflicts(part_id, &partinfo.conflicts).await?;
     }

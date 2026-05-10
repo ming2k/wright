@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::database::{
-    Dependency, FileType, InstalledDb, NewPart, TransactionOperation,
-};
+use crate::database::{Dependency, FileType, InstalledDb, NewPart, TransactionOperation};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::version::{self, Version};
@@ -13,7 +11,7 @@ use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
 
-use super::{log_debug_timing, self_replace_provides_conflicts};
+use super::{log_debug_timing, self_replace_relations};
 
 pub async fn upgrade_part(
     db: &InstalledDb,
@@ -376,7 +374,7 @@ pub async fn upgrade_part(
     }
     db.replace_dependencies(updated_part.id, &deps).await?;
 
-    self_replace_provides_conflicts(db, updated_part.id, &partinfo).await?;
+    self_replace_relations(db, updated_part.id, &partinfo).await?;
 
     tx.commit().await?;
     log_debug_timing(

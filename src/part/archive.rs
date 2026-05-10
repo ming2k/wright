@@ -114,6 +114,80 @@ pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<(PartInfo, Stri
     )))
 }
 
+/// Light summary of an archive's metadata + file list, used by the
+/// package-time ELF lint to build SONAME → part lookups without full
+/// extraction.
+pub struct ArchiveMeta {
+    pub partinfo: PartInfo,
+    pub files: Vec<String>,
+}
+
+/// Read both .PARTINFO and .FILELIST from an archive in a single streamed
+/// pass. .FILELIST entries are returned verbatim (one path per non-empty
+/// line, leading/trailing whitespace trimmed).
+pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
+    let file = std::fs::File::open(part_path).map_err(|e| {
+        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
+    })?;
+    let decoder = zstd::Decoder::new(file)
+        .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
+    let mut archive = tar::Archive::new(decoder);
+
+    let mut partinfo: Option<PartInfo> = None;
+    let mut files: Option<Vec<String>> = None;
+
+    for entry in archive
+        .entries()
+        .map_err(|e| WrightError::PartError(format!("failed to read archive entries: {}", e)))?
+    {
+        let mut entry =
+            entry.map_err(|e| WrightError::PartError(format!("failed to read entry: {}", e)))?;
+        let path = entry
+            .path()
+            .map_err(|e| WrightError::PartError(format!("failed to read entry path: {}", e)))?;
+        let path_str = path.to_string_lossy().into_owned();
+
+        if path_str.ends_with(".PARTINFO") && partinfo.is_none() {
+            let mut content = String::new();
+            entry
+                .read_to_string(&mut content)
+                .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
+            partinfo = Some(parse_partinfo_str(
+                &content,
+                &part_path.display().to_string(),
+            )?);
+        } else if path_str.ends_with(".FILELIST") && files.is_none() {
+            let mut content = String::new();
+            entry
+                .read_to_string(&mut content)
+                .map_err(|e| WrightError::PartError(format!("failed to read .FILELIST: {}", e)))?;
+            files = Some(
+                content
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect(),
+            );
+        }
+
+        if partinfo.is_some() && files.is_some() {
+            break;
+        }
+    }
+
+    let partinfo = partinfo.ok_or_else(|| {
+        WrightError::PartError(format!(
+            "{}: archive does not contain .PARTINFO",
+            part_path.display()
+        ))
+    })?;
+    Ok(ArchiveMeta {
+        partinfo,
+        files: files.unwrap_or_default(),
+    })
+}
+
 /// Read .PARTINFO from an archive without full extraction.
 pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
     let file = std::fs::File::open(part_path).map_err(|e| {
@@ -344,8 +418,13 @@ fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> Strin
 }
 
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| WrightError::PartError(format!("{}: failed to read .PARTINFO: {}", path.display(), e)))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        WrightError::PartError(format!(
+            "{}: failed to read .PARTINFO: {}",
+            path.display(),
+            e
+        ))
+    })?;
     parse_partinfo_str(&content, &path.display().to_string())
 }
 
@@ -403,12 +482,16 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         files: Vec<String>,
     }
 
-    let parsed: PartInfoToml = toml::from_str(content)
-        .map_err(|e| WrightError::PartError(format!("{}: failed to parse .PARTINFO: {}", source, e)))?;
+    let parsed: PartInfoToml = toml::from_str(content).map_err(|e| {
+        WrightError::PartError(format!("{}: failed to parse .PARTINFO: {}", source, e))
+    })?;
 
     let relations = parsed.relations.unwrap_or_default();
     let plan_section = parsed.plan.ok_or_else(|| {
-        WrightError::PartError(format!("{}: .PARTINFO missing required [plan] section", source))
+        WrightError::PartError(format!(
+            "{}: .PARTINFO missing required [plan] section",
+            source
+        ))
     })?;
 
     Ok(PartInfo {

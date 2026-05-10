@@ -2,25 +2,33 @@
 
 This document explains how Wright resolves and acts on dependencies from a user perspective. It focuses on what happens when you build and install parts, and how to interpret the output.
 
+For the model behind these mechanics — why runtime deps are advisory rather
+than enforced, and what `registered`, `satisfied`, and `runnable` mean —
+see [Dependency Philosophy](dependency-philosophy.md) and
+[ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
+
 **Dependency Types**
 Wright uses two dependency types, each with a different purpose.
 
-- `link_deps`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes.
-- `runtime_deps`: Required for the part to run after installation.
+- `link_deps`: ABI-sensitive dependencies used by `wright resolve` to trigger reverse rebuilds when a linked dependency changes. Lives only in plan source — not persisted in the installed database.
+- `runtime_deps`: Required for the part to run after installation. Recorded in the installed database as advisory facts; missing targets surface via `wright check` rather than blocking the install.
 
 `link_deps` and `runtime_deps` are allowed to overlap. If something is needed after installation, it must be listed in `runtime_deps` even if it also appears in `link_deps`.
 
 **Where Dependencies Come From**
 Dependencies are declared in `plan.toml` at two levels:
 
-- **Plan level**: `link_deps` is a top-level field that drives the build orchestrator.
+- **Plan level**: `link_deps` is a top-level field that drives build planning.
 - **Output level**: `runtime_deps` is declared inside each `[[output]]` entry. It describes what a specific installed part needs at run time.
 
 Plan-level dependencies are for build planning: `build_deps` selects tools and
 inputs mounted for the build, and `link_deps` marks ABI-sensitive inputs for
-rebuild decisions. Output-level `runtime_deps` are for installation: they are
-serialized into binary part metadata, recorded in the installed database, and
-checked by `wright install` as warnings.
+rebuild decisions. Neither is persisted in the installed registry — they
+matter during construction, not after a part is on disk. Output-level
+`runtime_deps` are for the installed registry: they are serialized into
+binary part metadata and recorded as advisory edges. Missing targets are
+reported as warnings by `wright install` and surfaced by `wright check`;
+they do not block installation.
 
 Dependency references accept two forms:
 
@@ -35,7 +43,15 @@ plan.
 
 Only `runtime_deps` and part relations are serialized into binary part metadata
 used by `wright install`. `build_deps` and `link_deps` remain build-graph
-concepts used by `wright resolve`.
+concepts used by `wright resolve`; they are not persisted in the installed
+registry.
+
+Of the part-relation fields, only `replaces` and `conflicts` round-trip into
+the registry as enforceable structure. `replaces` is the migration channel
+for renames and splits; `conflicts` is a hard install-time constraint
+(mutual exclusion is not advisory). Virtual `provides` is no longer a
+recognized concept — depend on a specific `plan:output` and use `replaces`
+to handle name changes.
 
 You do not need to declare transitive dependencies. Wright expands them when you run builds that require it.
 
@@ -97,12 +113,33 @@ This results in two scheduled entries for that part:
 
 If no MVP definition exists, Wright stops and reports the cycle.
 
+**Package-Time ELF Lint**
+When a part is packaged, Wright scans the staged ELF binaries for their
+`DT_NEEDED` entries (the dynamic loader's own list of required shared
+libraries) and compares the empirical set against the declared
+`runtime_deps`. The lint never injects data into PARTINFO or the database
+— plan source remains the single source of truth. See
+[ADR-0017](../adr/0017-plan-source-single-dep-truth.md).
+
+- A library the binary needs but the plan does not declare → **error**:
+  the package step fails with the missing entries listed. Add them to
+  `runtime_deps` and re-run.
+- A declaration with no `DT_NEEDED` edge → **warning**: usually a
+  legitimate dlopen or data-file dep; remove if stale.
+- A SONAME no archive provides → **warning**: vendored, host-provided,
+  or missing.
+
+The lint catches forgotten declarations at build time, where they are
+cheap to fix, instead of at the user's first `wright launch`.
+
 **Applying Plans to the Live System**
 Wright exposes separate build and install flows:
 
 - `wright build` creates staging and output directories from plans.
-- `wright install` installs selected plan outputs onto the live system and warns
-  when recorded runtime dependencies are missing or version-mismatched.
+- `wright install` installs selected plan outputs onto the live system and
+  warns when recorded runtime dependencies are missing or version-mismatched.
+  Warnings do not block — the registry accepts the install and records the
+  unsatisfied edge for later diagnosis.
 
 For the common source-first workflow, use `wright apply`. It resolves plans or
 plan directories, checks archives in `parts_dir`, automatically adds missing or

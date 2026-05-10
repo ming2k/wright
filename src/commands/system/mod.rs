@@ -1,4 +1,5 @@
 pub mod apply;
+pub mod check;
 pub mod doctor;
 pub mod install;
 pub mod list;
@@ -33,7 +34,7 @@ pub async fn execute(
 
     if let SystemCommands::Apply {
         targets,
-        fresh,
+        invalidate,
         deps,
         rdeps,
         match_policies,
@@ -44,7 +45,7 @@ pub async fn execute(
     {
         return apply::execute_apply(apply::ApplyArgs {
             targets,
-            fresh,
+            invalidate,
             deps,
             rdeps,
             match_policies,
@@ -99,6 +100,9 @@ pub async fn execute(
         }
         SystemCommands::Doctor => {
             doctor::execute_doctor(&db).await?;
+        }
+        SystemCommands::Check { part, deep } => {
+            check::execute_check(&db, root_dir, part.as_deref(), deep).await?;
         }
         SystemCommands::Upgrade {
             parts,

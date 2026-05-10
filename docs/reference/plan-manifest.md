@@ -204,7 +204,7 @@ metadata as well as split outputs.
 | `backup` | No | Per-output backup files |
 | `replaces` | No | Per-output replacement relations |
 | `conflicts` | No | Per-output conflict relations |
-| `provides` | No | Per-output virtual provides |
+| `provides` | No | **Deprecated.** Parsed but ignored. Virtual provides are no longer recognized; the field will be removed in a future release. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md). |
 
 **Coverage rules:**
 
@@ -241,7 +241,7 @@ Relations are per-output.
 |----------|----------|
 | `replaces` | On install, silently removes any installed part in this list. One-way. Use for renames/merges. |
 | `conflicts` | Mutual exclusion. Install refused while a conflicting part is present. Bidirectional. |
-| `provides` | Virtual names. Multiple parts can provide the same name. Satisfies dependencies on abstract capabilities. |
+| `provides` | **Deprecated.** Parsed but ignored — virtual aliasing is not part of the advisory runtime model. Depend on a concrete `plan:output` and use `replaces` for renames. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md). |
 
 ### Backup Files
 

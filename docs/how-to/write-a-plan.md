@@ -97,7 +97,7 @@ Rules:
 
 - `runtime_deps` is **output-level only** — there is no plan-level fallback.
 - Each output declares exactly what it needs. Outputs are independent; one output's deps do not affect another.
-- `build_deps` and `link_deps` are **plan-level only** — they drive the build orchestrator and have no meaning inside `[[output]]`.
+- `build_deps` and `link_deps` are **plan-level only** — they drive build planning and have no meaning inside `[[output]]`.
 
 ## Fetch Sources
 
@@ -359,7 +359,7 @@ Relations are **per-output**, not per-plan. In multi-output mode, each sub-part 
 
 - **`conflicts`** — Mutual exclusion. Wright refuses to install this part while a conflicting part is present (or vice versa). Use when two parts provide overlapping functionality and cannot coexist (e.g. `nginx` and `apache` both binding port 80). Conflicts are **bidirectional**.
 
-- **`provides`** — Virtual names. Allows this part to satisfy dependencies on an abstract capability rather than a concrete part name. Multiple parts can provide the same virtual name (e.g. both `nginx` and `apache` provide `http-server`).
+- **`provides`** — **Deprecated.** Still parsed for plan-source compatibility but no longer recognized at runtime. Virtual aliasing has been retired in favour of the advisory runtime model: depend on a concrete `plan:output`, and use `replaces` to handle renames or splits. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 
 #### Backup Files
 
@@ -389,7 +389,7 @@ foo/
 link_deps = ["freetype"] # omit harfbuzz in MVP
 ```
 
-Wright's orchestrator uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has MVP overrides that remove at least one edge of the cycle, it automatically inserts the two-pass schedule.
+Wright's planning layer uses Tarjan's SCC algorithm to detect cycles. If it finds a cycle and a plan in that cycle has MVP overrides that remove at least one edge of the cycle, it automatically inserts the two-pass schedule.
 
 The MVP phase can also be triggered **manually** without a cycle being present, using the `--mvp` flag:
 

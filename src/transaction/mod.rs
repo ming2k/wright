@@ -30,17 +30,12 @@ pub(super) fn journal_path_from_db(db: &InstalledDb) -> Option<PathBuf> {
     db.db_path().map(|p| p.with_extension("journal"))
 }
 
-/// Replace provides, conflicts, and replaces rows for a part (used during upgrade).
-pub(super) async fn self_replace_provides_conflicts(
+/// Replace conflicts and replaces rows for a part (used during upgrade).
+pub(super) async fn self_replace_relations(
     db: &InstalledDb,
     part_id: i64,
     partinfo: &PartInfo,
 ) -> Result<()> {
-    sqlx::query("DELETE FROM provides WHERE part_id = ?")
-        .bind(part_id)
-        .execute(&db.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to delete old provides: {}", e)))?;
     sqlx::query("DELETE FROM conflicts WHERE part_id = ?")
         .bind(part_id)
         .execute(&db.pool)
@@ -54,9 +49,6 @@ pub(super) async fn self_replace_provides_conflicts(
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to delete old replaces: {}", e)))?;
 
-    if !partinfo.provides.is_empty() {
-        db.insert_provides(part_id, &partinfo.provides).await?;
-    }
     if !partinfo.conflicts.is_empty() {
         db.insert_conflicts(part_id, &partinfo.conflicts).await?;
     }

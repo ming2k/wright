@@ -17,3 +17,5 @@
 | [ADR-0013](0013-multi-lowerdir-isolation.md) | Multi-lowerdir OverlayFS isolation | Accepted |
 | [ADR-0014](0014-launch-and-pack-format.md) | `wright launch` and the pack format | Superseded by ADR-0015 |
 | [ADR-0015](0015-group-manifest-replaces-pack.md) | Group manifest replaces pack format | Accepted |
+| [ADR-0016](0016-advisory-runtime-dependencies.md) | Runtime dependencies are advisory, not enforced | Accepted |
+| [ADR-0017](0017-plan-source-single-dep-truth.md) | Plan source as single dep truth + ELF lint | Accepted |

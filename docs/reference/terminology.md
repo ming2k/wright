@@ -19,9 +19,24 @@ Wright uses the Ship of Theseus metaphor: the ship keeps sailing while its parts
 
 | Term | Definition |
 |------|------------|
-| **`build_deps`** | Tools and headers needed during compilation. Mounted into the isolation environment at build time only. |
-| **`link_deps`** | ABI-sensitive shared libraries linked by the built binary. Trigger reverse rebuilds when they change. |
-| **`runtime_deps`** | Parts required for this part to function after installation. Declared per-output. Warnings issued at install time if missing. |
+| **`build_deps`** | Tools and headers needed during compilation. Mounted into the isolation environment at build time only. Not persisted in the installed registry. |
+| **`link_deps`** | ABI-sensitive shared libraries linked by the built binary. Trigger reverse rebuilds when they change. Not persisted in the installed registry. |
+| **`runtime_deps`** | Parts required for this part to function after installation. Declared per-output. Recorded in the installed registry as advisory facts; missing targets are surfaced by `wright check` but do not block install. |
+| **`replaces`** | Names of parts this part supersedes. Used by `wright install`/`wright upgrade` to migrate references after a rename or split. |
+| **`conflicts`** | Names of parts that cannot coexist with this part. Hard install-time constraint; install is rejected unless `--force`. |
+
+## Dependency States
+
+Each registered part is independently characterized by these three states.
+A part can be `registered` without being `satisfied`, and `satisfied`
+without being `runnable`. See
+[Dependency Philosophy](../explanation/dependency-philosophy.md).
+
+| State | Meaning |
+|-------|---------|
+| **registered** | The part exists in `wright.db` and its files are on disk. |
+| **satisfied** | Every entry in the part's `runtime_deps` resolves to another registered part (directly or via `replaces`). |
+| **runnable** | The part actually executes — every dynamic-loader request, dlopen target, and data file is present. |
 
 ## Origin Values
 
@@ -48,6 +63,18 @@ previously pulled in at a lower tier. `external` is managed exclusively via
 | **Lifecycle stage** | A named step in the build pipeline (e.g. `fetch`, `compile`, `staging`). Each stage runs a script in an optional isolation environment. |
 | **Isolation** | A sandboxed environment for running lifecycle stages. Levels: `none`, `relaxed`, `strict`. |
 | **Sysroot** | A read-only copy of the host's `/usr`, `/bin`, and `/lib` trees used as the root for `strict`-isolation builds. |
+
+## Execution Hierarchy
+
+Wright organizes execution into five layers. See the [Execution Hierarchy Explanation](../explanation/execution-hierarchy.md) for details.
+
+| Term | Level | Definition |
+|------|-------|------------|
+| **Operation** | L1 | A top-level CLI command (e.g. `apply`). |
+| **Workflow** | L2 | A DAG of steps to fulfill an operation. |
+| **Step** | L3 | The unit of scheduling and idempotency. |
+| **Pipeline** | L4 | The internal lifecycle of a complex step (e.g. Build). |
+| **Stage** | L5 | An atomic script or command within a pipeline. |
 
 ## Writing Guidance
 

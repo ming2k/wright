@@ -490,30 +490,75 @@ pub async fn write_system_tree(
 
 // ─── health-check functions (unchanged) ──────────────────────────────────────
 
-/// Check all installed parts for broken dependencies.
-pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+/// One unsatisfied runtime dependency edge — a part declared a need
+/// the registry cannot resolve (directly or via replaces).
+#[derive(Debug, Clone)]
+pub struct BrokenDep {
+    pub part: String,
+    pub required_name: String,
+    pub version_constraint: Option<String>,
+}
+
+/// Check all installed parts for unsatisfied runtime dependencies.
+///
+/// Per ADR-0016 resolution walks `parts.name` first and falls through
+/// to `replaces.name` so renamed targets stay satisfied across plan
+/// migrations. The advisory model is read-only — this function reports;
+/// callers decide how to react.
+pub async fn check_dependencies_structured(db: &InstalledDb) -> Result<Vec<BrokenDep>> {
     let all_parts = db.list_parts().await?;
     let mut broken = Vec::new();
 
     for part in all_parts {
         let deps = db.get_dependencies(part.id).await?;
         for dep in deps {
-            if db.get_part(&dep.name).await?.is_none()
-                && db.find_providers(&dep.name).await?.is_empty()
-            {
-                let version_constraint_str = dep
-                    .version_constraint
-                    .map(|c| format!(" ({})", c))
-                    .unwrap_or_default();
-                broken.push(format!(
-                    "Part '{}' has a broken dependency: '{}'{} not found",
-                    part.name, dep.name, version_constraint_str
-                ));
+            if !is_dep_satisfied(db, &dep.name).await? {
+                broken.push(BrokenDep {
+                    part: part.name.clone(),
+                    required_name: dep.name,
+                    version_constraint: dep.version_constraint,
+                });
             }
         }
     }
-
     Ok(broken)
+}
+
+/// Legacy formatted variant kept for callers that just want a string list.
+pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+    let broken = check_dependencies_structured(db).await?;
+    Ok(broken
+        .into_iter()
+        .map(|b| {
+            let vc = b
+                .version_constraint
+                .map(|c| format!(" ({})", c))
+                .unwrap_or_default();
+            format!(
+                "Part '{}' has a broken dependency: '{}'{} not found",
+                b.part, b.required_name, vc
+            )
+        })
+        .collect())
+}
+
+async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
+    // The required_name may be "plan:output" or just "output". Names are
+    // globally unique, so the output is what we look up.
+    let target = required.split(':').next_back().unwrap_or(required);
+    if db.get_part(target).await?.is_some() {
+        return Ok(true);
+    }
+    // Replaces fallback: any installed part declaring `replaces = [target]`
+    // covers the old name. Walk parts → check their replaces list.
+    let parts = db.list_parts().await?;
+    for p in parts {
+        let replaces = db.get_replaces(p.id).await?;
+        if replaces.iter().any(|n| n == target) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Check for circular dependencies in the installed database.

@@ -154,10 +154,12 @@ pub enum Commands {
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
 
-        /// Discard any prior workflow state for these inputs and start from
-        /// scratch. By default, rerunning the same command resumes.
+        /// Discard cached workflow progress and re-execute from scratch.
+        /// Build-stage and install caches are still subject to their own
+        /// content-addressed checks; use the plan's own rebuild flags for
+        /// deeper invalidation.
         #[arg(long)]
-        fresh: bool,
+        invalidate: bool,
 
         /// Expand dependencies.
         /// `link` follows ABI-sensitive link dependencies.
@@ -322,6 +324,32 @@ pub enum Commands {
     },
     /// Perform a full system health check (integrity, dependencies, file conflicts, shadows)
     Doctor,
+    /// Report unsatisfied runtime dependencies in the advisory registry
+    #[command(
+        long_about = "List installed parts whose declared runtime_deps cannot be \
+                      resolved against the current registry (directly or via \
+                      `replaces`).\n\n\
+                      With --deep, walk each installed part's ELF binaries and \
+                      verify their DT_NEEDED entries against the installed \
+                      file ownership table. This catches forgotten declarations \
+                      that the registry-level check would miss.\n\n\
+                      Per ADR-0016 the registry is advisory: this command \
+                      reports state, it does not change it. Exit code is 0 \
+                      when everything resolves and 1 when any unsatisfied \
+                      edge exists, so it is suitable for CI gates."
+    )]
+    Check {
+        /// Restrict the check to a single installed part (registry-level
+        /// scope is unchanged when omitted).
+        #[arg(value_name = "PART")]
+        part: Option<String>,
+
+        /// Walk ELF DT_NEEDED entries for each installed binary and verify
+        /// their providing parts via the files table. Reads disk; slower
+        /// than the registry-level scan.
+        #[arg(long)]
+        deep: bool,
+    },
     /// Mark a part as externally provided to satisfy dependency checks
     #[command(
         long_about = "Mark a part as externally provided so dependency checks consider it satisfied.\n\nPass a name and version as arguments, pipe 'name version' lines, or use --file for bulk bootstrap.",

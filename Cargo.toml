@@ -42,6 +42,7 @@ figment = { version = "0.10.19", features = ["toml", "env"] }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
 tokio = { version = "1.52.1", features = ["full"] }
 futures-util = "0.3.32"
+goblin = { version = "0.10", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
 
 [build-dependencies]
 clap = { version = "4", features = ["derive"] }

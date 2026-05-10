@@ -27,29 +27,27 @@
 | Table | Contents |
 |-------|----------|
 | `plans` | plan metadata (name, version, release, epoch, description, arch, license) |
-| `plan_build_deps` | build-time dependency edges per plan |
-| `plan_link_deps` | ABI-sensitive link dependency edges per plan |
 | `parts` | installed part metadata: origin, plan association, archive hash |
 | `files` | installed file paths, types, checksums, ownership |
-| `dependencies` | installed runtime dependency edges per part |
-| `provides` | virtual capabilities a part provides |
+| `dependencies` | advisory runtime dependency edges per part (soft TEXT pointer; not enforced) |
 | `conflicts` | mutually exclusive part name declarations |
-| `replaces` | automatic replacement metadata |
+| `replaces` | rename / supersession metadata |
 | `shadowed_files` | file collision records used for divert and safe removal |
 | `transactions` | install, upgrade, remove history |
 | `workflows` | active content-addressed workflow identities for incomplete work |
 | `workflow_steps` | active per-step resume state for incomplete workflows |
+
+Build deps, link deps, and `provides` are deliberately not persisted. See
+[Dependency Philosophy](../explanation/dependency-philosophy.md) and
+[ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 
 ## Entity Relationship Diagram
 
 ```mermaid
 erDiagram
     plans ||--o{ parts : contains
-    plans ||--o{ plan_build_deps : "build deps"
-    plans ||--o{ plan_link_deps : "link deps"
     parts ||--o{ files : owns
-    parts ||--o{ dependencies : "runtime deps"
-    parts ||--o{ provides : provides
+    parts ||--o{ dependencies : "runtime deps (advisory)"
     parts ||--o{ conflicts : conflicts
     parts ||--o{ replaces : replaces
     parts ||--o{ shadowed_files : "original owner"
@@ -78,18 +76,6 @@ erDiagram
         TEXT origin
     }
 
-    plan_build_deps {
-        INTEGER id PK
-        INTEGER plan_id FK
-        TEXT depends_on
-    }
-
-    plan_link_deps {
-        INTEGER id PK
-        INTEGER plan_id FK
-        TEXT depends_on
-    }
-
     files {
         INTEGER id PK
         INTEGER part_id FK
@@ -106,12 +92,6 @@ erDiagram
         INTEGER part_id FK
         TEXT depends_on
         TEXT version_constraint
-    }
-
-    provides {
-        INTEGER id PK
-        INTEGER part_id FK
-        TEXT name
     }
 
     conflicts {
@@ -176,8 +156,6 @@ erDiagram
 | `parts.name` | `UNIQUE` | Part names are globally unique identifiers |
 | `parts.origin` | `CHECK(origin IN ('dependency','build','manual','external'))` | Enforces valid provenance values at the DB layer |
 | `plans.name` | `UNIQUE` | Each plan name maps to exactly one plan record |
-| `plan_build_deps` | `UNIQUE(plan_id, depends_on)` | Prevents duplicate build dependency edges per plan |
-| `plan_link_deps` | `UNIQUE(plan_id, depends_on)` | Prevents duplicate link dependency edges per plan |
 | `workflows.id` | `PRIMARY KEY` | Active content-addressed workflow IDs are immutable |
 | `workflow_steps.id` | `PRIMARY KEY` | Content-addressed step IDs are immutable |
 | `workflow_steps.status` | `CHECK(status IN ('pending','running','succeeded','failed','skipped'))` | Enforces valid step lifecycle states |
@@ -186,9 +164,7 @@ erDiagram
 
 | Field | References | Purpose |
 |-------|------------|---------|
-| `dependencies.depends_on` | `parts.name` or `provides.name` | Runtime dependency target |
-| `plan_build_deps.depends_on` | plan dependency name or `plan:output` dependency key | Build-time dependency target |
-| `plan_link_deps.depends_on` | plan dependency name or `plan:output` dependency key | ABI-sensitive link dependency target |
+| `dependencies.depends_on` | `parts.name` (or `replaces.name`) | Advisory runtime-dependency target. Soft pointer — target may be unresolved (treated as "unsatisfied" rather than an error). |
 | `transactions.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
 
 ## Removed Databases

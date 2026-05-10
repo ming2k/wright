@@ -3,7 +3,7 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{FileType, InstalledDb, InstalledPart, TransactionOperation};
+use crate::database::{FileType, InstalledDb, TransactionOperation};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
@@ -34,7 +34,7 @@ pub async fn remove_part_with_ignored_dependents(
         .await?
         .ok_or_else(|| WrightError::PartNotFound(format!("plan for {}", name)))?;
 
-    let mut dependents = collect_removal_dependents(db, &part, name, ignored_dependents).await?;
+    let mut dependents = collect_removal_dependents(db, name).await?;
 
     if !ignored_dependents.is_empty() {
         dependents.retain(|dep_name| !ignored_dependents.contains(dep_name));
@@ -202,31 +202,8 @@ pub async fn remove_part_with_ignored_dependents(
     Ok(())
 }
 
-async fn collect_removal_dependents(
-    db: &InstalledDb,
-    part: &InstalledPart,
-    name: &str,
-    ignored_dependents: &HashSet<String>,
-) -> Result<Vec<String>> {
-    let mut dependents = db.get_dependents(name).await?;
-
-    let provides_list = db.get_provides(part.id).await?;
-    for virtual_name in &provides_list {
-        let virtual_dependents = db.get_dependents(virtual_name).await?;
-        for dep_name in virtual_dependents {
-            let remaining_providers: Vec<String> = db
-                .find_providers(virtual_name)
-                .await?
-                .into_iter()
-                .filter(|p| p != name && !ignored_dependents.contains(p))
-                .collect();
-            if remaining_providers.is_empty() && !dependents.contains(&dep_name) {
-                dependents.push(dep_name);
-            }
-        }
-    }
-
-    Ok(dependents)
+async fn collect_removal_dependents(db: &InstalledDb, name: &str) -> Result<Vec<String>> {
+    db.get_dependents(name).await
 }
 
 pub async fn order_removal_batch(db: &InstalledDb, targets: &[String]) -> Result<Vec<String>> {
@@ -266,16 +243,11 @@ fn visit_removal_target<'a>(
             return Ok(());
         }
 
-        let part = db
+        let _ = db
             .get_part(name)
             .await?
             .ok_or_else(|| WrightError::PartNotFound(name.to_string()))?;
-        let batch_ignored: HashSet<String> = target_set
-            .iter()
-            .filter(|candidate| candidate.as_str() != name)
-            .cloned()
-            .collect();
-        let dependents = collect_removal_dependents(db, &part, name, &batch_ignored).await?;
+        let dependents = collect_removal_dependents(db, name).await?;
         let mut next: Vec<String> = dependents
             .into_iter()
             .filter(|dep_name| target_set.contains(dep_name))

@@ -45,23 +45,7 @@ impl InstalledDb {
             .try_get(0)
             .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
 
-        if count > 0 {
-            return Ok(true);
-        }
-
-        let prov_row = query("SELECT COUNT(*) as count FROM provides WHERE name = ?")
-            .bind(name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to check provides dependency: {}", e))
-            })?;
-
-        let prov_count: i64 = prov_row
-            .try_get(0)
-            .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-
-        Ok(prov_count > 0)
+        Ok(count > 0)
     }
 
     pub async fn get_dependents(&self, name: &str) -> Result<Vec<String>> {
@@ -157,60 +141,6 @@ impl InstalledDb {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan deps: {}", e)))?;
-
-        let mut result = Vec::new();
-        for row in rows {
-            use sqlx::Row;
-            result.push(
-                row.try_get(0)
-                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
-            );
-        }
-        Ok(result)
-    }
-
-    pub async fn insert_provides(&self, part_id: i64, names: &[String]) -> Result<()> {
-        for name in names {
-            query("INSERT INTO provides (part_id, name) VALUES (?, ?)")
-                .bind(part_id)
-                .bind(name)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to insert provides: {}", e))
-                })?;
-        }
-        Ok(())
-    }
-
-    pub async fn get_provides(&self, part_id: i64) -> Result<Vec<String>> {
-        let rows = query("SELECT name FROM provides WHERE part_id = ? ORDER BY name")
-            .bind(part_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get provides: {}", e)))?;
-
-        let mut result = Vec::new();
-        for row in rows {
-            use sqlx::Row;
-            result.push(
-                row.try_get(0)
-                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
-            );
-        }
-        Ok(result)
-    }
-
-    pub async fn find_providers(&self, virtual_name: &str) -> Result<Vec<String>> {
-        let rows = query(
-            "SELECT p.name FROM parts p
-             JOIN provides pv ON p.id = pv.part_id
-             WHERE pv.name = ?",
-        )
-        .bind(virtual_name)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to find providers: {}", e)))?;
 
         let mut result = Vec::new();
         for row in rows {
