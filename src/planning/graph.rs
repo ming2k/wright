@@ -73,14 +73,9 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if !build_set.contains(&dep_plan_name) {
-                if let Some(label) = dependency_match_label(
-                    &dep_output_name,
-                    &dep_plan_name,
-                    index,
-                    db,
-                    policies,
-                )
-                .await?
+                if let Some(label) =
+                    dependency_match_label(&dep_output_name, &dep_plan_name, index, db, policies)
+                        .await?
                 {
                     if let Some(plan_path) = index.path_for(&dep_plan_name) {
                         info!(
@@ -191,8 +186,7 @@ async fn dependency_match_label(
             }
             MatchPolicy::Installed => {
                 if installed.is_some()
-                    && !dependency_plan_differs(dep_output_name, dep_plan_name, index, db)
-                        .await?
+                    && !dependency_plan_differs(dep_output_name, dep_plan_name, index, db).await?
                 {
                     Some("installed")
                 } else {
@@ -202,8 +196,7 @@ async fn dependency_match_label(
             MatchPolicy::Outdated => {
                 if installed.is_none() {
                     Some("missing")
-                } else if dependency_plan_differs(dep_output_name, dep_plan_name, index, db)
-                    .await?
+                } else if dependency_plan_differs(dep_output_name, dep_plan_name, index, db).await?
                 {
                     Some("outdated")
                 } else {
@@ -523,18 +516,33 @@ pub(super) fn build_dep_map(
 
     // Load manifests for the explicit build set first.
     let mut build_manifests = Vec::with_capacity(plans_to_build.len());
+    let mut validation_errors = Vec::new();
     for path in plans_to_build {
-        let manifest = PlanManifest::from_file(path)?;
-        let name = manifest.metadata.name.clone();
-        name_to_path.insert(name.clone(), path.clone());
-        build_set.insert(name.clone());
-        part_to_plan.insert(name.clone(), name.clone());
-        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-            for (sub_name, _) in parts {
-                part_to_plan.insert(sub_name.clone(), name.clone());
+        match PlanManifest::from_file(path) {
+            Ok(manifest) => {
+                let name = manifest.metadata.name.clone();
+                name_to_path.insert(name.clone(), path.clone());
+                build_set.insert(name.clone());
+                part_to_plan.insert(name.clone(), name.clone());
+                if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+                    for (sub_name, _) in parts {
+                        part_to_plan.insert(sub_name.clone(), name.clone());
+                    }
+                }
+                build_manifests.push((name, manifest));
+            }
+            Err(e) => {
+                validation_errors.push(format!("{}: {}", path.display(), e));
             }
         }
-        build_manifests.push((name, manifest));
+    }
+
+    if !validation_errors.is_empty() {
+        return Err(WrightError::ValidationError(format!(
+            "plan validation failed with {} error(s):\n  {}",
+            validation_errors.len(),
+            validation_errors.join("\n  ")
+        )));
     }
 
     // Build the dep map.  Only parse dependency plans that are actually
@@ -571,8 +579,7 @@ pub(super) fn build_dep_map(
             deps = collect_phase_deps(manifest, &part_to_plan, is_mvp, Some(index));
 
             if is_mvp {
-                let full_deps =
-                    collect_phase_deps(manifest, &part_to_plan, false, Some(index));
+                let full_deps = collect_phase_deps(manifest, &part_to_plan, false, Some(index));
                 let mvp_deps = collect_phase_deps(manifest, &part_to_plan, true, Some(index));
                 let excluded: Vec<String> = full_deps
                     .into_iter()

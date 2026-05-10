@@ -74,7 +74,16 @@ impl StageCheckpoint {
     /// in the canonical pipeline order.  Used when a preceding phase (e.g. mvp)
     /// invalidates downstream work.
     pub fn invalidate_from(&self, stage: &str) {
-        let order = ["fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging"];
+        let order = [
+            "fetch",
+            "verify",
+            "extract",
+            "prepare",
+            "configure",
+            "compile",
+            "check",
+            "staging",
+        ];
         let Some(pos) = order.iter().position(|&s| s == stage) else {
             return;
         };
@@ -85,7 +94,16 @@ impl StageCheckpoint {
 
     /// Remove all stage checkpoints.
     pub fn invalidate_all(&self) {
-        let order = ["fetch", "verify", "extract", "prepare", "configure", "compile", "check", "staging"];
+        let order = [
+            "fetch",
+            "verify",
+            "extract",
+            "prepare",
+            "configure",
+            "compile",
+            "check",
+            "staging",
+        ];
         for s in &order {
             self.invalidate(s);
         }

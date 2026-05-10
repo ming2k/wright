@@ -272,8 +272,18 @@ impl PlanManifest {
         let content = std::fs::read_to_string(path).map_err(|e| {
             WrightError::ParseError(format!("failed to read {}: {}", path.display(), e))
         })?;
-        let mut manifest = Self::parse(&content)?;
-        manifest.validate()?;
+        let mut manifest = Self::parse(&content).map_err(|e| match e {
+            WrightError::ParseError(msg) => {
+                WrightError::ParseError(format!("{}: {}", path.display(), msg))
+            }
+            other => other,
+        })?;
+        manifest.validate().map_err(|e| match e {
+            WrightError::ValidationError(msg) => {
+                WrightError::ValidationError(format!("{}: {}", path.display(), msg))
+            }
+            other => other,
+        })?;
 
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");

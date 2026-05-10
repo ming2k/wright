@@ -422,7 +422,12 @@ fn sync_groups_to_target(source_groups: &[PathBuf], target_groups_dir: &Path) ->
         }
     }
     if synced > 0 || up_to_date > 0 {
-        info!("Synced {} group(s): {} updated, {} up-to-date", synced + up_to_date, synced, up_to_date);
+        info!(
+            "Synced {} group(s): {} updated, {} up-to-date",
+            synced + up_to_date,
+            synced,
+            up_to_date
+        );
     }
     Ok(())
 }

@@ -83,7 +83,9 @@ impl PlanIndex {
                 return Ok(Some(cached.clone()));
             }
             let manifest = PlanManifest::from_file(path)?;
-            self.cache.borrow_mut().insert(name.to_string(), manifest.clone());
+            self.cache
+                .borrow_mut()
+                .insert(name.to_string(), manifest.clone());
             Ok(Some(manifest))
         } else {
             Ok(None)
@@ -101,11 +103,7 @@ impl PlanIndex {
                 Ok(Some(manifest)) => results.push((name.clone(), manifest)),
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::warn!(
-                        "Skipping plan '{}' during bulk load: {}",
-                        name,
-                        e
-                    );
+                    tracing::warn!("Skipping plan '{}' during bulk load: {}", name, e);
                 }
             }
         }
@@ -134,18 +132,13 @@ impl PlanIndex {
     /// Lightweight extraction of the `name` field without deserialising the
     /// full manifest.  This is the only parsing cost paid at index-build time.
     fn extract_name(path: &Path) -> Result<String> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| WrightError::IoError(e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| WrightError::IoError(e))?;
         #[derive(serde::Deserialize)]
         struct NameOnly {
             name: String,
         }
         let partial: NameOnly = toml::from_str(&content).map_err(|e| {
-            WrightError::ValidationError(format!(
-                "invalid plan.toml '{}': {}",
-                path.display(),
-                e
-            ))
+            WrightError::ValidationError(format!("invalid plan.toml '{}': {}", path.display(), e))
         })?;
         Ok(partial.name)
     }

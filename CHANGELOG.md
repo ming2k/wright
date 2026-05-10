@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-05-11
+
 ### Added
 - **`wright doctor` command** — comprehensive system health check that runs all checks from `wright check --deep` plus a global parts_dir dependency closure scan. Detects missing providers and stale dependencies across the entire archive collection. Use after batch installations.
 

@@ -66,10 +66,14 @@ mod tests {
     fn host_libc_candidates() -> Vec<PathBuf> {
         // Common locations where a glibc / musl share-lib lives. Tests are
         // skipped when none of these exist (e.g. on a non-ELF host).
-        ["/lib/x86_64-linux-gnu/libc.so.6", "/lib64/libc.so.6", "/lib/libc.so.6"]
-            .iter()
-            .map(PathBuf::from)
-            .collect()
+        [
+            "/lib/x86_64-linux-gnu/libc.so.6",
+            "/lib64/libc.so.6",
+            "/lib/libc.so.6",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
     }
 
     fn first_existing(paths: &[PathBuf]) -> Option<&Path> {

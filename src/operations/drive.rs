@@ -73,26 +73,24 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
             }
         }
         TerminalStatus::Failed => {
-            if !opts.quiet {
-                eprintln!("\n=== failures summary ===");
-                for (step_id, msg, plan, label) in &outcome.failed {
-                    let ctx = match (plan, label) {
-                        (Some(p), Some(l)) => format!(" [{} / {}]", p, l),
-                        (Some(p), None) => format!(" [{}]", p),
-                        (None, Some(l)) => format!(" [{}]", l),
-                        (None, None) => String::new(),
-                    };
-                    eprintln!("  step {} failed{}: {}", step_id.short(), ctx, msg);
-                }
-                eprintln!(
-                    "workflow {} failed; rerun the same command to resume, or use --invalidate to discard active workflow state",
-                    outcome.workflow_id.short()
-                );
+            tracing::error!("=== failures summary ===");
+            for (step_id, msg, plan, label) in &outcome.failed {
+                let ctx = match (plan, label) {
+                    (Some(p), Some(l)) => format!(" [{} / {}]", p, l),
+                    (Some(p), None) => format!(" [{}]", p),
+                    (None, Some(l)) => format!(" [{}]", l),
+                    (None, None) => String::new(),
+                };
+                tracing::error!("  step {} failed{}: {}", step_id.short(), ctx, msg);
             }
+            tracing::error!(
+                "workflow {} failed; rerun the same command to resume, or use --invalidate to discard active workflow state",
+                outcome.workflow_id.short()
+            );
             std::process::exit(1);
         }
         TerminalStatus::Aborted => {
-            eprintln!(
+            tracing::error!(
                 "workflow {} aborted; rerun the same command to resume",
                 outcome.workflow_id.short()
             );

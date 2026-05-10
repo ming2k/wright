@@ -245,9 +245,7 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
     }
 
     let mut relations_toml = String::new();
-    if !manifest.relations.replaces.is_empty()
-        || !manifest.relations.conflicts.is_empty()
-    {
+    if !manifest.relations.replaces.is_empty() || !manifest.relations.conflicts.is_empty() {
         relations_toml.push_str("\n[relations]\n");
         if !manifest.relations.replaces.is_empty() {
             relations_toml.push_str("replaces = [");

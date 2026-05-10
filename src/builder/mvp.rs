@@ -100,8 +100,7 @@ pub(crate) fn collect_phase_deps(
                         let rdep_name = version::parse_dependency(rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
-                        let rdep_plan_name =
-                            version::parse_dep_ref(&rdep_name).plan().to_string();
+                        let rdep_plan_name = version::parse_dep_ref(&rdep_name).plan().to_string();
                         let rdep_plan = part_to_plan
                             .get(&rdep_plan_name)
                             .cloned()

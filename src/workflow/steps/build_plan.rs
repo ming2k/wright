@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::info;
 
-use crate::planning::{plan_file_fingerprint, BuildOptions};
 use crate::builder::Builder;
 use crate::config::GlobalConfig;
 use crate::error::WrightError;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
+use crate::planning::{plan_file_fingerprint, BuildOptions};
 use crate::workflow::errors::{Result, WorkflowError};
 use crate::workflow::id::StepId;
 use crate::workflow::step::{ResourceClass, Step, StepContext};

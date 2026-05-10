@@ -54,7 +54,7 @@ async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()>
 
         let part = db.get_part(target).await.context("failed to query part")?;
         if part.is_none() {
-            eprintln!("part '{}' is not installed", target);
+            tracing::error!("part '{}' is not installed", target);
             std::process::exit(1);
         }
 
@@ -119,10 +119,10 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
     for (name, manifest) in index.load_all()? {
         for (dep_raw, kind) in manifest.all_dependencies() {
             let dep_name = version::parse_dep_ref(&dep_raw).plan().to_string();
-                rdeps_map
-                    .entry(dep_name)
-                    .or_default()
-                    .push((name.clone(), kind));
+            rdeps_map
+                .entry(dep_name)
+                .or_default()
+                .push((name.clone(), kind));
         }
     }
 
@@ -169,8 +169,7 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
             }
         }
 
-        let show_rdeps =
-            (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
+        let show_rdeps = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
         if show_rdeps {
             if color {
                 println!("{}", "Dependents:".bold().cyan());

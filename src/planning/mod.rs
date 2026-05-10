@@ -275,13 +275,7 @@ pub fn create_execution_plan(
         .map(|m| (m.metadata.name, RebuildReason::Explicit))
         .collect();
 
-    let mut graph = build_dep_map(
-        &plans_to_build,
-        opts.checksum,
-        opts.mvp,
-        reasons,
-        &index,
-    )?;
+    let mut graph = build_dep_map(&plans_to_build, opts.checksum, opts.mvp, reasons, &index)?;
 
     if opts.is_build_op() && !opts.mvp {
         inject_bootstrap_passes(&mut graph)?;

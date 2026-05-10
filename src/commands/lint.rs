@@ -24,7 +24,9 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
     let db_path = config.general.db_path.clone();
     let db = crate::database::InstalledDb::open(&db_path)
         .await
-        .map_err(|e| crate::error::WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
+        .map_err(|e| {
+            crate::error::WrightError::DatabaseError(format!("failed to open database: {}", e))
+        })?;
     let root_dir = std::path::PathBuf::from("/");
 
     let parts = db.list_parts().await?;
@@ -52,10 +54,7 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
     Ok(())
 }
 
-async fn execute_plan_lint(
-    targets: Vec<String>,
-    config: &GlobalConfig,
-) -> Result<()> {
+async fn execute_plan_lint(targets: Vec<String>, config: &GlobalConfig) -> Result<()> {
     let plan_dirs = planning::plan_search_dirs(config);
     let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let all_plan_paths: Vec<PathBuf> = index.paths().cloned().collect();
@@ -156,7 +155,6 @@ async fn execute_plan_lint(
 fn report_lint_error(message: impl AsRef<str>) {
     let message = message.as_ref();
     error!("{}", message);
-    eprintln!("error: {}", message);
 }
 
 #[derive(Debug, Clone)]

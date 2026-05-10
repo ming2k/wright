@@ -91,32 +91,66 @@ fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> 
 }
 
 /// Recursively hard-link all files from src_dir to dest_dir, preserving directory
-/// structure.  Falls back to copy when a hard-link fails (e.g. across btrfs
-/// subvolumes — see [`link_or_copy`]).
+/// structure and symbolic links.  Falls back to copy when a hard-link fails
+/// (e.g. across btrfs subvolumes — see [`link_or_copy`]).
+///
+/// # Important: does not follow symlinks
+///
+/// This function uses `symlink_metadata` rather than `metadata` so that
+/// symbolic links are reproduced in the output instead of being followed.
+/// Following symlinks would incorrectly traverse into host directories
+/// (e.g. `var/run -> /run`) and attempt to hard-link runtime sockets,
+/// which fails with `ENXIO`.
 async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
     let mut dirs_to_visit = vec![src_dir.to_path_buf()];
     while let Some(dir) = dirs_to_visit.pop() {
         if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if tokio::fs::metadata(&path)
-                    .await
-                    .map(|m| m.is_dir())
-                    .unwrap_or(false)
-                {
-                    dirs_to_visit.push(path);
-                } else if let Ok(rel_path) = path.strip_prefix(src_dir) {
-                    let dest_path = dest_dir.join(rel_path);
-                    if let Some(parent) = dest_path.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
+
+                let file_type = match tokio::fs::symlink_metadata(&path).await {
+                    Ok(m) => Some(m.file_type()),
+                    Err(_) => None,
+                };
+
+                let Ok(rel_path) = path.strip_prefix(src_dir) else {
+                    continue;
+                };
+                let dest_path = dest_dir.join(rel_path);
+                if let Some(parent) = dest_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+
+                match file_type {
+                    Some(ft) if ft.is_symlink() => {
+                        let target = tokio::fs::read_link(&path).await.map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to read symlink {}: {}",
+                                path.display(),
+                                e
+                            ))
+                        })?;
+                        tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to create symlink {} -> {}: {}",
+                                dest_path.display(),
+                                target.display(),
+                                e
+                            ))
+                        })?;
                     }
-                    if let Err(e) = link_or_copy(&path, &dest_path).await {
-                        return Err(WrightError::BuildError(format!(
-                            "failed to link {} to {}: {}",
-                            path.display(),
-                            dest_path.display(),
-                            e
-                        )));
+                    Some(ft) if ft.is_dir() => {
+                        dirs_to_visit.push(path);
+                    }
+                    _ => {
+                        if let Err(e) = link_or_copy(&path, &dest_path).await {
+                            return Err(WrightError::BuildError(format!(
+                                "failed to link {} to {}: {}",
+                                path.display(),
+                                dest_path.display(),
+                                e
+                            )));
+                        }
                     }
                 }
             }
@@ -150,6 +184,9 @@ async fn link_or_copy(src: &Path, dest: &Path) -> std::io::Result<()> {
     match tokio::fs::hard_link(src, dest).await {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            tokio::fs::copy(src, dest).await.map(|_| ())
+        }
+        Err(e) if e.raw_os_error() == Some(libc::ENXIO) => {
             tokio::fs::copy(src, dest).await.map(|_| ())
         }
         Err(e) => Err(e),
@@ -303,10 +340,8 @@ impl Builder {
             }
         }
 
-        let checkpoint = checkpoint::StageCheckpoint::new(
-            work_dir.clone(),
-            build_phase.map(|s| s.to_string()),
-        );
+        let checkpoint =
+            checkpoint::StageCheckpoint::new(work_dir.clone(), build_phase.map(|s| s.to_string()));
 
         if !stages.is_empty() {
             if !work_dir.exists() {

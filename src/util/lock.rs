@@ -143,11 +143,7 @@ fn acquire_lock_path_with_timeout(
         {
             // Non-fatal, but we log it if we had a logger here.
             // For now, we continue since the flock itself is the source of truth.
-            eprintln!(
-                "warning: failed to write PID to {}: {}",
-                lock_path.display(),
-                e
-            );
+            tracing::warn!("failed to write PID to {}: {}", lock_path.display(), e);
         }
         Ok(ProcessLock {
             _file: f,

@@ -45,30 +45,33 @@ impl InstalledDb {
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
             "SELECT id, name, version, release, epoch, arch, registered_at
-             FROM plans WHERE name = ?")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get plan: {}", e)))
+             FROM plans WHERE name = ?",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to get plan: {}", e)))
     }
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
             "SELECT id, name, version, release, epoch, arch, registered_at
-             FROM plans WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get plan by id: {}", e)))
+             FROM plans WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to get plan by id: {}", e)))
     }
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
         query_as::<_, PlanRecord>(
             "SELECT id, name, version, release, epoch, arch, registered_at
-             FROM plans ORDER BY name")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to list plans: {}", e)))
+             FROM plans ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to list plans: {}", e)))
     }
 
     pub async fn remove_plan(&self, name: &str) -> Result<()> {
@@ -132,17 +135,15 @@ impl InstalledDb {
         arch: &str,
     ) -> Result<i64> {
         if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
-            query(
-                "UPDATE plans SET version = ?, release = ?, epoch = ?, arch = ? WHERE id = ?"
-            )
-            .bind(version)
-            .bind(release as i64)
-            .bind(epoch as i64)
-            .bind(arch)
-            .bind(existing.id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
+            query("UPDATE plans SET version = ?, release = ?, epoch = ?, arch = ? WHERE id = ?")
+                .bind(version)
+                .bind(release as i64)
+                .bind(epoch as i64)
+                .bind(arch)
+                .bind(existing.id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
 
             Ok(existing.id)
         } else {
