@@ -97,8 +97,16 @@ impl PlanIndex {
     pub fn load_all(&self) -> Result<Vec<(String, PlanManifest)>> {
         let mut results = Vec::with_capacity(self.entries.len());
         for name in self.entries.keys() {
-            if let Some(manifest) = self.manifest_for(name)? {
-                results.push((name.clone(), manifest));
+            match self.manifest_for(name) {
+                Ok(Some(manifest)) => results.push((name.clone(), manifest)),
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "Skipping plan '{}' during bulk load: {}",
+                        name,
+                        e
+                    );
+                }
             }
         }
         Ok(results)

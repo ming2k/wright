@@ -520,31 +520,60 @@ pub(super) fn build_dep_map(
     let mut bootstrap_excluded = HashMap::new();
 
     let mut part_to_plan = HashMap::new();
-    let all_manifests = index.load_all()?;
-    for (plan_name, m) in all_manifests {
-        part_to_plan.insert(plan_name.clone(), plan_name.clone());
-        if let Some(OutputConfig::Multi(ref parts)) = m.outputs {
-            for (sub_name, _) in parts {
-                part_to_plan.insert(sub_name.clone(), plan_name.clone());
-            }
-        }
-    }
 
+    // Load manifests for the explicit build set first.
+    let mut build_manifests = Vec::with_capacity(plans_to_build.len());
     for path in plans_to_build {
         let manifest = PlanManifest::from_file(path)?;
         let name = manifest.metadata.name.clone();
         name_to_path.insert(name.clone(), path.clone());
         build_set.insert(name.clone());
+        part_to_plan.insert(name.clone(), name.clone());
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            for (sub_name, _) in parts {
+                part_to_plan.insert(sub_name.clone(), name.clone());
+            }
+        }
+        build_manifests.push((name, manifest));
+    }
+
+    // Build the dep map.  Only parse dependency plans that are actually
+    // reachable, so a broken plan elsewhere in the tree cannot block a build.
+    for (name, manifest) in &build_manifests {
+        // Pre-load direct dependencies into part_to_plan so that
+        // collect_phase_deps can resolve multi-output references.
+        for dep_raw in manifest
+            .build_deps
+            .iter()
+            .chain(&manifest.runtime_deps)
+            .chain(&manifest.link_deps)
+        {
+            let dep_name = version::parse_dependency(dep_raw)
+                .unwrap_or_else(|_| (dep_raw.clone(), None))
+                .0;
+            let dep_plan_name = version::parse_dep_ref(&dep_name).plan().to_string();
+            if !part_to_plan.contains_key(&dep_plan_name) {
+                if let Some(dep_path) = index.path_for(&dep_plan_name) {
+                    if let Ok(dep_manifest) = PlanManifest::from_file(dep_path) {
+                        part_to_plan.insert(dep_plan_name.clone(), dep_plan_name.clone());
+                        if let Some(OutputConfig::Multi(ref parts)) = dep_manifest.outputs {
+                            for (sub_name, _) in parts {
+                                part_to_plan.insert(sub_name.clone(), dep_plan_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let mut deps = Vec::new();
         if !checksum {
-            deps = collect_phase_deps(&manifest, &part_to_plan, is_mvp, Some(index),
-            );
+            deps = collect_phase_deps(manifest, &part_to_plan, is_mvp, Some(index));
 
             if is_mvp {
                 let full_deps =
-                    collect_phase_deps(&manifest, &part_to_plan, false, Some(index));
-                let mvp_deps = collect_phase_deps(&manifest, &part_to_plan, true, Some(index));
+                    collect_phase_deps(manifest, &part_to_plan, false, Some(index));
+                let mvp_deps = collect_phase_deps(manifest, &part_to_plan, true, Some(index));
                 let excluded: Vec<String> = full_deps
                     .into_iter()
                     .filter(|d| !mvp_deps.contains(d))
@@ -554,7 +583,7 @@ pub(super) fn build_dep_map(
                 }
             }
         }
-        deps_map.insert(name, deps);
+        deps_map.insert(name.clone(), deps);
     }
 
     Ok(PlanGraph {
