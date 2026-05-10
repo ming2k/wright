@@ -202,7 +202,7 @@ pub async fn build_apply_workflow(
             let pkg_id = wfb.add(PackagePlanStep::new(
                 PackagePlanInputs {
                     plan: plan_ref,
-                    force: false,
+                    force: force_install,
                     out_dir: config.general.parts_dir.clone(),
                 },
                 deps,
@@ -246,7 +246,6 @@ pub async fn build_apply_workflow(
                 label,
                 sources,
                 explicit_targets: explicit_sorted,
-                explicit_pack_files: Vec::new(),
                 root_dir: root_dir.clone(),
                 force: force_install,
                 nodeps,

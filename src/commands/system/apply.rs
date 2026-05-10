@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 use crate::commands::workflow_run::{drive_command, DriveOptions};
 use crate::config::GlobalConfig;
+use crate::database::InstalledDb;
+use crate::part::group;
 use crate::part::store::LocalPartStore;
 use crate::workflow::builders::build_apply_workflow;
 
@@ -83,7 +85,32 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         if !std::io::stdin().is_terminal() {
             anyhow::bail!("no targets received from stdin; did the resolve succeed?");
         }
-        anyhow::bail!("no targets specified (pass plan names/paths as arguments or via stdin)");
+        anyhow::bail!("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)");
+    }
+
+    // Build the list of plan directories used for group resolution.
+    let mut plan_dirs: Vec<std::path::PathBuf> = vec![config.general.plans_dir.clone()];
+    plan_dirs.extend(config.general.extra_plans_dirs.iter().cloned());
+
+    // Expand any @group references into their constituent plan names.
+    let (targets, group_assumes, _group_config) =
+        group::expand_group_references(targets, &plan_dirs)?;
+
+    if targets.is_empty() {
+        anyhow::bail!("no plans to build after expanding groups");
+    }
+
+    // Pre-register any assumptions collected from groups.
+    if !group_assumes.is_empty() {
+        let db = InstalledDb::open(db_path)
+            .await
+            .context("failed to open database for group assumptions")?;
+        for assume in &group_assumes {
+            db.assume_part(&assume.name, &assume.version)
+                .await
+                .with_context(|| format!("failed to assume {}", assume.name))?;
+        }
+        drop(db);
     }
 
     let resolve_opts = crate::builder::orchestrator::ResolveOptions {

@@ -6,5 +6,4 @@ mod integration {
     mod install_test;
     mod isolation_test;
     mod migration_test;
-    mod pack_test;
 }

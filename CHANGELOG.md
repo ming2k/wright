@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-05-10
+
+### Breaking Changes
+- **Pack format removed** — the `.wright.pack.tar` artifact format and `wright pack` command have been removed. The pack format solved distribution but did not provide a true source-first bootstrap path or host isolation.
+- **`wright launch` no longer accepts pack files** — launch now accepts either `--group <file>` for a `group.toml` manifest or `--plans <dir>` with explicit plan names or `@group` references.
+- **`pack_dirs` configuration removed** — the `general.pack_dirs` setting is no longer recognized.
+
+### Added
+- **Group manifest (`group.toml`)** — a pure declaration that names plans, assumed externals, and optional post-install system configuration (`[config]` with hostname, timezone, locale, and runit services). See `docs/reference/group-manifest.md` and ADR-0015.
+- **`wright launch --group <file>`** — bootstrap a target root from a group manifest.
+- **`wright launch --plans <dir> @<group>`** — reference a group by name when launching from a plans directory.
+- **Target root self-containment** — `launch` copies source plans and group manifests into the target root and writes a target-local `/etc/wright/wright.toml`, making the resulting root independently maintainable.
+
+### Changed
+- **Host-isolated builds under `--root`** — when `--root` is set (and is not `/`), `build_dir` and `parts_dir` are automatically redirected under the target root, preventing host filesystem pollution.
+- **Workflow runner failure reporting** — failed steps now report the associated plan name and step label for easier debugging.
+- **PARTINFO error messages** — parsing errors now include the source archive path.
+- **Apply workflow force propagation** — the `force` flag is now correctly passed through to package steps in the apply workflow.
+
+### Removed
+- All pack-related code: `src/part/pack.rs`, `src/workflow/steps/extract_pack.rs`, `src/workflow/steps/apply_overlay.rs`, `src/workflow/builders/launch.rs`, and `tests/integration/pack_test.rs`.
+- ADR-0014 superseded by ADR-0015.
+
 ## [4.1.2] - 2026-05-07
 
 ### Changed

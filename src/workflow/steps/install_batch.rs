@@ -33,12 +33,6 @@ pub enum InstallSource {
     Path { path: PathBuf, hash: String },
     /// Take all archives from this upstream `PackagePlanStep`'s outputs.
     FromPackage { step: StepId },
-    /// Take archives from a `ExtractPackStep` + the named part files in the
-    /// pack manifest (resolved at execute time).
-    FromPackExtract {
-        step: StepId,
-        files: Vec<String>, // part filenames inside the staging dir; sorted
-    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -48,10 +42,6 @@ pub struct InstallBatchInputs {
     /// Part names to mark with `Origin::Manual`. Used when the install
     /// sources are pre-resolved (`Path` / `FromPackage`).
     pub explicit_targets: Vec<String>, // sorted
-    /// Pack filenames to mark with `Origin::Manual` after `FromPackExtract`
-    /// sources resolve. The step reads each archive's `PARTINFO` at execute
-    /// time to map filename → part name.
-    pub explicit_pack_files: Vec<String>, // sorted
     pub root_dir: PathBuf,
     pub force: bool,
     pub nodeps: bool,
@@ -135,34 +125,6 @@ impl Step for InstallBatchStep {
                             }
                         }
                     }
-                    InstallSource::FromPackExtract { step, files } => {
-                        let v = ctx.upstream_outputs.get(step).ok_or_else(|| {
-                            WorkflowError::other(format!(
-                                "missing upstream pack-extract outputs for step {}",
-                                step
-                            ))
-                        })?;
-                        let outs: super::ExtractPackOutputs = serde_json::from_value(v.clone())?;
-                        for f in files {
-                            let p = outs.staging_dir.join(f);
-                            if seen.insert(p.clone()) {
-                                paths.push(p.clone());
-                            }
-                            // Translate manual pack filenames -> part names by
-                            // reading each archive's authoritative PARTINFO.
-                            if self.inputs.explicit_pack_files.contains(f) {
-                                let info =
-                                    crate::part::archive::read_partinfo(&p).map_err(|e| {
-                                        WorkflowError::Other(format!(
-                                            "read PARTINFO from {}: {}",
-                                            p.display(),
-                                            e
-                                        ))
-                                    })?;
-                                batch_part_names.push(info.name);
-                            }
-                        }
-                    }
                 }
             }
 
@@ -194,8 +156,6 @@ impl Step for InstallBatchStep {
 
             let mut explicit: HashSet<String> =
                 self.inputs.explicit_targets.iter().cloned().collect();
-            // For pack-extract sources, batch_part_names was populated above
-            // with the names of *manual* archives; treat them as explicit too.
             for n in &batch_part_names {
                 explicit.insert(n.clone());
             }

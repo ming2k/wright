@@ -108,9 +108,10 @@ pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<(PartInfo, Stri
         return Ok((parse_partinfo(&partinfo_path)?, hash));
     }
 
-    Err(WrightError::PartError(
-        "archive does not contain .PARTINFO".to_string(),
-    ))
+    Err(WrightError::PartError(format!(
+        "{}: archive does not contain .PARTINFO",
+        part_path.display()
+    )))
 }
 
 /// Read .PARTINFO from an archive without full extraction.
@@ -141,13 +142,14 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
             entry
                 .read_to_string(&mut content)
                 .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
-            return parse_partinfo_str(&content);
+            return parse_partinfo_str(&content, &part_path.display().to_string());
         }
     }
 
-    Err(WrightError::PartError(
-        "archive does not contain .PARTINFO".to_string(),
-    ))
+    Err(WrightError::PartError(format!(
+        "{}: archive does not contain .PARTINFO",
+        part_path.display()
+    )))
 }
 
 fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>) -> String {
@@ -343,11 +345,11 @@ fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> Strin
 
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
-    parse_partinfo_str(&content)
+        .map_err(|e| WrightError::PartError(format!("{}: failed to read .PARTINFO: {}", path.display(), e)))?;
+    parse_partinfo_str(&content, &path.display().to_string())
 }
 
-fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
+fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
     #[derive(serde::Deserialize)]
     struct PartInfoToml {
         part: PartInfoMeta,
@@ -402,11 +404,11 @@ fn parse_partinfo_str(content: &str) -> Result<PartInfo> {
     }
 
     let parsed: PartInfoToml = toml::from_str(content)
-        .map_err(|e| WrightError::PartError(format!("failed to parse .PARTINFO: {}", e)))?;
+        .map_err(|e| WrightError::PartError(format!("{}: failed to parse .PARTINFO: {}", source, e)))?;
 
     let relations = parsed.relations.unwrap_or_default();
     let plan_section = parsed.plan.ok_or_else(|| {
-        WrightError::PartError(".PARTINFO missing required [plan] section".to_string())
+        WrightError::PartError(format!("{}: .PARTINFO missing required [plan] section", source))
     })?;
 
     Ok(PartInfo {
@@ -456,6 +458,7 @@ description = "demo"
 arch = "x86_64"
 license = "MIT"
 "#,
+            "test",
         )
         .unwrap();
 
@@ -482,6 +485,7 @@ license = "GPL-3.0-or-later"
 build_deps = ["binutils"]
 link_deps = ["zlib"]
 "#,
+            "test",
         )
         .unwrap();
 
@@ -503,6 +507,7 @@ name = "demo"
 build_date = "2025-01-01"
 runtime_deps = ["bash"]
 "#,
+            "test",
         );
 
         assert!(result.is_err());

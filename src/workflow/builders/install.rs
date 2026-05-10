@@ -73,7 +73,6 @@ pub fn build_install_archives_workflow(
             label: "install".to_string(),
             sources,
             explicit_targets: sorted_explicit,
-            explicit_pack_files: Vec::new(),
             root_dir,
             force,
             nodeps,

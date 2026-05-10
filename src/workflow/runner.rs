@@ -46,7 +46,8 @@ impl Default for SchedulerPolicy {
 pub struct RunOutcome {
     pub workflow_id: WorkflowId,
     pub status: TerminalStatus,
-    pub failed: Vec<(StepId, String)>,
+    /// (step_id, message, plan_name, label)
+    pub failed: Vec<(StepId, String, Option<String>, Option<String>)>,
 }
 
 struct StepDone {
@@ -136,7 +137,7 @@ pub async fn drive(
 
     let (tx, mut rx) = mpsc::channel::<StepDone>(total_steps.max(1));
     let mut in_flight: usize = 0;
-    let mut failed: Vec<(StepId, String)> = Vec::new();
+    let mut failed: Vec<(StepId, String, Option<String>, Option<String>)> = Vec::new();
     let mut stop_launching = false;
 
     loop {
@@ -253,11 +254,12 @@ pub async fn drive(
             }
             Err(e) => {
                 let msg = format!("{:#}", e);
-                warn!(step = %done.id.short(), error = %msg, "step failed");
+                let (plan, label) = extract_plan_label(&done.inputs_json);
+                warn!(step = %done.id.short(), plan = ?plan, label = ?label, error = %msg, "step failed");
                 statuses.insert(done.id.clone(), Status::Failed);
                 let failure = failure_json(done.kind, &done.inputs_json, &msg);
                 store.mark_failed(&done.id, &failure).await?;
-                failed.push((done.id, msg));
+                failed.push((done.id, msg, plan, label));
                 if policy.fail_fast {
                     stop_launching = true;
                 }
@@ -277,10 +279,11 @@ pub async fn drive(
                     }
                     Err(e) => {
                         let msg = format!("{:#}", e);
+                        let (plan, label) = extract_plan_label(&done.inputs_json);
                         statuses.insert(done.id.clone(), Status::Failed);
                         let failure = failure_json(done.kind, &done.inputs_json, &msg);
                         store.mark_failed(&done.id, &failure).await?;
-                        failed.push((done.id, msg));
+                        failed.push((done.id, msg, plan, label));
                     }
                 }
             }
@@ -295,7 +298,7 @@ pub async fn drive(
             att,
             if att == 1 { "" } else { "s" }
         );
-        failed.push((id.clone(), msg));
+        failed.push((id.clone(), msg, None, None));
     }
 
     let cancelled = *cancel.borrow();
@@ -394,6 +397,21 @@ fn failure_json(kind: &str, inputs_json: &str, message: &str) -> serde_json::Val
     serde_json::Value::Object(obj)
 }
 
+fn extract_plan_label(inputs_json: &str) -> (Option<String>, Option<String>) {
+    let inputs = serde_json::from_str::<serde_json::Value>(inputs_json)
+        .unwrap_or_else(|_| serde_json::Value::Null);
+    let plan = inputs
+        .get("plan")
+        .and_then(|p| p.get("name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let label = inputs
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    (plan, label)
+}
+
 fn reason_for(kind: &str, message: &str) -> String {
     match kind {
         "build_plan" if message.contains("stage '") && message.contains("exit code") => {
@@ -401,7 +419,6 @@ fn reason_for(kind: &str, message: &str) -> String {
         }
         "package_plan" if message.contains("expected archive not produced") => "archive_missing",
         "install_batch" if message.contains("conflict") => "file_conflict",
-        "extract_pack" if message.contains("integrity check failed") => "integrity_failed",
         _ => "step_failed",
     }
     .to_string()

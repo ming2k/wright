@@ -1,7 +1,6 @@
 pub mod build;
 pub mod launch;
 pub mod lint;
-pub mod pack;
 pub mod package;
 pub mod prune;
 pub mod resolve;
@@ -40,7 +39,7 @@ pub async fn dispatch(
                 .map_err(Into::into)
         }
         crate::cli::Commands::Prune(args) => prune::execute_prune(args, config, &db_path).await,
-        crate::cli::Commands::Pack(args) => pack::execute_pack(args).await,
+
         crate::cli::Commands::Launch(args) => {
             launch::execute_launch(args, config, &db_path, &root_dir, cli.verbose, cli.quiet).await
         }

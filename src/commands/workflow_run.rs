@@ -61,8 +61,14 @@ pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result
             }
         }
         TerminalStatus::Failed => {
-            for (step_id, msg) in &outcome.failed {
-                eprintln!("step {} failed: {}", step_id.short(), msg);
+            for (step_id, msg, plan, label) in &outcome.failed {
+                let ctx = match (plan, label) {
+                    (Some(p), Some(l)) => format!(" [{} / {}]", p, l),
+                    (Some(p), None) => format!(" [{}]", p),
+                    (None, Some(l)) => format!(" [{}]", l),
+                    (None, None) => String::new(),
+                };
+                eprintln!("step {} failed{}: {}", step_id.short(), ctx, msg);
             }
             eprintln!(
                 "workflow {} failed; rerun the same command to resume, or use --fresh to discard active workflow state",

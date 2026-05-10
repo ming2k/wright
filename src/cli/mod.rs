@@ -9,7 +9,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 use build::BUILD_AFTER_HELP;
-use launch::{LAUNCH_AFTER_HELP, PACK_AFTER_HELP};
+use launch::LAUNCH_AFTER_HELP;
 use package::PACKAGE_AFTER_HELP;
 use resolve::RESOLVE_AFTER_HELP;
 
@@ -77,11 +77,7 @@ pub enum Commands {
     /// Prune stale archives from the parts directory
     Prune(prune::PruneArgs),
 
-    /// Bundle a directory into a `.wright.pack.tar` artifact, or inspect one
-    #[command(after_help = PACK_AFTER_HELP)]
-    Pack(launch::PackArgs),
-
-    /// Fill a target root from a pack file or from plans
+    /// Fill a target root from a group manifest or from plans
     #[command(after_help = LAUNCH_AFTER_HELP)]
     Launch(launch::LaunchArgs),
 }

@@ -51,9 +51,10 @@ Removes installed parts and optionally cleans up orphaned dependencies.
 
 ### `wright apply <TARGET...>`
 
-Resolves plans or plan directories, checks archives in `parts_dir`, automatically
-adds missing or outdated dependency plans, builds each wave, and then installs or
-upgrades each wave before continuing.
+Resolves plans, plan directories, or group names (prefixed with `@`), checks
+archives in `parts_dir`, automatically adds missing or outdated dependency
+plans, builds each wave, and then installs or upgrades each wave before
+continuing.
 
 | Flag | Description |
 |------|-------------|
@@ -135,39 +136,41 @@ Changes the recorded origin of one or more installed parts.
 | `--as-manual` | Mark as `manual` (user-requested; not auto-removable) |
 | `--as-dependency` | Mark as `dependency` (eligible for orphan cleanup) |
 
-### `wright launch <SOURCE>`
+### `wright launch`
 
-Converges a target root from a pack file or from plans. Initializes
-`<root>/var/lib/wright/`, installs each part wave with `--root` set, applies
-the optional overlay, and applies declarative `[config]` (hostname, timezone,
-locale, services).
+Converges a target root from a group manifest or from explicit plan names.
+Before building, `launch` prepares the target root with a complete Wright
+infrastructure:
+
+1. Creates the directory skeleton (`var/lib/wright/`, `var/log/wright/`,
+   `etc/wright/`, ...).
+2. Copies all source plans into `<root>/var/lib/wright/plans/` so the target
+   can self-maintain later.
+3. Copies referenced group manifests into `<root>/var/lib/wright/groups/`.
+4. Writes a minimal `/etc/wright/wright.toml` pointing at the target-local
+   directories.
+5. Initialises the SQLite database with the full schema.
+
+It then resolves dependencies, builds each wave, packages outputs, installs
+them into `--root`, and applies declarative `[config]` (hostname, timezone,
+locale, services).  Build and package outputs are isolated under the target
+root so the host system is not polluted.
 
 ```bash
-wright launch --root /mnt/new ./base.wright.pack
+wright launch --root /mnt/new --group ./groups/core.toml
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc
+wright launch --root /mnt/new --plans ./plans @core
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--root <PATH>` | Required. The target root to fill. |
-| `--plans <DIR>` | Source path: take plans from this directory and apply them into `--root`. |
-| `--profile <NAME>` | Resolve a pack by name from configured pack search dirs. |
-| `--dry-run` | Print install order and overlay actions without writing anything. |
-| `--force` | Reinstall parts that are already present in the target. |
+| `--group <FILE>` | Path to a `group.toml` manifest naming the plans to build and install. |
+| `--plans <DIR>` | Source path: take plans from this directory. Positional arguments are plan names or `@group` references. |
+| `--dry-run` | Print install order and config actions without writing anything. |
+| `--force` | Rebuild and reinstall parts that are already present in the target. |
 
-When `<SOURCE>` is a `.wright.pack.tar` path it takes precedence over
-`--plans`/`--profile`. Re-running `launch` on the same root converges drift
-rather than erroring.
-
-### `wright pack <DIR>`
-
-Bundles a directory containing a `pack.toml` manifest into a single
-`.wright.pack.tar` artifact. Verifies that every referenced part exists and
-records SHA-256 hashes in the manifest.
-
-| Flag | Description |
-|------|-------------|
-| `-o`, `--output <PATH>` | Output file (defaults to `<name>-<version>.wright.pack.tar`) |
+Re-running `launch` on the same root converges drift rather than erroring.
 
 ---
 
@@ -254,6 +257,8 @@ Let `apply` drive the whole source-first workflow:
 
 ```bash
 wright apply curl
+wright apply @core
+wright apply @core openssl
 ```
 
 Rebuild all ABI-sensitive reverse dependents and install:

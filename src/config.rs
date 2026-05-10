@@ -37,9 +37,6 @@ pub struct GeneralConfig {
     pub logs_dir: PathBuf,
     #[serde(default = "default_executors_dir")]
     pub executors_dir: PathBuf,
-    /// Directories searched by `wright launch --profile` for `.wright.pack.tar` files.
-    #[serde(default = "default_pack_dirs")]
-    pub pack_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -107,7 +104,6 @@ fn default_general() -> GeneralConfig {
             default_logs_dir()
         },
         executors_dir: default_executors_dir(),
-        pack_dirs: default_pack_dirs(),
     }
 }
 
@@ -172,9 +168,6 @@ fn default_logs_dir() -> PathBuf {
 }
 fn default_executors_dir() -> PathBuf {
     PathBuf::from("/etc/wright/executors")
-}
-fn default_pack_dirs() -> Vec<PathBuf> {
-    vec![PathBuf::from("/var/lib/wright/packs")]
 }
 fn default_build_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright/workshop")
