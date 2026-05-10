@@ -272,8 +272,8 @@ its sentinel while preserving earlier stage sentinels such as `prepare`,
 
 The recovery controls intentionally operate at different layers:
 
-- `--fresh` discards workflow rows for the command identity. It does not delete
-  source caches, `work/`, stage sentinels, `outputs/`, or archives.
+- `--invalidate` discards workflow rows for the command identity. It does not
+  delete source caches, `work/`, stage sentinels, `outputs/`, or archives.
 - `--clean` removes the per-plan build workspace, including `work/` and all
   stage sentinels. It keeps the source cache.
 - `--force` ignores output/archive skip checks and ignores stage sentinels while

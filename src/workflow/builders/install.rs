@@ -96,7 +96,7 @@ pub fn build_install_targets_workflow(
     nodeps: bool,
 ) -> Result<WorkflowSpec> {
     let plan_dirs = crate::planning::plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)
         .map_err(|e| WorkflowError::Other(format!("discover plans: {}", e)))?;
 
     let mut archive_paths: Vec<PathBuf> = Vec::new();
@@ -104,7 +104,7 @@ pub fn build_install_targets_workflow(
 
     for target in &targets {
         let one = vec![target.clone()];
-        let plan_paths = crate::planning::resolve_targets(&one, &all_plans, &plan_dirs)
+        let plan_paths = crate::planning::resolve_targets(&one, &index, &plan_dirs)
             .map_err(|e| WorkflowError::Other(format!("resolve {}: {}", target, e)))?;
         for plan_path in plan_paths {
             let manifest = PlanManifest::from_file(&plan_path)

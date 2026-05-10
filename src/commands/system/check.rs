@@ -10,10 +10,11 @@ use crate::query;
 
 /// Implementation of `wright check`.
 ///
-/// Walks every installed part's declared runtime_deps and reports
-/// unsatisfied edges. With `deep`, additionally walks ELF DT_NEEDED
-/// entries on each installed binary and verifies the providing part via
-/// the files table.
+/// Runs system health checks covering:
+/// - Database integrity
+/// - File ownership conflicts and shadowed files
+/// - Runtime dependency resolution (registry level)
+/// - With `--deep`: ELF DT_NEEDED verification
 ///
 /// Exit semantics: returns `WrightError::DependencyError` when any
 /// problem is found, so the CLI dispatch layer maps to a non-zero exit.
@@ -22,7 +23,22 @@ pub async fn execute_check(
     root_dir: &Path,
     only_part: Option<&str>,
     deep: bool,
+    integrity_only: bool,
 ) -> Result<()> {
+    let mut total_issues = 0usize;
+
+    // --- Integrity checks (from doctor) ---
+    let integrity_issues = integrity_check(db).await?;
+    total_issues += integrity_issues;
+
+    if integrity_only {
+        if total_issues == 0 {
+            println!("{}: system integrity reports clean", "check".green());
+        }
+        return Ok(());
+    }
+
+    // --- Dependency checks (from original check) ---
     let registry_findings = registry_check(db, only_part).await?;
     let elf_findings = if deep {
         elf_check(db, root_dir, only_part).await?
@@ -35,25 +51,65 @@ pub async fn execute_check(
         print_elf_findings(&elf_findings);
     }
 
-    let total =
+    total_issues +=
         registry_findings.len() + elf_findings.missing.len() + elf_findings.unmapped.len();
-    if total == 0 {
+
+    if total_issues == 0 {
         let scope = scope_label(only_part);
-        let mode = if deep { " (registry + ELF)" } else { "" };
-        println!(
-            "{}: {} reports clean{}",
-            "advisory".green(),
-            scope,
-            mode
-        );
+        let mode = if deep {
+            " (integrity + deps + ELF)"
+        } else {
+            " (integrity + deps)"
+        };
+        println!("{}: {} reports clean{}", "check".green(), scope, mode);
         return Ok(());
     }
 
     Err(WrightError::DependencyError(format!(
-        "{} unsatisfied edge(s) reported by `wright check{}`",
-        total,
+        "{} issue(s) reported by `wright check{}`",
+        total_issues,
         if deep { " --deep" } else { "" }
     )))
+}
+
+async fn integrity_check(db: &InstalledDb) -> Result<usize> {
+    let mut issues = 0usize;
+
+    // 1. Database integrity
+    print!("Checking database integrity... ");
+    match db.integrity_check().await {
+        Ok(issues_list) if issues_list.is_empty() => println!("{}", "OK".green()),
+        Ok(issues_list) => {
+            println!("{}", "FAILED".red());
+            for issue in issues_list {
+                println!("  - {}", issue);
+                issues += 1;
+            }
+        }
+        Err(e) => {
+            println!("{} ({})", "ERROR".red(), e);
+            issues += 1;
+        }
+    }
+
+    // 2. Shadowed file conflicts
+    print!("Checking for file shadowing conflicts... ");
+    match db.get_shadowed_conflicts().await {
+        Ok(conflicts) if conflicts.is_empty() => println!("{}", "OK".green()),
+        Ok(conflicts) => {
+            println!("{}", "WARNING".yellow());
+            for conflict in conflicts {
+                println!("  - {}", conflict);
+                issues += 1;
+            }
+        }
+        Err(e) => {
+            println!("{} ({})", "ERROR".red(), e);
+            issues += 1;
+        }
+    }
+
+    Ok(issues)
 }
 
 fn scope_label(only_part: Option<&str>) -> String {

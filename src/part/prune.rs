@@ -55,7 +55,6 @@ pub async fn plan_prune(
                 epoch: partinfo.plan.epoch,
                 path,
                 dependencies: partinfo.runtime_deps,
-                provides: partinfo.provides,
             });
         }
         Ok::<Vec<ResolvedPartVersioned>, WrightError>(archives)

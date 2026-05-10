@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **Consistent workflow invalidation** — `wright package` and `wright install` now accept `--invalidate` to discard active workflow resume state before retrying.
+
+### Fixed
+- **Workflow graph drift handling** — active workflow resume state now prunes steps that are not part of the current step graph, and step identities include dependency edges so stale status is not reused after graph shape changes.
+
 ## [4.2.0] - 2026-05-10
 
 ### Breaking Changes

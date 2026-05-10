@@ -10,11 +10,55 @@ use tracing::{error, info, warn};
 pub async fn execute_lint(
     targets: Vec<String>,
     _recursive: bool,
+    verify: bool,
+    config: &GlobalConfig,
+) -> Result<()> {
+    if verify {
+        return execute_verify_installed(config).await;
+    }
+
+    execute_plan_lint(targets, config).await
+}
+
+async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
+    let db_path = config.general.db_path.clone();
+    let db = crate::database::InstalledDb::open(&db_path)
+        .await
+        .map_err(|e| crate::error::WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
+    let root_dir = std::path::PathBuf::from("/");
+
+    let parts = db.list_parts().await?;
+    let mut all_ok = true;
+
+    for part in &parts {
+        let issues = crate::transaction::verify_part(&db, &part.name, &root_dir).await?;
+        if issues.is_empty() {
+            println!("{}: OK", part.name);
+        } else {
+            all_ok = false;
+            println!("{}:", part.name);
+            for issue in &issues {
+                println!("  {}", issue);
+            }
+        }
+    }
+
+    if !all_ok {
+        return Err(crate::error::WrightError::ValidationError(
+            "verify failed: some parts have integrity issues".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+async fn execute_plan_lint(
+    targets: Vec<String>,
     config: &GlobalConfig,
 ) -> Result<()> {
     let plan_dirs = planning::plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
-    let all_plan_paths = crate::plan::discovery::collect_plan_files(&plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let all_plan_paths: Vec<PathBuf> = index.paths().cloned().collect();
     let mut local_index = build_local_plan_index(&all_plan_paths);
 
     let mut plan_targets = Vec::new();
@@ -23,7 +67,7 @@ pub async fn execute_lint(
         plan_targets.extend(all_plan_paths.iter().cloned());
     } else {
         for target in targets {
-            if let Some(path) = all_plans.get(&target) {
+            if let Some(path) = index.path_for(&target) {
                 plan_targets.push(path.clone());
             } else {
                 let path = PathBuf::from(&target);

@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use std::collections::{HashMap, HashSet};
 use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::resolve::{DomainArg, MatchPolicyArg, ResolveArgs};
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::part::version;
-use crate::plan::manifest::PlanManifest;
+use crate::plan::discovery::PlanIndex;
 use crate::planning::{self, DependentsMode, MatchPolicy, ResolveOptions};
 use crate::query::{self, PrefixMode, TreeOptions};
 
@@ -113,18 +113,16 @@ async fn render_build_view(args: ResolveArgs, config: &GlobalConfig) -> Result<(
 
 async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()> {
     let plan_dirs = planning::plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
 
     let mut rdeps_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
-    for (name, path) in &all_plans {
-        if let Ok(m) = PlanManifest::from_file(path) {
-            for (dep_raw, kind) in m.all_dependencies() {
-                let dep_name = version::parse_dep_ref(&dep_raw).plan().to_string();
+    for (name, manifest) in index.load_all()? {
+        for (dep_raw, kind) in manifest.all_dependencies() {
+            let dep_name = version::parse_dep_ref(&dep_raw).plan().to_string();
                 rdeps_map
                     .entry(dep_name)
                     .or_default()
                     .push((name.clone(), kind));
-            }
         }
     }
 
@@ -154,7 +152,7 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
             let mut visited = HashSet::new();
             visited.insert(target.to_string());
             let dep_ctx = DepTreeCtx {
-                all_plans: &all_plans,
+                index: &index,
                 max_depth: effective_depth,
                 filter: args.deps,
                 color,
@@ -168,13 +166,12 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
                         "(none)".to_string()
                     }
                 );
-            } else {
-                println!();
             }
         }
 
-        let show_dependents = (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
-        if show_dependents {
+        let show_rdeps =
+            (args.deps.is_none() && args.rdeps.is_none()) || args.rdeps.is_some();
+        if show_rdeps {
             if color {
                 println!("{}", "Dependents:".bold().cyan());
                 print!("{}", target.bold().green());
@@ -199,11 +196,10 @@ async fn render_plan_tree(args: ResolveArgs, config: &GlobalConfig) -> Result<()
                         "(none)".to_string()
                     }
                 );
-            } else {
-                println!();
             }
         }
     }
+
     Ok(())
 }
 
@@ -261,7 +257,7 @@ async fn render_list_output(args: ResolveArgs, config: &GlobalConfig) -> Result<
 }
 
 struct DepTreeCtx<'a> {
-    all_plans: &'a HashMap<String, PathBuf>,
+    index: &'a PlanIndex,
     max_depth: usize,
     filter: Option<DomainArg>,
     color: bool,
@@ -277,11 +273,10 @@ fn print_dependency_tree(
     if current_depth > ctx.max_depth {
         return Ok(false);
     }
-    let path = match ctx.all_plans.get(name) {
-        Some(p) => p,
+    let manifest = match ctx.index.manifest_for(name)? {
+        Some(m) => m,
         None => return Ok(false),
     };
-    let manifest = PlanManifest::from_file(path)?;
     let mut deps = manifest.all_dependencies();
     if let Some(domain) = ctx.filter {
         deps.retain(|(_, kind)| match domain {

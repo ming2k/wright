@@ -9,17 +9,17 @@ use crate::plan::manifest::PlanManifest;
 
 /// Plan-level metadata extracted from the `[plan]` section of `.PARTINFO`.
 /// All outputs of a plan share these fields; they are stored in the `plans` table.
+///
+/// Only identity + runtime-discriminator fields are carried here.
+/// Human-readable documentation (`description`, `license`, `url`) lives in
+/// plan source only and is not duplicated into binary part metadata.
 #[derive(Debug, Clone)]
 pub struct PlanMetadata {
     pub name: String,
     pub version: String,
     pub release: u32,
     pub epoch: u32,
-    pub description: String,
     pub arch: String,
-    pub license: String,
-    pub build_deps: Vec<String>,
-    pub link_deps: Vec<String>,
 }
 
 /// Metadata extracted from a .PARTINFO file.
@@ -34,7 +34,6 @@ pub struct PartInfo {
     pub runtime_deps: Vec<String>,
     pub replaces: Vec<String>,
     pub conflicts: Vec<String>,
-    pub provides: Vec<String>,
     pub backup_files: Vec<String>,
     pub plan: PlanMetadata,
 }
@@ -248,7 +247,6 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
     let mut relations_toml = String::new();
     if !manifest.relations.replaces.is_empty()
         || !manifest.relations.conflicts.is_empty()
-        || !manifest.relations.provides.is_empty()
     {
         relations_toml.push_str("\n[relations]\n");
         if !manifest.relations.replaces.is_empty() {
@@ -264,16 +262,6 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
         if !manifest.relations.conflicts.is_empty() {
             relations_toml.push_str("conflicts = [");
             for (i, dep) in manifest.relations.conflicts.iter().enumerate() {
-                if i > 0 {
-                    relations_toml.push_str(", ");
-                }
-                relations_toml.push_str(&format!("\"{}\"", dep));
-            }
-            relations_toml.push_str("]\n");
-        }
-        if !manifest.relations.provides.is_empty() {
-            relations_toml.push_str("provides = [");
-            for (i, dep) in manifest.relations.provides.iter().enumerate() {
                 if i > 0 {
                     relations_toml.push_str(", ");
                 }
@@ -309,33 +297,7 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
     if plan.metadata.epoch > 0 {
         plan_toml.push_str(&format!("epoch = {}\n", plan.metadata.epoch));
     }
-    plan_toml.push_str(&format!(
-        "description = \"{}\"\n",
-        plan.metadata.description
-    ));
     plan_toml.push_str(&format!("arch = \"{}\"\n", plan.metadata.arch));
-    plan_toml.push_str(&format!("license = \"{}\"\n", plan.metadata.license));
-
-    if !plan.build_deps.is_empty() {
-        plan_toml.push_str("build_deps = [");
-        for (i, d) in plan.build_deps.iter().enumerate() {
-            if i > 0 {
-                plan_toml.push_str(", ");
-            }
-            plan_toml.push_str(&format!("\"{}\"", d));
-        }
-        plan_toml.push_str("]\n");
-    }
-    if !plan.link_deps.is_empty() {
-        plan_toml.push_str("link_deps = [");
-        for (i, d) in plan.link_deps.iter().enumerate() {
-            if i > 0 {
-                plan_toml.push_str(", ");
-            }
-            plan_toml.push_str(&format!("\"{}\"", d));
-        }
-        plan_toml.push_str("]\n");
-    }
 
     format!(
         r#"[part]
@@ -457,13 +419,7 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         release: u32,
         #[serde(default)]
         epoch: u32,
-        description: String,
         arch: String,
-        license: String,
-        #[serde(default)]
-        build_deps: Vec<String>,
-        #[serde(default)]
-        link_deps: Vec<String>,
     }
 
     #[derive(serde::Deserialize, Default)]
@@ -472,8 +428,6 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         replaces: Vec<String>,
         #[serde(default)]
         conflicts: Vec<String>,
-        #[serde(default)]
-        provides: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -500,18 +454,13 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         runtime_deps: parsed.part.runtime_deps,
         replaces: relations.replaces,
         conflicts: relations.conflicts,
-        provides: relations.provides,
         backup_files: parsed.backup.map(|b| b.files).unwrap_or_default(),
         plan: PlanMetadata {
             name: plan_section.name,
             version: plan_section.version,
             release: plan_section.release,
             epoch: plan_section.epoch,
-            description: plan_section.description,
             arch: plan_section.arch,
-            license: plan_section.license,
-            build_deps: plan_section.build_deps,
-            link_deps: plan_section.link_deps,
         },
     })
 }
@@ -565,8 +514,6 @@ release = 1
 description = "GNU Compiler Collection"
 arch = "x86_64"
 license = "GPL-3.0-or-later"
-build_deps = ["binutils"]
-link_deps = ["zlib"]
 "#,
             "test",
         )
@@ -577,8 +524,6 @@ link_deps = ["zlib"]
         assert_eq!(info.plan.version, "14.2.0");
         assert_eq!(info.plan.release, 1);
         assert_eq!(info.runtime_deps, vec!["libgcc"]);
-        assert_eq!(info.plan.build_deps, vec!["binutils"]);
-        assert_eq!(info.plan.link_deps, vec!["zlib"]);
     }
 
     #[test]

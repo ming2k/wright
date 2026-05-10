@@ -97,19 +97,13 @@ imply `runnable`. Each is a distinct query.
 - **`replaces` for renames.** `wright lint` enforces that a release whose
   output names diverge from the prior release includes the matching
   `replaces` entries.
-- **Diagnostic surface.** `wright check`, `wright complete`, and
-  `wright launch` pre-flight together turn unsatisfied state into
-  actionable user-facing information.
+ - **Diagnostic surface.** `wright check` and `wright launch` pre-flight
+  together turn unsatisfied state into actionable user-facing information.
 
 ### Operational shape
 
-- `wright check` — read-only scan of `dependencies` against current
-  registry; lists unsatisfied references.
-- `wright complete` — strictly additive: feeds the unsatisfied list back
-  through the same plan→build→install pipeline used by `apply`. Never
-  reinstalls existing parts. Treats unresolvable names (typos, missing
-  plans) as broken-reference diagnostics, not "needs install".
-- `wright apply --complete` — sugar for `apply` followed by `complete`.
+ - `wright check` — read-only scan of `dependencies` against current
+   registry; lists unsatisfied references.
 - `wright remove` — warns when a removal will leave dependents unsatisfied
   but does not block; the user accepts or rejects the broken state.
 - `wright launch` — pre-flight check; refuses to exec on unsatisfied
@@ -175,9 +169,12 @@ from the registry; the plan-source field will be removed in a follow-up.
 - `transaction/install.rs`, `transaction/upgrade.rs`,
   `transaction/remove.rs`, and `query/mod.rs` are updated to drop
   `find_providers` / `insert_provides` / `get_provides` calls.
-- `partinfo.provides` and `manifest.relations.provides` remain in plan
-  source as inert fields; a follow-up will remove them after a
-  deprecation window.
+- `manifest.relations.provides` remains in plan source as an inert field;
+  a follow-up will remove it after a deprecation window.
+- `.PARTINFO` no longer contains `provides`, `build_deps`, `link_deps`,
+  `description`, or `license`.  The binary part metadata carries only
+  install-time/runtime facts.  Human-readable documentation belongs in plan
+  source only.
 - Build/link deps remain in plan source and continue to drive the build
   pipeline (`builder/mvp.rs`, `planning/graph.rs`); only the registry
   persistence is removed.

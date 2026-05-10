@@ -19,7 +19,6 @@ pub struct ResolvedPart {
     pub version: String,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
-    pub provides: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +29,6 @@ pub struct ResolvedPartVersioned {
     pub epoch: u32,
     pub path: PathBuf,
     pub dependencies: Vec<String>,
-    pub provides: Vec<String>,
 }
 
 impl ResolvedPartVersioned {
@@ -100,7 +98,6 @@ impl LocalPartStore {
             version: p.version.clone(),
             path: p.path.clone(),
             dependencies: p.dependencies.clone(),
-            provides: p.provides.clone(),
         }))
     }
 
@@ -145,7 +142,6 @@ impl LocalPartStore {
                         epoch: partinfo.plan.epoch,
                         path,
                         dependencies: partinfo.runtime_deps,
-                        provides: partinfo.provides,
                     });
                 }
             }
@@ -162,7 +158,6 @@ impl LocalPartStore {
             version: partinfo.plan.version,
             path: path.to_path_buf(),
             dependencies: partinfo.runtime_deps,
-            provides: partinfo.provides,
         })
     }
 }

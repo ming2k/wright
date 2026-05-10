@@ -23,6 +23,7 @@ pub async fn execute_install(
     db_path: &Path,
     root_dir: &Path,
     part_store: &LocalPartStore,
+    invalidate: bool,
 ) -> Result<()> {
     let parts = collect_install_args(parts)?;
     use std::io::IsTerminal;
@@ -93,7 +94,7 @@ pub async fn execute_install(
         DriveOptions {
             config,
             db_path,
-            invalidate: false,
+            invalidate,
             quiet: false,
         },
     )

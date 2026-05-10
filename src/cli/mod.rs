@@ -73,6 +73,9 @@ pub enum Commands {
         /// Recurse into subdirectories
         #[arg(long, short = 'r')]
         recursive: bool,
+        /// Verify installed part file integrity (SHA-256 checksums)
+        #[arg(long)]
+        verify: bool,
     },
 
     /// Prune stale archives from the parts directory

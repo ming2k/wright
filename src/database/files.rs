@@ -156,24 +156,6 @@ impl InstalledDb {
         .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))
     }
 
-    pub async fn find_owner(&self, path: &str) -> Result<Option<String>> {
-        let row =
-            query("SELECT p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path = ?")
-                .bind(path)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to find owner: {}", e)))?;
-
-        match row {
-            Some(r) => {
-                use sqlx::Row;
-                Ok(r.try_get(0)
-                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?)
-            }
-            None => Ok(None),
-        }
-    }
-
     pub async fn find_owners_batch(&self, paths: &[&str]) -> Result<HashMap<String, String>> {
         let mut result = HashMap::new();
         for chunk in paths.chunks(999) {

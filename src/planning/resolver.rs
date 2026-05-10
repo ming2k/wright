@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::part::store::LocalPartStore;
+use crate::plan::discovery::PlanIndex;
 use crate::plan::manifest::PlanManifest;
 
 pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
@@ -33,7 +34,7 @@ pub fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
 
 pub fn resolve_targets(
     targets: &[String],
-    all_plans: &HashMap<String, PathBuf>,
+    index: &PlanIndex,
     plan_dirs: &[PathBuf],
 ) -> Result<HashSet<PathBuf>> {
     let mut plans_to_build = HashSet::new();
@@ -44,7 +45,7 @@ pub fn resolve_targets(
             continue;
         }
 
-        if let Some(path) = all_plans.get(clean_target) {
+        if let Some(path) = index.path_for(clean_target) {
             plans_to_build.insert(path.clone());
         } else {
             let plan_path = PathBuf::from(clean_target);

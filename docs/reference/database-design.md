@@ -26,7 +26,7 @@
 
 | Table | Contents |
 |-------|----------|
-| `plans` | plan metadata (name, version, release, epoch, description, arch, license) |
+| `plans` | plan identity metadata (name, version, release, epoch, arch) |
 | `parts` | installed part metadata: origin, plan association, archive hash |
 | `files` | installed file paths, types, checksums, ownership |
 | `dependencies` | advisory runtime dependency edges per part (soft TEXT pointer; not enforced) |
@@ -59,10 +59,7 @@ erDiagram
         TEXT version
         INTEGER release
         INTEGER epoch
-        TEXT description
         TEXT arch
-        TEXT license
-        TEXT url
         DATETIME registered_at
     }
 

@@ -133,8 +133,8 @@ pub fn resolve_explicit_plan_names(
     plan_dirs: &[PathBuf],
     targets: &[String],
 ) -> Result<HashSet<String>> {
-    let all_plans = crate::plan::discovery::get_all_plans(plan_dirs)?;
-    let paths = resolve_targets(targets, &all_plans, plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(plan_dirs)?;
+    let paths = resolve_targets(targets, &index, plan_dirs)?;
     Ok(paths
         .iter()
         .filter_map(|p| PlanManifest::from_file(p).ok())
@@ -148,8 +148,8 @@ pub async fn resolve_build_set(
     opts: ResolveOptions,
 ) -> Result<Vec<String>> {
     let plan_dirs = plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
-    let plans_to_build = resolve_targets(&targets, &all_plans, &plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
@@ -181,7 +181,7 @@ pub async fn resolve_build_set(
         if let Some(domain) = opts.deps {
             expand_missing_dependencies(
                 &mut plans_to_build,
-                &all_plans,
+                &index,
                 &db,
                 &opts.match_policies,
                 domain,
@@ -202,7 +202,7 @@ pub async fn resolve_build_set(
                 if let Ok(m) = PlanManifest::from_file(&path) {
                     if graph::dependency_matches_policy(
                         &m.metadata.name,
-                        &all_plans,
+                        &index,
                         &db,
                         &opts.match_policies,
                     )
@@ -228,7 +228,7 @@ pub async fn resolve_build_set(
                 .collect();
             expand_rebuild_deps(
                 &mut plans_to_build,
-                &all_plans,
+                &index,
                 domain,
                 actual_max,
                 &installed_names,
@@ -260,8 +260,8 @@ pub fn create_execution_plan(
     opts: &BuildOptions,
 ) -> Result<BuildExecutionPlan> {
     let plan_dirs = plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
-    let plans_to_build = resolve_targets(&targets, &all_plans, &plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Err(WrightError::BuildError(
@@ -280,7 +280,7 @@ pub fn create_execution_plan(
         opts.checksum,
         opts.mvp,
         reasons,
-        &all_plans,
+        &index,
     )?;
 
     if opts.is_build_op() && !opts.mvp {
@@ -392,14 +392,14 @@ pub fn describe_batch_actions(
 
 pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[String]) -> Result<()> {
     let plan_dirs = plan_search_dirs(config);
-    let all_plans = crate::plan::discovery::get_all_plans(&plan_dirs)?;
-    let plans_to_build = resolve_targets(targets, &all_plans, &plan_dirs)?;
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let plans_to_build = resolve_targets(targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Ok(());
     }
 
-    let graph = graph::build_dep_map(&plans_to_build, false, false, HashMap::new(), &all_plans)?;
+    let graph = graph::build_dep_map(&plans_to_build, false, false, HashMap::new(), &index)?;
 
     execute::lint_dependency_graph(&graph)
 }

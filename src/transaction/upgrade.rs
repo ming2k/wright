@@ -321,9 +321,7 @@ pub async fn upgrade_part(
             &partinfo.plan.version,
             partinfo.plan.release,
             partinfo.plan.epoch,
-            &partinfo.plan.description,
             &partinfo.plan.arch,
-            &partinfo.plan.license,
         )
         .await?;
     db.update_part(NewPart {

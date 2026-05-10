@@ -7,14 +7,13 @@ Workflows:
   Install plan outputs:     wright install zlib
   Install from archive:     wright install --path ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Apply plans:              wright apply zlib openssl
-  Upgrade everything:       wright sysupgrade
   Inspect dependencies:     wright resolve zlib --tree
-  Change install reason:    wright mark zlib --as-dependency
 
 Use `wright build` to build plans.";
 const WRIGHT_INSTALL_AFTER_HELP: &str = "\
 Examples:
   wright install zlib
+  wright install zlib --invalidate
   wright install zlib openssl
   wright install ./plans/zlib
   wright install --path ./zlib-1.3.1-1-x86_64.wright.tar.zst";
@@ -35,10 +34,6 @@ Examples:
   wright remove zlib
   wright remove zlib --recursive
   wright remove zlib --cascade";
-const WRIGHT_SYSUPGRADE_AFTER_HELP: &str = "\
-Examples:
-  wright sysupgrade
-  wright sysupgrade --dry-run";
 const WRIGHT_LIST_AFTER_HELP: &str = "\
 Examples:
   wright list
@@ -49,30 +44,15 @@ Examples:
 
 By default only part names are printed (one per line), suitable for piping.
 Use -l/--long to show origin, version, release, and architecture.";
-const WRIGHT_MARK_AFTER_HELP: &str = "\
-Examples:
-  wright mark zlib --as-dependency
-  wright mark openssl --as-manual";
-const WRIGHT_QUERY_AFTER_HELP: &str = "\
-Examples:
-  wright query zlib";
-const WRIGHT_SEARCH_AFTER_HELP: &str = "\
-Examples:
-  wright search ssl
-  wright search python
-
-This searches installed parts only.";
 const WRIGHT_FILES_AFTER_HELP: &str = "\
 Examples:
   wright files zlib";
-const WRIGHT_OWNER_AFTER_HELP: &str = "\
+const WRIGHT_CHECK_AFTER_HELP: &str = "\
 Examples:
-  wright owner /usr/bin/awk
-  wright owner /usr/lib/libz.so";
-const WRIGHT_VERIFY_AFTER_HELP: &str = "\
-Examples:
-  wright verify
-  wright verify zlib";
+  wright check
+  wright check zlib
+  wright check --deep
+  wright check --integrity-only";
 const WRIGHT_ASSUME_AFTER_HELP: &str = "\
 Examples:
   wright assume glibc 2.41
@@ -139,6 +119,12 @@ pub enum Commands {
         /// Skip runtime dependency warnings
         #[arg(long)]
         nodeps: bool,
+
+        /// Discard cached workflow progress and re-execute from scratch.
+        /// Installed-state checks still decide whether an archive needs to be
+        /// applied again; use --force to reinstall matching parts.
+        #[arg(long)]
+        invalidate: bool,
 
         /// Treat arguments and stdin as explicit archive paths
         #[arg(long)]
@@ -228,11 +214,11 @@ pub enum Commands {
     },
     /// Remove installed parts
     #[command(
-        long_about = "Remove installed parts by name or plan.\n\nBy default, removal is blocked when another installed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
+        long_about = "Remove installed parts by name.\n\nBy default, removal is blocked when another installed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
         after_help = WRIGHT_REMOVE_AFTER_HELP
     )]
     Remove {
-        /// Part names to remove (or plan names when using --plan)
+        /// Part names to remove
         #[arg(required = true, value_name = "PART")]
         parts: Vec<String>,
 
@@ -247,14 +233,10 @@ pub enum Commands {
         /// Also remove orphan dependencies (auto-installed deps no longer needed)
         #[arg(long, short = 'c')]
         cascade: bool,
-
-        /// Treat arguments as plan names and remove all parts from those plans
-        #[arg(long)]
-        plan: bool,
     },
     /// List installed parts
     #[command(
-        long_about = "List installed parts.\n\nUse filters to narrow the output to root parts, assumed external parts, orphaned dependency installs, or parts from a specific plan.",
+        long_about = "List installed parts.\n\nUse filters to narrow the output to root parts, assumed external parts, or orphaned dependency installs.",
         after_help = WRIGHT_LIST_AFTER_HELP
     )]
     List {
@@ -270,28 +252,6 @@ pub enum Commands {
         /// Show only orphan parts (auto-installed deps no longer needed)
         #[arg(long, short)]
         orphans: bool,
-        /// Show only parts from a specific plan
-        #[arg(long, short)]
-        plan: Option<String>,
-    },
-    /// Show detailed part information
-    #[command(
-        long_about = "Show detailed metadata for an installed part.",
-        after_help = WRIGHT_QUERY_AFTER_HELP
-    )]
-    Query {
-        /// Part name
-        #[arg(value_name = "PART")]
-        part: String,
-    },
-    /// Search installed parts by keyword
-    #[command(
-        long_about = "Search installed parts by keyword.\n\nMatches are taken from installed part names and descriptions.",
-        after_help = WRIGHT_SEARCH_AFTER_HELP
-    )]
-    Search {
-        /// Search keyword
-        keyword: String,
     },
     /// List files owned by a part
     #[command(
@@ -303,32 +263,10 @@ pub enum Commands {
         #[arg(value_name = "PART")]
         part: String,
     },
-    /// Find which part owns a file
+    /// Perform system health checks
     #[command(
-        long_about = "Find which installed part owns a given file path.",
-        after_help = WRIGHT_OWNER_AFTER_HELP
-    )]
-    Owner {
-        /// File path
-        file: String,
-    },
-    /// Verify installed part file integrity (SHA-256 checksums)
-    #[command(
-        long_about = "Verify installed part file integrity using recorded SHA-256 checksums.\n\nPass a part name to verify one part, or omit it to verify all installed parts.",
-        after_help = WRIGHT_VERIFY_AFTER_HELP
-    )]
-    Verify {
-        /// Part name; omit to verify all installed parts
-        #[arg(value_name = "PART")]
-        part: Option<String>,
-    },
-    /// Perform a full system health check (integrity, dependencies, file conflicts, shadows)
-    Doctor,
-    /// Report unsatisfied runtime dependencies in the advisory registry
-    #[command(
-        long_about = "List installed parts whose declared runtime_deps cannot be \
-                      resolved against the current registry (directly or via \
-                      `replaces`).\n\n\
+        long_about = "Run system health checks covering database integrity, file conflicts, \
+                      shadowed files, and runtime dependency resolution.\n\n\
                       With --deep, walk each installed part's ELF binaries and \
                       verify their DT_NEEDED entries against the installed \
                       file ownership table. This catches forgotten declarations \
@@ -336,7 +274,8 @@ pub enum Commands {
                       Per ADR-0016 the registry is advisory: this command \
                       reports state, it does not change it. Exit code is 0 \
                       when everything resolves and 1 when any unsatisfied \
-                      edge exists, so it is suitable for CI gates."
+                      edge exists, so it is suitable for CI gates.",
+        after_help = WRIGHT_CHECK_AFTER_HELP
     )]
     Check {
         /// Restrict the check to a single installed part (registry-level
@@ -349,6 +288,10 @@ pub enum Commands {
         /// than the registry-level scan.
         #[arg(long)]
         deep: bool,
+
+        /// Only run integrity checks (database, file conflicts, shadows)
+        #[arg(long, conflicts_with = "deep")]
+        integrity_only: bool,
     },
     /// Mark a part as externally provided to satisfy dependency checks
     #[command(
@@ -375,22 +318,6 @@ pub enum Commands {
         #[arg(value_name = "PART")]
         name: String,
     },
-    /// Change the install origin of a part
-    #[command(
-        long_about = "Change the install origin of a part.\n\nThis controls whether a part is treated as explicitly installed or as a dependency. Marking a part as a dependency makes it eligible for orphan cleanup.",
-        after_help = WRIGHT_MARK_AFTER_HELP
-    )]
-    Mark {
-        /// Part names
-        #[arg(required = true, value_name = "PART")]
-        parts: Vec<String>,
-        /// Mark as a dependency install
-        #[arg(long, group = "origin")]
-        as_dependency: bool,
-        /// Mark as an explicit (manual) install
-        #[arg(long, group = "origin")]
-        as_manual: bool,
-    },
     /// Show part transaction history (install, upgrade, remove)
     #[command(
         long_about = "Show part transaction history.\n\nPass a part name to limit the history to one part, or omit it to show all recorded transactions.",
@@ -400,15 +327,5 @@ pub enum Commands {
         /// Part name; omit to show all history
         #[arg(value_name = "PART")]
         part: Option<String>,
-    },
-    /// Upgrade all installed parts to latest available versions
-    #[command(
-        long_about = "Upgrade all installed parts to the latest versions available in parts_dir.\n\nUse `--dry-run` to preview the transaction without making any changes.",
-        after_help = WRIGHT_SYSUPGRADE_AFTER_HELP
-    )]
-    Sysupgrade {
-        /// Preview what would be upgraded without actually doing it
-        #[arg(long, short = 'n')]
-        dry_run: bool,
     },
 }

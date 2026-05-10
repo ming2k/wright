@@ -17,6 +17,10 @@ const STEP_PREFIX: &[u8] = b"wright-step:v1\n";
 pub struct WorkflowId(String);
 
 /// Content-addressed identity for a step within a workflow.
+///
+/// The hash material includes both step inputs and dependency edges. A step
+/// whose inputs are unchanged but whose ordering constraints changed is a new
+/// scheduling fact and must not reuse stale persisted status.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct StepId(String);

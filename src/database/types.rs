@@ -149,10 +149,7 @@ pub struct PartWithPlan {
     pub version: String,
     pub release: i64,
     pub epoch: i64,
-    pub description: Option<String>,
     pub arch: String,
-    pub license: Option<String>,
-    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -192,10 +189,7 @@ pub struct NewPlan<'a> {
     pub version: &'a str,
     pub release: u32,
     pub epoch: u32,
-    pub description: &'a str,
     pub arch: &'a str,
-    pub license: &'a str,
-    pub url: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

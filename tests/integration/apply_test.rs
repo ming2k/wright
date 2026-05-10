@@ -76,7 +76,7 @@ runtime_deps = ["wayland"]
 
     let cmd = SystemCommands::Apply {
         targets: vec!["wayland-utils".to_string()],
-        fresh: false,
+        invalidate: false,
         deps: Some(DomainArg::All),
         rdeps: None,
         match_policies: vec![MatchPolicyArg::Missing],

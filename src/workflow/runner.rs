@@ -85,6 +85,9 @@ pub async fn drive(
     store
         .upsert_workflow(&spec.workflow_id, spec.kind, &spec.inputs_json)
         .await?;
+    store
+        .prune_steps_not_in(&spec.workflow_id, &spec.steps)
+        .await?;
     for s in &spec.steps {
         store.upsert_step(&spec.workflow_id, s).await?;
     }
@@ -113,7 +116,12 @@ pub async fn drive(
     // Keep lightweight metadata for diagnostics after steps are removed from `by_id`.
     let step_metadata: HashMap<StepId, (Option<String>, Option<String>, Vec<StepId>)> = by_id
         .iter()
-        .map(|(id, s)| (id.clone(), (s.plan_name.clone(), s.label.clone(), s.depends_on.clone())))
+        .map(|(id, s)| {
+            (
+                id.clone(),
+                (s.plan_name.clone(), s.label.clone(), s.depends_on.clone()),
+            )
+        })
         .collect();
 
     let mut statuses: HashMap<StepId, Status> = store.load_statuses(&spec.workflow_id).await?;
@@ -251,13 +259,12 @@ pub async fn drive(
             // Pending exist but nothing in flight and nothing was launched =>
             // remaining steps have unmet deps (cycle, or dep on a permanently-
             // failed step). Report and exit.
-            let failures = store.load_failures(&spec.workflow_id).await.unwrap_or_default();
-            let unmet = describe_unmet_deps(
-                &statuses,
-                &step_metadata,
-                &failures,
-                &permanent_failures,
-            );
+            let failures = store
+                .load_failures(&spec.workflow_id)
+                .await
+                .unwrap_or_default();
+            let unmet =
+                describe_unmet_deps(&statuses, &step_metadata, &failures, &permanent_failures);
             return Err(WorkflowError::BlockedByFailures(unmet));
         }
 
@@ -390,10 +397,7 @@ fn describe_unmet_deps(
                 .get(id)
                 .and_then(|f| f.get("message").and_then(|m| m.as_str()))
                 .unwrap_or("unknown error");
-            failed_steps.push((
-                id.clone(),
-                format!("{} — {}", name, err_msg),
-            ));
+            failed_steps.push((id.clone(), format!("{} — {}", name, err_msg)));
         } else if *status == Status::Pending {
             let deps = step_metadata
                 .get(id)
@@ -418,7 +422,12 @@ fn describe_unmet_deps(
     let mut out = String::new();
 
     if !failed_steps.is_empty() {
-        writeln!(&mut out, "\n=== failed steps ({} total) ===", failed_steps.len()).ok();
+        writeln!(
+            &mut out,
+            "\n=== failed steps ({} total) ===",
+            failed_steps.len()
+        )
+        .ok();
         for (_, msg) in &failed_steps {
             writeln!(&mut out, "  {}", msg).ok();
         }

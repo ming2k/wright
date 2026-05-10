@@ -24,6 +24,7 @@ dependency problems are reported as warnings, not errors.
 | Flag | Description |
 |------|-------------|
 | `--force` | Reinstall even if the part is already installed and up to date |
+| `--invalidate` | Discard prior workflow state and start from scratch |
 | `--nodeps` | Suppress runtime dependency warnings |
 | `--path` | Treat arguments and stdin as explicit archive paths |
 
@@ -63,7 +64,7 @@ continuing.
 | `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
 | `--depth <N>` | Maximum expansion depth |
 | `-f`, `--force` | Force rebuild and reinstall |
-| `--fresh` | Discard prior workflow state and start from scratch |
+| `--invalidate` | Discard prior workflow state and start from scratch |
 | `--dry-run` | Print the plan without executing it |
 
 ### `wright list`
@@ -185,7 +186,7 @@ Builds plans into staging and output directories under `build_dir`.
 |------|-------------|
 | `--force` | Rebuild even if staged outputs already exist; force re-run of all lifecycle stages even when stage sentinels exist |
 | `--clean` | Remove the build workspace before building |
-| `--fresh` | Discard prior workflow state and start from scratch |
+| `--invalidate` | Discard prior workflow state and start from scratch |
 | `--stage <NAME>` | Start execution at this stage (skip earlier stages) |
 | `--until-stage <NAME>` | Stop after this stage |
 | `--skip-check` | Skip the `check` lifecycle stage |
@@ -200,6 +201,7 @@ Slices existing staging directories into output archives and writes them to `par
 | Flag | Description |
 |------|-------------|
 | `--force` | Re-slice outputs from staging and overwrite existing archives |
+| `--invalidate` | Discard prior workflow state and start from scratch |
 | `--out-dir <PATH>` | Write produced archives to this directory instead of `parts_dir` |
 | `--print-parts` | Print produced archive paths on stdout |
 

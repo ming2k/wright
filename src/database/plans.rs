@@ -10,27 +10,21 @@ pub struct PlanRecord {
     pub version: String,
     pub release: i64,
     pub epoch: i64,
-    pub description: Option<String>,
     pub arch: String,
-    pub license: Option<String>,
-    pub url: Option<String>,
     pub registered_at: Option<String>,
 }
 
 impl InstalledDb {
     pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
         let res = query(
-            "INSERT INTO plans (name, version, release, epoch, description, arch, license, url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO plans (name, version, release, epoch, arch)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(plan.name)
         .bind(plan.version)
         .bind(plan.release as i64)
         .bind(plan.epoch as i64)
-        .bind(plan.description)
         .bind(plan.arch)
-        .bind(plan.license)
-        .bind(plan.url)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -50,7 +44,7 @@ impl InstalledDb {
 
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at
              FROM plans WHERE name = ?")
             .bind(name)
             .fetch_optional(&self.pool)
@@ -60,7 +54,7 @@ impl InstalledDb {
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at
              FROM plans WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -70,7 +64,7 @@ impl InstalledDb {
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, description, arch, license, url, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at
              FROM plans ORDER BY name")
             .fetch_all(&self.pool)
             .await
@@ -135,20 +129,16 @@ impl InstalledDb {
         version: &str,
         release: u32,
         epoch: u32,
-        description: &str,
         arch: &str,
-        license: &str,
     ) -> Result<i64> {
         if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
             query(
-                "UPDATE plans SET version = ?, release = ?, epoch = ?, description = ?, arch = ?, license = ? WHERE id = ?"
+                "UPDATE plans SET version = ?, release = ?, epoch = ?, arch = ? WHERE id = ?"
             )
             .bind(version)
             .bind(release as i64)
             .bind(epoch as i64)
-            .bind(description)
             .bind(arch)
-            .bind(license)
             .bind(existing.id)
             .execute(&self.pool)
             .await
@@ -161,10 +151,7 @@ impl InstalledDb {
                 version,
                 release,
                 epoch,
-                description,
                 arch,
-                license,
-                url: None,
             })
             .await
         }

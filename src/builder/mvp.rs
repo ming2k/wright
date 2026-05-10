@@ -5,6 +5,7 @@ use tracing::{debug, info};
 
 use crate::error::{Result, WrightError};
 use crate::part::version;
+use crate::plan::discovery::PlanIndex;
 use crate::plan::manifest::PlanManifest;
 
 #[derive(Debug)]
@@ -29,7 +30,7 @@ pub(crate) fn collect_phase_deps(
     manifest: &PlanManifest,
     part_to_plan: &HashMap<String, String>,
     is_mvp: bool,
-    all_plans: Option<&HashMap<String, PathBuf>>,
+    index: Option<&PlanIndex>,
 ) -> Vec<String> {
     let (build, link) = if is_mvp {
         if let Some(ref mvp) = manifest.mvp {
@@ -75,7 +76,7 @@ pub(crate) fn collect_phase_deps(
 
     // A build dependency is useless unless its full transitive runtime dep tree is
     // installed first. Use BFS to add ordering edges for the entire closure.
-    if let Some(plans) = all_plans {
+    if let Some(idx) = index {
         for build_dep in &build {
             let build_dep_name = version::parse_dependency(build_dep)
                 .unwrap_or_else(|_| (build_dep.clone(), None))
@@ -94,23 +95,21 @@ pub(crate) fn collect_phase_deps(
                 if !visited.insert(cur.clone()) {
                     continue;
                 }
-                if let Some(plan_path) = plans.get(&cur) {
-                    if let Ok(dep_manifest) = PlanManifest::from_file(plan_path) {
-                        for rdep in &dep_manifest.runtime_deps {
-                            let rdep_name = version::parse_dependency(rdep)
-                                .unwrap_or_else(|_| (rdep.clone(), None))
-                                .0;
-                            let rdep_plan_name =
-                                version::parse_dep_ref(&rdep_name).plan().to_string();
-                            let rdep_plan = part_to_plan
-                                .get(&rdep_plan_name)
-                                .cloned()
-                                .unwrap_or(rdep_plan_name);
-                            if rdep_plan != manifest.metadata.name {
-                                deps.push(rdep_plan.clone());
-                            }
-                            queue.push_back(rdep_plan);
+                if let Ok(Some(dep_manifest)) = idx.manifest_for(&cur) {
+                    for rdep in &dep_manifest.runtime_deps {
+                        let rdep_name = version::parse_dependency(rdep)
+                            .unwrap_or_else(|_| (rdep.clone(), None))
+                            .0;
+                        let rdep_plan_name =
+                            version::parse_dep_ref(&rdep_name).plan().to_string();
+                        let rdep_plan = part_to_plan
+                            .get(&rdep_plan_name)
+                            .cloned()
+                            .unwrap_or(rdep_plan_name);
+                        if rdep_plan != manifest.metadata.name {
+                            deps.push(rdep_plan.clone());
                         }
+                        queue.push_back(rdep_plan);
                     }
                 }
             }

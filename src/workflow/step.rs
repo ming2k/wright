@@ -98,9 +98,9 @@ pub struct StepContext {
 /// * `execute` MUST be idempotent given the same `Inputs`. Re-running a step
 ///   whose outputs already exist on disk should be cheap and produce the same
 ///   `Outputs`.
-/// * `Inputs` MUST be serializable to canonical JSON in a way that is stable
-///   across processes (no `HashMap`, no time-dependent fields). Use
-///   `BTreeMap` and pre-sorted `Vec` for set-like inputs.
+/// * `Inputs` and dependency edges MUST be serializable to canonical JSON in a
+///   way that is stable across processes (no `HashMap`, no time-dependent
+///   fields). Use `BTreeMap` and pre-sorted `Vec` for set-like inputs.
 /// * `Outputs` should reference artifacts (paths, hashes) rather than
 ///   embedding bulk data; the runner persists them in `workflow_steps.outputs_json`.
 pub trait Step: Send + Sync + 'static {
@@ -156,8 +156,15 @@ pub struct ScheduledStep {
 impl ScheduledStep {
     pub(super) fn from_step<S: Step>(workflow_id: &WorkflowId, step: S) -> WfResult<Self> {
         let inputs_json = super::id::canonical_json(step.inputs())?;
-        let id = StepId::derive(workflow_id, S::KIND, &inputs_json);
-        let depends_on = step.depends_on().to_vec();
+        let mut depends_on = step.depends_on().to_vec();
+        depends_on.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        depends_on.dedup_by(|a, b| a.as_str() == b.as_str());
+        let identity = serde_json::json!({
+            "inputs": serde_json::from_str::<serde_json::Value>(&inputs_json)?,
+            "depends_on": depends_on.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
+        });
+        let identity_json = super::id::canonical_json(&identity)?;
+        let id = StepId::derive(workflow_id, S::KIND, &identity_json);
         let class = S::RESOURCE_CLASS;
         let plan_name = step.plan_name().map(|s| s.to_string());
         let label = step.label().map(|s| s.to_string());

@@ -510,9 +510,7 @@ pub async fn install_part_with_origin(
             &partinfo.plan.version,
             partinfo.plan.release,
             partinfo.plan.epoch,
-            &partinfo.plan.description,
             &partinfo.plan.arch,
-            &partinfo.plan.license,
         )
         .await?;
     let part_id = db

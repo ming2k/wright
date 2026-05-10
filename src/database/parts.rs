@@ -4,7 +4,7 @@ use sqlx::Row;
 const PART_WITH_PLAN_SQL: &str = "
     SELECT
         p.id, p.name, p.plan_id, p.installed_at, p.part_hash, p.install_scripts, p.origin,
-        pl.name as plan_name, pl.version, pl.release, pl.epoch, pl.description, pl.arch, pl.license, pl.url
+        pl.name as plan_name, pl.version, pl.release, pl.epoch, pl.arch
     FROM parts p
     INNER JOIN plans pl ON p.plan_id = pl.id
 ";
@@ -164,17 +164,6 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))
     }
 
-    pub async fn get_part_with_plan(&self, name: &str) -> Result<Option<PartWithPlan>> {
-        let sql = format!("{} WHERE p.name = ?", PART_WITH_PLAN_SQL);
-        query_as::<_, PartWithPlan>(&sql)
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to query part with plan: {}", e))
-            })
-    }
-
     pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {
         let sql = format!("{} ORDER BY p.name", PART_WITH_PLAN_SQL);
         query_as::<_, PartWithPlan>(&sql)
@@ -194,20 +183,6 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to get root parts: {}", e)))
     }
 
-    pub async fn search_parts(&self, keyword: &str) -> Result<Vec<PartWithPlan>> {
-        let pattern = format!("%{}%", keyword);
-        let sql = format!(
-            "{} WHERE p.name LIKE ? OR pl.description LIKE ? ORDER BY p.name",
-            PART_WITH_PLAN_SQL
-        );
-        query_as::<_, PartWithPlan>(&sql)
-            .bind(&pattern)
-            .bind(&pattern)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to search parts: {}", e)))
-    }
-
     pub async fn set_origin(&self, name: &str, new_origin: Origin) -> Result<()> {
         if let Some(existing) = self.get_part(name).await? {
             // External parts are managed exclusively via assume/unassume.
@@ -224,20 +199,6 @@ impl InstalledDb {
             .execute(&self.pool)
             .await
             .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
-        Ok(())
-    }
-
-    pub async fn force_set_origin(&self, name: &str, new_origin: Origin) -> Result<()> {
-        let res = query("UPDATE parts SET origin = ? WHERE name = ?")
-            .bind(new_origin)
-            .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
-
-        if res.rows_affected() == 0 {
-            return Err(WrightError::PartNotFound(name.to_string()));
-        }
         Ok(())
     }
 

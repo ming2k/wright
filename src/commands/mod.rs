@@ -33,8 +33,8 @@ pub async fn dispatch(
         crate::cli::Commands::Resolve(args) => {
             resolve::execute_resolve(args, config, &db_path).await
         }
-        crate::cli::Commands::Lint { targets, recursive } => {
-            lint::execute_lint(targets, recursive, config)
+        crate::cli::Commands::Lint { targets, recursive, verify } => {
+            lint::execute_lint(targets, recursive, verify, config)
                 .await
                 .map_err(Into::into)
         }

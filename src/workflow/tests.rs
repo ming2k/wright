@@ -295,6 +295,69 @@ async fn workflow_id_is_stable_across_builders() {
     assert_eq!(s1.steps[0].id, s2.steps[0].id);
 }
 
+#[test]
+fn step_id_changes_when_dependency_edges_change() {
+    let inputs = serde_json::json!({"case": "dep-identity"});
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    let mut without_dep = WorkflowBuilder::new("test", &inputs).unwrap();
+    let no_dep = without_dep
+        .add(make_step("target", vec![], counter.clone(), 0))
+        .unwrap();
+
+    let mut with_dep = WorkflowBuilder::new("test", &inputs).unwrap();
+    let dep = with_dep
+        .add(make_step("dep", vec![], counter.clone(), 0))
+        .unwrap();
+    let dep_bound = with_dep
+        .add(make_step("target", vec![dep], counter.clone(), 0))
+        .unwrap();
+
+    assert_eq!(
+        without_dep.build().workflow_id,
+        with_dep.build().workflow_id
+    );
+    assert_ne!(no_dep, dep_bound);
+}
+
+#[tokio::test]
+async fn prunes_steps_not_in_current_spec_before_resume() {
+    let db = fresh_db().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let inputs = serde_json::json!({"case": "graph-drift"});
+
+    let mut old = WorkflowBuilder::new("test", &inputs).unwrap();
+    old.add(make_step("old", vec![], counter.clone(), 1))
+        .unwrap();
+    let first = drive(
+        db.clone(),
+        old.build(),
+        policy(),
+        std::env::temp_dir(),
+        never_cancelled(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.status, TerminalStatus::Failed);
+
+    let mut current = WorkflowBuilder::new("test", &inputs).unwrap();
+    current
+        .add(make_step("current", vec![], counter.clone(), 0))
+        .unwrap();
+    let second = drive(
+        db.clone(),
+        current.build(),
+        policy(),
+        std::env::temp_dir(),
+        never_cancelled(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(second.status, TerminalStatus::Succeeded);
+    assert!(second.failed.is_empty());
+}
+
 #[tokio::test]
 async fn parallel_independent_steps() {
     let db = fresh_db().await;

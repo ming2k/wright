@@ -21,14 +21,15 @@ ID, so the runner finds the prior step state and picks up where it left off.
 
 ## Start Fresh
 
-Use `--fresh` to discard all prior workflow state and start from scratch:
+Use `--invalidate` to discard all prior workflow state and start from scratch:
 
 ```bash
-wright apply curl --deps --fresh
+wright apply curl --deps --invalidate
 ```
 
 ## More Detail
 
 See [Build Resume Model](../explanation/build-resume-model.md) for the database
 workflow state behind resume and for how `source_dir`, `work/`, stage
-sentinels, `outputs/`, archives, `--fresh`, `--clean`, and `--force` interact.
+sentinels, `outputs/`, archives, `--invalidate`, `--clean`, and `--force`
+interact.

@@ -1,6 +1,5 @@
 pub mod apply;
 pub mod check;
-pub mod doctor;
 pub mod install;
 pub mod list;
 
@@ -66,6 +65,7 @@ pub async fn execute(
         parts,
         force,
         nodeps,
+        invalidate,
         path,
     } = command
     {
@@ -78,6 +78,7 @@ pub async fn execute(
             db_path,
             root_dir,
             &part_store,
+            invalidate,
         )
         .await;
     }
@@ -94,15 +95,15 @@ pub async fn execute(
             roots,
             assumed,
             orphans,
-            plan,
         } => {
-            list::execute_list(&db, long, roots, assumed, orphans, plan.as_deref()).await?;
+            list::execute_list(&db, long, roots, assumed, orphans).await?;
         }
-        SystemCommands::Doctor => {
-            doctor::execute_doctor(&db).await?;
-        }
-        SystemCommands::Check { part, deep } => {
-            check::execute_check(&db, root_dir, part.as_deref(), deep).await?;
+        SystemCommands::Check {
+            part,
+            deep,
+            integrity_only,
+        } => {
+            check::execute_check(&db, root_dir, part.as_deref(), deep, integrity_only).await?;
         }
         SystemCommands::Upgrade {
             parts,
@@ -183,219 +184,108 @@ pub async fn execute(
             force,
             recursive,
             cascade,
-            plan: remove_by_plan,
         } => {
-            if remove_by_plan {
-                // Remove all parts from the specified plans
-                for plan_name in &parts {
-                    let plan_parts = db
-                        .get_parts_by_plan(plan_name)
-                        .await
-                        .context(format!("failed to get parts for plan {}", plan_name))?;
-                    if plan_parts.is_empty() {
-                        println!("no parts found for plan '{}'", plan_name);
-                        continue;
-                    }
-                    println!(
-                        "removing {} part(s) from plan '{}'",
-                        plan_parts.len(),
-                        plan_name
-                    );
-                    let part_names: Vec<String> =
-                        plan_parts.iter().map(|part| part.name.clone()).collect();
-                    let batch_targets: HashSet<String> = part_names.iter().cloned().collect();
-                    let removal_order = transaction::order_removal_batch(&db, &part_names)
-                        .await
-                        .context(format!(
-                            "failed to plan removal order for plan {}",
-                            plan_name
-                        ))?;
-
-                    for part_name in &removal_order {
-                        let ignored_dependents: HashSet<String> = batch_targets
-                            .iter()
-                            .filter(|candidate| candidate.as_str() != part_name)
-                            .cloned()
-                            .collect();
-                        match transaction::remove_part_with_ignored_dependents(
-                            &db,
-                            part_name,
-                            root_dir,
-                            force,
-                            &ignored_dependents,
-                        )
-                        .await
-                        {
-                            Ok(()) => println!("removed: {}", part_name),
-                            Err(e) => {
-                                eprintln!("error removing {}: {}", part_name, e);
-                                std::process::exit(1);
-                            }
-                        }
+            // Check for assumed parts before attempting removal
+            for name in &parts {
+                if let Some(part) = db.get_part(name).await? {
+                    if part.origin == crate::database::Origin::External {
+                        eprintln!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
+                        std::process::exit(1);
                     }
                 }
+            }
+
+            let batch_targets: HashSet<String> = if recursive {
+                HashSet::new()
             } else {
-                // Check for assumed parts before attempting removal
-                for name in &parts {
-                    if let Some(part) = db.get_part(name).await? {
-                        if part.origin == crate::database::Origin::External {
-                            eprintln!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
-                            std::process::exit(1);
-                        }
-                    }
-                }
+                parts.iter().cloned().collect()
+            };
+            let removal_order = if recursive {
+                parts.clone()
+            } else {
+                transaction::order_removal_batch(&db, &parts)
+                    .await
+                    .context("failed to plan removal order")?
+            };
 
-                let batch_targets: HashSet<String> = if recursive {
-                    HashSet::new()
-                } else {
-                    parts.iter().cloned().collect()
-                };
-                let removal_order = if recursive {
-                    parts.clone()
-                } else {
-                    transaction::order_removal_batch(&db, &parts)
+            for name in &removal_order {
+                if recursive {
+                    let dependents = db
+                        .get_recursive_dependents(name)
                         .await
-                        .context("failed to plan removal order")?
-                };
+                        .context(format!("failed to resolve dependents of {}", name))?;
 
-                for name in &removal_order {
-                    if recursive {
-                        let dependents = db
-                            .get_recursive_dependents(name)
-                            .await
-                            .context(format!("failed to resolve dependents of {}", name))?;
-
-                        if !dependents.is_empty() {
-                            println!(
-                                "will also remove (depends on {}): {}",
-                                name,
-                                dependents.join(", ")
-                            );
-                        }
-
-                        for dep in &dependents {
-                            match transaction::remove_part(&db, dep, root_dir, true).await {
-                                Ok(()) => println!("removed: {}", dep),
-                                Err(e) => {
-                                    eprintln!("error removing {}: {}", dep, e);
-                                    std::process::exit(1);
-                                }
-                            }
-                        }
-                    }
-
-                    // Compute cascade list before removing the target
-                    let cascade_list = if cascade {
-                        let list = transaction::cascade_remove_list(&db, name)
-                            .await
-                            .context(format!("failed to compute cascade list for {}", name))?;
-                        if !list.is_empty() {
-                            println!(
-                                "will also remove orphan dependencies of {}: {}",
-                                name,
-                                list.join(", ")
-                            );
-                        }
-                        list
-                    } else {
-                        Vec::new()
-                    };
-
-                    let result = if recursive {
-                        transaction::remove_part(&db, name, root_dir, force || recursive).await
-                    } else {
-                        let ignored_dependents: HashSet<String> = batch_targets
-                            .iter()
-                            .filter(|candidate| candidate.as_str() != name)
-                            .cloned()
-                            .collect();
-                        transaction::remove_part_with_ignored_dependents(
-                            &db,
+                    if !dependents.is_empty() {
+                        println!(
+                            "will also remove (depends on {}): {}",
                             name,
-                            root_dir,
-                            force,
-                            &ignored_dependents,
-                        )
-                        .await
-                    };
-
-                    match result {
-                        Ok(()) => println!("removed: {}", name),
-                        Err(e) => {
-                            eprintln!("error removing {}: {}", name, e);
-                            std::process::exit(1);
-                        }
+                            dependents.join(", ")
+                        );
                     }
 
-                    // Remove orphan dependencies (leaf-first order)
-                    for orphan in &cascade_list {
-                        match transaction::remove_part(&db, orphan, root_dir, true).await {
-                            Ok(()) => println!("removed: {}", orphan),
+                    for dep in &dependents {
+                        match transaction::remove_part(&db, dep, root_dir, true).await {
+                            Ok(()) => println!("removed: {}", dep),
                             Err(e) => {
-                                eprintln!("error removing {}: {}", orphan, e);
+                                eprintln!("error removing {}: {}", dep, e);
                                 std::process::exit(1);
                             }
                         }
                     }
                 }
-            }
-        }
-        SystemCommands::Query { part } => {
-            let installed_part = db
-                .get_part_with_plan(&part)
-                .await
-                .context("failed to query part")?;
-            match installed_part {
-                Some(info) => {
-                    println!("Name        : {}", info.name);
-                    println!(
-                        "Version     : {}",
-                        if info.version.is_empty() {
-                            "-"
-                        } else {
-                            &info.version
+
+                // Compute cascade list before removing the target
+                let cascade_list = if cascade {
+                    let list = transaction::cascade_remove_list(&db, name)
+                        .await
+                        .context(format!("failed to compute cascade list for {}", name))?;
+                    if !list.is_empty() {
+                        println!(
+                            "will also remove orphan dependencies of {}: {}",
+                            name,
+                            list.join(", ")
+                        );
+                    }
+                    list
+                } else {
+                    Vec::new()
+                };
+
+                let result = if recursive {
+                    transaction::remove_part(&db, name, root_dir, force || recursive).await
+                } else {
+                    let ignored_dependents: HashSet<String> = batch_targets
+                        .iter()
+                        .filter(|candidate| candidate.as_str() != name)
+                        .cloned()
+                        .collect();
+                    transaction::remove_part_with_ignored_dependents(
+                        &db,
+                        name,
+                        root_dir,
+                        force,
+                        &ignored_dependents,
+                    )
+                    .await
+                };
+
+                match result {
+                    Ok(()) => println!("removed: {}", name),
+                    Err(e) => {
+                        eprintln!("error removing {}: {}", name, e);
+                        std::process::exit(1);
+                    }
+                }
+
+                // Remove orphan dependencies (leaf-first order)
+                for orphan in &cascade_list {
+                    match transaction::remove_part(&db, orphan, root_dir, true).await {
+                        Ok(()) => println!("removed: {}", orphan),
+                        Err(e) => {
+                            eprintln!("error removing {}: {}", orphan, e);
+                            std::process::exit(1);
                         }
-                    );
-                    println!("Release     : {}", info.release);
-                    println!("Description : {}", info.description.unwrap_or_default());
-                    println!("Architecture: {}", info.arch);
-                    println!("License     : {}", info.license.unwrap_or_default());
-                    if let Some(ref url) = info.url {
-                        println!("URL         : {}", url);
                     }
-                    println!("Origin      : {}", info.origin);
-                    println!("Plan        : {}", info.plan_name);
-                    println!("Installed At: {}", info.installed_at.unwrap_or_default());
-                    if let Some(ref hash) = info.part_hash {
-                        println!("Part Hash   : {}", hash);
-                    }
-                }
-                None => {
-                    eprintln!("part '{}' is not installed", part);
-                    std::process::exit(1);
-                }
-            }
-        }
-        SystemCommands::Search { keyword } => {
-            let results = db
-                .search_parts(&keyword)
-                .await
-                .context("failed to search parts")?;
-            if results.is_empty() {
-                println!("no parts found matching '{}'", keyword);
-            } else {
-                for installed_part in &results {
-                    let ver_rel = if installed_part.version.is_empty() {
-                        format!("{}", installed_part.release)
-                    } else {
-                        format!("{}-{}", installed_part.version, installed_part.release)
-                    };
-                    println!(
-                        "{} {} - {}",
-                        installed_part.name,
-                        ver_rel,
-                        installed_part.description.as_deref().unwrap_or_default()
-                    );
                 }
             }
         }
@@ -412,134 +302,6 @@ pub async fn execute(
                     eprintln!("part '{}' is not installed", part);
                     std::process::exit(1);
                 }
-            }
-        }
-        SystemCommands::Owner { file } => {
-            match db.find_owner(&file).await.context("failed to find owner")? {
-                Some(owner) => println!("{} is owned by {}", file, owner),
-                None => {
-                    println!("{} is not owned by any part", file);
-                    std::process::exit(1);
-                }
-            }
-        }
-        SystemCommands::Verify { part } => {
-            let parts_to_verify: Vec<String> = if let Some(name) = part {
-                vec![name]
-            } else {
-                db.list_parts()
-                    .await
-                    .context("failed to list parts")?
-                    .iter()
-                    .map(|p| p.name.clone())
-                    .collect()
-            };
-
-            let mut all_ok = true;
-            for name in &parts_to_verify {
-                let issues = transaction::verify_part(&db, name, root_dir)
-                    .await
-                    .context(format!("failed to verify {}", name))?;
-                if issues.is_empty() {
-                    println!("{}: OK", name);
-                } else {
-                    all_ok = false;
-                    println!("{}:", name);
-                    for issue in &issues {
-                        println!("  {}", issue);
-                    }
-                }
-            }
-            if !all_ok {
-                std::process::exit(1);
-            }
-        }
-        SystemCommands::Sysupgrade { dry_run } => {
-            use crate::part::version::Version;
-
-            let parts = db.list_parts().await.context("failed to list parts")?;
-            let mut upgraded = 0usize;
-            let mut up_to_date = 0usize;
-            let mut not_found = 0usize;
-
-            for part in &parts {
-                match part_store.resolve_all(&part.name).await {
-                    Ok(all_versions) if !all_versions.is_empty() => {
-                        if let Some(latest) = pick_latest(&all_versions) {
-                            let is_newer = {
-                                let new_ver = Version::parse(&latest.version).ok();
-                                let installed_ver = Version::parse(&part.version).ok();
-                                match (new_ver, installed_ver) {
-                                    (Some(nv), Some(ov)) => {
-                                        if latest.epoch != part.epoch as u32 {
-                                            latest.epoch > part.epoch as u32
-                                        } else if nv != ov {
-                                            nv > ov
-                                        } else {
-                                            latest.release > part.release as u32
-                                        }
-                                    }
-                                    _ => {
-                                        latest.version != part.version
-                                            || latest.release > part.release as u32
-                                    }
-                                }
-                            };
-
-                            if is_newer {
-                                let installed_ver_rel = if part.version.is_empty() {
-                                    format!("{}", part.release)
-                                } else {
-                                    format!("{}-{}", part.version, part.release)
-                                };
-                                let new_ver_rel = if latest.version.is_empty() {
-                                    format!("{}", latest.release)
-                                } else {
-                                    format!("{}-{}", latest.version, latest.release)
-                                };
-                                println!(
-                                    "upgrade: {} {} -> {}",
-                                    part.name, installed_ver_rel, new_ver_rel
-                                );
-                                if !dry_run {
-                                    if let Err(e) = transaction::upgrade_part(
-                                        &db,
-                                        &latest.path,
-                                        root_dir,
-                                        false,
-                                        true,
-                                    )
-                                    .await
-                                    {
-                                        eprintln!("  error: {}", e);
-                                    } else {
-                                        upgraded += 1;
-                                    }
-                                } else {
-                                    upgraded += 1;
-                                }
-                            } else {
-                                up_to_date += 1;
-                            }
-                        }
-                    }
-                    Ok(_) => {
-                        not_found += 1;
-                    }
-                    Err(e) => eprintln!("warning: part store error for {}: {}", part.name, e),
-                }
-            }
-
-            if dry_run {
-                println!(
-                    "\n[dry-run] would upgrade {} part(s), {} up to date, {} not found",
-                    upgraded, up_to_date, not_found
-                );
-            } else {
-                println!(
-                    "\nupgraded {}, {} up to date, {} not found",
-                    upgraded, up_to_date, not_found
-                );
             }
         }
         SystemCommands::Assume {
@@ -609,32 +371,6 @@ pub async fn execute(
                 std::process::exit(1);
             }
         },
-        SystemCommands::Mark {
-            parts,
-            as_dependency,
-            as_manual,
-        } => {
-            use crate::database::Origin;
-
-            let origin = if as_dependency {
-                Origin::Dependency
-            } else if as_manual {
-                Origin::Manual
-            } else {
-                eprintln!("error: specify --as-dependency or --as-manual");
-                std::process::exit(1);
-            };
-
-            for name in &parts {
-                match db.force_set_origin(name, origin).await {
-                    Ok(()) => println!("{}: marked as {}", name, origin),
-                    Err(e) => {
-                        eprintln!("error: {}: {}", name, e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
         SystemCommands::History { part } => {
             let records = db.get_history(part.as_deref()).await?;
             if records.is_empty() {

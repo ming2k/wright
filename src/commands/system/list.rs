@@ -7,11 +7,8 @@ pub async fn execute_list(
     roots: bool,
     assumed: bool,
     orphans: bool,
-    plan: Option<&str>,
 ) -> Result<()> {
-    let parts = if let Some(plan_name) = plan {
-        db.get_parts_by_plan(plan_name).await?
-    } else if assumed {
+    let parts = if assumed {
         db.get_assumed_parts().await?
     } else if orphans {
         db.get_orphan_parts().await?

@@ -68,7 +68,7 @@ pub async fn execute_package(
         DriveOptions {
             config: &command_config,
             db_path,
-            invalidate: false,
+            invalidate: args.invalidate,
             quiet,
         },
     )

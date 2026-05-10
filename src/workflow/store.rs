@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value as JsonValue;
 
@@ -36,8 +36,7 @@ impl<'a> WorkflowStore<'a> {
     }
 
     /// List all workflows in the database.
-    pub async fn list_workflows(&self,
-    ) -> Result<Vec<WorkflowSummary>> {
+    pub async fn list_workflows(&self) -> Result<Vec<WorkflowSummary>> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT id, kind FROM workflows ORDER BY created_at DESC")
                 .fetch_all(&self.db.pool)
@@ -52,10 +51,7 @@ impl<'a> WorkflowStore<'a> {
     }
 
     /// List all steps for a workflow, including basic metadata for display.
-    pub async fn list_steps(
-        &self,
-        workflow_id: &WorkflowId,
-    ) -> Result<Vec<StepSummary>> {
+    pub async fn list_steps(&self, workflow_id: &WorkflowId) -> Result<Vec<StepSummary>> {
         let rows: Vec<(String, String, i32, String, String)> = sqlx::query_as(
             "SELECT id, status, attempt, inputs_json, kind \
              FROM workflow_steps \
@@ -131,6 +127,37 @@ impl<'a> WorkflowStore<'a> {
         .bind(&depends_on_json)
         .execute(&self.db.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Remove persisted rows that do not belong to the current in-memory spec.
+    ///
+    /// Workflow identity is intentionally based on command intent, so commands
+    /// like `apply` can produce a different step graph as installed state
+    /// changes. Rows from an older graph are stale resume state and must not
+    /// participate in scheduling or diagnostics for the current graph.
+    pub async fn prune_steps_not_in(
+        &self,
+        workflow_id: &WorkflowId,
+        current_steps: &[ScheduledStep],
+    ) -> Result<()> {
+        let current: HashSet<&str> = current_steps.iter().map(|s| s.id.as_str()).collect();
+        let rows: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM workflow_steps WHERE workflow_id = ?")
+                .bind(workflow_id.as_str())
+                .fetch_all(&self.db.pool)
+                .await?;
+
+        for id in rows {
+            if !current.contains(id.as_str()) {
+                sqlx::query("DELETE FROM workflow_steps WHERE workflow_id = ? AND id = ?")
+                    .bind(workflow_id.as_str())
+                    .bind(id)
+                    .execute(&self.db.pool)
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 

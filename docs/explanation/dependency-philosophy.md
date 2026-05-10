@@ -121,13 +121,8 @@ The diagnostic and recovery surface:
   binaries and verifies each `DT_NEEDED` SONAME against the installed
   files table. Catches forgotten-declaration footguns that registry-level
   resolution misses. Optional `[PART]` argument restricts the scope.
-- `wright check --deep <part>` — focused check on a single part before
-  invoking it.
-- `wright complete` (planned) — best-effort recovery: feeds the
-  unsatisfied list back through the same plan→build→install pipeline
-  used by `apply`. Strictly additive, never reinstalls existing parts.
-  Stops when it cannot resolve a name (treats it as a broken reference,
-  not a "needs install").
+ - `wright check --deep <part>` — focused check on a single part before
+   invoking it.
 
 `wright remove` warns when removing a depended-on part but does not block:
 the user decides whether to accept the broken state. The dependency edge in
