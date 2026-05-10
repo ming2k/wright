@@ -7,6 +7,9 @@
 
 ### Fixed
 - **Workflow graph drift handling** — active workflow resume state now prunes steps that are not part of the current step graph, and step identities include dependency edges so stale status is not reused after graph shape changes.
+- **Unreachable broken plans no longer block builds** — `build_dep_map` now parses only the plans actually in the build set and their direct dependencies, instead of eagerly loading every plan in the index. A malformed `plan.toml` in an unrelated plan (e.g. `btop`) no longer aborts `wright build`, `apply`, `package`, or `launch`.
+- **Bulk validation of reachable plans** — `build_dep_map` collects all parse errors across the build set before returning, so a single `wright build` invocation reports every malformed plan rather than failing on the first one.
+- **`PlanIndex::load_all` resilience** — individual parse errors during bulk manifest loading are now logged as warnings and skipped, instead of aborting the entire operation. This protects commands like `wright resolve` from unrelated broken plans.
 
 ## [4.2.0] - 2026-05-10
 
