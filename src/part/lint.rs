@@ -93,11 +93,7 @@ impl SonameIndex {
 
         for entry in std::fs::read_dir(parts_dir)
             .map_err(|e| {
-                crate::error::WrightError::PartError(format!(
-                    "read {}: {}",
-                    parts_dir.display(),
-                    e
-                ))
+                crate::error::WrightError::PartError(format!("read {}: {}", parts_dir.display(), e))
             })?
             .flatten()
         {
@@ -150,8 +146,13 @@ impl SonameIndex {
     }
 
     /// All output names produced by the named plan (empty set if unknown).
-    fn outputs_of(&self, plan: &str) -> Option<&HashSet<String>> {
+    pub fn outputs_of(&self, plan: &str) -> Option<&HashSet<String>> {
         self.plan_outputs.get(plan)
+    }
+
+    /// Returns true when the index contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.soname_to_output.is_empty() && self.plan_outputs.is_empty()
     }
 }
 
@@ -202,8 +203,7 @@ pub fn lint_runtime_deps(
     let (needed, ownership) = collect_dt_needed(output_dir)?;
     let self_sonames = collect_self_sonames(output_dir)?;
 
-    let needed_external: BTreeSet<&String> =
-        needed.difference(&self_sonames).collect();
+    let needed_external: BTreeSet<&String> = needed.difference(&self_sonames).collect();
 
     let declared_targets = expand_declared_targets(declared, index, self_part_name);
 
@@ -250,9 +250,7 @@ pub fn lint_runtime_deps(
     Ok(report)
 }
 
-fn collect_dt_needed(
-    output_dir: &Path,
-) -> Result<(HashSet<String>, HashMap<String, PathBuf>)> {
+fn collect_dt_needed(output_dir: &Path) -> Result<(HashSet<String>, HashMap<String, PathBuf>)> {
     let mut needed = HashSet::new();
     let mut ownership: HashMap<String, PathBuf> = HashMap::new();
 
@@ -394,13 +392,8 @@ mod tests {
     fn declared_dep_with_unknown_plan_is_stale() {
         let dir = tempfile::tempdir().unwrap();
         let idx = SonameIndex::default();
-        let report = lint_runtime_deps(
-            dir.path(),
-            &["nonexistent".to_string()],
-            "self",
-            &idx,
-        )
-        .unwrap();
+        let report =
+            lint_runtime_deps(dir.path(), &["nonexistent".to_string()], "self", &idx).unwrap();
         // No DT_NEEDED, so nothing matched; declared dep can't route.
         assert_eq!(report.stale, vec!["nonexistent".to_string()]);
     }

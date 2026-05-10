@@ -103,12 +103,13 @@ the matching `replaces` entry.
 | Mismatch | Meaning | Action |
 |----------|---------|--------|
 | ELF needs `X`, plan doesn't declare it | Forgotten declaration; binary will fail to load | **Error** — package step fails |
-| Plan declares `Y`, no ELF edge to it | Likely dlopen / data-file dep | **Warn** — author keeps or removes |
-| ELF needs SONAME `Z`, no part provides it | Vendored, host-provided, or missing | **Warn** — author investigates |
+| Plan declares `Y`, no ELF edge to it | Likely dlopen / data-file dep | Surfaces via `wright doctor` |
+| ELF needs SONAME `Z`, no part provides it | Vendored, host-provided, or missing | Surfaces via `wright doctor` |
 
-The asymmetry is intentional: forgotten declarations are silent footguns,
-surplus declarations are noise. Surplus may be legitimate (dlopen targets
-are invisible to the linker), so only the author can decide.
+The asymmetry is intentional: forgotten declarations are silent footguns
+that deserve a hard stop at build time. Surplus declarations and unmapped
+SONAMEs are noise during batch packaging (the dependency closure is often
+incomplete), so they are surfaced globally by `wright doctor` instead.
 
 ## Operational shape
 
@@ -123,6 +124,10 @@ The diagnostic and recovery surface:
   resolution misses. Optional `[PART]` argument restricts the scope.
  - `wright check --deep <part>` — focused check on a single part before
    invoking it.
+- `wright doctor` — comprehensive system health check. Runs all checks
+  from `check --deep` plus a global parts_dir dependency closure scan.
+  Use after batch installations to detect missing providers and stale
+  dependencies across the entire archive collection.
 
 `wright remove` warns when removing a depended-on part but does not block:
 the user decides whether to accept the broken state. The dependency edge in

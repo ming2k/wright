@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::builder::logging;
 use crate::builder::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
@@ -79,12 +79,16 @@ pub async fn package_outputs(
     // declared link_deps closure. Per ADR-0017 this is a lint input only,
     // never written back into PARTINFO. When link_deps is empty the
     // index is also empty — a part that links nothing should not have
-    // any DT_NEEDED edges to begin with, and any that appear surface as
-    // "unmapped" warnings.
-    let soname_index =
-        SonameIndex::scan_for_link_deps(&output_dir, &manifest.link_deps).unwrap_or_else(|e| {
-            warn!(
-                "elf-lint: failed to build SONAME index ({}); lint will proceed best-effort",
+    // any DT_NEEDED edges to begin with.
+    //
+    // Advisory warnings (stale/unmapped) are intentionally NOT emitted
+    // during packaging. In batch builds the dependency closure is usually
+    // incomplete, making them unactionable noise. Use `wright doctor` after
+    // full installation to surface them globally.
+    let soname_index = SonameIndex::scan_for_link_deps(&output_dir, &manifest.link_deps)
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                "elf-lint: failed to build SONAME index ({}); error-only lint will proceed",
                 e
             );
             SonameIndex::default()
@@ -132,9 +136,12 @@ pub async fn package_outputs(
     Ok(())
 }
 
-/// Run the ADR-0017 ELF lint against a staged output. Errors fail the
-/// package step (forgotten declarations); warnings (stale, unmapped) are
-/// logged but allowed.
+/// Run the ADR-0017 ELF lint against a staged output.
+///
+/// Only **errors** (forgotten runtime_deps) fail the package step.
+/// Advisory items (stale, unmapped) are intentionally not reported here;
+/// they are surfaced globally by `wright doctor` after installation when
+/// the dependency closure is complete.
 fn run_elf_lint(
     part_dir: &Path,
     sub_manifest: &PlanManifest,
@@ -146,30 +153,10 @@ fn run_elf_lint(
         &sub_manifest.metadata.name,
         index,
     )?;
-    log_lint_warnings(&sub_manifest.metadata.name, &report);
     if report.has_errors() {
         return Err(elf_lint_error(&sub_manifest.metadata.name, &report));
     }
     Ok(())
-}
-
-fn log_lint_warnings(part_name: &str, report: &LintReport) {
-    for stale in &report.stale {
-        warn!(
-            "elf-lint[{}]: declared runtime_dep '{}' has no DT_NEEDED edge \
-             — keep if dlopen/data-file dep, otherwise remove",
-            part_name, stale
-        );
-    }
-    for u in &report.unmapped {
-        warn!(
-            "elf-lint[{}]: SONAME {} (in {}) is not provided by any indexed \
-             archive (vendored, host-provided, or missing)",
-            part_name,
-            u.soname,
-            u.seen_in.display()
-        );
-    }
 }
 
 fn elf_lint_error(part_name: &str, report: &LintReport) -> WrightError {

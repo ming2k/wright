@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **`wright doctor` command** — comprehensive system health check that runs all checks from `wright check --deep` plus a global parts_dir dependency closure scan. Detects missing providers and stale dependencies across the entire archive collection. Use after batch installations.
+
+### Changed
+- **Package-time ELF lint warnings removed** — advisory warnings for stale declarations and unmapped SONAMEs are no longer emitted during `wright package`. In batch builds the dependency closure is typically incomplete, making these warnings unactionable noise. They now surface globally via `wright doctor` after installation.
+
+### Fixed
 - **Consistent workflow invalidation** — `wright package` and `wright install` now accept `--invalidate` to discard active workflow resume state before retrying.
 
 ### Fixed

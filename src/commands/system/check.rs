@@ -72,7 +72,7 @@ pub async fn execute_check(
     )))
 }
 
-async fn integrity_check(db: &InstalledDb) -> Result<usize> {
+pub(super) async fn integrity_check(db: &InstalledDb) -> Result<usize> {
     let mut issues = 0usize;
 
     // 1. Database integrity
@@ -119,7 +119,7 @@ fn scope_label(only_part: Option<&str>) -> String {
     }
 }
 
-async fn registry_check(
+pub(super) async fn registry_check(
     db: &InstalledDb,
     only_part: Option<&str>,
 ) -> Result<Vec<query::BrokenDep>> {
@@ -130,7 +130,7 @@ async fn registry_check(
     Ok(broken)
 }
 
-fn print_registry_findings(broken: &[query::BrokenDep]) {
+pub(super) fn print_registry_findings(broken: &[query::BrokenDep]) {
     if broken.is_empty() {
         return;
     }
@@ -151,25 +151,25 @@ fn print_registry_findings(broken: &[query::BrokenDep]) {
 }
 
 #[derive(Default)]
-struct DeepReport {
+pub(super) struct DeepReport {
     /// SONAMEs an ELF binary needs but no installed file provides.
-    missing: Vec<DeepMissing>,
+    pub(super) missing: Vec<DeepMissing>,
     /// SONAMEs whose owner is the installed file table but whose owner
     /// is the part itself (purely informational; not reported).
     /// Kept here for clarity even though we filter it out.
     #[allow(dead_code)]
-    self_links: usize,
+    pub(super) self_links: usize,
     /// Internal accounting; not reported.
-    unmapped: Vec<DeepMissing>,
+    pub(super) unmapped: Vec<DeepMissing>,
 }
 
-struct DeepMissing {
+pub(super) struct DeepMissing {
     part: String,
     binary: String,
     soname: String,
 }
 
-async fn elf_check(
+pub(super) async fn elf_check(
     db: &InstalledDb,
     root_dir: &Path,
     only_part: Option<&str>,
@@ -263,7 +263,7 @@ async fn resolve_soname_owner(db: &InstalledDb, soname: &str) -> Result<Option<S
     Ok(None)
 }
 
-fn print_elf_findings(report: &DeepReport) {
+pub(super) fn print_elf_findings(report: &DeepReport) {
     if report.missing.is_empty() {
         return;
     }

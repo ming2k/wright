@@ -59,13 +59,15 @@ Two directions of mismatch carry different meaning:
 | Direction | Meaning | Action |
 |-----------|---------|--------|
 | **ELF needs `X`, plan does not declare `X`** | The author forgot a declaration. The binary will fail to start without `X`. | **Error.** Package step fails. Author must add `X` to `runtime_deps` (or to `link_deps` if `X` is not yet a known plan, then declare it). |
-| **Plan declares `Y`, ELF does not need `Y`** | Likely a dlopen target, data-file dependency, or stale declaration. The author may have a legitimate reason. | **Warn.** Package step succeeds. Author decides whether to remove the entry. |
-| **ELF needs `Z`, no part provides SONAME `Z`** | The binary links a library wright cannot account for — vendored, host-provided, or genuinely missing. | **Warn.** Package step succeeds; the unmapped SONAME is reported with the file that linked it. |
+| **Plan declares `Y`, ELF does not need `Y`** | Likely a dlopen target, data-file dependency, or stale declaration. The author may have a legitimate reason. | **Not reported during packaging.** These surface globally via `wright doctor` after the full dependency closure is available. |
+| **ELF needs `Z`, no part provides SONAME `Z`** | The binary links a library wright cannot account for — vendored, host-provided, or genuinely missing. | **Not reported during packaging.** These surface globally via `wright doctor` after the full dependency closure is available. |
 
 The asymmetry is deliberate. Forgotten declarations are *silent footguns*
 at runtime; they deserve a hard stop at build time. Surplus declarations
-are merely noise; the author is the only one who knows whether they are
-legitimate (dlopen, etc.).
+and unmapped SONAMEs are merely noise during batch builds (the dependency
+closure is often incomplete at package time). They are surfaced globally
+by `wright doctor`, which scans the entire archive collection with a
+complete SONAME index.
 
 ### What is scanned
 
@@ -157,15 +159,11 @@ the earlier-feedback option.
 - Plan authors must maintain `runtime_deps` accurately. When code
   changes link relationships (e.g. `-lfoo` added or removed), the
   `runtime_deps` list must be edited in the same change.
-- Genuine dlopen / data-file deps appear as warnings every package
-  build until silenced. Silencing requires either removing the entry
-  (if stale) or accepting the warning as an honest signal.
+- Genuine dlopen / data-file deps are no longer visible during
+  packaging; authors must run `wright doctor` after batch installs to
+  detect stale declarations.
 - The package step depends on a SONAME → part index. Building that
   index requires a non-trivial walk of the link-deps closure.
-- Misconfigured `link_deps` (declares a plan that doesn't actually
-  provide the SONAME the binary needs) becomes visible as an
-  "unmapped SONAME" warning. This is desirable but produces noise
-  during the transition.
 
 ## Known v0 limitations
 

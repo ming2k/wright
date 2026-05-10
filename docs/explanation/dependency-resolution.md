@@ -124,10 +124,13 @@ libraries) and compares the empirical set against the declared
 - A library the binary needs but the plan does not declare → **error**:
   the package step fails with the missing entries listed. Add them to
   `runtime_deps` and re-run.
-- A declaration with no `DT_NEEDED` edge → **warning**: usually a
-  legitimate dlopen or data-file dep; remove if stale.
-- A SONAME no archive provides → **warning**: vendored, host-provided,
-  or missing.
+
+Advisory items (declarations with no `DT_NEEDED` edge, or SONAMEs that no
+archive provides) are intentionally **not** reported during packaging.
+In batch builds the dependency closure is typically incomplete, making
+these warnings unactionable noise. They are surfaced globally after
+installation by `wright doctor`, which scans the entire archive collection
+with a complete SONAME index.
 
 The lint catches forgotten declarations at build time, where they are
 cheap to fix, instead of at the user's first `wright launch`.

@@ -101,7 +101,14 @@ Verifies file checksums against recorded hashes. Checks all parts when `PART` is
 
 ### `wright doctor`
 
-Runs a series of integrity checks on the installed state and reports problems.
+Runs comprehensive system health checks: database integrity, file conflicts,
+registry dependency resolution, ELF `DT_NEEDED` verification, and a global
+parts_dir dependency closure scan. Use after batch installations to detect
+missing providers and stale dependencies across the entire archive collection.
+
+| Flag | Description |
+|------|-------------|
+| `--deep` | Walk ELF binaries and verify `DT_NEEDED` entries (always enabled for doctor) |
 
 ### `wright history [PART]`
 

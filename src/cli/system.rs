@@ -64,6 +64,9 @@ const WRIGHT_HISTORY_AFTER_HELP: &str = "\
 Examples:
   wright history
   wright history zlib";
+const WRIGHT_DOCTOR_AFTER_HELP: &str = "\
+Examples:
+  wright doctor";
 
 #[derive(Parser)]
 #[command(
@@ -328,4 +331,15 @@ pub enum Commands {
         #[arg(value_name = "PART")]
         part: Option<String>,
     },
+    /// Diagnose system and archive health issues
+    #[command(
+        long_about = "Run comprehensive system health checks.\n\n\
+                      This command performs all checks from `check --deep` and \
+                      additionally verifies the dependency closure of archives \
+                      in parts_dir. Use it after batch installations to detect \
+                      missing providers and stale dependencies across the entire \
+                      archive collection.",
+        after_help = WRIGHT_DOCTOR_AFTER_HELP
+    )]
+    Doctor,
 }

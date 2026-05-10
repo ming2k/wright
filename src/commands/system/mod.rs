@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod check;
+pub mod doctor;
 pub mod install;
 pub mod list;
 
@@ -117,7 +118,7 @@ pub async fn execute(
                     match transaction::upgrade_part(&db, &path, root_dir, force, true).await {
                         Ok(()) => println!("upgraded: {}", path.display()),
                         Err(e) => {
-                            eprintln!("error upgrading {}: {}", path.display(), e);
+                            tracing::error!("upgrading {}: {}", path.display(), e);
                             std::process::exit(1);
                         }
                     }
@@ -131,7 +132,7 @@ pub async fn execute(
                     .context(format!("failed to resolve '{}'", arg))?;
 
                 if all_versions.is_empty() {
-                    eprintln!("error: no parts found for '{}'", arg);
+                    tracing::error!("no parts found for '{}'", arg);
                     std::process::exit(1);
                 }
 
@@ -144,8 +145,8 @@ pub async fn execute(
                 let selected = match selected {
                     Some(s) => s,
                     None => {
-                        eprintln!(
-                            "error: version '{}' not found for '{}'",
+                        tracing::error!(
+                            "version '{}' not found for '{}'",
                             target_version.as_deref().unwrap_or("?"),
                             arg
                         );
@@ -173,7 +174,7 @@ pub async fn execute(
                         println!("upgraded: {} -> {}", arg, ver_rel);
                     }
                     Err(e) => {
-                        eprintln!("error upgrading {}: {}", arg, e);
+                        tracing::error!("upgrading {}: {}", arg, e);
                         std::process::exit(1);
                     }
                 }
@@ -189,7 +190,7 @@ pub async fn execute(
             for name in &parts {
                 if let Some(part) = db.get_part(name).await? {
                     if part.origin == crate::database::Origin::External {
-                        eprintln!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
+                        tracing::error!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
                         std::process::exit(1);
                     }
                 }
@@ -227,7 +228,7 @@ pub async fn execute(
                         match transaction::remove_part(&db, dep, root_dir, true).await {
                             Ok(()) => println!("removed: {}", dep),
                             Err(e) => {
-                                eprintln!("error removing {}: {}", dep, e);
+                                tracing::error!("removing {}: {}", dep, e);
                                 std::process::exit(1);
                             }
                         }
@@ -272,7 +273,7 @@ pub async fn execute(
                 match result {
                     Ok(()) => println!("removed: {}", name),
                     Err(e) => {
-                        eprintln!("error removing {}: {}", name, e);
+                        tracing::error!("removing {}: {}", name, e);
                         std::process::exit(1);
                     }
                 }
@@ -282,7 +283,7 @@ pub async fn execute(
                     match transaction::remove_part(&db, orphan, root_dir, true).await {
                         Ok(()) => println!("removed: {}", orphan),
                         Err(e) => {
-                            eprintln!("error removing {}: {}", orphan, e);
+                            tracing::error!("removing {}: {}", orphan, e);
                             std::process::exit(1);
                         }
                     }
@@ -299,7 +300,7 @@ pub async fn execute(
                     }
                 }
                 None => {
-                    eprintln!("part '{}' is not installed", part);
+                    tracing::error!("part '{}' is not installed", part);
                     std::process::exit(1);
                 }
             }
@@ -348,9 +349,7 @@ pub async fn execute(
                     entries.push((n.to_string(), v.to_string()));
                 }
             } else {
-                eprintln!(
-                    "error: provide name and version as arguments, use --file, or pipe input"
-                );
+                tracing::error!("provide name and version as arguments, use --file, or pipe input");
                 std::process::exit(1);
             }
 
@@ -358,7 +357,7 @@ pub async fn execute(
                 match db.assume_part(&n, &v).await {
                     Ok(()) => println!("assumed: {} {}", n, v),
                     Err(e) => {
-                        eprintln!("error assuming {}: {:#}", n, e);
+                        tracing::error!("assuming {}: {:#}", n, e);
                         std::process::exit(1);
                     }
                 }
@@ -367,7 +366,7 @@ pub async fn execute(
         SystemCommands::Unassume { name } => match db.unassume_part(&name).await {
             Ok(()) => println!("unassumed: {}", name),
             Err(e) => {
-                eprintln!("error: {:#}", e);
+                tracing::error!("{:#}", e);
                 std::process::exit(1);
             }
         },
@@ -398,6 +397,9 @@ pub async fn execute(
                     );
                 }
             }
+        }
+        SystemCommands::Doctor => {
+            doctor::execute_doctor(&db, root_dir, config).await?;
         }
     }
     Ok(())
