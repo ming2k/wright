@@ -14,8 +14,6 @@ pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
         dirs.push(extra_dir.clone());
     }
 
-    // Add current directory to plans search path so we can resolve dependencies
-    // in local development trees.
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd);
     }
@@ -25,10 +23,7 @@ pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
 
 pub fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
     let mut store = LocalPartStore::new();
-
-    // Always include the configured parts directory in the part search path.
     store.add_search_dir(config.general.parts_dir.clone());
-
     Ok(store)
 }
 

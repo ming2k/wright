@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{ArgAction, Parser, Subcommand};
 
 const WRIGHT_AFTER_HELP: &str = "\
-Workflows:
+Commands:
   Install plan outputs:     wright install zlib
   Install from archive:     wright install --path ./zlib-1.3.1-1-x86_64.wright.tar.zst
   Apply plans:              wright apply zlib openssl
@@ -123,12 +123,6 @@ pub enum Commands {
         #[arg(long)]
         nodeps: bool,
 
-        /// Discard cached workflow progress and re-execute from scratch.
-        /// Installed-state checks still decide whether an archive needs to be
-        /// applied again; use --force to reinstall matching parts.
-        #[arg(long)]
-        invalidate: bool,
-
         /// Treat arguments and stdin as explicit archive paths
         #[arg(long)]
         path: bool,
@@ -142,13 +136,6 @@ pub enum Commands {
         /// Plan names, plan directories, or group names prefixed with '@'
         #[arg(value_name = "TARGET")]
         targets: Vec<String>,
-
-        /// Discard cached workflow progress and re-execute from scratch.
-        /// Build-stage and install caches are still subject to their own
-        /// content-addressed checks; use the plan's own rebuild flags for
-        /// deeper invalidation.
-        #[arg(long)]
-        invalidate: bool,
 
         /// Expand dependencies.
         /// `link` follows ABI-sensitive link dependencies.

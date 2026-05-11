@@ -5,5 +5,6 @@ mod integration {
     mod force_test;
     mod install_test;
     mod isolation_test;
+
     mod migration_test;
 }

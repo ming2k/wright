@@ -1,21 +1,19 @@
 use anyhow::{Context, Result};
 use std::io::BufRead;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::cli::package::PackageArgs;
 use crate::config::GlobalConfig;
 use crate::error::WrightError;
-use crate::operations::drive::{drive_command, DriveOptions};
-use crate::planning::BuildOptions;
-use crate::workflow::builders::build_package_workflow;
+use crate::plan::manifest::PlanManifest;
+use crate::planning::{package_manifest, plan_search_dirs, resolve_targets};
 
 pub async fn execute_package(
     args: PackageArgs,
     config: &GlobalConfig,
     db_path: &Path,
-    verbose: u8,
-    quiet: bool,
+    _verbose: u8,
+    _quiet: bool,
 ) -> Result<()> {
     let mut command_config = config.clone();
     if let Some(out_dir) = args.out_dir {
@@ -46,34 +44,23 @@ pub async fn execute_package(
         return Err(WrightError::BuildError("No targets specified to package.".to_string()).into());
     }
 
-    let options = BuildOptions {
-        verbose: verbose > 0,
-        quiet,
-        nproc_per_isolation: command_config.build.nproc_per_isolation,
-        force: args.force,
-        ..Default::default()
-    };
+    let plan_dirs = plan_search_dirs(&command_config);
+    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let plans_to_build = resolve_targets(&all_targets, &index, &plan_dirs)?;
 
-    let spec = build_package_workflow(
-        Arc::new(command_config.clone()),
-        all_targets,
-        options,
-        args.force,
-        args.print_parts,
-    )
-    .map_err(|e| anyhow::anyhow!("package workflow: {}", e))?;
+    if plans_to_build.is_empty() {
+        return Err(WrightError::BuildError("No targets found to package.".to_string()).into());
+    }
 
-    drive_command(
-        spec,
-        DriveOptions {
-            config: &command_config,
-            db_path,
-            invalidate: args.invalidate,
-            quiet,
-        },
-    )
-    .await
-    .map(|_| ())
+    for plan_path in plans_to_build {
+        let manifest = PlanManifest::from_file(&plan_path)
+            .with_context(|| format!("read plan {}", plan_path.display()))?;
+        package_manifest(&manifest, &command_config, args.print_parts, args.force)
+            .await
+            .with_context(|| format!("package {}", manifest.metadata.name))?;
+    }
+
+    Ok(())
 }
 
 fn normalize_out_dir(path: std::path::PathBuf) -> Result<std::path::PathBuf> {

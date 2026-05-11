@@ -1,101 +1,97 @@
-//! Shared boilerplate for top-level commands that drive a workflow.
+//! Direct DAG execution — no persistent workflow state.
 //!
-//! Core design: workflow state is a cache of execution progress.  `--invalidate`
-//! tells the engine "discard cached progress for these inputs and re-compute".
-//! There is no separate `--restart` or `--fresh`; a single invalidation flag is
-//! sufficient because the engine always converges deterministically from state.
+//! Resume is handled by builder checkpoints (file-system sentinels keyed by
+//! plan fingerprint) and install idempotence (database state). This layer
+//! only schedules dependency batches and reports failures.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use futures_util::stream::{self, StreamExt};
+use tokio::sync::Semaphore;
 use tokio::sync::watch;
+use tracing::{error, info};
 
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
-use crate::util::progress::SUPPRESS_INFO_LOGS;
-use crate::workflow::{drive, RunOutcome, SchedulerPolicy, TerminalStatus, WorkflowSpec};
-use std::sync::atomic::Ordering;
+use crate::planning::BuildExecutionPlan;
 
 pub struct DriveOptions<'a> {
     pub config: &'a GlobalConfig,
     pub db_path: &'a Path,
-    /// Discard any persisted workflow progress for this spec and re-execute
-    /// from scratch.  This is the single, unambiguous knob for "I want a clean
-    /// re-run" — build-stage and install caches downstream are still governed
-    /// by their own content-addressed checks.
-    pub invalidate: bool,
     pub quiet: bool,
 }
 
-pub async fn drive_command(spec: WorkflowSpec, opts: DriveOptions<'_>) -> Result<RunOutcome> {
-    let db = InstalledDb::open(opts.db_path)
-        .await
-        .context("open database")?;
+/// Drive a build plan to completion, executing tasks batch-by-batch.
+///
+/// No persistent workflow state — resume is handled entirely by builder
+/// checkpoints (file-system sentinels keyed by plan fingerprint).
+///
+/// `concurrency` limits how many tasks within a batch run at once.
+pub async fn drive_batches<F, Fut>(
+    plan: &BuildExecutionPlan,
+    options: &DriveOptions<'_>,
+    concurrency: usize,
+    task_fn: F,
+    cancel: watch::Receiver<bool>,
+) -> Result<()>
+where
+    F: FnMut(String) -> Fut + Send,
+    Fut: std::future::Future<Output = Result<()>> + Send,
+{
+    let task_fn = Arc::new(tokio::sync::Mutex::new(task_fn));
+    let semaphore = Arc::new(Semaphore::new(concurrency.max(1)));
+    let total_batches = plan.batches().len();
+    let cancel = cancel;
 
-    if opts.invalidate {
-        crate::workflow::WorkflowStore::new(&db)
-            .clear_workflow(&spec.workflow_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("--invalidate: {}", e))?;
-    }
+    for (batch_idx, batch) in plan.batches().iter().enumerate() {
+        if *cancel.borrow() {
+            anyhow::bail!("cancelled by user");
+        }
 
-    let resources = crate::planning::summarize_build_resources(opts.config);
-    let policy = SchedulerPolicy {
-        cpu_concurrency: resources.concurrent_tasks.max(1),
-        network_concurrency: 4,
-        fail_fast: true,
-        max_attempts: Some(3),
-    };
+        if !options.quiet {
+            info!(
+                "batch {}/{}: {} task(s)",
+                batch_idx + 1,
+                total_batches,
+                batch.len()
+            );
+        }
 
-    let log_dir = opts.config.general.logs_dir.join("workflow");
-    std::fs::create_dir_all(&log_dir).ok();
+        let results: Vec<Result<()>> = stream::iter(batch.iter().cloned())
+            .map(|task| {
+                let sem = semaphore.clone();
+                let f = task_fn.clone();
+                async move {
+                    let _permit = sem
+                        .acquire()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("semaphore: {}", e))?;
+                    let fut = {
+                        let mut guard = f.lock().await;
+                        guard(task)
+                    };
+                    fut.await
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
 
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        tracing::warn!("received interrupt, cancelling workflow...");
-        let _ = cancel_tx.send(true);
-    });
-    let db_arc = Arc::new(db);
-
-    let outcome = drive(db_arc, spec, policy, log_dir, cancel_rx)
-        .await
-        .map_err(|e| anyhow::anyhow!("workflow: {}", e))?;
-
-    // Reset log suppression so subsequent commands are not affected.
-    SUPPRESS_INFO_LOGS.store(false, Ordering::Relaxed);
-
-    match outcome.status {
-        TerminalStatus::Succeeded => {
-            if !opts.quiet {
-                tracing::info!("workflow {} succeeded", outcome.workflow_id.short());
+        for result in results {
+            match result {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("batch {}/{} failed: {:#}", batch_idx + 1, total_batches, e);
+                    return Err(e);
+                }
             }
         }
-        TerminalStatus::Failed => {
-            tracing::error!("=== failures summary ===");
-            for (step_id, msg, plan, label) in &outcome.failed {
-                let ctx = match (plan, label) {
-                    (Some(p), Some(l)) => format!(" [{} / {}]", p, l),
-                    (Some(p), None) => format!(" [{}]", p),
-                    (None, Some(l)) => format!(" [{}]", l),
-                    (None, None) => String::new(),
-                };
-                tracing::error!("  step {} failed{}: {}", step_id.short(), ctx, msg);
-            }
-            tracing::error!(
-                "workflow {} failed; rerun the same command to resume, or use --invalidate to discard active workflow state",
-                outcome.workflow_id.short()
-            );
-            std::process::exit(1);
-        }
-        TerminalStatus::Aborted => {
-            tracing::error!(
-                "workflow {} aborted; rerun the same command to resume",
-                outcome.workflow_id.short()
-            );
-            std::process::exit(1);
-        }
     }
-    Ok(outcome)
+
+    if !options.quiet {
+        info!("all batches completed");
+    }
+
+    Ok(())
 }

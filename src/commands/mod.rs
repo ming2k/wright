@@ -3,7 +3,6 @@ pub mod launch;
 pub mod lint;
 pub mod package;
 pub mod prune;
-pub mod ps;
 pub mod resolve;
 pub mod system;
 
@@ -44,9 +43,6 @@ pub async fn dispatch(
 
         crate::cli::Commands::Launch(args) => {
             launch::execute_launch(args, config, &db_path, &root_dir, cli.verbose, cli.quiet).await
-        }
-        crate::cli::Commands::Ps(args) => {
-            ps::execute_ps(&db_path, args.all, args.status.as_deref()).await
         }
     }
 }

@@ -27,15 +27,13 @@ outputs, and install each completed wave before continuing.
 ## Internal Layers
 
 ```text
-bin -> cli -> commands -> operations -> workflow -> steps
-                                      -> planning
+bin -> cli -> commands -> operations -> planning
                                       -> builder / transaction / part / database
 ```
 
 - `cli` defines command-line schemas.
 - `commands` maps CLI args into operation requests and acquires command locks.
-- `operations` owns command use cases such as apply and launch.
-- `workflow` schedules resumable content-addressed DAGs.
+- `operations` owns command use cases such as apply and launch, and drives batch execution.
 - `planning` resolves targets, expands dependency policy, and constructs build waves.
 - `builder` executes one plan's lifecycle stages.
 - `transaction` mutates a target root and installed-state database.

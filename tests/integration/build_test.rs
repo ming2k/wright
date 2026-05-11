@@ -35,6 +35,7 @@ async fn test_build_hello_fixture() {
             &manifest,
             &plan_dir,
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -68,6 +69,7 @@ async fn test_build_and_archive_hello() {
             &manifest,
             &plan_dir,
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -151,6 +153,7 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -184,6 +187,7 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -245,6 +249,7 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -317,6 +322,7 @@ include = ["/usr/share/doc/.*"]
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -379,6 +385,7 @@ include = ["/usr/bin/.*"]
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -448,6 +455,7 @@ reason = "documentation is intentionally not packaged"
             &manifest,
             plan_dir.path(),
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -517,6 +525,7 @@ async fn test_build_single_stage() {
             &manifest,
             &plan_dir,
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,
@@ -539,6 +548,7 @@ async fn test_build_single_stage() {
             &plan_dir,
             Path::new("/"),
             &["prepare".to_string()],
+            &[] as &[String],
             None,
             false,
             false,
@@ -574,6 +584,7 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
             &plan_dir,
             Path::new("/"),
             &[],
+            &[] as &[String],
             Some("staging"),
             false,
             false,
@@ -796,6 +807,21 @@ retry_count = 3
         ),
     )
     .unwrap();
+
+    // Package no longer auto-builds; build first.
+    let default_build = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("build")
+        .arg("custom-out-dir")
+        .output()
+        .unwrap();
+    assert!(
+        default_build.status.success(),
+        "default build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&default_build.stdout),
+        String::from_utf8_lossy(&default_build.stderr)
+    );
 
     let default_package = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
@@ -1083,6 +1109,9 @@ retry_count = 3
         .arg("resume-main")
         .output()
         .unwrap();
+
+    eprintln!("FIRST BUILD stdout: {}", String::from_utf8_lossy(&first.stdout));
+    eprintln!("FIRST BUILD stderr: {}", String::from_utf8_lossy(&first.stderr));
 
     assert!(
         !first.status.success(),

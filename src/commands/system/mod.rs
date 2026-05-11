@@ -34,7 +34,6 @@ pub async fn execute(
 
     if let SystemCommands::Apply {
         targets,
-        invalidate,
         deps,
         rdeps,
         match_policies,
@@ -43,9 +42,8 @@ pub async fn execute(
         dry_run,
     } = command
     {
-        return apply::execute_apply(apply::ApplyArgs {
+        return apply::execute_system_apply(apply::ApplyArgs {
             targets,
-            invalidate,
             deps,
             rdeps,
             match_policies,
@@ -66,7 +64,6 @@ pub async fn execute(
         parts,
         force,
         nodeps,
-        invalidate,
         path,
     } = command
     {
@@ -79,7 +76,6 @@ pub async fn execute(
             db_path,
             root_dir,
             &part_store,
-            invalidate,
         )
         .await;
     }

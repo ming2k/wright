@@ -5,8 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 use crate::config::GlobalConfig;
-use crate::operations::apply::{build_apply_spec, ApplyRequest};
-use crate::operations::drive::{drive_command, DriveOptions};
+use crate::operations::apply::{execute_apply, ApplyRequest};
 use crate::part::store::LocalPartStore;
 use crate::planning::{DependentsMode, MatchPolicy};
 
@@ -26,7 +25,6 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
 
 pub struct ApplyArgs<'a> {
     pub targets: Vec<String>,
-    pub invalidate: bool,
     pub deps: Option<DomainArg>,
     pub rdeps: Option<DomainArg>,
     pub match_policies: Vec<MatchPolicyArg>,
@@ -59,10 +57,9 @@ fn map_match_policy(m: MatchPolicyArg) -> MatchPolicy {
     }
 }
 
-pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
+pub async fn execute_system_apply(args: ApplyArgs<'_>) -> Result<()> {
     let ApplyArgs {
         targets,
-        invalidate,
         deps,
         rdeps,
         match_policies,
@@ -86,7 +83,13 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         anyhow::bail!("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)");
     }
 
-    let spec = build_apply_spec(ApplyRequest {
+    if dry_run {
+        println!("Apply plan (dry-run):");
+        println!("  targets: {}", targets.join(", "));
+        return Ok(());
+    }
+
+    execute_apply(ApplyRequest {
         targets,
         deps: deps.map(map_resolve_domain),
         rdeps: rdeps.map(map_resolve_domain),
@@ -100,30 +103,5 @@ pub async fn execute_apply(args: ApplyArgs<'_>) -> Result<()> {
         quiet,
         part_store,
     })
-    .await?;
-
-    if dry_run {
-        println!("Apply plan (dry-run):");
-        println!(
-            "  workflow {} ({} steps)",
-            spec.workflow_id.short(),
-            spec.steps.len()
-        );
-        for s in &spec.steps {
-            println!("  {:<14} {}", s.kind, s.id.short());
-        }
-        return Ok(());
-    }
-
-    drive_command(
-        spec,
-        DriveOptions {
-            config,
-            db_path,
-            invalidate,
-            quiet,
-        },
-    )
     .await
-    .map(|_| ())
 }

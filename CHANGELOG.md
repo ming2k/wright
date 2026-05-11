@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+- **Workflow system removed** — the SQLite-backed workflow DAG scheduler (`src/workflow/`) has been deleted. Commands now execute build/package/install waves directly using the existing file-system checkpoint mechanism for resume support. This eliminates the `workflow_steps`, `workflow_runs`, and `step_dependencies` database tables.
+- **`--invalidate` flag removed** — `wright package` and `wright install` no longer accept `--invalidate`. Resume state is managed purely through builder staging checkpoints; use `--clean` or remove `build_dir` contents to force full rebuilds.
+
+### Changed
+- **Direct batch execution** — `wright apply`, `wright build`, `wright package`, and `wright install` now schedule plan execution directly via `FuturesUnordered` with concurrency limits derived from available CPUs, removing the intermediate workflow builder abstraction.
+- **Builder checkpoint resume preserved** — stopping a build mid-stage and re-running the same command resumes from the last completed stage via `StagingCheckpoint`, without requiring workflow step tracking.
+
 ## [4.2.1] - 2026-05-11
 
 ### Added
@@ -11,10 +19,6 @@
 - **Package-time ELF lint warnings removed** — advisory warnings for stale declarations and unmapped SONAMEs are no longer emitted during `wright package`. In batch builds the dependency closure is typically incomplete, making these warnings unactionable noise. They now surface globally via `wright doctor` after installation.
 
 ### Fixed
-- **Consistent workflow invalidation** — `wright package` and `wright install` now accept `--invalidate` to discard active workflow resume state before retrying.
-
-### Fixed
-- **Workflow graph drift handling** — active workflow resume state now prunes steps that are not part of the current step graph, and step identities include dependency edges so stale status is not reused after graph shape changes.
 - **Unreachable broken plans no longer block builds** — `build_dep_map` now parses only the plans actually in the build set and their direct dependencies, instead of eagerly loading every plan in the index. A malformed `plan.toml` in an unrelated plan (e.g. `btop`) no longer aborts `wright build`, `apply`, `package`, or `launch`.
 - **Bulk validation of reachable plans** — `build_dep_map` collects all parse errors across the build set before returning, so a single `wright build` invocation reports every malformed plan rather than failing on the first one.
 - **`PlanIndex::load_all` resilience** — individual parse errors during bulk manifest loading are now logged as warnings and skipped, instead of aborting the entire operation. This protects commands like `wright resolve` from unrelated broken plans.

@@ -4,7 +4,7 @@
 
 | Database | Default path | Scope | Role |
 |----------|--------------|-------|------|
-| System DB | `/var/lib/wright/wright.db` | target root | Installed state, file ownership, dependencies, transactions, workflow tracking |
+| System DB | `/var/lib/wright/wright.db` | target root | Installed state, file ownership, dependencies, transactions |
 
 ## Archive Metadata
 
@@ -34,8 +34,6 @@
 | `replaces` | rename / supersession metadata |
 | `shadowed_files` | file collision records used for divert and safe removal |
 | `transactions` | install, upgrade, remove history |
-| `workflows` | active content-addressed workflow identities for incomplete work |
-| `workflow_steps` | active per-step resume state for incomplete workflows |
 
 Build deps, link deps, and `provides` are deliberately not persisted. See
 [Dependency Philosophy](../explanation/dependency-philosophy.md) and
@@ -52,7 +50,6 @@ erDiagram
     parts ||--o{ replaces : replaces
     parts ||--o{ shadowed_files : "original owner"
     parts ||--o{ shadowed_files : "shadowed by"
-    workflows ||--o{ workflow_steps : contains
     plans {
         INTEGER id PK
         TEXT name UK
@@ -123,27 +120,6 @@ erDiagram
         TEXT backup_path
     }
 
-    workflows {
-        TEXT id PK
-        TEXT kind
-        TEXT inputs_json
-        INTEGER created_at
-    }
-
-    workflow_steps {
-        TEXT id PK
-        TEXT workflow_id FK
-        TEXT kind
-        TEXT inputs_json
-        TEXT depends_on_json
-        TEXT status
-        INTEGER attempt
-        TEXT outputs_json
-        TEXT failure_json
-        INTEGER started_at
-        INTEGER finished_at
-    }
-
 ```
 
 ## Key Constraints
@@ -153,9 +129,6 @@ erDiagram
 | `parts.name` | `UNIQUE` | Part names are globally unique identifiers |
 | `parts.origin` | `CHECK(origin IN ('dependency','build','manual','external'))` | Enforces valid provenance values at the DB layer |
 | `plans.name` | `UNIQUE` | Each plan name maps to exactly one plan record |
-| `workflows.id` | `PRIMARY KEY` | Active content-addressed workflow IDs are immutable |
-| `workflow_steps.id` | `PRIMARY KEY` | Content-addressed step IDs are immutable |
-| `workflow_steps.status` | `CHECK(status IN ('pending','running','succeeded','failed','skipped'))` | Enforces valid step lifecycle states |
 
 ## Non-Foreign-Key References
 

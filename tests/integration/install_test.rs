@@ -35,6 +35,7 @@ async fn build_hello_archive() -> PathBuf {
             plan_dir,
             Path::new("/"),
             &[],
+            &[] as &[String],
             None,
             false,
             false,
@@ -284,7 +285,6 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         parts: vec!["split-plan".to_string()],
         force: false,
         nodeps: false,
-        invalidate: false,
         path: false,
     };
     system::execute(cmd, &config, &db_path, &root, 0, false)
@@ -324,7 +324,6 @@ async fn test_install_command_requires_path_flag_for_archive_paths() {
         parts: vec![archive_path.display().to_string()],
         force: false,
         nodeps: false,
-        invalidate: false,
         path: false,
     };
     let err = system::execute(cmd, &config, &db_path, &root, 0, false)

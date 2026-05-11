@@ -57,7 +57,7 @@ async fn main() {
     .await;
 
     if let Err(e) = result {
-        tracing::error!("{}", e);
+        eprintln!("ERROR: {}", e);
         std::process::exit(1);
     }
 }

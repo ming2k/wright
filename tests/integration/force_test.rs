@@ -16,10 +16,7 @@ async fn test_apply_force_always_includes_explicit_targets() {
             version: "1.0.0",
             release: 1,
             epoch: 0,
-            description: "test",
             arch: "x86_64",
-            license: "MIT",
-            url: None,
         })
         .await
         .unwrap();

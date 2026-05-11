@@ -1,35 +1,41 @@
 # How to Resume a Failed Build
 
-Wright V4 uses **content-addressed workflows** — no `--resume` flag needed.
-Re-running the same command automatically skips already-succeeded steps and
-retries only the failed or pending work.
+Wright automatically resumes builds from the last completed lifecycle stage.
+No `--resume` flag is needed — re-running the same command checks builder
+staging checkpoints and skips stages that already succeeded.
 
 ## Resume After a Failed Build
 
 ```bash
-# First run — fails on package 15 of 30:
+# First run — fails during compile:
 wright apply curl --deps
 
 # Re-run exactly the same command:
 wright apply curl --deps
-# Already-succeeded steps are skipped; failed/pending steps are resumed.
+# Already-completed stages (fetch, verify, prepare, configure) are skipped;
+# compilation and later stages resume from where they left off.
 ```
 
-Wright records workflow state for the normalized inputs: targets, flags, and
-dependency scope. On re-invocation, the same inputs produce the same workflow
-ID, so the runner finds the prior step state and picks up where it left off.
+The builder records a `StagingCheckpoint` after each lifecycle stage finishes.
+On re-invocation, the checkpoint compares the stored plan fingerprint against
+the current plan; when they match, the stage is skipped.
 
 ## Start Fresh
 
-Use `--invalidate` to discard all prior workflow state and start from scratch:
+Use `--clean` to remove the build workspace and start from scratch:
 
 ```bash
-wright apply curl --deps --invalidate
+wright apply curl --deps --clean
+```
+
+Use `--force` to re-run all lifecycle stages even when stage sentinels exist:
+
+```bash
+wright apply curl --deps --force
 ```
 
 ## More Detail
 
-See [Build Resume Model](../explanation/build-resume-model.md) for the database
-workflow state behind resume and for how `source_dir`, `work/`, stage
-sentinels, `outputs/`, archives, `--invalidate`, `--clean`, and `--force`
-interact.
+See [Build Resume Model](../explanation/build-resume-model.md) for how
+`source_dir`, `work/`, stage sentinels, `outputs/`, archives, `--clean`, and
+`--force` interact.

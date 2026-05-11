@@ -1,15 +1,17 @@
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
+
 use crate::builder::Builder;
 use crate::cli::build::BuildArgs;
 use crate::config::GlobalConfig;
-use crate::operations::drive::{drive_command, DriveOptions};
+use crate::operations::drive::{drive_batches, DriveOptions};
 use crate::plan::manifest::PlanManifest;
-use crate::planning::BuildOptions;
-use crate::workflow::builders::build_build_workflow;
+use crate::planning::{create_execution_plan, BuildExecutionPlan, BuildOptions};
 
 pub async fn execute_build(
     args: BuildArgs,
@@ -42,15 +44,12 @@ pub async fn execute_build(
     }
 
     // Fast path: single target with no dep resolution needed.
-    // Bypass workflow construction and drive for the common case of
-    // `wright build myplan`, reducing overhead by ~10-20ms.
     let can_fast_path = all_targets.len() == 1
         && !all_targets[0].starts_with('@')
         && args.stage.is_empty()
         && args.until_stage.is_none()
         && !args.fetch
-        && !args.checksum
-        && !args.invalidate;
+        && !args.checksum;
 
     if can_fast_path {
         let target = &all_targets[0];
@@ -59,7 +58,7 @@ pub async fn execute_build(
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
                 .with_context(|| format!("read plan {}", target))?;
             let builder = Builder::new(config.clone());
-            let mut extra_env = std::collections::HashMap::new();
+            let mut extra_env = HashMap::new();
             if args.mvp {
                 extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
             }
@@ -101,18 +100,143 @@ pub async fn execute_build(
         nproc_per_isolation: config.build.nproc_per_isolation,
     };
 
-    let spec = build_build_workflow(Arc::new(config.clone()), all_targets, options)
-        .map_err(|e| anyhow::anyhow!("build workflow: {}", e))?;
+    let plan = create_execution_plan(&config, all_targets, &options)
+        .map_err(|e| anyhow::anyhow!("create execution plan: {}", e))?;
 
-    drive_command(
-        spec,
-        DriveOptions {
-            config,
-            db_path,
-            invalidate: args.invalidate,
-            quiet,
+    let plan = Arc::new(plan);
+    let builder = Arc::new(Builder::new(config.clone()));
+    let configure_lock = Arc::new(Mutex::new(()));
+    let compile_lock = Arc::new(Mutex::new(()));
+    let resources = crate::planning::summarize_build_resources(config);
+
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        let _ = cancel_tx.send(true);
+    });
+
+    drive_batches(
+        &plan,
+        &DriveOptions { config, db_path, quiet },
+        resources.concurrent_tasks,
+        |task| {
+            let plan = Arc::clone(&plan);
+            let builder = Arc::clone(&builder);
+            let options = options.clone();
+            let configure_lock = Arc::clone(&configure_lock);
+            let compile_lock = Arc::clone(&compile_lock);
+            let config = config.clone();
+
+            async move {
+                let plan_path = plan
+                    .plan_path_for_task(&task)
+                    .ok_or_else(|| anyhow::anyhow!("no path for task {}", task))?;
+                let base = BuildExecutionPlan::task_base_name(&task);
+                let is_bootstrap = task.ends_with(":bootstrap");
+                let bootstrap_excluded = plan.bootstrap_excluded_for(&task).to_vec();
+
+                let manifest = PlanManifest::from_file(plan_path)
+                    .with_context(|| format!("read plan {}", base))?;
+
+                let mut extra_env = HashMap::new();
+                if is_bootstrap || options.mvp {
+                    extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
+                    for dep in &bootstrap_excluded {
+                        let key = format!(
+                            "WRIGHT_BOOTSTRAP_WITHOUT_{}",
+                            dep.to_uppercase().replace('-', "_")
+                        );
+                        extra_env.insert(key, "1".to_string());
+                    }
+                } else {
+                    extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
+                }
+
+                // Post-bootstrap full builds need to invalidate mvp checkpoints
+                let force = if !is_bootstrap && plan.is_post_bootstrap_full(&task) {
+                    let build_root = builder.build_root(&manifest)?;
+                    let work_dir = build_root.join("work");
+                    let ck = crate::builder::checkpoint::StageCheckpoint::new(
+                        work_dir,
+                        Some("mvp".to_string()),
+                    );
+                    ck.invalidate_all();
+                    true
+                } else {
+                    options.force
+                };
+
+                // After a bootstrap pass, clear staging checkpoints so the next
+                // (full) build does not mistakenly reuse mvp staging outputs.
+                if is_bootstrap {
+                    let build_root = builder.build_root(&manifest)?;
+                    let work_dir = build_root.join("work");
+                    let ck = crate::builder::checkpoint::StageCheckpoint::new(
+                        work_dir,
+                        Some("mvp".to_string()),
+                    );
+                    ck.invalidate_from("staging");
+                }
+
+                let plan_dir = plan_path
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("plan path has no parent"))?
+                    .to_path_buf();
+
+                // Intra-step idempotence: skip when staging/ is already populated.
+                let build_root = builder.build_root(&manifest)?;
+                let can_short_circuit = !force
+                    && options.stages.is_empty()
+                    && options.until_stage.is_none()
+                    && !options.fetch_only;
+                if can_short_circuit && staging_is_populated(&build_root) {
+                    tracing::info!("{} already built; reusing populated staging/", base);
+                    return Ok(());
+                }
+
+                builder
+                    .build(
+                        &manifest,
+                        &plan_dir,
+                        std::path::Path::new("/"),
+                        &options.stages,
+                        &options.force_stage,
+                        options.until_stage.as_deref(),
+                        options.fetch_only,
+                        options.skip_check,
+                        force,
+                        &extra_env,
+                        options.verbose,
+                        config.build.nproc_per_isolation,
+                        Some(configure_lock),
+                        Some(compile_lock),
+                        None,
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| anyhow::anyhow!("build {}: {}", base, e))
+            }
         },
+        cancel_rx,
     )
     .await
-    .map(|_| ())
+}
+
+fn staging_is_populated(build_root: &std::path::Path) -> bool {
+    dir_is_populated(&build_root.join("staging"))
+}
+
+fn dir_is_populated(dir: &std::path::Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                return true;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) && dir_is_populated(&p) {
+                return true;
+            }
+        }
+    }
+    false
 }

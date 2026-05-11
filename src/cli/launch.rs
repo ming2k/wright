@@ -39,11 +39,4 @@ pub struct LaunchArgs {
     /// Rebuild and reinstall parts that already exist in the target root.
     #[arg(long, short = 'f')]
     pub force: bool,
-
-    /// Discard cached workflow progress and re-execute from scratch.
-    /// Build-stage and install caches are still subject to their own
-    /// content-addressed checks; use the plan's own rebuild flags for
-    /// deeper invalidation.
-    #[arg(long)]
-    pub invalidate: bool,
 }

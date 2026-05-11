@@ -186,12 +186,12 @@ impl<'a> LifecyclePipeline<'a> {
             }
 
             let is_forced = self.force_stage.contains(stage_name);
-            if checkpoint_enabled
-                && !is_forced
-                && self
-                    .checkpoint
-                    .is_complete(stage_name, &self.plan_fingerprint)
-            {
+            let checkpoint_complete = if checkpoint_enabled && !is_forced {
+                self.checkpoint.is_complete(stage_name, &self.plan_fingerprint)
+            } else {
+                false
+            };
+            if checkpoint_complete {
                 info!(
                     "{}",
                     logging::stage_skipped(&self.manifest.metadata.name, stage_name)

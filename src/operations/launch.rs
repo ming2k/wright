@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
-use crate::operations::apply::{build_apply_spec, ApplyRequest};
-use crate::operations::drive::{drive_command, DriveOptions};
+use crate::operations::apply::{execute_apply, ApplyRequest};
 use crate::part::group::{self, GroupManifest};
 use crate::part::store::LocalPartStore;
 
@@ -16,7 +15,6 @@ pub struct LaunchRequest {
     pub plan_targets: Vec<String>,
     pub dry_run: bool,
     pub force: bool,
-    pub invalidate: bool,
 }
 
 pub async fn execute_launch(
@@ -177,7 +175,6 @@ async fn launch_from_group(
             part_store: &part_store,
         },
         false,
-        request.invalidate,
     )
     .await?;
 
@@ -279,7 +276,6 @@ async fn launch_from_plans(
             part_store: &part_store,
         },
         request.dry_run,
-        request.invalidate,
     )
     .await?;
 
@@ -302,36 +298,14 @@ fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
     crate::planning::setup_part_store(config).map_err(Into::into)
 }
 
-async fn build_and_apply(request: ApplyRequest<'_>, dry_run: bool, invalidate: bool) -> Result<()> {
-    let config = request.config;
-    let db_path = request.db_path;
-    let quiet = request.quiet;
-    let spec = build_apply_spec(request).await?;
-
+async fn build_and_apply(request: ApplyRequest<'_>, dry_run: bool) -> Result<()> {
     if dry_run {
         println!("Apply plan (dry-run):");
-        println!(
-            "  workflow {} ({} steps)",
-            spec.workflow_id.short(),
-            spec.steps.len()
-        );
-        for s in &spec.steps {
-            println!("  {:<14} {}", s.kind, s.id.short());
-        }
+        println!("  targets: {}", request.targets.join(", "));
         return Ok(());
     }
 
-    drive_command(
-        spec,
-        DriveOptions {
-            config,
-            db_path,
-            invalidate,
-            quiet,
-        },
-    )
-    .await
-    .map(|_| ())
+    execute_apply(request).await
 }
 
 fn ensure_target_skeleton(root_dir: &Path) -> std::io::Result<()> {
@@ -549,37 +523,44 @@ default_isolation = "{}"
 }
 
 async fn apply_group_config(root_dir: &Path, cfg: &group::GroupConfig) -> Result<()> {
-    use crate::workflow::steps::{ApplyConfigInputs, ApplyConfigStep};
-    use crate::workflow::WorkflowBuilder;
-
-    let inputs = ApplyConfigInputs {
-        root_dir: root_dir.to_path_buf(),
-        hostname: cfg.hostname.clone(),
-        timezone: cfg.timezone.clone(),
-        locale: cfg.locale.clone(),
-        services: {
-            let mut s = cfg.services.clone();
-            s.sort();
-            s.dedup();
-            s
-        },
-    };
-
-    let mut wfb = WorkflowBuilder::new("apply_config", &inputs)
-        .map_err(|e| anyhow::anyhow!("workflow builder: {}", e))?;
-    wfb.add(ApplyConfigStep::new(inputs, Vec::new()))
-        .map_err(|e| anyhow::anyhow!("apply config step: {}", e))?;
-    let spec = wfb.build();
-
-    drive_command(
-        spec,
-        DriveOptions {
-            config: &GlobalConfig::default(),
-            db_path: &root_dir.join("var/lib/wright/wright.db"),
-            invalidate: false,
-            quiet: true,
-        },
-    )
-    .await
-    .map(|_| ())
+    if let Some(ref hostname) = cfg.hostname {
+        let path = root_dir.join("etc/hostname");
+        std::fs::write(&path, format!("{}\n", hostname))
+            .map_err(|e| anyhow::anyhow!("write hostname: {}", e))?;
+    }
+    if let Some(ref tz) = cfg.timezone {
+        let target = format!("../usr/share/zoneinfo/{}", tz);
+        let link = root_dir.join("etc/localtime");
+        let _ = std::fs::remove_file(&link);
+        if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
+            warn!("failed to symlink {} -> {}: {}", link.display(), target, e);
+        }
+    }
+    if let Some(ref locale) = cfg.locale {
+        let path = root_dir.join("etc/locale.conf");
+        std::fs::write(&path, format!("LANG={}\n", locale))
+            .map_err(|e| anyhow::anyhow!("write locale: {}", e))?;
+    }
+    if !cfg.services.is_empty() {
+        let svc_root = root_dir.join("var/service");
+        std::fs::create_dir_all(&svc_root)
+            .map_err(|e| anyhow::anyhow!("mkdir var/service: {}", e))?;
+        for service in &cfg.services {
+            let target = format!("/etc/sv/{}", service);
+            let link = svc_root.join(service);
+            if link.exists() {
+                continue;
+            }
+            if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
+                warn!(
+                    "failed to enable runit service {}: {} -> {}: {}",
+                    service,
+                    link.display(),
+                    target,
+                    e
+                );
+            }
+        }
+    }
+    Ok(())
 }

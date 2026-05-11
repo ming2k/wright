@@ -19,7 +19,6 @@ pub async fn execute_launch(
         plan_targets: args.plan_targets,
         dry_run: args.dry_run,
         force: args.force,
-        invalidate: args.invalidate,
     };
     crate::operations::launch::execute_launch(request, config, db_path, root_dir, verbose, quiet)
         .await

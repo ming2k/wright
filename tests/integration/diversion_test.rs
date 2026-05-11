@@ -45,6 +45,7 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
             &manifest,
             &plan_dir,
             Path::new("/"),
+            &[] as &[String],
             &[],
             None,
             false,

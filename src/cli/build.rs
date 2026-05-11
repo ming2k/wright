@@ -9,8 +9,7 @@ Examples:
   wright resolve openssl --rdeps | wright build
   echo -e 'curl\\nwget' | wright build --rebuild
 
-Resume: rerunning the same command resumes any incomplete run automatically.
-Use --invalidate to discard cached progress and re-compute.";
+Resume is automatic via builder file-system checkpoints keyed by plan content hash.";
 
 #[derive(Parser, Debug, Clone)]
 pub struct BuildArgs {
@@ -50,13 +49,6 @@ pub struct BuildArgs {
     /// script or dependencies and need a clean rebuild.
     #[arg(long, short = 'R')]
     pub rebuild: bool,
-
-    /// Discard cached workflow progress and re-execute from scratch.
-    /// Build-stage and install caches are still subject to their own
-    /// content-addressed checks; use the plan's own rebuild flags for
-    /// deeper invalidation.
-    #[arg(long)]
-    pub invalidate: bool,
 
     /// Build using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it

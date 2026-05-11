@@ -76,7 +76,6 @@ runtime_deps = ["wayland"]
 
     let cmd = SystemCommands::Apply {
         targets: vec!["wayland-utils".to_string()],
-        invalidate: false,
         deps: Some(DomainArg::All),
         rdeps: None,
         match_policies: vec![MatchPolicyArg::Missing],
@@ -242,3 +241,249 @@ retry_count = 3
     );
     assert!(root.join("usr/share/apply-resume-main").exists());
 }
+
+#[tokio::test]
+async fn test_apply_resolve_build_set_includes_runtime_deps() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans = temp.path().join("plans");
+    let parts = temp.path().join("parts");
+    let state = temp.path().join("wright");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&plans).unwrap();
+    fs::create_dir_all(&parts).unwrap();
+    fs::create_dir_all(&state).unwrap();
+
+    let db_path = state.join("wright.db");
+
+    let wayland_dir = plans.join("wayland");
+    fs::create_dir_all(&wayland_dir).unwrap();
+    fs::write(
+        wayland_dir.join("plan.toml"),
+        r#"
+name = "wayland"
+version = "1.22.0"
+release = 1
+description = "Wayland"
+license = "MIT"
+arch = "x86_64"
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = "mkdir -p ${STAGING_DIR}/usr/lib"
+"#,
+    )
+    .unwrap();
+
+    let utils_dir = plans.join("wayland-utils");
+    fs::create_dir_all(&utils_dir).unwrap();
+    fs::write(
+        utils_dir.join("plan.toml"),
+        r#"
+name = "wayland-utils"
+version = "1.2.0"
+release = 1
+description = "Wayland utils"
+license = "MIT"
+arch = "x86_64"
+link_deps = []
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = "mkdir -p ${STAGING_DIR}/usr/bin"
+
+[[output]]
+name = "wayland-utils"
+runtime_deps = ["wayland"]
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    config.general.parts_dir = parts;
+    config.general.db_path = db_path.clone();
+    config.general.plans_dir = plans.clone();
+
+    let opts = wright::planning::ResolveOptions {
+        deps: Some(wright::planning::DependentsMode::All),
+        rdeps: None,
+        match_policies: vec![wright::planning::MatchPolicy::Missing],
+        depth: Some(0),
+        include_targets: true,
+        preserve_targets: false,
+    };
+
+    let build_set = wright::planning::resolve_build_set(
+        &config,
+        vec!["wayland-utils".to_string()],
+        opts,
+    )
+    .await
+    .unwrap();
+
+    println!("Build set: {:?}", build_set);
+    assert!(
+        build_set.contains(&"wayland".to_string()),
+        "wayland (runtime dep) should be in build set, got: {:?}",
+        build_set
+    );
+    assert!(
+        build_set.contains(&"wayland-utils".to_string()),
+        "wayland-utils should be in build set"
+    );
+}
+
+#[test]
+fn test_apply_installs_runtime_dependencies() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans = temp.path().join("plans");
+    let parts = temp.path().join("parts");
+    let sources = temp.path().join("sources");
+    let state = temp.path().join("wright");
+    let logs = temp.path().join("logs");
+    let build = temp.path().join("build");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&plans).unwrap();
+    fs::create_dir_all(&parts).unwrap();
+    fs::create_dir_all(&sources).unwrap();
+    fs::create_dir_all(&state).unwrap();
+    fs::create_dir_all(&logs).unwrap();
+    fs::create_dir_all(&build).unwrap();
+
+    let wayland_dir = plans.join("wayland");
+    fs::create_dir_all(&wayland_dir).unwrap();
+    fs::write(
+        wayland_dir.join("plan.toml"),
+        r#"
+name = "wayland"
+version = "1.22.0"
+release = 1
+description = "Wayland"
+license = "MIT"
+arch = "x86_64"
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/wayland-installed"
+"#,
+    )
+    .unwrap();
+
+    let utils_dir = plans.join("wayland-utils");
+    fs::create_dir_all(&utils_dir).unwrap();
+    fs::write(
+        utils_dir.join("plan.toml"),
+        r#"
+name = "wayland-utils"
+version = "1.2.0"
+release = 1
+description = "Wayland utils"
+license = "MIT"
+arch = "x86_64"
+link_deps = []
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/wayland-utils-installed"
+
+[[output]]
+name = "wayland-utils"
+runtime_deps = ["wayland"]
+"#,
+    )
+    .unwrap();
+
+    let config_path = temp.path().join("wright.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+parts_dir = "{}"
+source_dir = "{}"
+db_path = "{}"
+logs_dir = "{}"
+executors_dir = "/etc/wright/executors"
+assemblies_dir = "{}"
+
+[build]
+build_dir = "{}"
+default_isolation = "none"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans.display(),
+            parts.display(),
+            sources.display(),
+            state.join("wright.db").display(),
+            logs.display(),
+            temp.path().join("assemblies").display(),
+            build.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--root")
+        .arg(&root)
+        .arg("apply")
+        .arg("wayland-utils")
+        .arg("--deps")
+        .output()
+        .unwrap();
+
+    println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+    println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+
+    assert!(
+        output.status.success(),
+        "apply failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        root.join("usr/share/wayland-installed").exists(),
+        "runtime dependency 'wayland' should be installed"
+    );
+    assert!(
+        root.join("usr/share/wayland-utils-installed").exists(),
+        "target 'wayland-utils' should be installed"
+    );
+}
+
+#[tokio::test]
+async fn test_apply_runtime_deps_at_plan_level_ignored() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans = temp.path().join("plans");
+    let parts = temp.path().join("parts");
+    let state = temp.path().join("wright");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&plans).unwrap();
+    fs::create_dir_all(&parts).unwrap();
+    fs::create_dir_all(&state).unwrap();
+
+    let db_path = state.join("wright.db");
+
+    let dep_dir = plans.join("runtime-dep");
+    fs::create_dir_all(&dep_dir).unwrap();
+    fs::write(
+        dep_dir.join("plan.toml"),
+        r#"
+name = "runtime-dep"
+version = "1.0.0"
+release = 1
+description = "dep"
+license = "MIT"
+arch = "x86_64"
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = "mkdir -p ${STAGING_DIR}/usr/lib"
