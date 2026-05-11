@@ -1,8 +1,9 @@
-use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
+
+use crate::error::{Result, WrightError};
 
 use tokio::sync::Mutex;
 
@@ -25,13 +26,13 @@ pub async fn execute_build(
         crate::util::lock::LockIdentity::Command("build"),
         crate::util::lock::LockMode::Exclusive,
     )
-    .context("failed to acquire build command lock")?;
+        .map_err(|e| WrightError::LockError(format!("failed to acquire build command lock: {}", e)))?;
 
     let mut all_targets = args.targets;
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         for line in std::io::stdin().lock().lines() {
-            let line = line.context("failed to read target from stdin")?;
+            let line = line.map_err(|e| WrightError::IoError(e))?;
             let trimmed = line.trim().to_string();
             if !trimmed.is_empty() {
                 all_targets.push(trimmed);
@@ -40,7 +41,7 @@ pub async fn execute_build(
     }
 
     if all_targets.is_empty() {
-        anyhow::bail!("no targets specified");
+        return Err(WrightError::BuildError("no targets specified".into()));
     }
 
     // Fast path: single target with no dep resolution needed.
@@ -56,7 +57,7 @@ pub async fn execute_build(
         let plan_path = std::path::Path::new(target);
         if plan_path.is_dir() {
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
-                .with_context(|| format!("read plan {}", target))?;
+                .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", target, e)))?;
             let builder = Builder::new(config.clone());
             let mut extra_env = HashMap::new();
             if args.mvp {
@@ -101,7 +102,7 @@ pub async fn execute_build(
     };
 
     let plan = create_execution_plan(&config, all_targets, &options)
-        .map_err(|e| anyhow::anyhow!("create execution plan: {}", e))?;
+        .map_err(|e| WrightError::BuildError(format!("create execution plan: {}", e)))?;
 
     let plan = Arc::new(plan);
     let builder = Arc::new(Builder::new(config.clone()));
@@ -130,13 +131,13 @@ pub async fn execute_build(
             async move {
                 let plan_path = plan
                     .plan_path_for_task(&task)
-                    .ok_or_else(|| anyhow::anyhow!("no path for task {}", task))?;
+                    .ok_or_else(|| WrightError::BuildError(format!("no path for task {}", task)))?;
                 let base = BuildExecutionPlan::task_base_name(&task);
                 let is_bootstrap = task.ends_with(":bootstrap");
                 let bootstrap_excluded = plan.bootstrap_excluded_for(&task).to_vec();
 
                 let manifest = PlanManifest::from_file(plan_path)
-                    .with_context(|| format!("read plan {}", base))?;
+                    .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", base, e)))?;
 
                 let mut extra_env = HashMap::new();
                 if is_bootstrap || options.mvp {
@@ -180,7 +181,7 @@ pub async fn execute_build(
 
                 let plan_dir = plan_path
                     .parent()
-                    .ok_or_else(|| anyhow::anyhow!("plan path has no parent"))?
+                    .ok_or_else(|| WrightError::BuildError("plan path has no parent".into()))?
                     .to_path_buf();
 
                 // Intra-step idempotence: skip when staging/ is already populated.
@@ -214,7 +215,7 @@ pub async fn execute_build(
                     )
                     .await
                     .map(|_| ())
-                    .map_err(|e| anyhow::anyhow!("build {}: {}", base, e))
+                    .map_err(|e| WrightError::BuildError(format!("build {}: {}", base, e)))
             }
         },
         cancel_rx,

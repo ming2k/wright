@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightError};
 use owo_colors::OwoColorize;
 use std::collections::{HashMap, HashSet};
 use std::io::{IsTerminal, Write};
@@ -29,7 +29,7 @@ pub async fn execute_resolve(
 async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()> {
     let db = InstalledDb::open(db_path)
         .await
-        .context("failed to open installed database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open installed database: {}", e)))?;
     let color = std::io::stdout().is_terminal();
     let mut buf = Vec::new();
 
@@ -52,7 +52,7 @@ async fn render_installed_tree(args: &ResolveArgs, db_path: &Path) -> Result<()>
             writeln!(buf)?;
         }
 
-        let part = db.get_part(target).await.context("failed to query part")?;
+        let part = db.get_part(target).await.map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))?;
         if part.is_none() {
             tracing::error!("part '{}' is not installed", target);
             std::process::exit(1);

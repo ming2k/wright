@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::{Result, WrightError};
 use futures_util::stream::{self, StreamExt};
 use tokio::sync::Semaphore;
 use tokio::sync::watch;
@@ -46,7 +46,7 @@ where
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if *cancel.borrow() {
-            anyhow::bail!("cancelled by user");
+            return Err(WrightError::BuildError("cancelled by user".into()));
         }
 
         if !options.quiet {
@@ -66,7 +66,7 @@ where
                     let _permit = sem
                         .acquire()
                         .await
-                        .map_err(|e| anyhow::anyhow!("semaphore: {}", e))?;
+                        .map_err(|e| WrightError::BuildError(format!("semaphore: {}", e)))?;
                     let fut = {
                         let mut guard = f.lock().await;
                         guard(task)

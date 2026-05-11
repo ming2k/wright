@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
+use crate::error::{Result, WrightError};
 
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
@@ -26,12 +26,12 @@ pub async fn execute_launch(
     quiet: bool,
 ) -> Result<()> {
     if root_dir == Path::new("/") {
-        anyhow::bail!(
-            "wright launch refuses to fill `/`; pass --root <PATH> pointing at a mounted target root"
-        );
+        return Err(WrightError::BuildError(
+            "wright launch refuses to fill `/`; pass --root <PATH> pointing at a mounted target root".into()
+        ));
     }
     ensure_target_skeleton(root_dir)
-        .with_context(|| format!("failed to prepare target root {}", root_dir.display()))?;
+        .map_err(|e| WrightError::BuildError(format!("failed to prepare target root {}: {}", root_dir.display(), e)))?;
 
     // Isolate build outputs under the target root so the host is not polluted.
     let mut launch_config = config.clone();
@@ -39,7 +39,7 @@ pub async fn execute_launch(
 
     if let Some(group_path) = request.group.clone() {
         let manifest = group::read_manifest(&group_path)
-            .with_context(|| format!("read group {}", group_path.display()))?;
+            .map_err(|e| WrightError::BuildError(format!("read group {}: {}", group_path.display(), e)))?;
         return launch_from_group(
             manifest,
             &request,
@@ -78,7 +78,7 @@ pub async fn execute_launch(
         .await;
     }
 
-    anyhow::bail!("wright launch needs --group or targets to launch; nothing to do")
+    return Err(WrightError::BuildError("wright launch needs --group or targets to launch; nothing to do".into()))
 }
 
 async fn launch_from_group(
@@ -134,25 +134,26 @@ async fn launch_from_group(
     let target_plans_dir = root_dir.join("var/lib/wright/plans");
     let target_groups_dir = root_dir.join("var/lib/wright/groups");
     sync_plans_to_target(&config.general.plans_dir, &target_plans_dir)
-        .context("sync host plans into target root")?;
+        .map_err(|e| WrightError::BuildError(format!("sync host plans into target root: {}", e)))?;
     for extra_dir in &config.general.extra_plans_dirs {
         sync_plans_to_target(extra_dir, &target_plans_dir)
-            .context("sync extra plans into target root")?;
+            .map_err(|e| WrightError::BuildError(format!("sync extra plans into target root: {}", e)))?;
     }
     if let Some(group_path) = request.group.as_ref() {
         sync_groups_to_target(&[group_path.clone()], &target_groups_dir)
-            .context("sync group manifest into target root")?;
+            .map_err(|e| WrightError::BuildError(format!("sync group manifest into target root: {}", e)))?;
     }
-    write_target_wright_toml(root_dir, config).context("write target wright.toml")?;
+    write_target_wright_toml(root_dir, config)
+        .map_err(|e| WrightError::BuildError(format!("write target wright.toml: {}", e)))?;
 
     // Pre-register external assumptions.
     let db = InstalledDb::open(db_path)
         .await
-        .context("failed to open target database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open target database: {}", e)))?;
     for assume in &manifest.assumes {
         db.assume_part(&assume.name, &assume.version)
             .await
-            .with_context(|| format!("failed to assume {}", assume.name))?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e)))?;
     }
     drop(db);
 
@@ -197,7 +198,7 @@ async fn launch_from_plans(
     quiet: bool,
 ) -> Result<()> {
     if request.plan_targets.is_empty() {
-        anyhow::bail!("--plans needs one or more plan or group names to launch");
+        return Err(WrightError::BuildError("--plans needs one or more plan or group names to launch".into()));
     }
 
     let mut launch_config = config.clone();
@@ -214,7 +215,7 @@ async fn launch_from_plans(
         group::expand_group_references(request.plan_targets.clone(), &groups_dirs)?;
 
     if targets.is_empty() {
-        anyhow::bail!("no plans to build after expanding groups");
+        return Err(WrightError::BuildError("no plans to build after expanding groups".into()));
     }
 
     // Copy plans and groups into the target so the installed system can
@@ -222,12 +223,12 @@ async fn launch_from_plans(
     let target_plans_dir = root_dir.join("var/lib/wright/plans");
     let target_groups_dir = root_dir.join("var/lib/wright/groups");
     sync_plans_to_target(&plans_dir, &target_plans_dir)
-        .context("sync source plans into target root")?;
+        .map_err(|e| WrightError::BuildError(format!("sync source plans into target root: {}", e)))?;
     sync_plans_to_target(&config.general.plans_dir, &target_plans_dir)
-        .context("sync host plans into target root")?;
+        .map_err(|e| WrightError::BuildError(format!("sync host plans into target root: {}", e)))?;
     for extra_dir in &config.general.extra_plans_dirs {
         sync_plans_to_target(extra_dir, &target_plans_dir)
-            .context("sync extra plans into target root")?;
+            .map_err(|e| WrightError::BuildError(format!("sync extra plans into target root: {}", e)))?;
     }
 
     // Collect group files that were referenced and sync them too.
@@ -241,9 +242,10 @@ async fn launch_from_plans(
     }
     if !referenced_groups.is_empty() {
         sync_groups_to_target(&referenced_groups, &target_groups_dir)
-            .context("sync referenced groups into target root")?;
+            .map_err(|e| WrightError::BuildError(format!("sync referenced groups into target root: {}", e)))?;
     }
-    write_target_wright_toml(root_dir, config).context("write target wright.toml")?;
+    write_target_wright_toml(root_dir, config)
+        .map_err(|e| WrightError::BuildError(format!("write target wright.toml: {}", e)))?;
 
     let part_store = setup_part_store(config)?;
 
@@ -251,11 +253,11 @@ async fn launch_from_plans(
     if !group_assumes.is_empty() {
         let db = InstalledDb::open(db_path)
             .await
-            .context("failed to open target database")?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to open target database: {}", e)))?;
         for assume in &group_assumes {
             db.assume_part(&assume.name, &assume.version)
                 .await
-                .with_context(|| format!("failed to assume {}", assume.name))?;
+                .map_err(|e| WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e)))?;
         }
         drop(db);
     }
@@ -348,7 +350,7 @@ fn sync_plans_to_target(source_dir: &Path, target_plans_dir: &Path) -> Result<()
         let plan_name = path.file_name().unwrap_or_default();
         let target_plan_dir = target_plans_dir.join(&plan_name);
         let stats = sync_dir_with_stats(&path, &target_plan_dir)
-            .with_context(|| format!("sync plan {} to target", plan_name.to_string_lossy()))?;
+            .map_err(|e| WrightError::BuildError(format!("sync plan {} to target: {}", plan_name.to_string_lossy(), e)))?;
         total_stats.copied += stats.copied;
         total_stats.skipped += stats.skipped;
         total_stats.removed += stats.removed;
@@ -387,7 +389,7 @@ fn sync_groups_to_target(source_groups: &[PathBuf], target_groups_dir: &Path) ->
         let target = target_groups_dir.join(file_name);
         if should_copy_file(source, &target) {
             std::fs::copy(source, &target)
-                .with_context(|| format!("sync group {} to target", file_name.to_string_lossy()))?;
+                .map_err(|e| WrightError::BuildError(format!("sync group {} to target: {}", file_name.to_string_lossy(), e)))?;
             debug!("Group {} synced", file_name.to_string_lossy());
             synced += 1;
         } else {
@@ -518,7 +520,7 @@ default_isolation = "{}"
         config.general.arch, config.build.default_isolation,
     );
     std::fs::write(&target_config, content)
-        .with_context(|| format!("write {}", target_config.display()))?;
+        .map_err(|e| WrightError::IoError(e))?;
     Ok(())
 }
 
@@ -526,7 +528,7 @@ async fn apply_group_config(root_dir: &Path, cfg: &group::GroupConfig) -> Result
     if let Some(ref hostname) = cfg.hostname {
         let path = root_dir.join("etc/hostname");
         std::fs::write(&path, format!("{}\n", hostname))
-            .map_err(|e| anyhow::anyhow!("write hostname: {}", e))?;
+            .map_err(|e| WrightError::IoError(e))?;
     }
     if let Some(ref tz) = cfg.timezone {
         let target = format!("../usr/share/zoneinfo/{}", tz);
@@ -539,12 +541,12 @@ async fn apply_group_config(root_dir: &Path, cfg: &group::GroupConfig) -> Result
     if let Some(ref locale) = cfg.locale {
         let path = root_dir.join("etc/locale.conf");
         std::fs::write(&path, format!("LANG={}\n", locale))
-            .map_err(|e| anyhow::anyhow!("write locale: {}", e))?;
+            .map_err(|e| WrightError::IoError(e))?;
     }
     if !cfg.services.is_empty() {
         let svc_root = root_dir.join("var/service");
         std::fs::create_dir_all(&svc_root)
-            .map_err(|e| anyhow::anyhow!("mkdir var/service: {}", e))?;
+            .map_err(|e| WrightError::IoError(e))?;
         for service in &cfg.services {
             let target = format!("/etc/sv/{}", service);
             let link = svc_root.join(service);

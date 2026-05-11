@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use crate::error::Result;
 
 use crate::cli::launch::LaunchArgs;
 use crate::config::GlobalConfig;

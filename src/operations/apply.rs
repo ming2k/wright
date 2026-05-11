@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightError};
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -49,9 +49,9 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
     } = request;
 
     if targets.is_empty() {
-        anyhow::bail!(
-            "no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)"
-        );
+        return Err(WrightError::BuildError(
+            "no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)".into()
+        ));
     }
 
     let groups_dirs: Vec<PathBuf> = vec![config.general.groups_dir.clone()];
@@ -59,7 +59,7 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
         group::expand_group_references(targets, &groups_dirs)?;
 
     if targets.is_empty() {
-        anyhow::bail!("no plans to build after expanding groups");
+        return Err(WrightError::BuildError("no plans to build after expanding groups".into()));
     }
 
     register_group_assumptions(db_path, &group_assumes).await?;
@@ -89,14 +89,14 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
     let build_set: Vec<String> =
         resolve_build_set(config, targets.clone(), resolve_opts.clone())
             .await
-            .map_err(|e| anyhow::anyhow!("resolve_build_set: {}", e))?;
+            .map_err(|e| WrightError::BuildError(format!("resolve_build_set: {}", e)))?;
 
     let plan_dirs = crate::planning::plan_search_dirs(config);
     let explicit_plan_names = resolve_explicit_plan_names(&plan_dirs, &targets)
-        .map_err(|e| anyhow::anyhow!("explicit plan names: {}", e))?;
+        .map_err(|e| WrightError::BuildError(format!("explicit plan names: {}", e)))?;
 
     let plan = create_execution_plan(config, build_set, &build_opts)
-        .map_err(|e| anyhow::anyhow!("create_execution_plan: {}", e))?;
+        .map_err(|e| WrightError::BuildError(format!("create_execution_plan: {}", e)))?;
 
     let plan = Arc::new(plan);
     let builder = Arc::new(Builder::new(config.clone()));
@@ -106,7 +106,7 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
 
     let db = InstalledDb::open(db_path)
         .await
-        .context("open database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
 
     let total_batches = plan.batches().len();
 
@@ -135,13 +135,13 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
             let handle = tokio::spawn(async move {
                 let plan_path = plan
                     .plan_path_for_task(&task_for_handle)
-                    .ok_or_else(|| anyhow::anyhow!("no path for task {}", task_for_handle))?;
+                    .ok_or_else(|| WrightError::BuildError(format!("no path for task {}", task_for_handle)))?;
                 let base = BuildExecutionPlan::task_base_name(&task_for_handle);
                 let is_bootstrap = task_for_handle.ends_with(":bootstrap");
                 let bootstrap_excluded = plan.bootstrap_excluded_for(&task_for_handle).to_vec();
 
                 let manifest = PlanManifest::from_file(plan_path)
-                    .with_context(|| format!("read plan {}", base))?;
+                    .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", base, e)))?;
 
                 let mut extra_env = HashMap::new();
                 if is_bootstrap || build_opts.mvp {
@@ -182,7 +182,7 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
 
                 let plan_dir = plan_path
                     .parent()
-                    .ok_or_else(|| anyhow::anyhow!("plan path has no parent"))?
+                    .ok_or_else(|| WrightError::BuildError("plan path has no parent".into()))?
                     .to_path_buf();
 
                 builder
@@ -205,7 +205,7 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
                     )
                     .await
                     .map(|_| ())
-                    .map_err(|e| anyhow::anyhow!("build {}: {}", base, e))
+                    .map_err(|e| WrightError::BuildError(format!("build {}: {}", base, e)))
             });
             build_handles.push((task.clone(), handle));
         }
@@ -213,8 +213,8 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
         for (task, handle) in build_handles {
             match handle.await {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => anyhow::bail!("task '{}' failed: {}", task, e),
-                Err(e) => anyhow::bail!("task '{}' panicked: {}", task, e),
+                Ok(Err(e)) => return Err(WrightError::BuildError(format!("task '{}' failed: {}", task, e))),
+                Err(e) => return Err(WrightError::BuildError(format!("task '{}' panicked: {}", task, e))),
             }
         }
 
@@ -233,13 +233,13 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
             let plan_path = plan
                 .plan_path_for_task(base)
                 .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)))
-                .ok_or_else(|| anyhow::anyhow!("no plan path for {}", base))?;
+                    .ok_or_else(|| WrightError::BuildError(format!("no plan path for {}", base)))?;
             let manifest = PlanManifest::from_file(plan_path)
-                .with_context(|| format!("parse plan {}", base))?;
+                    .map_err(|e| WrightError::BuildError(format!("parse plan {}: {}", base, e)))?;
 
             crate::planning::package_manifest(&manifest, config, false, force)
                 .await
-                .with_context(|| format!("package {}", base))?;
+                .map_err(|e| WrightError::BuildError(format!("package {}: {}", base, e)))?;
         }
 
         // 3. Install this wave.
@@ -251,17 +251,17 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
                 let plan_path = plan
                     .plan_path_for_task(base)
                     .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)))
-                    .ok_or_else(|| anyhow::anyhow!("no plan path for {}", base))?;
+                .ok_or_else(|| WrightError::BuildError(format!("no plan path for {}", base)))?;
                 let manifest = PlanManifest::from_file(plan_path)
-                    .with_context(|| format!("parse plan {}", base))?;
+                .map_err(|e| WrightError::BuildError(format!("parse plan {}: {}", base, e)))?;
 
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
                     let resolved = part_store
                         .resolve(pn)
                         .await
-                        .with_context(|| format!("resolve part {} after packaging", pn))?
-                        .ok_or_else(|| anyhow::anyhow!("part {} not found after packaging", pn))?;
+                        .map_err(|e| WrightError::PartError(format!("resolve part {} after packaging: {}", pn, e)))?
+                        .ok_or_else(|| WrightError::PartNotFound(format!("part {} not found after packaging", pn)))?;
                     archive_paths.push(resolved.path);
                     if explicit_plan_names.contains(base) {
                         explicit.insert(pn.clone());
@@ -280,7 +280,7 @@ pub async fn execute_apply(request: ApplyRequest<'_>) -> Result<()> {
                     false,
                 )
                 .await
-                .context("install batch")?;
+                .map_err(|e| WrightError::InstallError(format!("install batch: {}", e)))?;
             }
         }
     }
@@ -298,11 +298,11 @@ async fn register_group_assumptions(
 
     let db = InstalledDb::open(db_path)
         .await
-        .context("failed to open database for group assumptions")?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open database for group assumptions: {}", e)))?;
     for assume in assumptions {
         db.assume_part(&assume.name, &assume.version)
             .await
-            .with_context(|| format!("failed to assume {}", assume.name))?;
+            .map_err(|e| WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e)))?;
     }
     Ok(())
 }

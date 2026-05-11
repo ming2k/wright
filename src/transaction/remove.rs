@@ -60,7 +60,7 @@ pub async fn remove_part_with_ignored_dependents(
         if let Some(script) = get_hook(content, "pre_remove") {
             log_running_hook(name, "pre_remove");
             if let Err(e) = run_install_script(&script, root_dir, name, "pre_remove").await {
-                warn!("pre_remove script failed (continuing removal): {}", e);
+                warn!("hook [pre_remove] for {} failed (continuing removal): {}", name, e);
             }
         }
     }
@@ -191,7 +191,7 @@ pub async fn remove_part_with_ignored_dependents(
         if let Some(script) = get_hook(content, "post_remove") {
             log_running_hook(name, "post_remove");
             if let Err(e) = run_install_script(&script, root_dir, name, "post_remove").await {
-                warn!("post_remove script failed (continuing removal): {}", e);
+                warn!("hook [post_remove] for {} failed (continuing removal): {}", name, e);
             }
         }
     }

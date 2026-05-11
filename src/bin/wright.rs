@@ -1,4 +1,3 @@
-use anyhow::Context;
 use clap::Parser;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
@@ -37,7 +36,8 @@ async fn main() {
 
     // 2. Load Configuration and Dispatch
     let result = async {
-        let config = GlobalConfig::load(cli.config.as_deref()).context("failed to load config")?;
+        let config = GlobalConfig::load(cli.config.as_deref())
+            .map_err(|e| wright::error::WrightError::ConfigError(format!("failed to load config: {}", e)))?;
 
         let root_dir = cli.root.clone().unwrap_or_else(|| PathBuf::from("/"));
 

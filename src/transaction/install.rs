@@ -466,7 +466,7 @@ pub async fn install_part_with_origin(
             if let Err(e) =
                 run_install_script(script, root_dir, &partinfo.name, "pre_install").await
             {
-                warn!("pre_install script failed: {}", e);
+                warn!("hook [pre_install] for {} failed: {}", partinfo.name, e);
             }
             log_debug_timing(
                 "install",
@@ -577,7 +577,7 @@ pub async fn install_part_with_origin(
             if let Err(e) =
                 run_install_script(script, root_dir, &partinfo.name, "post_install").await
             {
-                warn!("post_install script failed: {}", e);
+                warn!("hook [post_install] for {} failed: {}", partinfo.name, e);
             }
             log_debug_timing(
                 "install",

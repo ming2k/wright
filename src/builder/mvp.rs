@@ -32,7 +32,7 @@ pub(crate) fn collect_phase_deps(
     is_mvp: bool,
     index: Option<&PlanIndex>,
 ) -> Vec<String> {
-    let (build, link) = if is_mvp {
+    let (build, link, runtime) = if is_mvp {
         if let Some(ref mvp) = manifest.mvp {
             (
                 if mvp.build_deps.is_empty() {
@@ -45,18 +45,23 @@ pub(crate) fn collect_phase_deps(
                 } else {
                     mvp.link_deps.clone()
                 },
+                if mvp.runtime_deps.is_empty() {
+                    manifest.runtime_deps.clone()
+                } else {
+                    mvp.runtime_deps.clone()
+                },
             )
         } else {
-            (manifest.build_deps.clone(), manifest.link_deps.clone())
+            (manifest.build_deps.clone(), manifest.link_deps.clone(), manifest.runtime_deps.clone())
         }
     } else {
-        (manifest.build_deps.clone(), manifest.link_deps.clone())
+        (manifest.build_deps.clone(), manifest.link_deps.clone(), manifest.runtime_deps.clone())
     };
 
     let mut deps = Vec::new();
     let mut raw_deps = Vec::new();
     raw_deps.extend(build.clone());
-    raw_deps.extend(manifest.runtime_deps.clone());
+    raw_deps.extend(runtime);
     raw_deps.extend(link);
 
     for dep in &raw_deps {
@@ -306,13 +311,11 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         let (part, excl) = match chosen {
             Some(c) => (c.part, c.excluded),
             None => {
-                return Err(WrightError::BuildError(format!(
-                    "Dependency cycle cannot be automatically resolved.\n\
-                     Cycle: {}\n\
+                return Err(WrightError::BuildError(
+                    "Dependency cycle cannot be automatically resolved. \
                      Add a sibling 'mvp.toml' in one of these plans to declare \
-                     an acyclic MVP dependency set.",
-                    cycle_display
-                )));
+                     an acyclic MVP dependency set.".to_string()
+                ));
             }
         };
 

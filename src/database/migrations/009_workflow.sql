@@ -1,0 +1,2 @@
+-- No-op: workflow system removed. This migration is retained to preserve
+-- migration history for databases where it was previously applied.

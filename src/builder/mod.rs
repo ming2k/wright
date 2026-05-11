@@ -642,16 +642,19 @@ impl Builder {
                 discard_rules.len()
             );
             let mut all_entries = Vec::new();
+            let mut symlink_entries = Vec::new();
             let mut dirs_to_visit = vec![staging_dir.clone()];
             while let Some(dir) = dirs_to_visit.pop() {
                 if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
                     while let Ok(Some(entry)) = entries.next_entry().await {
                         let path = entry.path();
-                        if tokio::fs::metadata(&path)
-                            .await
-                            .map(|m| m.is_dir())
-                            .unwrap_or(false)
-                        {
+                        let file_type = match tokio::fs::symlink_metadata(&path).await {
+                            Ok(m) => m.file_type(),
+                            Err(_) => continue,
+                        };
+                        if file_type.is_symlink() {
+                            symlink_entries.push(path);
+                        } else if file_type.is_dir() {
                             dirs_to_visit.push(path);
                         } else {
                             all_entries.push(path);
@@ -660,8 +663,10 @@ impl Builder {
                 }
             }
             all_entries.sort();
+            symlink_entries.sort();
 
             let mut link_actions = Vec::new();
+            let mut symlink_actions = Vec::new();
             let mut unmatched = Vec::new();
             for file_path in &all_entries {
                 if let Ok(rel_path) = file_path.strip_prefix(&staging_dir) {
@@ -700,6 +705,54 @@ impl Builder {
 
                     if let Some(dest_path) = dest_path {
                         link_actions.push((file_path.clone(), dest_path));
+                    }
+                }
+            }
+
+            for symlink_path in &symlink_entries {
+                if let Ok(rel_path) = symlink_path.strip_prefix(&staging_dir) {
+                    let rel_str = format!("/{}", rel_path.display());
+                    let mut dest_path = None;
+                    for (_sub_name, sub_dir, includes, excludes) in &sub_rules {
+                        let mut matched = includes.iter().any(|re| re.is_match(&rel_str));
+                        if matched
+                            && !excludes.is_empty()
+                            && excludes.iter().any(|re| re.is_match(&rel_str))
+                        {
+                            matched = false;
+                        }
+                        if matched {
+                            dest_path = Some(sub_dir.join(rel_path));
+                            break;
+                        }
+                    }
+
+                    if dest_path.is_none() {
+                        let discarded =
+                            discard_rules.iter().any(|(_reason, includes, excludes)| {
+                                let matched = includes.iter().any(|re| re.is_match(&rel_str));
+                                matched
+                                    && (excludes.is_empty()
+                                        || !excludes.iter().any(|re| re.is_match(&rel_str)))
+                            });
+                        if !discarded {
+                            if has_catchall {
+                                dest_path = Some(default_output_dir.join(rel_path));
+                            } else {
+                                unmatched.push(rel_str);
+                            }
+                        }
+                    }
+
+                    if let Some(dest_path) = dest_path {
+                        let target = tokio::fs::read_link(symlink_path).await.map_err(|e| {
+                            WrightError::BuildError(format!(
+                                "failed to read symlink {}: {}",
+                                symlink_path.display(),
+                                e
+                            ))
+                        })?;
+                        symlink_actions.push((dest_path, target));
                     }
                 }
             }
@@ -753,6 +806,20 @@ impl Builder {
                         e
                     )));
                 }
+            }
+
+            for (dest_path, target) in symlink_actions {
+                if let Some(parent) = dest_path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
+                    WrightError::BuildError(format!(
+                        "failed to create symlink {} -> {}: {}",
+                        dest_path.display(),
+                        target.display(),
+                        e
+                    ))
+                })?;
             }
         } else {
             hard_link_all(&staging_dir, &default_output_dir).await?;

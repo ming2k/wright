@@ -108,7 +108,7 @@ pub async fn package_outputs(
                     fhs::validate(part_dir, sub_name)?;
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                run_elf_lint(part_dir, &sub_manifest, &soname_index)?;
+                maybe_run_elf_lint(part_dir, &sub_manifest, &soname_index)?;
                 let sub_part_path =
                     archive::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
@@ -121,7 +121,7 @@ pub async fn package_outputs(
             if !manifest.options.skip_fhs_check {
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
-            run_elf_lint(&result.output_dir, manifest, &soname_index)?;
+            maybe_run_elf_lint(&result.output_dir, manifest, &soname_index)?;
             let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
             info!(
                 "{}",
@@ -136,25 +136,46 @@ pub async fn package_outputs(
     Ok(())
 }
 
-/// Run the ADR-0017 ELF lint against a staged output.
+/// Conditionally run the ADR-0017 ELF lint against a staged output.
+///
+/// Skipped when the plan opts out via `options.skip_elf_lint = true`,
+/// or when the plan is marked `static = true` with no `link_deps` — a
+/// common pattern for Go / Rust binaries that have no dynamic edges to
+/// validate.
 ///
 /// Only **errors** (forgotten runtime_deps) fail the package step.
 /// Advisory items (stale, unmapped) are intentionally not reported here;
 /// they are surfaced globally by `wright doctor` after installation when
 /// the dependency closure is complete.
-fn run_elf_lint(
+fn maybe_run_elf_lint(
     part_dir: &Path,
-    sub_manifest: &PlanManifest,
+    manifest: &PlanManifest,
     index: &SonameIndex,
 ) -> Result<()> {
+    if manifest.options.skip_elf_lint {
+        tracing::debug!(
+            "elf-lint: skipping {} (skip_elf_lint = true)",
+            manifest.metadata.name
+        );
+        return Ok(());
+    }
+
+    if manifest.options.static_ && manifest.link_deps.is_empty() {
+        tracing::debug!(
+            "elf-lint: skipping {} (static build with no link_deps)",
+            manifest.metadata.name
+        );
+        return Ok(());
+    }
+
     let report = lint_runtime_deps(
         part_dir,
-        &sub_manifest.runtime_deps,
-        &sub_manifest.metadata.name,
+        &manifest.runtime_deps,
+        &manifest.metadata.name,
         index,
     )?;
     if report.has_errors() {
-        return Err(elf_lint_error(&sub_manifest.metadata.name, &report));
+        return Err(elf_lint_error(&manifest.metadata.name, &report));
     }
     Ok(())
 }

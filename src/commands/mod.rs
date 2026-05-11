@@ -9,7 +9,7 @@ pub mod system;
 use crate::cli::Cli;
 use crate::config::GlobalConfig;
 use crate::part::store::LocalPartStore;
-use anyhow::Result;
+use crate::error::Result;
 use std::path::PathBuf;
 
 /// Dispatch the parsed CLI command to the appropriate handler.

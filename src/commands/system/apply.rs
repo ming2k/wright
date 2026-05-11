@@ -1,10 +1,9 @@
 use std::io::BufRead;
 use std::path::Path;
 
-use anyhow::{Context, Result};
-
 use crate::cli::resolve::{DomainArg, MatchPolicyArg};
 use crate::config::GlobalConfig;
+use crate::error::{Result, WrightError};
 use crate::operations::apply::{execute_apply, ApplyRequest};
 use crate::part::store::LocalPartStore;
 use crate::planning::{DependentsMode, MatchPolicy};
@@ -13,7 +12,7 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         for line in std::io::stdin().lock().lines() {
-            let line = line.context("failed to read install target from stdin")?;
+            let line = line.map_err(|e| WrightError::IoError(e))?;
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 args.push(trimmed.to_string());
@@ -78,9 +77,9 @@ pub async fn execute_system_apply(args: ApplyArgs<'_>) -> Result<()> {
     if targets.is_empty() {
         use std::io::IsTerminal;
         if !std::io::stdin().is_terminal() {
-            anyhow::bail!("no targets received from stdin; did the resolve succeed?");
+            return Err(WrightError::BuildError("no targets received from stdin; did the resolve succeed?".into()));
         }
-        anyhow::bail!("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)");
+        return Err(WrightError::BuildError("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)".into()));
     }
 
     if dry_run {

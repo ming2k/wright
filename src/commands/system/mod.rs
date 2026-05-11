@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightError};
 
 use crate::cli::system::Commands as SystemCommands;
 use crate::config::GlobalConfig;
@@ -29,7 +29,7 @@ pub async fn execute(
         crate::util::lock::LockIdentity::Command("wright"),
         crate::util::lock::LockMode::Exclusive,
     )
-    .context("failed to start wright operation")?;
+    .map_err(|e| WrightError::LockError(format!("failed to start wright operation: {}", e)))?;
     let part_store = crate::commands::setup_local_part_store(config)?;
 
     if let SystemCommands::Apply {
@@ -82,7 +82,7 @@ pub async fn execute(
 
     let db = InstalledDb::open(db_path)
         .await
-        .context("failed to open database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
 
     match command {
         SystemCommands::Apply { .. } => unreachable!(),
@@ -125,7 +125,7 @@ pub async fn execute(
                 let all_versions = part_store
                     .resolve_all(arg)
                     .await
-                    .context(format!("failed to resolve '{}'", arg))?;
+                    .map_err(|e| WrightError::PartError(format!("failed to resolve '{}': {}", arg, e)))?;
 
                 if all_versions.is_empty() {
                     tracing::error!("no parts found for '{}'", arg);
@@ -202,7 +202,7 @@ pub async fn execute(
             } else {
                 transaction::order_removal_batch(&db, &parts)
                     .await
-                    .context("failed to plan removal order")?
+                    .map_err(|e| WrightError::RemoveError(format!("failed to plan removal order: {}", e)))?
             };
 
             for name in &removal_order {
@@ -210,7 +210,7 @@ pub async fn execute(
                     let dependents = db
                         .get_recursive_dependents(name)
                         .await
-                        .context(format!("failed to resolve dependents of {}", name))?;
+                        .map_err(|e| WrightError::DatabaseError(format!("failed to resolve dependents of {}: {}", name, e)))?;
 
                     if !dependents.is_empty() {
                         println!(
@@ -235,7 +235,7 @@ pub async fn execute(
                 let cascade_list = if cascade {
                     let list = transaction::cascade_remove_list(&db, name)
                         .await
-                        .context(format!("failed to compute cascade list for {}", name))?;
+                        .map_err(|e| WrightError::RemoveError(format!("failed to compute cascade list for {}: {}", name, e)))?;
                     if !list.is_empty() {
                         println!(
                             "will also remove orphan dependencies of {}: {}",
@@ -287,10 +287,10 @@ pub async fn execute(
             }
         }
         SystemCommands::Files { part } => {
-            let installed_part = db.get_part(&part).await.context("failed to query part")?;
+            let installed_part = db.get_part(&part).await.map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))?;
             match installed_part {
                 Some(info) => {
-                    let files = db.get_files(info.id).await.context("failed to get files")?;
+                    let files = db.get_files(info.id).await.map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))?;
                     for file in &files {
                         println!("{}", file.path);
                     }
@@ -310,7 +310,7 @@ pub async fn execute(
 
             if let Some(path) = file {
                 let content = std::fs::read_to_string(&path)
-                    .context(format!("failed to read {}", path.display()))?;
+                    .map_err(|e| WrightError::IoError(e))?;
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -319,10 +319,10 @@ pub async fn execute(
                     let mut parts = trimmed.split_whitespace();
                     let n = parts
                         .next()
-                        .context(format!("missing name in line: {}", trimmed))?;
+                        .ok_or_else(|| WrightError::BuildError(format!("missing name in line: {}", trimmed)))?;
                     let v = parts
                         .next()
-                        .context(format!("missing version in line: {}", trimmed))?;
+                        .ok_or_else(|| WrightError::BuildError(format!("missing version in line: {}", trimmed)))?;
                     entries.push((n.to_string(), v.to_string()));
                 }
             } else if let (Some(n), Some(v)) = (name, version) {
@@ -330,7 +330,7 @@ pub async fn execute(
             } else if !std::io::stdin().is_terminal() {
                 use std::io::BufRead;
                 for line in std::io::stdin().lock().lines() {
-                    let line = line.context("failed to read from stdin")?;
+                    let line = line.map_err(|e| WrightError::IoError(e))?;
                     let trimmed = line.trim();
                     if trimmed.is_empty() || trimmed.starts_with('#') {
                         continue;
@@ -338,10 +338,10 @@ pub async fn execute(
                     let mut parts = trimmed.split_whitespace();
                     let n = parts
                         .next()
-                        .context(format!("missing name in line: {}", trimmed))?;
+                        .ok_or_else(|| WrightError::BuildError(format!("missing name in line: {}", trimmed)))?;
                     let v = parts
                         .next()
-                        .context(format!("missing version in line: {}", trimmed))?;
+                        .ok_or_else(|| WrightError::BuildError(format!("missing version in line: {}", trimmed)))?;
                     entries.push((n.to_string(), v.to_string()));
                 }
             } else {

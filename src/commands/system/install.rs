@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightError};
 
 use super::apply::collect_install_args;
 use crate::config::GlobalConfig;
@@ -29,41 +29,40 @@ pub async fn execute_install(
     use std::io::IsTerminal;
     if parts.is_empty() {
         if !std::io::stdin().is_terminal() {
-            if path {
-                anyhow::bail!("no archive paths received from stdin; did the build succeed?");
-            }
-            anyhow::bail!("no install targets received from stdin; did the resolve succeed?");
-        }
         if path {
-            anyhow::bail!("no archive paths specified (pass paths as arguments or via stdin)");
+            return Err(WrightError::BuildError("no archive paths received from stdin; did the build succeed?".into()));
         }
-        anyhow::bail!(
-            "no install targets specified (pass plan names/directories, or use --path for archive paths)"
-        );
+        return Err(WrightError::BuildError("no install targets received from stdin; did the resolve succeed?".into()));
+    }
+    if path {
+        return Err(WrightError::BuildError("no archive paths specified (pass paths as arguments or via stdin)".into()));
+    }
+    return Err(WrightError::BuildError(
+        "no install targets specified (pass plan names/directories, or use --path for archive paths)".into()
+    ));
     }
 
     if !path {
         for arg in &parts {
             if looks_like_archive_path(arg) {
-                anyhow::bail!(
+                return Err(WrightError::BuildError(format!(
                     "'{}' looks like an archive path; use `wright install --path {}`",
-                    arg,
-                    arg
-                );
+                    arg, arg
+                )));
             }
         }
     }
 
     let db = InstalledDb::open(db_path)
         .await
-        .context("open database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
 
     if path {
         let mut paths: Vec<PathBuf> = Vec::new();
         for arg in &parts {
             let p = PathBuf::from(arg);
             if !p.is_file() {
-                anyhow::bail!("archive path not found: {}", p.display());
+                return Err(WrightError::BuildError(format!("archive path not found: {}", p.display())));
             }
             paths.push(p);
         }
@@ -71,7 +70,7 @@ pub async fn execute_install(
         crate::transaction::install_parts(&db, &paths, root_dir, part_store, force, nodeps,
         )
         .await
-        .context("install archives")?;
+        .map_err(|e| WrightError::InstallError(format!("install archives: {}", e)))?;
     } else {
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut explicit: HashSet<String> = HashSet::new();
@@ -81,7 +80,7 @@ pub async fn execute_install(
             if let Some(resolved) = part_store
                 .resolve(arg)
                 .await
-                .with_context(|| format!("resolve part {}", arg))?
+                .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", arg, e)))?
             {
                 paths.push(resolved.path);
                 explicit.insert(resolved.name);
@@ -90,20 +89,20 @@ pub async fn execute_install(
 
             // Fall back to treating as a plan name/directory.
             let plan_path = PathBuf::from(arg);
-            let manifest = if plan_path.is_dir() {
-                PlanManifest::from_file(&plan_path.join("plan.toml"))
-                    .with_context(|| format!("read plan {}", arg))?
-            } else {
-                let plan_dirs = plan_search_dirs(_config);
-                let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
-                let resolved = resolve_targets(&[arg.clone()], &index, &plan_dirs)?;
-                if resolved.is_empty() {
-                    anyhow::bail!("target not found: {}", arg);
-                }
-                let plan_path = resolved.into_iter().next().unwrap();
-                PlanManifest::from_file(&plan_path)
-                    .with_context(|| format!("read plan {}", arg))?
-            };
+                let manifest = if plan_path.is_dir() {
+                    PlanManifest::from_file(&plan_path.join("plan.toml"))
+                        .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", arg, e)))?
+                } else {
+                    let plan_dirs = plan_search_dirs(_config);
+                    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+                    let resolved = resolve_targets(&[arg.clone()], &index, &plan_dirs)?;
+                    if resolved.is_empty() {
+                        return Err(WrightError::PartNotFound(format!("target not found: {}", arg)));
+                    }
+                    let plan_path = resolved.into_iter().next().unwrap();
+                    PlanManifest::from_file(&plan_path)
+                        .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", arg, e)))?
+                };
 
             let part_names = match manifest.outputs {
                 Some(crate::plan::manifest::OutputConfig::Multi(ref parts)) => {
@@ -116,8 +115,8 @@ pub async fn execute_install(
                 let resolved = part_store
                     .resolve(&pn)
                     .await
-                    .with_context(|| format!("resolve part {} from plan {}", pn, arg))?
-                    .ok_or_else(|| anyhow::anyhow!("part {} not found in parts_dir", pn))?;
+                    .map_err(|e| WrightError::PartError(format!("resolve part {} from plan {}: {}", pn, arg, e)))?
+                    .ok_or_else(|| WrightError::PartNotFound(format!("part {} not found in parts_dir", pn)))?;
                 paths.push(resolved.path);
                 explicit.insert(pn);
             }
@@ -133,7 +132,7 @@ pub async fn execute_install(
             nodeps,
         )
         .await
-        .context("install targets")?;
+        .map_err(|e| WrightError::InstallError(format!("install targets: {}", e)))?;
     }
 
     Ok(())

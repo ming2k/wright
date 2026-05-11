@@ -220,7 +220,7 @@ pub async fn upgrade_part(
             if let Err(e) =
                 run_install_script(script, root_dir, &partinfo.name, "pre_install").await
             {
-                warn!("pre_install script failed: {}", e);
+                warn!("hook [pre_install] for {} failed: {}", partinfo.name, e);
             }
             log_debug_timing(
                 "upgrade",
@@ -389,7 +389,7 @@ pub async fn upgrade_part(
             if let Err(e) =
                 run_install_script(script, root_dir, &partinfo.name, "post_upgrade").await
             {
-                warn!("post_upgrade script failed: {}", e);
+                warn!("hook [post_upgrade] for {} failed: {}", partinfo.name, e);
             }
             log_debug_timing(
                 "upgrade",

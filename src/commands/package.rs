@@ -1,10 +1,9 @@
-use anyhow::{Context, Result};
 use std::io::BufRead;
 use std::path::Path;
 
 use crate::cli::package::PackageArgs;
 use crate::config::GlobalConfig;
-use crate::error::WrightError;
+use crate::error::{Result, WrightError};
 use crate::plan::manifest::PlanManifest;
 use crate::planning::{package_manifest, plan_search_dirs, resolve_targets};
 
@@ -18,7 +17,7 @@ pub async fn execute_package(
     let mut command_config = config.clone();
     if let Some(out_dir) = args.out_dir {
         command_config.general.parts_dir =
-            normalize_out_dir(out_dir).context("failed to resolve package output directory")?;
+            normalize_out_dir(out_dir).map_err(|e| WrightError::BuildError(format!("failed to resolve package output directory: {}", e)))?;
     }
 
     let _command_lock = crate::util::lock::acquire_lock(
@@ -26,13 +25,13 @@ pub async fn execute_package(
         crate::util::lock::LockIdentity::Command("package"),
         crate::util::lock::LockMode::Exclusive,
     )
-    .context("failed to acquire package command lock")?;
+        .map_err(|e| WrightError::LockError(format!("failed to acquire package command lock: {}", e)))?;
 
     let mut all_targets = args.targets;
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         for line in std::io::stdin().lock().lines() {
-            let line = line.context("failed to read target from stdin")?;
+            let line = line.map_err(|e| WrightError::IoError(e))?;
             let trimmed = line.trim().to_string();
             if !trimmed.is_empty() {
                 all_targets.push(trimmed);
@@ -54,10 +53,10 @@ pub async fn execute_package(
 
     for plan_path in plans_to_build {
         let manifest = PlanManifest::from_file(&plan_path)
-            .with_context(|| format!("read plan {}", plan_path.display()))?;
+            .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", plan_path.display(), e)))?;
         package_manifest(&manifest, &command_config, args.print_parts, args.force)
             .await
-            .with_context(|| format!("package {}", manifest.metadata.name))?;
+            .map_err(|e| WrightError::BuildError(format!("package {}: {}", manifest.metadata.name, e)))?;
     }
 
     Ok(())

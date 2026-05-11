@@ -2,7 +2,7 @@ use crate::cli::prune::PruneArgs;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::part::prune;
-use anyhow::{Context, Result};
+use crate::error::{Result, WrightError};
 use std::path::Path;
 
 pub async fn execute_prune(args: PruneArgs, config: &GlobalConfig, db_path: &Path) -> Result<()> {
@@ -16,26 +16,28 @@ async fn prune_parts(
     apply: bool,
 ) -> Result<()> {
     if !keep_latest {
-        anyhow::bail!("nothing to do: pass --latest");
+        return Err(WrightError::BuildError("nothing to do: pass --latest".into()));
     }
 
     let parts_dir = &config.general.parts_dir;
     tokio::fs::create_dir_all(parts_dir)
         .await
-        .with_context(|| format!("failed to create {}", parts_dir.display()))?;
+        .map_err(|e| WrightError::IoError(std::io::Error::other(format!(
+            "failed to create {}: {}", parts_dir.display(), e
+        ))))?;
 
     let installed_db = InstalledDb::open(db_path)
         .await
-        .context("failed to open installed-part database")?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open installed-part database: {}", e)))?;
 
     let report = if apply {
         prune::apply_prune(&installed_db, parts_dir, keep_latest)
             .await
-            .context("prune failed")?
+            .map_err(|e| WrightError::BuildError(format!("prune failed: {}", e)))?
     } else {
         prune::plan_prune(&installed_db, parts_dir, keep_latest)
             .await
-            .context("prune planning failed")?
+            .map_err(|e| WrightError::BuildError(format!("prune planning failed: {}", e)))?
     };
 
     for stale in &report.stale {

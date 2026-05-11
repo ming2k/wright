@@ -15,6 +15,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use walkdir::WalkDir;
 
@@ -22,6 +24,16 @@ use crate::error::Result;
 use crate::part::archive::{read_archive_meta, ArchiveMeta};
 use crate::part::elf;
 use crate::part::version;
+
+/// In-process cache keyed by (output_dir, mtime) → ElfMetadata.
+///
+/// During batch builds the same output directory is often packaged
+/// repeatedly (e.g. re-slice without rebuild). This avoids re-walking
+/// the tree and re-parsing every ELF header.
+fn elf_lint_cache() -> &'static Mutex<HashMap<(PathBuf, SystemTime), ElfMetadata>> {
+    static CACHE: OnceLock<Mutex<HashMap<(PathBuf, SystemTime), ElfMetadata>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Map SONAME → (output_name, plan_name) built by scanning archives.
 ///
@@ -187,6 +199,14 @@ impl LintReport {
     }
 }
 
+/// Raw ELF metadata extracted from a single walk of the output directory.
+#[derive(Debug, Clone)]
+struct ElfMetadata {
+    needed: HashSet<String>,
+    ownership: HashMap<String, PathBuf>,
+    self_sonames: HashSet<String>,
+}
+
 /// Lint one output's staging tree against its declared `runtime_deps`.
 ///
 /// `output_dir` is the staged tree about to be packaged. `declared` is
@@ -194,16 +214,38 @@ impl LintReport {
 /// is the output name being packaged — its own SONAMEs are filtered out
 /// of `DT_NEEDED` so a part that links its own libraries does not appear
 /// to depend on itself.
+///
+/// This function caches the ELF scan keyed by `(output_dir, mtime)` so
+/// repeated packaging of the same unchanged tree is effectively free.
 pub fn lint_runtime_deps(
     output_dir: &Path,
     declared: &[String],
     self_part_name: &str,
     index: &SonameIndex,
 ) -> Result<LintReport> {
-    let (needed, ownership) = collect_dt_needed(output_dir)?;
-    let self_sonames = collect_self_sonames(output_dir)?;
+    let mtime = dir_mtime(output_dir)?;
+    let meta = {
+        let mut cache = elf_lint_cache()
+            .lock()
+            .map_err(|e| crate::error::WrightError::PartError(format!("elf-lint cache poison: {}", e)))?;
+        if let Some(cached) = cache.get(&(output_dir.to_path_buf(), mtime)) {
+            cached.clone()
+        } else {
+            let fresh = collect_elf_metadata(output_dir)?;
+            cache.insert((output_dir.to_path_buf(), mtime), fresh.clone());
+            fresh
+        }
+    };
+    evaluate_lint_report(declared, self_part_name, index, &meta)
+}
 
-    let needed_external: BTreeSet<&String> = needed.difference(&self_sonames).collect();
+fn evaluate_lint_report(
+    declared: &[String],
+    self_part_name: &str,
+    index: &SonameIndex,
+    meta: &ElfMetadata,
+) -> Result<LintReport> {
+    let needed_external: BTreeSet<&String> = meta.needed.difference(&meta.self_sonames).collect();
 
     let declared_targets = expand_declared_targets(declared, index, self_part_name);
 
@@ -219,14 +261,14 @@ pub fn lint_runtime_deps(
                     report.forgotten.push(ForgottenDep {
                         soname: (*soname).clone(),
                         providing_output: output.to_string(),
-                        seen_in: ownership.get(*soname).cloned().unwrap_or_default(),
+                        seen_in: meta.ownership.get(*soname).cloned().unwrap_or_default(),
                     });
                 }
             }
             None => report.unmapped.push(UnmappedSoname {
                 soname: (*soname).clone(),
-                seen_in: ownership.get(*soname).cloned().unwrap_or_default(),
-            }),
+                seen_in: meta.ownership.get(*soname).cloned().unwrap_or_default(),
+            })
         }
     }
 
@@ -250,15 +292,20 @@ pub fn lint_runtime_deps(
     Ok(report)
 }
 
-fn collect_dt_needed(output_dir: &Path) -> Result<(HashSet<String>, HashMap<String, PathBuf>)> {
+/// Walk the output directory once and collect DT_NEEDED, DT_SONAME, and
+/// basename heuristics for every ELF file.
+fn collect_elf_metadata(output_dir: &Path) -> Result<ElfMetadata> {
     let mut needed = HashSet::new();
     let mut ownership: HashMap<String, PathBuf> = HashMap::new();
+    let mut self_sonames = HashSet::new();
 
     for entry in WalkDir::new(output_dir).into_iter().flatten() {
         let path = entry.path();
         if !entry.file_type().is_file() {
             continue;
         }
+
+        // DT_NEEDED
         if let Ok(Some(libs)) = elf::read_dt_needed(path) {
             for lib in libs {
                 ownership
@@ -267,19 +314,10 @@ fn collect_dt_needed(output_dir: &Path) -> Result<(HashSet<String>, HashMap<Stri
                 needed.insert(lib);
             }
         }
-    }
-    Ok((needed, ownership))
-}
 
-fn collect_self_sonames(output_dir: &Path) -> Result<HashSet<String>> {
-    let mut set = HashSet::new();
-    for entry in WalkDir::new(output_dir).into_iter().flatten() {
-        let path = entry.path();
-        if !entry.file_type().is_file() {
-            continue;
-        }
+        // DT_SONAME (self-provided libraries)
         if let Ok(Some(soname)) = elf::read_dt_soname(path) {
-            set.insert(soname);
+            self_sonames.insert(soname);
         }
         // Also include the basename for .so files even when DT_SONAME is
         // absent — many builds produce libfoo.so.N without the tag, but
@@ -289,10 +327,38 @@ fn collect_self_sonames(output_dir: &Path) -> Result<HashSet<String>> {
             .and_then(|f| f.to_str())
             .filter(|n| n.contains(".so"))
         {
-            set.insert(base.to_string());
+            self_sonames.insert(base.to_string());
         }
     }
-    Ok(set)
+
+    Ok(ElfMetadata {
+        needed,
+        ownership,
+        self_sonames,
+    })
+}
+
+/// Heuristic mtime for a directory: latest mtime of any direct child entry.
+/// Using recursive mtime would be expensive, so we approximate with the
+/// directory's own mtime plus direct children. This is good enough because
+/// packaging always rewrites the output directory when it changes.
+fn dir_mtime(dir: &Path) -> Result<SystemTime> {
+    let mut latest = std::fs::metadata(dir)
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(t) = meta.modified() {
+                    if t > latest {
+                        latest = t;
+                    }
+                }
+            }
+        }
+    }
+    Ok(latest)
 }
 
 /// Expand the user's declared deps into the concrete output-name set we

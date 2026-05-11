@@ -252,6 +252,12 @@ pub struct BuildOptions {
     /// outside the standard FHS paths (e.g. kernel modules, legacy compat layers).
     #[serde(default)]
     pub skip_fhs_check: bool,
+    /// Skip ELF runtime dependency lint during packaging.
+    /// Use for statically-linked plans or when the lint is a bottleneck
+    /// in large batch builds. Errors caught here are still surfaced by
+    /// `wright doctor` after installation.
+    #[serde(default)]
+    pub skip_elf_lint: bool,
 }
 
 impl Default for BuildOptions {
@@ -265,6 +271,7 @@ impl Default for BuildOptions {
             cpu_time_limit: None,
             timeout: None,
             skip_fhs_check: false,
+            skip_elf_lint: false,
         }
     }
 }
@@ -309,6 +316,10 @@ pub struct PhaseConfig {
     /// `link_deps` field when omitted.
     #[serde(default)]
     pub link_deps: Vec<String>,
+    /// Phase-specific runtime dependency overrides. Falls back to the
+    /// aggregated `runtime_deps` field when omitted.
+    #[serde(default)]
+    pub runtime_deps: Vec<String>,
     #[serde(default)]
     pub lifecycle: HashMap<String, LifecycleStage>,
     #[serde(default)]
@@ -1385,6 +1396,23 @@ skip_fhs_check = true
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert!(manifest.options.skip_fhs_check);
+    }
+
+    #[test]
+    fn test_skip_elf_lint_option() {
+        let toml_str = r#"
+name = "static-tool"
+version = "1.0.0"
+release = 1
+description = "static binary"
+license = "MIT"
+arch = "x86_64"
+
+[options]
+skip_elf_lint = true
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        assert!(manifest.options.skip_elf_lint);
     }
 
     #[test]
