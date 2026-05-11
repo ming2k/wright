@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use wright::builder::Builder;
 use wright::config::GlobalConfig;
+use wright::forge::Forger;
 use wright::part::archive;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
 
@@ -27,10 +27,10 @@ async fn test_build_hello_fixture() {
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             &plan_dir,
@@ -61,10 +61,10 @@ async fn test_build_and_archive_hello() {
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             &plan_dir,
@@ -113,8 +113,8 @@ async fn test_build_and_archive_hello() {
 async fn test_failed_first_build_preserves_work_for_stage_resume() {
     let root = tempfile::tempdir().unwrap();
     let mut config = GlobalConfig::default();
-    config.build.build_dir = root.path().join("build");
-    std::fs::create_dir_all(&config.build.build_dir).unwrap();
+    config.build.forge_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
 
     let allow_staging = root.path().join("allow-staging");
     let manifest = PlanManifest::parse(&format!(
@@ -146,9 +146,9 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
     .unwrap();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let builder = Builder::new(config);
+    let forger = Forger::new(config);
 
-    let first = builder
+    let first = forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -169,20 +169,25 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
         .await;
     assert!(first.is_err(), "first build should fail in staging");
 
-    let build_root = builder.build_root(&manifest).unwrap();
+    let build_root = forger.build_root(&manifest).unwrap();
     assert!(
         build_root.join(".build_key").exists(),
         "build key should be committed after extraction, before later stages"
     );
-    assert!(build_root.join("work/.extracted").exists());
-    assert!(build_root.join("work/.wright-stage-prepare").exists());
+    assert!(build_root.join(".extracted").exists());
+    // Check that the prepare stage is recorded as completed in .wright-pipeline.json.
+    let state_raw = std::fs::read_to_string(build_root.join(".wright-pipeline.json")).unwrap();
+    assert!(
+        state_raw.contains("prepare"),
+        "prepare stage should be recorded in pipeline state"
+    );
     assert_eq!(
-        std::fs::read_to_string(build_root.join("work/prepare-count")).unwrap(),
+        std::fs::read_to_string(build_root.join("target/prepare-count")).unwrap(),
         "x"
     );
 
     std::fs::write(&allow_staging, "ok").unwrap();
-    let second = builder
+    let second = forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -205,7 +210,7 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
 
     assert!(second.output_dir.join("usr/share/stage-resume").exists());
     assert_eq!(
-        std::fs::read_to_string(build_root.join("work/prepare-count")).unwrap(),
+        std::fs::read_to_string(build_root.join("target/prepare-count")).unwrap(),
         "x",
         "successful prepare stage should be skipped on retry"
     );
@@ -240,11 +245,11 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -306,18 +311,18 @@ name = "split-vars"
 [[output]]
 name = "split-vars-doc"
 description = "doc output"
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 "#,
     )
     .unwrap();
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let builder = Builder::new(config);
-    builder
+    let forger = Forger::new(config);
+    forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -338,13 +343,15 @@ include = ["/usr/share/doc/.*"]
         .await
         .unwrap();
 
-    let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder.slice_outputs(&manifest, &build_root).await.unwrap();
+    let build_root = forger.build_root(&manifest).unwrap();
+    let result = forger.slice_outputs(&manifest, &build_root).await.unwrap();
 
     assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
-    assert!(result.split_part_dirs["split-vars-doc"]
-        .join("usr/share/doc/split-vars")
-        .exists());
+    assert!(
+        result.split_part_dirs["split-vars-doc"]
+            .join("usr/share/doc/split-vars")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -369,18 +376,18 @@ install -Dm644 /dev/null ${STAGING_DIR}/usr/share/doc/coverage
 [[output]]
 name = "coverage"
 description = "coverage binary"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 "#,
     )
     .unwrap();
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let builder = Builder::new(config);
-    builder
+    let forger = Forger::new(config);
+    forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -401,8 +408,8 @@ include = ["/usr/bin/.*"]
         .await
         .unwrap();
 
-    let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder.slice_outputs(&manifest, &build_root).await;
+    let build_root = forger.build_root(&manifest).unwrap();
+    let result = forger.slice_outputs(&manifest, &build_root).await;
 
     let err = match result {
         Ok(_) => panic!("expected unclaimed staging files to fail slicing"),
@@ -435,10 +442,10 @@ install -Dm644 /dev/null ${STAGING_DIR}/usr/share/doc/coverage
 [[output]]
 name = "coverage"
 description = "coverage binary"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 
 [[discard]]
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 reason = "documentation is intentionally not packaged"
 "#,
     )
@@ -446,11 +453,11 @@ reason = "documentation is intentionally not packaged"
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let builder = Builder::new(config);
-    builder
+    let forger = Forger::new(config);
+    forger
         .build(
             &manifest,
             plan_dir.path(),
@@ -471,15 +478,102 @@ reason = "documentation is intentionally not packaged"
         .await
         .unwrap();
 
-    let build_root = builder.build_root(&manifest).unwrap();
-    let result = builder.slice_outputs(&manifest, &build_root).await.unwrap();
+    let build_root = forger.build_root(&manifest).unwrap();
+    let result = forger.slice_outputs(&manifest, &build_root).await.unwrap();
 
-    assert!(result.split_part_dirs["coverage"]
-        .join("usr/bin/coverage")
-        .exists());
-    assert!(!result.split_part_dirs["coverage"]
-        .join("usr/share/doc/coverage")
-        .exists());
+    assert!(
+        result.split_part_dirs["coverage"]
+            .join("usr/bin/coverage")
+            .exists()
+    );
+    assert!(
+        !result.split_part_dirs["coverage"]
+            .join("usr/share/doc/coverage")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn test_multi_output_fails_on_ambiguous_overlap() {
+    let manifest = PlanManifest::parse(
+        r#"
+name = "overlap"
+version = "1.0.0"
+release = 1
+description = "test overlap detection"
+license = "MIT"
+arch = "x86_64"
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/overlap
+"""
+
+[[output]]
+name = "bin"
+description = "binaries"
+include = ["/usr/bin/**"]
+
+[[output]]
+name = "all"
+description = "everything"
+include = ["/usr/**"]
+"#,
+    )
+    .unwrap();
+
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let forger = Forger::new(config);
+    forger
+        .build(
+            &manifest,
+            plan_dir.path(),
+            Path::new("/"),
+            &[] as &[String],
+            &[],
+            None,
+            false,
+            false,
+            false,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let build_root = forger.build_root(&manifest).unwrap();
+    let result = forger.slice_outputs(&manifest, &build_root).await;
+
+    let err = match result {
+        Ok(_) => panic!("expected overlapping outputs to fail slicing"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("ambiguous"),
+        "error should mention ambiguity: {}",
+        msg
+    );
+    assert!(
+        msg.contains("/usr/bin/overlap"),
+        "error should name the file: {}",
+        msg
+    );
+    assert!(
+        msg.contains("bin") && msg.contains("all"),
+        "error should name both outputs: {}",
+        msg
+    );
 }
 
 #[tokio::test]
@@ -515,12 +609,12 @@ async fn test_build_single_stage() {
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
+    let forger = Forger::new(config);
 
     // First do a full build so src/ directory exists
-    builder
+    forger
         .build(
             &manifest,
             &plan_dir,
@@ -542,7 +636,7 @@ async fn test_build_single_stage() {
         .unwrap();
 
     // Now run a single stage on the existing build tree
-    let result = builder
+    let result = forger
         .build(
             &manifest,
             &plan_dir,
@@ -565,7 +659,7 @@ async fn test_build_single_stage() {
 
     // Running only prepare: hello.c should exist but hello binary should not
     // (output_dir is recreated fresh for single-stage runs)
-    assert!(result.work_dir.join("hello.c").exists());
+    assert!(result.work_dir.join("target/hello.c").exists());
     assert!(!result.output_dir.join("usr/bin/hello").exists());
 }
 
@@ -575,10 +669,10 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             &plan_dir,
@@ -599,8 +693,8 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
         .await
         .unwrap();
 
-    assert!(result.work_dir.join("hello.c").exists());
-    assert!(result.work_dir.join("hello").exists());
+    assert!(result.work_dir.join("target/hello.c").exists());
+    assert!(result.work_dir.join("target/hello").exists());
     assert!(result.output_dir.join("usr/bin/hello").exists());
     assert!(result.logs_dir.join("compile.log").exists());
     assert!(result.logs_dir.join("staging.log").exists());
@@ -630,7 +724,7 @@ async fn test_package_print_parts_keeps_verbose_build_output_off_stdout() {
 name = "verbose-pipe-test"
 version = "1.0.0"
 release = 1
-description = "verify stdout/stderr split for package --print-parts"
+description = "verify stdout/stderr split for build --print-parts"
 license = "MIT"
 arch = "x86_64"
 
@@ -655,14 +749,14 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/verbose-pipe-test
 arch = "x86_64"
 plans_dir = "{}"
 parts_dir = "{}"
-cache_dir = "{}"
+source_dir = "{}"
 db_path = "{}"
 logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
 
 [build]
-build_dir = "{}"
+forge_dir = "{}"
 default_isolation = "none"
 ccache = false
 
@@ -697,34 +791,10 @@ retry_count = 3
         String::from_utf8_lossy(&build_output.stderr)
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
-        .arg("--config")
-        .arg(&config_path)
-        .arg("package")
-        .arg("verbose-pipe-test")
-        .arg("--print-parts")
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "wright package failed: stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Package command deleted; build now seals automatically.
+    // Verify build output goes to stderr, not stdout.
+    let stdout = String::from_utf8_lossy(&build_output.stdout);
     let stderr = String::from_utf8_lossy(&build_output.stderr);
-    let stdout_lines: Vec<_> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-
-    assert_eq!(stdout_lines.len(), 1, "unexpected stdout: {stdout:?}");
-    assert!(
-        stdout_lines[0].ends_with(".wright.tar.zst"),
-        "stdout should contain only archive paths: {stdout:?}"
-    );
     assert!(
         !stdout.contains("LIVE-BUILD-OUTPUT"),
         "subprocess stdout leaked into stdout: {stdout:?}"
@@ -736,11 +806,10 @@ retry_count = 3
 }
 
 #[test]
-fn test_package_out_dir_overrides_parts_dir_for_this_run() {
+fn test_install_creates_archive_in_parts_dir() {
     let root = tempfile::tempdir().unwrap();
     let plans_dir = root.path().join("plans");
     let parts_dir = root.path().join("parts");
-    let out_dir = root.path().join("custom-parts");
     let source_dir = root.path().join("sources");
     let state_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
@@ -760,7 +829,7 @@ fn test_package_out_dir_overrides_parts_dir_for_this_run() {
 name = "custom-out-dir"
 version = "1.0.0"
 release = 1
-description = "verify package --out-dir"
+description = "verify install creates archives"
 license = "MIT"
 arch = "x86_64"
 
@@ -790,7 +859,7 @@ logs_dir = "{}"
 executors_dir = "/etc/wright/executors"
 
 [build]
-build_dir = "{}"
+forge_dir = "{}"
 default_isolation = "none"
 ccache = false
 
@@ -808,70 +877,24 @@ retry_count = 3
     )
     .unwrap();
 
-    // Package no longer auto-builds; build first.
-    let default_build = Command::new(env!("CARGO_BIN_EXE_wright"))
+    let install = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
-        .arg("build")
+        .arg("--root")
+        .arg(root.path())
+        .arg("install")
         .arg("custom-out-dir")
         .output()
         .unwrap();
     assert!(
-        default_build.status.success(),
-        "default build failed: stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&default_build.stdout),
-        String::from_utf8_lossy(&default_build.stderr)
+        install.status.success(),
+        "install failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr)
     );
 
-    let default_package = Command::new(env!("CARGO_BIN_EXE_wright"))
-        .arg("--config")
-        .arg(&config_path)
-        .arg("package")
-        .arg("custom-out-dir")
-        .output()
-        .unwrap();
-
-    assert!(
-        default_package.status.success(),
-        "default package failed: stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&default_package.stdout),
-        String::from_utf8_lossy(&default_package.stderr)
-    );
-
-    let default_archive = parts_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
-    assert!(
-        default_archive.exists(),
-        "default parts_dir archive missing"
-    );
-
-    let custom_package = Command::new(env!("CARGO_BIN_EXE_wright"))
-        .arg("--config")
-        .arg(&config_path)
-        .arg("package")
-        .arg("custom-out-dir")
-        .arg("--out-dir")
-        .arg(&out_dir)
-        .arg("--print-parts")
-        .output()
-        .unwrap();
-
-    assert!(
-        custom_package.status.success(),
-        "custom package failed: stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&custom_package.stdout),
-        String::from_utf8_lossy(&custom_package.stderr)
-    );
-
-    let custom_archive = out_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
-    assert!(custom_archive.exists(), "--out-dir archive missing");
-
-    let stdout = String::from_utf8_lossy(&custom_package.stdout);
-    let stdout_lines: Vec<_> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    let expected_stdout = custom_archive.to_string_lossy().to_string();
-    assert_eq!(stdout_lines, vec![expected_stdout.as_str()]);
+    let archive = parts_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
+    assert!(archive.exists(), "archive should be created in parts_dir");
 }
 
 #[test]
@@ -940,7 +963,7 @@ executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
 
 [build]
-build_dir = "{}"
+forge_dir = "{}"
 default_isolation = "none"
 ccache = false
 
@@ -1082,7 +1105,7 @@ executors_dir = "/etc/wright/executors"
 assemblies_dir = "{}"
 
 [build]
-build_dir = "{}"
+forge_dir = "{}"
 default_isolation = "none"
 ccache = false
 
@@ -1110,8 +1133,14 @@ retry_count = 3
         .output()
         .unwrap();
 
-    eprintln!("FIRST BUILD stdout: {}", String::from_utf8_lossy(&first.stdout));
-    eprintln!("FIRST BUILD stderr: {}", String::from_utf8_lossy(&first.stderr));
+    eprintln!(
+        "FIRST BUILD stdout: {}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    eprintln!(
+        "FIRST BUILD stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
 
     assert!(
         !first.status.success(),

@@ -1,158 +1,102 @@
 # Execution Hierarchy
 
-This document defines the technical terminology and structural layers used in Wright's execution model. It clarifies the relationship between high-level user intent and low-level system actions.
+Wright uses a three-tier metaphor for the journey of source into a running
+system.  Understanding these tiers clarifies how plans, pipelines, and
+individual build actions relate to each other.
 
-## The Four Layers of Execution
+## Why Three Tiers?
 
-Wright organizes execution into four distinct layers of granularity. The scheduling logic (Batch) remains decoupled from domain-specific execution logic (Pipeline).
+A plan's full lifecycle spans too many levels of abstraction to describe with
+a single term.  Collapsing everything into "build" or "install" muddies the
+distinction between strategy (what should happen) and mechanism (how each step
+executes).  Three tiers give each scale its own name and responsibility.
 
-| Layer | Term | Definition | Scope | Owner |
-| :--- | :--- | :--- | :--- | :--- |
-| **L1** | **Operation** | A top-level user action initiated via the CLI. | Multi-Plan / System-wide | `src/cli` |
-| **L2** | **Batch** | A topologically sorted sequence of plan groups executed concurrently within dependency constraints. | Inter-Plan Dependencies | `src/operations/drive.rs` |
-| **L3** | **Pipeline** | The internal **logic lifecycle** of a plan build or package. | Domain-specific flow | `src/builder/lifecycle.rs` |
-| **L4** | **Stage** | The minimum unit of **atomic execution**. Usually a single script or command. | Sandbox / Process | `src/builder/executor` |
+## Tier 1 (Macro): Delivery
 
----
+A **Delivery** is the complete arc of a plan: **resolve → forge → seal → deploy**.
 
-## Structural Visualization
+Every plan that participates in a `wright install` goes through this
+four-step journey.  The user's intent is a delivery — "get GCC onto this
+system" — and Wright's job is to execute the resolve, forge, seal, and deploy
+steps needed to fulfill that delivery.
 
-The following diagram illustrates how these layers nest within each other.
+| Step | What happens | Code home |
+|------|-------------|-----------|
+| **Resolve** | Discover plan files, build name → path index, resolve targets to canonical `plan.toml` paths | `src/resolve/resolver.rs`, `src/plan/discovery.rs` |
+| **Forge** | Fetch sources, verify checksums, extract, run lifecycle stages, slice outputs | `src/forge/`, `Forger::build` |
+| **Seal** | FHS-validate staging output, ELF-lint runtime dependencies, create `.wright.tar.zst` archive | `src/seal/`, `src/part/` |
+| **Deploy** | Extract archive, detect conflicts, copy files to target root, record in `wright.db`, run hooks | `src/transaction/` |
 
-```mermaid
-graph TD
-    subgraph L1_Operation [L1: Operation]
-        direction TB
-        L2_Batch[L2: Batch Driver]
-    end
+In a `wright install`, deliveries are grouped into **waves** by topological
+dependency sorting.  Every plan in a wave depends only on plans from earlier
+waves.  Wright resolves, forges, seals, and deploys one complete wave before
+starting the next, ensuring that when a plan's `configure` stage needs a
+library header, that library's files are already on the target root.
 
-    subgraph L2_Batch [L2: Batch]
-        direction LR
-        GroupA[Batch 0: glibc, linux-headers] --> GroupB[Batch 1: gcc, binutils]
-        GroupB --> GroupC[Batch 2: curl]
-    end
+## Tier 2 (Micro): Pipeline
 
-    subgraph L3_Pipeline [L3: Pipeline Detail]
-        direction TB
-        Execute[execute method] --> L4_Pipeline[L4: Lifecycle Pipeline]
-    end
+A **Pipeline** is the ordered sequence of **Stages** that implements the forge
+step of a delivery.  Think of it as the assembly line inside the forge.
 
-    subgraph L4_Pipeline [L4: Build Pipeline]
-        direction LR
-        S1[L5: Stage - fetch] --> S2[L5: Stage - configure]
-        S2 --> S3[L5: Stage - compile]
-        S3 --> S4[L5: Stage - staging]
-    end
-
-    GroupB -.-> L3_Pipeline
-```
-
----
-
-## Conceptual Separation: Scheduling vs. Execution
-
-A critical architectural boundary exists between **Batch (L2)** and **Pipeline (L3)**.
-
-### The Scheduling Layer (Batch Driver)
-The batch driver is "blind" to the internals of a plan build. It only cares about:
-- **Prerequisites:** "Have all dependency plans in earlier batches completed?"
-- **Resources:** "Is there a CPU or RootMutator lock available?"
-- **State:** "Did the plan build succeed or fail?"
-
-### The Execution Layer (Pipeline & Stage)
-The Pipeline is the domain-specific "worker" inside each batch item. For a build:
-- **Context:** It manages a shared `/work` directory and isolation environment across its Stages.
-- **Order:** It knows that `compile` must follow `configure`.
-- **Granularity:** It uses **Checkpoints** to skip already completed Stages, but these checkpoints are internal to the plan and not managed by the global batch driver.
-
-### Two-Level Recovery (Orthogonal Caches)
-
-Wright maintains **two independent levels of execution progress**. They do not invalidate each other.
-
-| Level | Storage | Granularity | Managed By | Purpose |
-|-------|---------|-------------|------------|---------|
-| **Batch State** | In-memory (`FuturesUnordered`) | Plan (L2) | `operations/drive.rs` | "Which plans have been built/packaged/installed in this run?" |
-| **Stage Checkpoints** | `.wright-stage-*` sentinel files in `work/` | Stage (L4) | `builder/checkpoint.rs` | "Which lifecycle stages inside this plan are done?" |
-
-**Key insight:** Stage Checkpoints survive across command invocations. A restarted `build` can still skip `configure` if its sentinel is valid. To force a full rebuild, use `--force` (which ignores Stage Checkpoints) or remove the `work/` directory.
-
-### Content-Addressed Checkpoints
-
-Stage Checkpoints are **content-addressed**. Each sentinel file stores the plan's `fingerprint` (a hash of plan metadata and sources):
+The default pipeline is:
 
 ```
-# .wright-stage-configure
-fingerprint=sha256:abc123...
+fetch → verify → extract → prepare → configure → compile → check → staging
 ```
 
-Before skipping a Stage, the Pipeline verifies that the stored fingerprint matches the current plan. If the plan has changed, the checkpoint is automatically ignored. This prevents stale checkpoints from silently reusing outdated build artifacts.
+- `fetch`, `verify`, `extract` are **built-in stages** — handled by the
+  `Forger` directly, not by user-defined scripts.  They cannot be targeted
+  with `--stage`.
 
----
+- `prepare`, `configure`, `compile`, `check`, `staging` are **lifecycle
+  stages** — each defined by a `[lifecycle.<name>]` block in `plan.toml`.
+  They run user-provided scripts inside an optional sandbox.
 
-## State Invalidation Matrix
+Plans may override the pipeline order via `lifecycle_order.stages` in
+`plan.toml`, or specify a different order for the MVP pass via
+`[mvp].lifecycle_order`.  The `LifecyclePipeline` struct in
+`src/forge/pipeline.rs` resolves the effective order per build phase.
 
-| User Intent | Affected Layer | CLI Flag | Scope |
-|------------|---------------|----------|-------|
-| "Rebuild even if staging exists" | L3 Pipeline | `--force` | This plan's entire Pipeline |
-| "Rerun from a specific stage" | L3 Pipeline | `--stage=configure` | From that stage forward |
-| "Clean everything and start over" | L3 + disk | `--clean` + `rm -rf work/` | Complete reset |
+Pipelines support **checkpoint-based resume**.  After a stage completes,
+Wright writes a `.wright-stage-<name>` marker in `work/`.  On retry, stages
+with valid checkpoints are skipped.  The `--force-stage` flag overrides this.
 
----
+## Tier 3 (Atomic): Stage
 
-## Execution Flow Example
+A **Stage** is a single script execution — the smallest schedulable unit of
+work in Wright.
 
-When a user runs `wright apply`, the following flow occurs:
+Each stage declared in `plan.toml` can specify:
 
-```mermaid
-sequenceDiagram
-    participant CLI as L1: Operation (apply)
-    participant Batch as L2: Batch Driver
-    participant PL as L3: Pipeline (Lifecycle)
-    participant CK as Checkpoint
-    participant ST as L4: Stage (compile)
+| Field | Purpose |
+|-------|---------|
+| `script` | Shell commands to execute |
+| `executor` | Which executor runs it (defaults to `bash`) |
+| `isolation` | Sandbox level: `none`, `relaxed`, or `strict` |
+| `env` | Per-stage environment variables |
 
-    CLI->>Batch: Drive batches
-    Batch->>PL: Run plan build (with plan fingerprint)
-    activate PL
-    PL->>CK: is_complete("configure", fingerprint)
-    CK-->>PL: true (skip)
-    PL->>CK: is_complete("compile", fingerprint)
-    CK-->>PL: false (stale — plan changed)
-    PL->>ST: Execute Stage
-    activate ST
-    ST-->>PL: Exit Code 0
-    deactivate ST
-    PL->>CK: mark_complete("compile", fingerprint)
-    PL-->>Batch: Plan Success
-    deactivate PL
-    Batch->>CLI: Operation Complete
-```
+Stages support hooks: `pre_<stage>` runs before the stage script, and
+`post_<stage>` runs after.  Both hooks live in the same `[lifecycle]`
+namespace.
 
----
+Stage execution in code is handled by `LifecyclePipeline::run_stage`
+(`src/forge/pipeline.rs`).  The pipeline runner determines the effective CPU
+count (when locks are held), applies variable substitution, logs to
+`logs/<stage>.log`, and retries on ETXTBSY races.
 
-## Why this Distinction Matters
+## How the Tiers Map to Code
 
-1.  **Performance:** Managing 800 individual Stages in a global DAG would cause significant scheduling overhead. Grouping them into Pipelines inside batch items keeps the scheduling layer lean.
-2.  **Context Preservation:** Stages within a Pipeline often share heavy resources (like a mounted OverlayFS). It is more efficient to run them sequentially within one plan than to teardown/setup environments between Stages.
-3.  **Resilience:** The batch driver handles "Process Crashes" (resuming at the plan level), while Pipeline handles "Logical Failures" (resuming at the Stage level using internal checkpoints).
-4.  **Safety:** Content-addressed Checkpoints prevent the class of bugs where a plan is modified but old build artifacts are silently reused. The fingerprint mismatch guarantees a clean rebuild.
+| Tier | Term | Key Types | Module |
+|------|------|-----------|--------|
+| Macro | Delivery | orchestration across `commands/` → `operations/` → `planning/` → `forge/` → `transaction/` | — (cross-cutting) |
+| Micro | Pipeline | `LifecyclePipeline`, `LifecycleContext`, `DEFAULT_STAGES` | `src/forge/pipeline.rs` |
+| Atomic | Stage | `LifecycleStage`, `ExecutorOptions` | `src/forge/pipeline.rs`, `src/forge/executor.rs` |
 
----
+## Relationship to CLI Commands
 
-## Design Status & Future Improvements
-
-The current execution hierarchy is **architecturally sound** and satisfies the core requirements of a distro build system. However, several enhancements would move it from "good" to "best-in-class":
-
-### Already Excellent
-- **Clean layer separation:** Batch driver does not leak into Pipeline internals.
-- **Orthogonal recovery:** Batch execution and Stage Checkpoints are independent caches with clear invalidation semantics.
-- **Content-addressed checkpoints:** Eliminates an entire class of stale-build bugs.
-- **Deterministic scheduling:** Topological batches ensure reproducible execution order.
-
-### Areas for Improvement
-
-1. **Observability Gap:** There is no `wright status` or `wright log` command to inspect batch progress or stage checkpoints without reading filesystem state directly.
-2. **Single-Plan Fast Path:** A `wright build single-plan` still constructs a full execution plan and batch driver. For single-target operations, a direct materialization path would reduce overhead.
-3. **Checkpoint Distribution:** Stage Checkpoints are local filesystem files. Distributed builds (e.g. `sccache`-like remote workers) would require checkpoint persistence in shared storage.
-4. **`--force` Semantic Overload:** `--force` means "rebuild from scratch" in `wright build` but "reinstall even if installed" in `wright apply`. Consider splitting into `--rebuild` and `--reinstall` for clarity.
-5. **Stage-Level Force:** There is no way to force a single stage rerun (e.g. "re-run `check` but keep `compile`"). A `--force-stage=check` flag would be useful.
+| Command | Tier engaged |
+|---------|-------------|
+| `wright build` | Forge only (one pipeline) |
+| `wright merge` | Deploy (from existing archive) |
+| `wright install` | Full Delivery (resolve + forge + seal + deploy, wave by wave) |
+| `wright launch` | Full Delivery on a fresh root |

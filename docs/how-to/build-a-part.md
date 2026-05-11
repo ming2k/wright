@@ -42,7 +42,7 @@ wright build zlib
 ## Build and Install Immediately
 
 ```bash
-wright apply zlib
+wright install zlib
 ```
 
 ## Iterate on a Build Script

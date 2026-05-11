@@ -13,7 +13,7 @@ replaced.
 - Sandboxed builds via Linux namespaces and OverlayFS
 - Transactional install / upgrade / remove
 - Local part inventory for reuse and rollback
-- Source-first maintenance through wave-aware `wright apply`
+- Source-first maintenance through wave-aware `wright install`
 
 ## Build
 
@@ -29,7 +29,7 @@ install -Dm644 target/man/*.1 /usr/share/man/man1/
 wright build hello
 wright package hello
 wright install hello
-wright apply hello
+wright install hello
 wright prune --latest --apply
 wright list
 ```

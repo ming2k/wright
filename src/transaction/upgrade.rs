@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::database::{Dependency, FileType, InstalledDb, NewPart, TransactionOperation};
+use crate::database::{Dependency, FileType, HistoryAction, InstalledDb, NewPart, SessionContext};
 use crate::error::{Result, WrightError};
 use crate::part::archive;
 use crate::part::version::{self, Version};
 use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
-use crate::transaction::hooks::{log_running_hook, read_hooks, run_install_script};
+use crate::transaction::hooks::{log_running_hook, read_hooks, run_deploy_script};
 
 use super::{log_debug_timing, self_replace_relations};
 
@@ -19,6 +19,7 @@ pub async fn upgrade_part(
     root_dir: &Path,
     force: bool,
     run_hooks: bool,
+    session: SessionContext,
 ) -> Result<()> {
     let overall_start = Instant::now();
 
@@ -150,10 +151,13 @@ pub async fn upgrade_part(
 
     let mut tx = TransactionContext::begin(
         db,
-        TransactionOperation::Upgrade,
+        HistoryAction::Upgrade,
         &partinfo.name,
         Some(&installed_plan.version),
         Some(&partinfo.plan.version),
+        session,
+        installed_part.part_hash.as_deref(),
+        Some(&part_hash),
     )
     .await?;
 
@@ -217,8 +221,7 @@ pub async fn upgrade_part(
         if let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
-            if let Err(e) =
-                run_install_script(script, root_dir, &partinfo.name, "pre_install").await
+            if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await
             {
                 warn!("hook [pre_install] for {} failed: {}", partinfo.name, e);
             }
@@ -328,7 +331,7 @@ pub async fn upgrade_part(
         name: &partinfo.name,
         plan_id,
         part_hash: Some(part_hash.as_str()),
-        install_scripts: hooks_content.as_deref(),
+        deploy_scripts: hooks_content.as_deref(),
         origin: installed_part.origin, // Preserve origin
     })
     .await?;
@@ -387,7 +390,7 @@ pub async fn upgrade_part(
             log_running_hook(&partinfo.name, "post_upgrade");
             phase_start = Instant::now();
             if let Err(e) =
-                run_install_script(script, root_dir, &partinfo.name, "post_upgrade").await
+                run_deploy_script(script, root_dir, &partinfo.name, "post_upgrade").await
             {
                 warn!("hook [post_upgrade] for {} failed: {}", partinfo.name, e);
             }

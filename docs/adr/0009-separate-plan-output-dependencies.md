@@ -45,7 +45,7 @@ Declared **per-output** inside `[[output]]` entries. These are recorded in binar
 [[output]]
 name = "libstdc++"
 runtime_deps = ["libgcc:default"]
-include = ["/usr/lib/libstdc.*"]
+include = ["/usr/lib/libstdc*"]
 ```
 
 ### No `[dependencies]` section, no optional dependencies

@@ -98,7 +98,7 @@ async fn join_hook_output(
     Ok(())
 }
 
-pub(super) async fn run_install_script(
+pub(super) async fn run_deploy_script(
     script: &str,
     root_dir: &Path,
     part_name: &str,

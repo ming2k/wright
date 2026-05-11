@@ -1,6 +1,6 @@
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ pub struct GlobalConfig {
     #[serde(default = "default_general")]
     pub general: GeneralConfig,
     #[serde(default)]
-    pub build: BuildConfig,
+    pub build: ForgeConfig,
     #[serde(default)]
     pub network: NetworkConfig,
 }
@@ -23,16 +23,18 @@ pub struct GeneralConfig {
     pub arch: String,
     #[serde(default = "default_plans_dir")]
     pub plans_dir: PathBuf,
-    /// Directory containing group manifest files (`<name>.toml`).
-    /// Defaults to the `groups` sibling of `plans_dir`.
-    #[serde(default = "default_groups_dir")]
-    pub groups_dir: PathBuf,
+    /// Directory containing folio manifest files (`<name>.toml`).
+    /// Defaults to the `folios` sibling of `plans_dir`.
+    #[serde(default = "default_folios_dir")]
+    pub folios_dir: PathBuf,
     /// Additional plan search directories consulted after `plans_dir`.
     /// Relative paths are resolved against the working directory at runtime.
     #[serde(default)]
     pub extra_plans_dirs: Vec<PathBuf>,
     #[serde(default = "default_parts_dir", alias = "components_dir")]
     pub parts_dir: PathBuf,
+    #[serde(default = "default_store_dir")]
+    pub store_dir: PathBuf,
     #[serde(default = "default_source_dir")]
     pub source_dir: PathBuf,
     #[serde(default = "default_db_path")]
@@ -45,9 +47,9 @@ pub struct GeneralConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct BuildConfig {
-    #[serde(default = "default_build_dir")]
-    pub build_dir: PathBuf,
+pub struct ForgeConfig {
+    #[serde(default = "default_forge_dir")]
+    pub forge_dir: PathBuf,
     #[serde(default = "default_isolation")]
     pub default_isolation: String,
     #[serde(default)]
@@ -91,9 +93,10 @@ fn default_general() -> GeneralConfig {
     GeneralConfig {
         arch: default_arch(),
         plans_dir: default_plans_dir(),
-        groups_dir: default_groups_dir(),
+        folios_dir: default_folios_dir(),
         extra_plans_dirs: Vec::new(),
         parts_dir: default_parts_dir(),
+        store_dir: default_store_dir(),
         source_dir: if use_xdg {
             get_xdg_cache().unwrap_or_else(default_source_dir)
         } else {
@@ -159,11 +162,14 @@ fn default_arch() -> String {
 fn default_plans_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/plans")
 }
-fn default_groups_dir() -> PathBuf {
-    PathBuf::from("/var/lib/wright/groups")
+fn default_folios_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/folios")
 }
 fn default_parts_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/parts")
+}
+fn default_store_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/store")
 }
 fn default_source_dir() -> PathBuf {
     PathBuf::from("/var/lib/wright/sources")
@@ -177,7 +183,7 @@ fn default_logs_dir() -> PathBuf {
 fn default_executors_dir() -> PathBuf {
     PathBuf::from("/etc/wright/executors")
 }
-fn default_build_dir() -> PathBuf {
+fn default_forge_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright/workshop")
 }
 fn default_isolation() -> String {
@@ -203,16 +209,16 @@ impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
             general: default_general(),
-            build: BuildConfig::default(),
+            build: ForgeConfig::default(),
             network: NetworkConfig::default(),
         }
     }
 }
 
-impl Default for BuildConfig {
+impl Default for ForgeConfig {
     fn default() -> Self {
         Self {
-            build_dir: default_build_dir(),
+            forge_dir: default_forge_dir(),
             default_isolation: default_isolation(),
             ccache: false,
             memory_limit: None,

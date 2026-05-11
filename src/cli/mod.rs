@@ -1,22 +1,22 @@
 pub mod build;
-pub mod launch;
-pub mod package;
-pub mod prune;
-pub mod resolve;
+pub mod common;
+pub mod maintenance;
+pub mod query;
 pub mod system;
 
 use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
-use build::BUILD_AFTER_HELP;
-use launch::LAUNCH_AFTER_HELP;
-use package::PACKAGE_AFTER_HELP;
-use resolve::RESOLVE_AFTER_HELP;
-
 #[derive(Parser)]
 #[command(
     name = "wright",
     about = "Declarative, extensible, sandboxed Linux package manager",
+    long_about = "Declarative, extensible, sandboxed Linux package manager\n\n\
+                  Command groups:\n  \
+                  System Management    install, remove, upgrade, merge, assume, unassume\n  \
+                  Query & Inspection   list, files, check, history, doctor\n  \
+                  Build & Packaging    build, lint, launch\n  \
+                  Cache & Maintenance  prune",
     version,
     subcommand_required = true,
     arg_required_else_help = true
@@ -48,39 +48,67 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    // --- System Management ---
-    #[command(flatten)]
-    System(system::Commands),
+    // ── System Management ──────────────────────────────────────────
+    /// Merge plan archives into the target root
+    #[command(display_order = 1)]
+    Merge(system::MergeArgs),
 
-    // --- Build & Development ---
-    /// Build parts from plans
-    #[command(after_help = BUILD_AFTER_HELP)]
+    /// Install plans: resolve, forge, seal, and merge with full lifecycle
+    #[command(display_order = 2)]
+    Install(system::InstallArgs),
+
+    /// Upgrade plans: resolve, rebuild, seal, and deploy with reverse dependency expansion
+    #[command(display_order = 3)]
+    Upgrade(system::UpgradeArgs),
+
+    /// Remove deployed parts
+    #[command(display_order = 4)]
+    Remove(system::RemoveArgs),
+
+    /// Mark a part as externally provided to satisfy dependency checks
+    #[command(display_order = 5)]
+    Assume(system::AssumeArgs),
+
+    /// Remove an assumed (externally provided) part record
+    #[command(display_order = 6)]
+    Unassume(system::UnassumeArgs),
+
+    // ── Query & Inspection ─────────────────────────────────────────
+    /// List deployed parts
+    #[command(display_order = 11)]
+    List(query::ListArgs),
+
+    /// List files owned by a part
+    #[command(display_order = 12)]
+    Files(query::FilesArgs),
+
+    /// Perform system health checks
+    #[command(display_order = 13)]
+    Check(query::CheckArgs),
+
+    /// Show part transaction history (deploy, upgrade, remove)
+    #[command(display_order = 14)]
+    History(query::HistoryArgs),
+
+    /// Diagnose system and archive health issues
+    #[command(display_order = 15)]
+    Doctor(query::DoctorArgs),
+
+    // ── Build & Packaging ──────────────────────────────────────────
+    /// Forge parts from plans
+    #[command(display_order = 21)]
     Build(build::BuildArgs),
 
-    /// Package built staging directories into `.wright.tar.zst` archives
-    #[command(after_help = PACKAGE_AFTER_HELP)]
-    Package(package::PackageArgs),
-
-    /// Resolve targets and expand their dependency graph
-    #[command(after_help = RESOLVE_AFTER_HELP)]
-    Resolve(resolve::ResolveArgs),
-
     /// Verify the syntax and logical integrity of plan files
-    Lint {
-        /// Plan names or paths to validate (all plans if omitted)
-        targets: Vec<String>,
-        /// Recurse into subdirectories
-        #[arg(long, short = 'r')]
-        recursive: bool,
-        /// Verify installed part file integrity (SHA-256 checksums)
-        #[arg(long)]
-        verify: bool,
-    },
+    #[command(display_order = 22)]
+    Lint(build::LintArgs),
 
+    /// Fill a target root from a folio manifest or from plans
+    #[command(display_order = 23)]
+    Launch(build::LaunchArgs),
+
+    // ── Cache & Maintenance ────────────────────────────────────────
     /// Prune stale archives from the parts directory
-    Prune(prune::PruneArgs),
-
-    /// Fill a target root from a group manifest or from plans
-    #[command(after_help = LAUNCH_AFTER_HELP)]
-    Launch(launch::LaunchArgs),
+    #[command(display_order = 31)]
+    Prune(maintenance::PruneArgs),
 }

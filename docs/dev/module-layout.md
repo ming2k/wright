@@ -9,8 +9,10 @@ src/
 ├── commands/         # thin CLI adapters grouped by subcommand
 ├── config.rs         # global config
 ├── operations/       # command use cases and batch driving
-├── planning/         # target resolution, dependency graphs, batches, packaging entry points
-├── builder/          # single-plan build lifecycle execution
+├── resolve/          # target resolution, dependency graphs, batch planning (step 1: resolve)
+├── forge/            # single-plan forge: fetch, pipeline execution, output slicing (step 2: forge)
+├── seal/             # output validation, archive creation (step 3: seal)
+├── delivery/          # CAS store + WAL crash recovery for the delivery state machine
 ├── database/         # installed system state and migration layer
 ├── isolation/        # sandbox isolation
 ├── part/             # archive format, local part store, pruning, versions, FHS validation
@@ -29,6 +31,7 @@ src/bin/wright.rs -> src/cli/* -> src/commands/* -> library modules
 - `src/bin/wright.rs` parses args, initializes logging, loads config, and dispatches.
 - `src/cli/` owns clap-facing argument and help-text definitions only.
 - `src/commands/` maps parsed args into operation requests and command locks.
-- `src/operations/` owns command use cases such as apply and launch, and drives batch execution.
-- `src/planning/` owns graph construction, dependency expansion, and build wave planning.
-- `src/builder/` owns execution of one plan's lifecycle stages.
+- `src/operations/` owns command use cases such as install and launch, and drives batch execution.
+- `src/resolve/` owns graph construction, dependency expansion, and build wave planning.
+- `src/forge/` owns execution of one plan's pipeline stages and source fetching.
+- `src/seal/` owns output validation (FHS, ELF lint) and archive creation.

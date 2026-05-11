@@ -82,11 +82,11 @@ Update `parse_dep_ref` and `parse_dependency_ref` in `src/part/version.rs` to re
 
 Update every consumer of dependency references:
 
-- `src/builder/orchestrator/planning.rs` — expand bare names before adding to build queue
-- `src/builder/lifecycle.rs` — mount all output directories for bare-name build deps
+- `src/planning/mod.rs` — expand bare names before adding to build queue
+- `src/forge/pipeline.rs` — mount all output directories for bare-name build deps
 - `src/commands/lint.rs` — validate all outputs exist for bare-name references
 - `src/transaction/install.rs` — install all outputs for bare-name runtime deps
-- `src/builder/mvp.rs` — same expansion for MVP dependency graph
+- `src/forge/mvp.rs` — same expansion for MVP dependency graph
 
 ### Phase 3 — Deprecation
 

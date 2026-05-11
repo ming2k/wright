@@ -42,7 +42,7 @@ This is triggered when:
 
 ### Fix
 
-The `link_or_copy()` helper in `src/builder/mod.rs` catches `EXDEV` from
+The `link_or_copy()` helper in `src/forge/mod.rs` catches `EXDEV` from
 `hard_link()` and transparently falls back to `fs::copy`.  This is
 functionally equivalent — the only cost is extra disk space for the
 duplicated data of the affected files.
@@ -91,7 +91,7 @@ during tight parallel exec windows.
 2. **execvp retry loop** (`src/isolation/native.rs`): 8 retries with
    exponential backoff for the top-level `execvp(command)` call.
 
-3. **Stage-level retry** (`src/builder/lifecycle.rs`): when a build stage
+3. **Stage-level retry** (`src/forge/pipeline.rs`): when a pipeline stage
    exits with code 126 and its output contains "Text file busy", the stage
    is retried up to 10 times with capped exponential backoff (200ms-1000ms
    base) and randomized jitter on each delay.  This catches ETXTBSY from

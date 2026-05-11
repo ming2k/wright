@@ -5,9 +5,9 @@ use serde::Deserialize;
 
 use crate::error::{Result, WrightError};
 
-use super::BuildOptions;
+use super::ForgeOptions;
 use super::{
-    BackupConfig, DiscardRule, FabricateHooks, InstallScripts, LifecycleOrder, LifecycleStage,
+    BackupConfig, DeployScripts, DiscardRule, FabricateHooks, LifecycleOrder, LifecycleStage,
     OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 
@@ -23,7 +23,7 @@ pub(super) struct RawManifest {
     #[serde(default)]
     pub sources: Option<toml::Value>,
     #[serde(default)]
-    pub options: BuildOptions,
+    pub options: ForgeOptions,
     #[serde(default)]
     pub lifecycle: Option<HashMap<String, toml::Value>>,
     #[serde(default)]
@@ -39,7 +39,7 @@ pub(super) struct RawManifest {
 
 struct OutputSection {
     outputs: Option<OutputConfig>,
-    install_scripts: Option<InstallScripts>,
+    deploy_scripts: Option<DeployScripts>,
     backup: Option<BackupConfig>,
     relations: Relations,
     runtime_deps: Vec<String>,
@@ -69,7 +69,7 @@ fn parse_output_section(
                         return Err(WrightError::ParseError(format!(
                             "[[output]] entry {} must be a table",
                             i
-                        )))
+                        )));
                     }
                 };
                 let name = match table.remove("name") {
@@ -81,7 +81,7 @@ fn parse_output_section(
                         return Err(WrightError::ParseError(format!(
                             "[[output]] entry {}: 'name' must be a string",
                             i
-                        )))
+                        )));
                     }
                     None => default_output_name.to_string(),
                 };
@@ -114,7 +114,7 @@ fn parse_output_section(
             match catchall_count {
                 0 => Ok(OutputSection {
                     outputs: Some(OutputConfig::Multi(parts)),
-                    install_scripts: None,
+                    deploy_scripts: None,
                     backup: None,
                     relations: Relations::default(),
                     runtime_deps: all_runtime_deps,
@@ -126,7 +126,7 @@ fn parse_output_section(
                         conflicts: catchall.conflicts.clone(),
                         provides: catchall.provides.clone(),
                     };
-                    let install_scripts = catchall.hooks.as_ref().map(|h| InstallScripts {
+                    let deploy_scripts = catchall.hooks.as_ref().map(|h| DeployScripts {
                         pre_install: h.pre_install.clone(),
                         post_install: h.post_install.clone(),
                         post_upgrade: h.post_upgrade.clone(),
@@ -139,7 +139,7 @@ fn parse_output_section(
 
                     Ok(OutputSection {
                         outputs: Some(OutputConfig::Multi(parts)),
-                        install_scripts,
+                        deploy_scripts,
                         backup: backup_cfg,
                         relations,
                         runtime_deps: all_runtime_deps,
@@ -169,7 +169,7 @@ fn parse_output_section(
             } else {
                 None
             },
-            install_scripts: None,
+            deploy_scripts: None,
             backup: None,
             relations: Relations::default(),
             runtime_deps: Vec::new(),
@@ -240,7 +240,7 @@ impl PlanManifest {
         let output_section = parse_output_section(&metadata.name, output, hooks)?;
         let OutputSection {
             outputs,
-            install_scripts,
+            deploy_scripts,
             backup,
             relations,
             runtime_deps,
@@ -259,7 +259,7 @@ impl PlanManifest {
             mvp: None,
             outputs,
             discard,
-            install_scripts,
+            deploy_scripts,
             backup,
             source_plan: None,
         };

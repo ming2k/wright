@@ -21,7 +21,7 @@ use std::time::SystemTime;
 use walkdir::WalkDir;
 
 use crate::error::Result;
-use crate::part::archive::{read_archive_meta, ArchiveMeta};
+use crate::part::archive::{ArchiveMeta, read_archive_meta};
 use crate::part::elf;
 use crate::part::version;
 
@@ -49,7 +49,7 @@ pub struct SonameIndex {
 impl SonameIndex {
     /// Walk every `.wright.tar.zst` archive under `parts_dir` and build
     /// the SONAME index. Archives that fail to parse are skipped with a
-    /// warning; one bad archive must not break a whole package run.
+    /// warning; one bad archive must not break a whole seal run.
     ///
     /// Prefer `scan_for_link_deps` when the caller has a known link-deps
     /// list — restricting the index to that closure avoids false-positive
@@ -216,7 +216,7 @@ struct ElfMetadata {
 /// to depend on itself.
 ///
 /// This function caches the ELF scan keyed by `(output_dir, mtime)` so
-/// repeated packaging of the same unchanged tree is effectively free.
+/// repeated sealing of the same unchanged tree is effectively free.
 pub fn lint_runtime_deps(
     output_dir: &Path,
     declared: &[String],
@@ -225,9 +225,9 @@ pub fn lint_runtime_deps(
 ) -> Result<LintReport> {
     let mtime = dir_mtime(output_dir)?;
     let meta = {
-        let mut cache = elf_lint_cache()
-            .lock()
-            .map_err(|e| crate::error::WrightError::PartError(format!("elf-lint cache poison: {}", e)))?;
+        let mut cache = elf_lint_cache().lock().map_err(|e| {
+            crate::error::WrightError::PartError(format!("elf-lint cache poison: {}", e))
+        })?;
         if let Some(cached) = cache.get(&(output_dir.to_path_buf(), mtime)) {
             cached.clone()
         } else {
@@ -268,7 +268,7 @@ fn evaluate_lint_report(
             None => report.unmapped.push(UnmappedSoname {
                 soname: (*soname).clone(),
                 seen_in: meta.ownership.get(*soname).cloned().unwrap_or_default(),
-            })
+            }),
         }
     }
 
@@ -341,7 +341,7 @@ fn collect_elf_metadata(output_dir: &Path) -> Result<ElfMetadata> {
 /// Heuristic mtime for a directory: latest mtime of any direct child entry.
 /// Using recursive mtime would be expensive, so we approximate with the
 /// directory's own mtime plus direct children. This is good enough because
-/// packaging always rewrites the output directory when it changes.
+/// sealing always rewrites the output directory when it changes.
 fn dir_mtime(dir: &Path) -> Result<SystemTime> {
     let mut latest = std::fs::metadata(dir)
         .and_then(|m| m.modified())

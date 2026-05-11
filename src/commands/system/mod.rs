@@ -1,402 +1,149 @@
-pub mod apply;
-pub mod check;
-pub mod doctor;
 pub mod install;
-pub mod list;
 
-use std::collections::HashSet;
-use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::error::{Result, WrightError};
-
-use crate::cli::system::Commands as SystemCommands;
+use crate::cli::system::{
+    AssumeArgs, InstallArgs, MergeArgs, RemoveArgs, UnassumeArgs, UpgradeArgs,
+};
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
-use crate::part::store::{pick_latest, pick_version};
-use crate::transaction;
+use crate::error::{Result, WrightError};
+use crate::part::store::LocalPartStore;
 
-pub async fn execute(
-    command: SystemCommands,
-    config: &GlobalConfig,
+use crate::util::lock::ProcessLock;
+
+fn ensure_lock_and_part_store(
     db_path: &Path,
-    root_dir: &Path,
-    verbose: u8,
-    quiet: bool,
-) -> Result<()> {
-    let _command_lock = crate::util::lock::acquire_lock(
+    config: &GlobalConfig,
+) -> Result<(LocalPartStore, ProcessLock)> {
+    let lock = crate::util::lock::acquire_lock(
         &crate::util::lock::lock_dir_from_db(db_path),
         crate::util::lock::LockIdentity::Command("wright"),
         crate::util::lock::LockMode::Exclusive,
     )
     .map_err(|e| WrightError::LockError(format!("failed to start wright operation: {}", e)))?;
     let part_store = crate::commands::setup_local_part_store(config)?;
+    Ok((part_store, lock))
+}
 
-    if let SystemCommands::Apply {
-        targets,
-        deps,
-        rdeps,
-        match_policies,
-        depth,
-        force,
-        dry_run,
-    } = command
-    {
-        return apply::execute_system_apply(apply::ApplyArgs {
-            targets,
-            deps,
-            rdeps,
-            match_policies,
-            depth,
-            force,
-            dry_run,
-            config,
-            db_path,
-            root_dir,
-            verbose,
-            quiet,
-            part_store: &part_store,
-        })
-        .await;
-    }
+pub async fn dispatch_merge(
+    args: MergeArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+    root_dir: &Path,
+) -> Result<()> {
+    let (part_store, _lock) = ensure_lock_and_part_store(db_path, config)?;
+    crate::operations::merge::execute_merge(
+        args.parts,
+        args.force,
+        args.nodeps,
+        args.path,
+        config,
+        db_path,
+        root_dir,
+        &part_store,
+    )
+    .await
+}
 
-    if let SystemCommands::Install {
-        parts,
-        force,
-        nodeps,
-        path,
-    } = command
-    {
-        return install::execute_install(
-            parts,
-            force,
-            nodeps,
-            path,
-            config,
-            db_path,
-            root_dir,
-            &part_store,
-        )
-        .await;
-    }
+pub async fn dispatch_install(
+    args: InstallArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+    root_dir: &Path,
+    verbose: u8,
+    quiet: bool,
+) -> Result<()> {
+    let (part_store, _lock) = ensure_lock_and_part_store(db_path, config)?;
+    install::execute_system_install(install::InstallArgs {
+        targets: args.targets,
+        deps: args.deps,
+        rdeps: args.rdeps,
+        match_policies: args.match_policies,
+        depth: args.depth,
+        force: args.force,
+        dry_run: args.dry_run,
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        part_store: &part_store,
+    })
+    .await
+}
 
+pub async fn dispatch_upgrade(
+    args: UpgradeArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+    root_dir: &Path,
+    verbose: u8,
+    quiet: bool,
+) -> Result<()> {
+    let (part_store, _lock) = ensure_lock_and_part_store(db_path, config)?;
+    crate::operations::upgrade::execute_upgrade(
+        args.targets,
+        args.force,
+        args.depth,
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        &part_store,
+    )
+    .await
+}
+
+pub async fn dispatch_remove(
+    args: RemoveArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+    root_dir: &Path,
+) -> Result<()> {
+    let (_, _lock) = ensure_lock_and_part_store(db_path, config)?;
     let db = InstalledDb::open(db_path)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
+    let parts_refs: Vec<&str> = args.parts.iter().map(|s| s.as_str()).collect();
+    crate::operations::remove::execute_remove(
+        &db,
+        &parts_refs,
+        args.force,
+        args.recursive,
+        args.cascade,
+        root_dir,
+    )
+    .await
+}
 
-    match command {
-        SystemCommands::Apply { .. } => unreachable!(),
-        SystemCommands::Install { .. } => unreachable!(),
-        SystemCommands::List {
-            long,
-            roots,
-            assumed,
-            orphans,
-        } => {
-            list::execute_list(&db, long, roots, assumed, orphans).await?;
-        }
-        SystemCommands::Check {
-            part,
-            deep,
-            integrity_only,
-        } => {
-            check::execute_check(&db, root_dir, part.as_deref(), deep, integrity_only).await?;
-        }
-        SystemCommands::Upgrade {
-            parts,
-            force,
-            version: target_version,
-        } => {
-            for arg in &parts {
-                let path = PathBuf::from(arg);
-                if path.exists() {
-                    // Direct part file path
-                    match transaction::upgrade_part(&db, &path, root_dir, force, true).await {
-                        Ok(()) => println!("upgraded: {}", path.display()),
-                        Err(e) => {
-                            tracing::error!("upgrading {}: {}", path.display(), e);
-                            std::process::exit(1);
-                        }
-                    }
-                    continue;
-                }
+pub async fn dispatch_assume(
+    args: AssumeArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+) -> Result<()> {
+    let (_, _lock) = ensure_lock_and_part_store(db_path, config)?;
+    let db = InstalledDb::open(db_path)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
+    crate::operations::assume::execute_assume(
+        &db,
+        args.name.as_deref(),
+        args.version.as_deref(),
+        args.file.as_deref(),
+    )
+    .await
+}
 
-                // Resolve by name
-                let all_versions = part_store
-                    .resolve_all(arg)
-                    .await
-                    .map_err(|e| WrightError::PartError(format!("failed to resolve '{}': {}", arg, e)))?;
-
-                if all_versions.is_empty() {
-                    tracing::error!("no parts found for '{}'", arg);
-                    std::process::exit(1);
-                }
-
-                let selected = if let Some(ref ver) = target_version {
-                    pick_version(&all_versions, ver)
-                } else {
-                    pick_latest(&all_versions)
-                };
-
-                let selected = match selected {
-                    Some(s) => s,
-                    None => {
-                        tracing::error!(
-                            "version '{}' not found for '{}'",
-                            target_version.as_deref().unwrap_or("?"),
-                            arg
-                        );
-                        std::process::exit(1);
-                    }
-                };
-
-                // When --version is explicitly given, force the upgrade (allows downgrade)
-                let effective_force = force || target_version.is_some();
-                match transaction::upgrade_part(
-                    &db,
-                    &selected.path,
-                    root_dir,
-                    effective_force,
-                    true,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        let ver_rel = if selected.version.is_empty() {
-                            format!("{}", selected.release)
-                        } else {
-                            format!("{}-{}", selected.version, selected.release)
-                        };
-                        println!("upgraded: {} -> {}", arg, ver_rel);
-                    }
-                    Err(e) => {
-                        tracing::error!("upgrading {}: {}", arg, e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
-        SystemCommands::Remove {
-            parts,
-            force,
-            recursive,
-            cascade,
-        } => {
-            // Check for assumed parts before attempting removal
-            for name in &parts {
-                if let Some(part) = db.get_part(name).await? {
-                    if part.origin == crate::database::Origin::External {
-                        tracing::error!("'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.", name, name);
-                        std::process::exit(1);
-                    }
-                }
-            }
-
-            let batch_targets: HashSet<String> = if recursive {
-                HashSet::new()
-            } else {
-                parts.iter().cloned().collect()
-            };
-            let removal_order = if recursive {
-                parts.clone()
-            } else {
-                transaction::order_removal_batch(&db, &parts)
-                    .await
-                    .map_err(|e| WrightError::RemoveError(format!("failed to plan removal order: {}", e)))?
-            };
-
-            for name in &removal_order {
-                if recursive {
-                    let dependents = db
-                        .get_recursive_dependents(name)
-                        .await
-                        .map_err(|e| WrightError::DatabaseError(format!("failed to resolve dependents of {}: {}", name, e)))?;
-
-                    if !dependents.is_empty() {
-                        println!(
-                            "will also remove (depends on {}): {}",
-                            name,
-                            dependents.join(", ")
-                        );
-                    }
-
-                    for dep in &dependents {
-                        match transaction::remove_part(&db, dep, root_dir, true).await {
-                            Ok(()) => println!("removed: {}", dep),
-                            Err(e) => {
-                                tracing::error!("removing {}: {}", dep, e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-
-                // Compute cascade list before removing the target
-                let cascade_list = if cascade {
-                    let list = transaction::cascade_remove_list(&db, name)
-                        .await
-                        .map_err(|e| WrightError::RemoveError(format!("failed to compute cascade list for {}: {}", name, e)))?;
-                    if !list.is_empty() {
-                        println!(
-                            "will also remove orphan dependencies of {}: {}",
-                            name,
-                            list.join(", ")
-                        );
-                    }
-                    list
-                } else {
-                    Vec::new()
-                };
-
-                let result = if recursive {
-                    transaction::remove_part(&db, name, root_dir, force || recursive).await
-                } else {
-                    let ignored_dependents: HashSet<String> = batch_targets
-                        .iter()
-                        .filter(|candidate| candidate.as_str() != name)
-                        .cloned()
-                        .collect();
-                    transaction::remove_part_with_ignored_dependents(
-                        &db,
-                        name,
-                        root_dir,
-                        force,
-                        &ignored_dependents,
-                    )
-                    .await
-                };
-
-                match result {
-                    Ok(()) => println!("removed: {}", name),
-                    Err(e) => {
-                        tracing::error!("removing {}: {}", name, e);
-                        std::process::exit(1);
-                    }
-                }
-
-                // Remove orphan dependencies (leaf-first order)
-                for orphan in &cascade_list {
-                    match transaction::remove_part(&db, orphan, root_dir, true).await {
-                        Ok(()) => println!("removed: {}", orphan),
-                        Err(e) => {
-                            tracing::error!("removing {}: {}", orphan, e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-            }
-        }
-        SystemCommands::Files { part } => {
-            let installed_part = db.get_part(&part).await.map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))?;
-            match installed_part {
-                Some(info) => {
-                    let files = db.get_files(info.id).await.map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))?;
-                    for file in &files {
-                        println!("{}", file.path);
-                    }
-                }
-                None => {
-                    tracing::error!("part '{}' is not installed", part);
-                    std::process::exit(1);
-                }
-            }
-        }
-        SystemCommands::Assume {
-            name,
-            version,
-            file,
-        } => {
-            let mut entries: Vec<(String, String)> = Vec::new();
-
-            if let Some(path) = file {
-                let content = std::fs::read_to_string(&path)
-                    .map_err(|e| WrightError::IoError(e))?;
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
-                        continue;
-                    }
-                    let mut parts = trimmed.split_whitespace();
-                    let n = parts
-                        .next()
-                        .ok_or_else(|| WrightError::BuildError(format!("missing name in line: {}", trimmed)))?;
-                    let v = parts
-                        .next()
-                        .ok_or_else(|| WrightError::BuildError(format!("missing version in line: {}", trimmed)))?;
-                    entries.push((n.to_string(), v.to_string()));
-                }
-            } else if let (Some(n), Some(v)) = (name, version) {
-                entries.push((n, v));
-            } else if !std::io::stdin().is_terminal() {
-                use std::io::BufRead;
-                for line in std::io::stdin().lock().lines() {
-                    let line = line.map_err(|e| WrightError::IoError(e))?;
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
-                        continue;
-                    }
-                    let mut parts = trimmed.split_whitespace();
-                    let n = parts
-                        .next()
-                        .ok_or_else(|| WrightError::BuildError(format!("missing name in line: {}", trimmed)))?;
-                    let v = parts
-                        .next()
-                        .ok_or_else(|| WrightError::BuildError(format!("missing version in line: {}", trimmed)))?;
-                    entries.push((n.to_string(), v.to_string()));
-                }
-            } else {
-                tracing::error!("provide name and version as arguments, use --file, or pipe input");
-                std::process::exit(1);
-            }
-
-            for (n, v) in entries {
-                match db.assume_part(&n, &v).await {
-                    Ok(()) => println!("assumed: {} {}", n, v),
-                    Err(e) => {
-                        tracing::error!("assuming {}: {:#}", n, e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
-        SystemCommands::Unassume { name } => match db.unassume_part(&name).await {
-            Ok(()) => println!("unassumed: {}", name),
-            Err(e) => {
-                tracing::error!("{:#}", e);
-                std::process::exit(1);
-            }
-        },
-        SystemCommands::History { part } => {
-            let records = db.get_history(part.as_deref()).await?;
-            if records.is_empty() {
-                println!("no transaction history");
-            } else {
-                for r in &records {
-                    let version = match (&r.old_version, &r.new_version) {
-                        (None, Some(v)) => v.clone(),
-                        (Some(v), None) => v.clone(),
-                        (Some(old), Some(new)) => format!("{} -> {}", old, new),
-                        (None, None) => String::new(),
-                    };
-                    let status = if r.status != crate::database::TransactionStatus::Completed {
-                        format!(" ({})", r.status)
-                    } else {
-                        String::new()
-                    };
-                    println!(
-                        "{}  {:<9} {} {}{}",
-                        r.timestamp.as_deref().unwrap_or_default(),
-                        r.operation,
-                        r.part_name,
-                        version,
-                        status
-                    );
-                }
-            }
-        }
-        SystemCommands::Doctor => {
-            doctor::execute_doctor(&db, root_dir, config).await?;
-        }
-    }
-    Ok(())
+pub async fn dispatch_unassume(
+    args: UnassumeArgs,
+    config: &GlobalConfig,
+    db_path: &Path,
+) -> Result<()> {
+    let (_, _lock) = ensure_lock_and_part_store(db_path, config)?;
+    let db = InstalledDb::open(db_path)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to open database: {}", e)))?;
+    crate::operations::unassume::execute_unassume(&db, &args.name).await
 }

@@ -1,6 +1,6 @@
 use crate::error::Result;
-use sqlx::migrate::{Migrate, Migrator};
 use sqlx::SqlitePool;
+use sqlx::migrate::{Migrate, Migrator};
 use tracing::info;
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {

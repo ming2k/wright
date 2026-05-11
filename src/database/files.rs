@@ -1,6 +1,6 @@
 use super::{FileEntry, InstalledDb};
 use crate::error::{Result, WrightError};
-use sqlx::{query, query_as, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Sqlite, query, query_as};
 use std::collections::HashMap;
 
 impl InstalledDb {
@@ -29,7 +29,7 @@ impl InstalledDb {
 
         for chunk in files.chunks(999 / 7) {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config) "
+                "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config) ",
             );
 
             query_builder.push_values(chunk, |mut b, file: &FileEntry| {
@@ -160,7 +160,7 @@ impl InstalledDb {
         let mut result = HashMap::new();
         for chunk in paths.chunks(999) {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "SELECT f.path, p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path IN ("
+                "SELECT f.path, p.name FROM files f JOIN parts p ON f.part_id = p.id WHERE f.path IN (",
             );
 
             let mut separated = query_builder.separated(", ");
@@ -199,7 +199,7 @@ impl InstalledDb {
         let mut result: HashMap<String, Vec<String>> = HashMap::new();
         for chunk in paths.chunks(998) {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-                "SELECT f.path, p.name FROM parts p JOIN files f ON p.id = f.part_id WHERE p.id != "
+                "SELECT f.path, p.name FROM parts p JOIN files f ON p.id = f.part_id WHERE p.id != ",
             );
             query_builder.push_bind(current_part_id);
             query_builder.push(" AND f.path IN (");

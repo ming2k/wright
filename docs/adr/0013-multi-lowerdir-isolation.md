@@ -116,5 +116,5 @@ OverlayFS lower layers, with a **per-task writable upper layer**.
 ## References
 
 - `src/isolation/native.rs` — multi-lowerdir construction and `/usr` hierarchy fix
-- `src/builder/lifecycle.rs` — `IsolationConfig` and `base_root`
-- `src/builder/executor.rs` — `ExecutorOptions` and script execution
+- `src/forge/pipeline.rs` — `ExecutorOptions` and pipeline stage execution
+- `src/forge/executor.rs` — script execution and isolation dispatch

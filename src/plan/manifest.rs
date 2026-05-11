@@ -70,9 +70,10 @@ pub struct DiscardRule {
 #[derive(Debug, Clone)]
 pub enum OutputConfig {
     /// Ordered list of outputs. At most one has `include = None` (the catch-all);
-    /// all others carry explicit `include` patterns. Non-catch-all outputs are
-    /// processed in declared order. Any unclaimed file must match a discard rule
-    /// or be packaged by the optional catch-all.
+    /// all others carry explicit `include` patterns.  Include patterns across
+    /// non-catch-all outputs must be mutually exclusive — a file matching more
+    /// than one output is a build failure.  Any unclaimed file must match a
+    /// discard rule or be packaged by the optional catch-all.
     Multi(Vec<(String, SubFabricateOutput)>),
 }
 
@@ -81,7 +82,7 @@ pub enum OutputConfig {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct InstallScripts {
+pub struct DeployScripts {
     #[serde(default)]
     pub pre_install: Option<String>,
     #[serde(default)]
@@ -186,7 +187,7 @@ pub struct PlanManifest {
     pub runtime_deps: Vec<String>,
     pub relations: Relations,
     pub sources: Sources,
-    pub options: BuildOptions,
+    pub options: ForgeOptions,
     pub lifecycle: HashMap<String, LifecycleStage>,
     pub lifecycle_order: Option<LifecycleOrder>,
     pub mvp: Option<PhaseConfig>,
@@ -195,7 +196,7 @@ pub struct PlanManifest {
     /// Explicitly ignored staging files for multi-output slicing.
     pub discard: Vec<DiscardRule>,
     /// Derived archive metadata populated from outputs.
-    pub install_scripts: Option<InstallScripts>,
+    pub deploy_scripts: Option<DeployScripts>,
     pub backup: Option<BackupConfig>,
     /// For sub-outputs, the original plan name. Used to write plan-level
     /// metadata into the pack archive.
@@ -228,7 +229,7 @@ impl Sources {}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct BuildOptions {
+pub struct ForgeOptions {
     #[serde(default, rename = "static")]
     pub static_: bool,
     #[serde(default)]
@@ -252,15 +253,15 @@ pub struct BuildOptions {
     /// outside the standard FHS paths (e.g. kernel modules, legacy compat layers).
     #[serde(default)]
     pub skip_fhs_check: bool,
-    /// Skip ELF runtime dependency lint during packaging.
+    /// Skip ELF runtime dependency lint during sealing.
     /// Use for statically-linked plans or when the lint is a bottleneck
-    /// in large batch builds. Errors caught here are still surfaced by
-    /// `wright doctor` after installation.
+    /// in large batch forges. Errors caught here are still surfaced by
+    /// `wright doctor` after deployment.
     #[serde(default)]
     pub skip_elf_lint: bool,
 }
 
-impl Default for BuildOptions {
+impl Default for ForgeOptions {
     fn default() -> Self {
         Self {
             static_: false,
@@ -374,7 +375,7 @@ impl PlanManifest {
         let stages: Vec<&str> = if let Some(ref order) = self.lifecycle_order {
             order.stages.iter().map(|s| s.as_str()).collect()
         } else {
-            crate::builder::lifecycle::DEFAULT_STAGES.to_vec()
+            crate::forge::pipeline::DEFAULT_STAGES.to_vec()
         };
         let mut valid_names = std::collections::HashSet::new();
         for stage in &stages {
@@ -402,7 +403,7 @@ impl PlanManifest {
         // Validate output config
         if let Some(ref part) = self.outputs {
             match part {
-                OutputConfig::Multi(ref parts) => {
+                OutputConfig::Multi(parts) => {
                     let catchall_count = parts.iter().filter(|(_, s)| s.include.is_none()).count();
                     if catchall_count > 1 {
                         return Err(WrightError::ValidationError(
@@ -733,7 +734,7 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
         assert!(!manifest.options.static_);
         assert!(manifest.lifecycle.contains_key("check"));
 
-        let scripts = manifest.install_scripts.as_ref().unwrap();
+        let scripts = manifest.deploy_scripts.as_ref().unwrap();
         assert!(scripts.post_install.is_some());
         assert!(scripts.pre_remove.is_some());
 
@@ -831,7 +832,7 @@ name = "gcc"
 [[output]]
 name = "libstdc++"
 description = "GNU C++ standard library"
-include = ["/usr/lib/libstdc.*"]
+include = ["/usr/lib/libstdc*"]
 runtime_deps = ["libgcc"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
@@ -888,7 +889,7 @@ provides = ["http-server"]
 name = "nginx-doc"
 description = "Nginx documentation files"
 provides = ["nginx-documentation"]
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
@@ -932,7 +933,7 @@ name = "test-doc"
 description = "Documentation for test"
 version = "1.0.0-doc"
 arch = "any"
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -963,7 +964,7 @@ name = "test"
 
 [[output]]
 name = "test-lib"
-include = ["/usr/lib/.*"]
+include = ["/usr/lib/**"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("description is required"));
@@ -986,7 +987,7 @@ name = "test"
 [[output]]
 name = "BadName"
 description = "bad"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("invalid output name"));
@@ -1029,12 +1030,12 @@ arch = "x86_64"
 [[output]]
 name = "test"
 description = "test bin"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 
 [[output]]
 name = "test-lib"
 description = "test lib"
-include = ["/usr/lib/.*"]
+include = ["/usr/lib/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -1059,7 +1060,7 @@ arch = "x86_64"
 
 [[output]]
 description = "test output"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -1083,7 +1084,7 @@ arch = "x86_64"
 [[output]]
 name = ""
 description = "test output"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -1107,12 +1108,12 @@ arch = "x86_64"
 [[output]]
 name = "test-bin"
 description = "test bin"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 
 [[output]]
 name = "test-bin"
 description = "duplicate"
-include = ["/usr/lib/.*"]
+include = ["/usr/lib/**"]
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         assert!(err.to_string().contains("duplicate output name"));
@@ -1148,10 +1149,10 @@ arch = "x86_64"
 [[output]]
 name = "test-bin"
 description = "test bin"
-include = ["/usr/bin/.*"]
+include = ["/usr/bin/**"]
 
 [[discard]]
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 reason = ""
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
@@ -1222,12 +1223,12 @@ arch = "x86_64"
 [[output]]
 name = "gcc-libs"
 description = "GCC runtime libraries"
-include = ["/usr/lib/.*\\.so.*"]
+include = ["/usr/lib/lib*.so*"]
 
 [[output]]
 name = "gcc-dev"
 description = "GCC development files"
-include = ["/usr/include/.*", "/usr/lib/.*\\.a"]
+include = ["/usr/include/**", "/usr/lib/lib*.a"]
 
 [[output]]
 name = "gcc"
@@ -1279,7 +1280,7 @@ pre_remove = "systemctl stop test"
             }
             _ => panic!("expected Multi output config"),
         }
-        assert!(manifest.install_scripts.is_some());
+        assert!(manifest.deploy_scripts.is_some());
         assert!(manifest.backup.is_some());
     }
 
@@ -1303,7 +1304,7 @@ name = "gcc"
 [[output]]
 name = "gcc-doc"
 description = "GCC documentation"
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         match manifest.outputs {
@@ -1375,7 +1376,7 @@ arch = "x86_64"
         assert!(manifest.build_deps.is_empty());
         assert!(manifest.sources.entries.is_empty());
         assert!(manifest.lifecycle.is_empty());
-        assert!(manifest.install_scripts.is_none());
+        assert!(manifest.deploy_scripts.is_none());
         assert!(manifest.backup.is_none());
         assert!(!manifest.options.skip_fhs_check);
         assert_eq!(manifest.metadata.epoch, 0);
@@ -1548,7 +1549,7 @@ post_install = "ldconfig"
             }
             _ => panic!("expected Multi"),
         }
-        let scripts = manifest.install_scripts.as_ref().unwrap();
+        let scripts = manifest.deploy_scripts.as_ref().unwrap();
         assert_eq!(scripts.pre_install.as_deref(), Some("echo preparing"));
     }
 

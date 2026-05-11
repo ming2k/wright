@@ -83,5 +83,5 @@ See "Why workarounds were rejected" in Context above.
 
 - `src/isolation/sysroot.rs` — `SysrootManager` implementation
 - `src/isolation/native.rs` — namespace isolation with sysroot bind-mount
-- `src/builder/executor.rs` — hook that sets `IsolationConfig.base_root` to the sysroot path
+- `src/forge/executor.rs` — hook that sets `base_root` to the sysroot path
 - Linux kernel documentation: `Documentation/filesystems/overlayfs.rst` ( OverlayFS lowerdir sharing behaviour )

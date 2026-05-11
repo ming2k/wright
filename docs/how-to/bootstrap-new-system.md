@@ -69,10 +69,10 @@ root.
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc gcc
 ```
 
-This reuses `wright apply`'s wave engine end-to-end. The only difference from
-a normal `apply` is that installs target `--root` instead of `/`.
+This reuses `wright install`'s wave engine end-to-end. The only difference from
+a normal `install` is that installs target `--root` instead of `/`.
 
-### Plan and group synchronisation
+### Plan and folio synchronisation
 
 `launch` keeps the target's plan definitions in sync with the host so the
 target can self-maintain later.  During every run it:
@@ -83,7 +83,7 @@ target can self-maintain later.  During every run it:
 3. Removes files or directories in the target that no longer exist on the
    host.
 
-The same logic applies to group manifests in `<root>/var/lib/wright/groups/`.
+The same logic applies to folio manifests in `<root>/var/lib/wright/folios/`.
 This means you can edit a plan on the host and re-run `launch`; the target
 will receive the updated definition without a full rebuild of plans that
 have not changed.

@@ -1,4 +1,4 @@
-use crate::database::{InstalledDb, TransactionOperation, TransactionStatus};
+use crate::database::{HistoryAction, HistoryStatus, InstalledDb, SessionContext};
 use crate::error::Result;
 use crate::transaction::rollback::RollbackState;
 
@@ -23,10 +23,13 @@ pub struct TransactionContext<'a> {
 impl<'a> TransactionContext<'a> {
     pub async fn begin(
         db: &'a InstalledDb,
-        operation: TransactionOperation,
+        action: HistoryAction,
         part_name: &str,
         old_version: Option<&str>,
         new_version: Option<&str>,
+        session: SessionContext,
+        old_hash: Option<&str>,
+        new_hash: Option<&str>,
     ) -> Result<Self> {
         let rollback = match super::journal_path_from_db(db) {
             Some(jp) => RollbackState::with_journal(jp),
@@ -34,12 +37,16 @@ impl<'a> TransactionContext<'a> {
         };
 
         let tx_id = db
-            .record_transaction(
-                operation,
+            .record_history(
+                &session.id,
+                &session.command,
                 part_name,
+                action,
                 old_version,
                 new_version,
-                TransactionStatus::Pending,
+                old_hash,
+                new_hash,
+                HistoryStatus::Pending,
                 None,
             )
             .await?;
@@ -59,7 +66,7 @@ impl<'a> TransactionContext<'a> {
 
     pub async fn commit(mut self) -> Result<()> {
         self.db
-            .update_transaction_status(self.tx_id, TransactionStatus::Completed)
+            .update_history_status(self.tx_id, HistoryStatus::Completed)
             .await?;
         self.rollback.commit();
         self.finalized = true;
@@ -69,7 +76,7 @@ impl<'a> TransactionContext<'a> {
     pub async fn rollback(mut self) -> Result<()> {
         self.rollback.rollback();
         self.db
-            .update_transaction_status(self.tx_id, TransactionStatus::RolledBack)
+            .update_history_status(self.tx_id, HistoryStatus::RolledBack)
             .await?;
         self.finalized = true;
         Ok(())

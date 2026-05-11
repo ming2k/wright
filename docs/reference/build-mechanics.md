@@ -31,29 +31,38 @@ Each part gets its own working directory under `build_dir`
 
 ```
 <build_dir>/<name>-<version>/¹
-├── work/      # The source tree (mounted at /build in isolation)
-├── staging/   # Build script output root ($STAGING_DIR / $MAIN_STAGING_DIR, mounted at /output)
+├── .wright-pipeline.json  # Stage state machine (hash-chain checkpoint records)
+├── target/                # OverlayFS merge mount point (virtual root for the container)
+├── .ovl_work/             # OverlayFS internal working directory
+├── layers/                # Per-stage isolated directories
+│   ├── 01-fetch/          # Hard-links to the global source cache
+│   ├── 02-verify/         # (verification-only)
+│   ├── 03-extract/        # Extracted source tree
+│   ├── 04-prepare/        # Patched files
+│   ├── 05-configure/      # ./configure output (Makefiles, config.h)
+│   ├── 06-compile/        # .o files and binaries
+│   ├── 07-check/          # (test-only)
+│   └── 08-staging/        # make install output
+├── staging/   # Convenience alias for final staging output
 ├── outputs/   # Sliced output directories (hard-linked from staging/)
 │   └── default/  # Catch-all output
 ├── logs/      # Per-stage log files
-└── .wright_script* # Temporary build script (auto-cleaned on next run)
+└── .build_key # Build key marker (for work-tree reuse detection)
 
 ¹ When `version` is omitted from `plan.toml`, the directory uses `<name>-noversion`.
 ```
 
-`work/` is the isolation's `/build` mount. `staging/` is `/output`. By default,
-`staging/`, `outputs/`, and `logs/` are recreated clean at the start of every build. `work/` is
-**reused** when the build key has not changed (same version, sources, and
-lifecycle scripts), enabling incremental builds — the fetch/verify/extract
-steps are skipped entirely. The build key is committed as soon as sources are
-successfully extracted, so a first build that later fails in a lifecycle stage
-can still reuse `work/` on retry. When `work/` is reused, lifecycle stages that
-have a `.wright-stage-<name>` sentinel file (written after successful
-completion) are also skipped, making a repeated `wright build` nearly instant
-when nothing changed. When the build key changes (e.g. a version bump), `work/`
-is cleaned and sources are re-extracted automatically — all sentinels are
-cleared with it. `--clean` always removes the entire working directory including
-`work/`.
+Each stage's writes are captured in its dedicated `layers/<NN>-<stage>/`
+directory via OverlayFS.  The `target/` directory serves as the working
+directory for the build — it presents a merged view of all completed layers
+(lowerdir) with the current stage writing to its own upper layer.
+
+`layers/` replaces the flat `work/` directory from previous versions.  When
+the build key has not changed (same version, sources, and lifecycle scripts),
+the layers from earlier stages (`fetch` through `extract`) are reused and only
+stages whose inputs changed are re-executed.  Stage completion is tracked in
+`.wright-pipeline.json` using a hash-chain fingerprint scheme — see
+[Checkpoint Recovery](../explanation/checkpoint-recovery.md).
 
 If multiple outputs are defined in `plan.toml` (split-parts), additional
 output directories are created:
@@ -122,9 +131,9 @@ path.
 
 ### Directory lifecycle rules
 
-| Operation | `work/` | `staging/` | `outputs/` | `logs/` | Stage sentinels |
+| Operation | `layers/` | `staging/` | `outputs/` | `logs/` | Checkpoints |
 |-----------|:------:|:------:|:------:|:------:|:------:|
-| Full build (key match) | **preserved** | recreated | recreated | recreated | **honored** |
+| Full build (key match) | **preserved** | recreated | recreated | recreated | **honored** (smart resume) |
 | Full build (key mismatch) | recreated | recreated | recreated | recreated | cleared |
 | `--stage=<s>` | preserved | recreated | recreated | recreated | ignored |
 | `--force` build | reuse if key matches | recreated | recreated | recreated | **ignored** |
@@ -213,26 +222,29 @@ The part is created from the output directories (`outputs/<name>/`) after the
 output slicing phase and records the full part metadata (name, version,
 dependencies, file list) for the installer.
 
-#### Output slicing order
+#### Output slicing rules
 
 When multi-output plans declare `[[output]]` entries:
 
-1. Non-catch-all outputs (those with explicit `include` patterns) are processed
-   in their declared order.
-2. For each output, files matching its `include` patterns are **hard-linked**
-   from `staging/` into `outputs/<name>/`.
-3. Remaining files matching `[[discard]]` rules are ignored.
-4. If a catch-all output exists (the one with no `include`), it keeps whatever
+1. Every file in `staging/` is evaluated against **all** non-catch-all outputs
+   simultaneously.
+2. A file matches an output when it hits any `include` glob and does **not**
+   hit any `exclude` glob for that same output.
+3. **Overlap is a build failure.** If a single file matches more than one
+   output, slicing stops immediately with an error naming the file and the
+   conflicting outputs. Use `exclude` patterns to carve out mutually exclusive
+   sets.
+4. Remaining files matching `[[discard]]` rules are ignored.
+5. If a catch-all output exists (the one with no `include`), it keeps whatever
    remains in `staging/` via hard-links into `outputs/default/`.
-5. Any file still unclaimed fails slicing and must be assigned or explicitly discarded.
+6. Any file still unclaimed fails slicing and must be assigned or explicitly discarded.
 
-Later outputs only see files not claimed by earlier outputs. Order matters
-when `include` patterns overlap. The original `staging/` directory is left
-intact for inspection after the build completes.
+`[[output]]` declaration order has no effect on slicing. The original `staging/`
+directory is left intact for inspection after the build completes.
 
 ## Flag Quick Reference
 
-| Flag | Source cache | Output part | `work/` | `staging/` / `outputs/` / `logs/` | Stage sentinels |
+| Flag | Source cache | Output part | `layers/` | `staging/` / `outputs/` / `logs/` | Stage checkpoints |
 |------|:---:|:---:|:---:|:---:|:---:|
 | (default) | reuse | skip if exists | reuse if key matches | recreated | **honored** |
 | `--force` | reuse | overwrite | reuse if key matches | recreated | **ignored** |
@@ -241,26 +253,22 @@ intact for inspection after the build completes.
 | `--stage=<s>` | reuse | skip | preserved | recreated | ignored |
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — force a clean `work/` re-extraction; clears all stage sentinels
-- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all lifecycle stages even when their sentinels exist
+- `--clean` — force a clean `layers/` re-extraction; clears all stage checkpoints
+- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all lifecycle stages even when their checkpoints exist
 - `--clean --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
 
 ### Incremental builds
 
-By default, `work/` is preserved across builds when the **build key** has not
-changed. This allows plan authors to write lifecycle scripts that support
-incremental compilation (e.g. `make` without `make clean` first). The
-fetch/verify/extract steps are skipped entirely when `work/` is reused.
-
-When the build key matches, Wright also checks for per-stage sentinel files
-(`.wright-stage-<name>` in `work/`). Each stage writes its sentinel after
-completing successfully. On the next build, any stage whose sentinel exists
-is skipped (including its pre/post hooks). This means a repeated `wright build`
-with no changes completes almost instantly — only stages whose outputs were
-invalidated (e.g. `staging/` was cleaned) re-execute.
+By default, `layers/` is preserved across builds when the **build key** has not
+changed. The fetch and extract layers (01 through 03) are reused, and only
+stages whose hash-chain fingerprint differs from the stored record are
+re-executed. This means a repeated `wright build` with no changes completes
+almost instantly — the smart resume algorithm in `.wright-pipeline.json` skips
+all up-to-date stages automatically.
 
 When the build key changes — because the version, sources, or lifecycle scripts
-were modified — `work/` is automatically cleaned and sources are re-extracted.
-All sentinels are cleared with `work/`. To force a clean re-extraction without
-changing the plan, use `--clean`. To re-run all lifecycle stages while keeping
-`work/` intact, use `--force`.
+were modified — `layers/` is automatically cleaned and sources are
+re-extracted. All checkpoint records in `.wright-pipeline.json` are cleared.
+
+To force a clean re-extraction without changing the plan, use `--clean`.
+To re-run all lifecycle stages while keeping `layers/` intact, use `--force`.

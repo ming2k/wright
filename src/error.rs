@@ -9,11 +9,11 @@ pub enum WrightError {
     #[error("database error: {0}")]
     DatabaseError(String),
 
-    #[error("build error: {0}")]
-    BuildError(String),
+    #[error("forge error: {0}")]
+    ForgeError(String),
 
-    #[error("install error: {0}")]
-    InstallError(String),
+    #[error("deploy error: {0}")]
+    DeployError(String),
 
     #[error("remove error: {0}")]
     RemoveError(String),
@@ -39,7 +39,7 @@ pub enum WrightError {
     #[error("part not found: {0}")]
     PartNotFound(String),
 
-    #[error("part already installed: {0}")]
+    #[error("part already deployed: {0}")]
     PartAlreadyInstalled(String),
 
     #[error("upgrade error: {0}")]
@@ -67,13 +67,13 @@ pub enum WrightError {
 pub type Result<T> = std::result::Result<T, WrightError>;
 
 /// Extension trait that adds `.context()` to any Result,
-/// converting errors into WrightError::BuildError with a context message.
+/// converting errors into WrightError::ForgeError with a context message.
 pub trait WrightResultExt<T> {
     fn context(self, msg: impl std::fmt::Display) -> Result<T>;
 }
 
 impl<T, E: std::fmt::Display> WrightResultExt<T> for std::result::Result<T, E> {
     fn context(self, msg: impl std::fmt::Display) -> Result<T> {
-        self.map_err(|e| WrightError::BuildError(format!("{}: {}", msg, e)))
+        self.map_err(|e| WrightError::ForgeError(format!("{}: {}", msg, e)))
     }
 }

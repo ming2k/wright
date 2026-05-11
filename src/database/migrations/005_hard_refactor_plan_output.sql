@@ -69,7 +69,7 @@ CREATE TABLE parts (
     installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     install_size INTEGER,
     part_hash TEXT,
-    install_scripts TEXT,
+    deploy_scripts TEXT,
     assumed INTEGER NOT NULL DEFAULT 0,
     origin TEXT NOT NULL DEFAULT 'manual',
 

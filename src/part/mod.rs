@@ -1,7 +1,7 @@
 pub mod archive;
 pub mod elf;
 pub mod fhs;
-pub mod group;
+pub mod folio;
 pub mod lint;
 pub mod prune;
 pub mod store;

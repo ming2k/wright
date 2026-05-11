@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use wright::builder::Builder;
-use wright::cli::system::Commands as SystemCommands;
+use wright::cli::system::InstallArgs;
 use wright::commands::system;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
+use wright::forge::Forger;
 use wright::part::archive;
 use wright::part::store::LocalPartStore;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
@@ -26,10 +26,10 @@ async fn build_hello_archive() -> PathBuf {
 
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             plan_dir,
@@ -101,6 +101,14 @@ include = ["/usr/bin/x"]
 name = "y"
 description = "y output"
 include = ["/usr/bin/y"]
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${{STAGING_DIR}}/usr/bin/x
+install -Dm755 /bin/sh ${{STAGING_DIR}}/usr/bin/y
+"""
 "#
     ))
     .unwrap()
@@ -166,6 +174,14 @@ include = ["/usr/bin/x"]
 name = "y"
 description = "y output"
 include = ["/usr/bin/y"]
+
+[lifecycle.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${{STAGING_DIR}}/usr/bin/x
+install -Dm755 /bin/sh ${{STAGING_DIR}}/usr/bin/y
+"""
 "#
         ),
     )
@@ -179,8 +195,8 @@ async fn test_end_to_end_install_query_remove() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    // Install
-    transaction::install_part(&db, &archive, root.path(), false)
+    // Deploy
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 
@@ -230,7 +246,7 @@ async fn test_install_accepts_same_revision_split_outputs() {
     let x = build_split_archive("1.0.0", "x");
     let y = build_split_archive("1.0.0", "y");
 
-    transaction::install_parts(
+    transaction::deploy_parts(
         &db,
         &[x.clone(), y.clone()],
         root.path(),
@@ -280,14 +296,18 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
     config.general.plans_dir = plans_dir;
     config.general.parts_dir = parts_dir;
     config.general.db_path = db_path.clone();
+    config.build.forge_dir = temp.path().join("build");
 
-    let cmd = SystemCommands::Install {
-        parts: vec!["split-plan".to_string()],
+    let cmd = InstallArgs {
+        targets: vec!["split-plan".to_string()],
+        deps: None,
+        rdeps: None,
+        match_policies: vec![],
+        depth: None,
         force: false,
-        nodeps: false,
-        path: false,
+        dry_run: false,
     };
-    system::execute(cmd, &config, &db_path, &root, 0, false)
+    system::dispatch_install(cmd, &config, &db_path, &root, 0, false)
         .await
         .unwrap();
 
@@ -300,40 +320,6 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
 }
 
 #[tokio::test]
-async fn test_install_command_requires_path_flag_for_archive_paths() {
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("root");
-    let plans_dir = temp.path().join("plans");
-    let parts_dir = temp.path().join("parts");
-    let state_dir = temp.path().join("state");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::create_dir_all(&plans_dir).unwrap();
-    std::fs::create_dir_all(&parts_dir).unwrap();
-    std::fs::create_dir_all(&state_dir).unwrap();
-
-    let archive_path = temp.path().join("hello-1.0.0-1-x86_64.wright.tar.zst");
-    std::fs::write(&archive_path, b"not a real archive").unwrap();
-
-    let db_path = state_dir.join("wright.db");
-    let mut config = GlobalConfig::default();
-    config.general.plans_dir = plans_dir;
-    config.general.parts_dir = parts_dir;
-    config.general.db_path = db_path.clone();
-
-    let cmd = SystemCommands::Install {
-        parts: vec![archive_path.display().to_string()],
-        force: false,
-        nodeps: false,
-        path: false,
-    };
-    let err = system::execute(cmd, &config, &db_path, &root, 0, false)
-        .await
-        .unwrap_err();
-
-    assert!(err.to_string().contains("--path"));
-}
-
-#[tokio::test]
 async fn test_install_rejects_mixed_split_plan_revisions() {
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -341,7 +327,7 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
     let x = build_split_archive("1.0.0", "x");
     let y = build_split_archive("2.0.0", "y");
 
-    let err = transaction::install_parts(
+    let err = transaction::deploy_parts(
         &db,
         &[x.clone(), y.clone()],
         root.path(),
@@ -367,7 +353,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
     let x_v1 = build_split_archive("1.0.0", "x");
     let y_v2 = build_split_archive("2.0.0", "y");
 
-    transaction::install_parts(
+    transaction::deploy_parts(
         &db,
         std::slice::from_ref(&x_v1),
         root.path(),
@@ -378,7 +364,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
     .await
     .unwrap();
 
-    let err = transaction::install_parts(
+    let err = transaction::deploy_parts(
         &db,
         std::slice::from_ref(&y_v2),
         root.path(),
@@ -389,7 +375,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
     .await
     .unwrap_err();
 
-    assert!(err.to_string().contains("installed output(s)"));
+    assert!(err.to_string().contains("deployed output(s)"));
     assert!(err.to_string().contains("x"));
     assert!(db.get_part("x").await.unwrap().is_some());
     assert!(db.get_part("y").await.unwrap().is_none());
@@ -407,13 +393,13 @@ async fn test_successful_install_removes_rollback_journal() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false)
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 
     assert!(
         !journal_path.exists(),
-        "successful install left rollback journal at {}",
+        "successful deploy left rollback journal at {}",
         journal_path.display()
     );
 
@@ -426,13 +412,13 @@ async fn test_file_conflict_detection() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    // Install first copy
-    transaction::install_part(&db, &archive, root.path(), false)
+    // Deploy first copy
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 
-    // Try to install again — should fail because the part is already installed
-    let result = transaction::install_part(&db, &archive, root.path(), false);
+    // Try to deploy again — should fail because the part is already installed
+    let result = transaction::deploy_part(&db, &archive, root.path(), false);
     assert!(result.await.is_err());
 
     let _ = std::fs::remove_file(&archive);
@@ -444,7 +430,7 @@ async fn test_verify_detects_modification() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false)
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 
@@ -466,7 +452,7 @@ async fn test_verify_detects_missing_file() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false)
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 
@@ -488,7 +474,7 @@ async fn test_list_installed_parts() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::install_part(&db, &archive, root.path(), false)
+    transaction::deploy_part(&db, &archive, root.path(), false)
         .await
         .unwrap();
 

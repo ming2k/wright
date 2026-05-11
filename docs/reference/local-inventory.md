@@ -4,25 +4,24 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 
 ## Current Model
 
-- `wright build` builds plans into staging directories (`work/` and `staging/`)
-- `wright package` slices `staging/` into `outputs/` (using the plan's `[[output]]` rules) and creates `.wright.tar.zst` archives
-- `wright install` resolves plan names to expected archives in `parts_dir`
-- `wright install --path` reads explicit archive paths and their `.PARTINFO` metadata
-- `wright install` rejects mixed-revision archives from the same plan in one batch
-- `wright install` rejects plan revision changes that would leave installed outputs from the old revision
+- `wright build` builds plans into staging directories (`work/` and `staging/`), then seals outputs into `.wright.tar.zst` archives in `parts_dir`
+- `wright merge` resolves plan names to expected archives in `parts_dir` and deploys them
+- `wright merge --path` reads explicit archive paths and their `.PARTINFO` metadata
+- `wright merge` rejects mixed-revision archives from the same plan in one batch
+- `wright merge` rejects plan revision changes that would leave installed outputs from the old revision
+- `wright install` performs the full lifecycle: resolve, forge, seal, and merge in one command
 
 ## Quick Start
 
 ```bash
 wright build curl
-wright package curl
-wright install curl
+wright merge curl
 ```
 
-Or use `wright apply` for plan-driven maintenance:
+Or use `wright install` for plan-driven maintenance:
 
 ```bash
-wright apply curl
+wright install curl
 ```
 
 ## Cleaning Old Parts
@@ -38,12 +37,11 @@ wright prune --latest --apply
 
 ## Low-Level Pipeline
 
-For explicit control over build and install phases:
+For explicit control over build and merge phases:
 
 ```bash
-wright resolve openssl --rdeps=all --depth=0 > /tmp/wright-rebuild
-wright build --force $(cat /tmp/wright-rebuild)
-wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
+wright build --force zlib openssl
+wright merge zlib openssl
 ```
 
 `--print-parts` keeps stdout reserved for archive paths. Human-readable logs stay on stderr.

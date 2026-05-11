@@ -1,139 +1,121 @@
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::io::BufRead;
+use std::path::Path;
 
-use crate::error::{Result, WrightError};
-
-use super::apply::collect_install_args;
+use crate::cli::common::{DomainArg, MatchPolicyArg};
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
+use crate::error::{Result, WrightError};
+use crate::operations::install::{InstallRequest, execute_install};
 use crate::part::store::LocalPartStore;
-use crate::plan::manifest::PlanManifest;
-use crate::planning::{plan_search_dirs, resolve_targets};
+use crate::resolve::{DepDomain, DependentsMode, MatchPolicy};
 
-fn looks_like_archive_path(arg: &str) -> bool {
-    arg.ends_with(".wright.tar.zst")
+pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        for line in std::io::stdin().lock().lines() {
+            let line = line.map_err(|e| WrightError::IoError(e))?;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                args.push(trimmed.to_string());
+            }
+        }
+    }
+    Ok(args)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn execute_install(
-    parts: Vec<String>,
-    force: bool,
-    nodeps: bool,
-    path: bool,
-    _config: &GlobalConfig,
-    db_path: &Path,
-    root_dir: &Path,
-    part_store: &LocalPartStore,
-) -> Result<()> {
-    let parts = collect_install_args(parts)?;
-    use std::io::IsTerminal;
-    if parts.is_empty() {
+pub struct InstallArgs<'a> {
+    pub targets: Vec<String>,
+    pub deps: Option<DomainArg>,
+    pub rdeps: Option<DomainArg>,
+    pub match_policies: Vec<MatchPolicyArg>,
+    pub depth: Option<usize>,
+    pub force: bool,
+    pub dry_run: bool,
+    pub config: &'a GlobalConfig,
+    pub db_path: &'a Path,
+    pub root_dir: &'a Path,
+    pub verbose: u8,
+    pub quiet: bool,
+    pub part_store: &'a LocalPartStore,
+}
+
+fn map_resolve_domain(d: DomainArg) -> DependentsMode {
+    match d {
+        DomainArg::Link => DependentsMode::Link,
+        DomainArg::Runtime => DependentsMode::Runtime,
+        DomainArg::Forge => DependentsMode::Forge,
+        DomainArg::All => DependentsMode::All,
+    }
+}
+
+fn map_match_policy(m: MatchPolicyArg) -> MatchPolicy {
+    match m {
+        MatchPolicyArg::All => MatchPolicy::All,
+        MatchPolicyArg::Missing => MatchPolicy::Missing,
+        MatchPolicyArg::Outdated => MatchPolicy::Outdated,
+        MatchPolicyArg::Installed => MatchPolicy::Installed,
+    }
+}
+
+pub async fn execute_system_install(args: InstallArgs<'_>) -> Result<()> {
+    let InstallArgs {
+        targets,
+        deps,
+        rdeps,
+        match_policies,
+        depth,
+        force,
+        dry_run,
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        part_store,
+    } = args;
+
+    let targets = collect_install_args(targets)?;
+    if targets.is_empty() {
+        use std::io::IsTerminal;
         if !std::io::stdin().is_terminal() {
-        if path {
-            return Err(WrightError::BuildError("no archive paths received from stdin; did the build succeed?".into()));
+            return Err(WrightError::ForgeError(
+                "no targets received from stdin; did the resolve succeed?".into(),
+            ));
         }
-        return Err(WrightError::BuildError("no install targets received from stdin; did the resolve succeed?".into()));
-    }
-    if path {
-        return Err(WrightError::BuildError("no archive paths specified (pass paths as arguments or via stdin)".into()));
-    }
-    return Err(WrightError::BuildError(
-        "no install targets specified (pass plan names/directories, or use --path for archive paths)".into()
-    ));
+        return Err(WrightError::ForgeError("no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)".into()));
     }
 
-    if !path {
-        for arg in &parts {
-            if looks_like_archive_path(arg) {
-                return Err(WrightError::BuildError(format!(
-                    "'{}' looks like an archive path; use `wright install --path {}`",
-                    arg, arg
-                )));
-            }
-        }
+    if dry_run {
+        println!("Apply plan (dry-run):");
+        println!("  targets: {}", targets.join(", "));
+        return Ok(());
     }
 
-    let db = InstalledDb::open(db_path)
-        .await
-        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
-
-    if path {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        for arg in &parts {
-            let p = PathBuf::from(arg);
-            if !p.is_file() {
-                return Err(WrightError::BuildError(format!("archive path not found: {}", p.display())));
-            }
-            paths.push(p);
-        }
-
-        crate::transaction::install_parts(&db, &paths, root_dir, part_store, force, nodeps,
-        )
-        .await
-        .map_err(|e| WrightError::InstallError(format!("install archives: {}", e)))?;
+    let dep_domain = if deps.is_none() && rdeps.is_none() {
+        DepDomain::ALL
     } else {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut explicit: HashSet<String> = HashSet::new();
-
-        for arg in &parts {
-            // Try resolving as a part name first.
-            if let Some(resolved) = part_store
-                .resolve(arg)
-                .await
-                .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", arg, e)))?
-            {
-                paths.push(resolved.path);
-                explicit.insert(resolved.name);
-                continue;
-            }
-
-            // Fall back to treating as a plan name/directory.
-            let plan_path = PathBuf::from(arg);
-                let manifest = if plan_path.is_dir() {
-                    PlanManifest::from_file(&plan_path.join("plan.toml"))
-                        .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", arg, e)))?
-                } else {
-                    let plan_dirs = plan_search_dirs(_config);
-                    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
-                    let resolved = resolve_targets(&[arg.clone()], &index, &plan_dirs)?;
-                    if resolved.is_empty() {
-                        return Err(WrightError::PartNotFound(format!("target not found: {}", arg)));
-                    }
-                    let plan_path = resolved.into_iter().next().unwrap();
-                    PlanManifest::from_file(&plan_path)
-                        .map_err(|e| WrightError::BuildError(format!("read plan {}: {}", arg, e)))?
-                };
-
-            let part_names = match manifest.outputs {
-                Some(crate::plan::manifest::OutputConfig::Multi(ref parts)) => {
-                    parts.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
-                }
-                _ => vec![manifest.metadata.name.clone()],
-            };
-
-            for pn in part_names {
-                let resolved = part_store
-                    .resolve(&pn)
-                    .await
-                    .map_err(|e| WrightError::PartError(format!("resolve part {} from plan {}: {}", pn, arg, e)))?
-                    .ok_or_else(|| WrightError::PartNotFound(format!("part {} not found in parts_dir", pn)))?;
-                paths.push(resolved.path);
-                explicit.insert(pn);
-            }
+        let mut domain = DepDomain::empty();
+        if let Some(d) = deps {
+            domain.insert(DepDomain::from_dependents_mode(map_resolve_domain(d)));
         }
+        if let Some(d) = rdeps {
+            domain.insert(DepDomain::from_dependents_mode(map_resolve_domain(d)));
+        }
+        domain
+    };
 
-        crate::transaction::install_parts_with_explicit_targets(
-            &db,
-            &paths,
-            &explicit,
-            root_dir,
-            part_store,
-            force,
-            nodeps,
-        )
-        .await
-        .map_err(|e| WrightError::InstallError(format!("install targets: {}", e)))?;
-    }
-
-    Ok(())
+    execute_install(InstallRequest {
+        targets,
+        dep_domain,
+        match_policies: match_policies.into_iter().map(map_match_policy).collect(),
+        depth,
+        force,
+        config,
+        db_path,
+        root_dir,
+        verbose,
+        quiet,
+        part_store,
+        forge_opts: None,
+    })
+    .await
 }

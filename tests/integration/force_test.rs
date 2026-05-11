@@ -1,6 +1,6 @@
 use wright::config::GlobalConfig;
 use wright::database::{InstalledDb, NewPart, NewPlan, Origin};
-use wright::planning::{resolve_build_set, MatchPolicy, ResolveOptions};
+use wright::resolve::{MatchPolicy, ResolveOptions, resolve_build_set};
 
 #[tokio::test]
 async fn test_apply_force_always_includes_explicit_targets() {
@@ -25,7 +25,7 @@ async fn test_apply_force_always_includes_explicit_targets() {
         name: "a",
         plan_id,
         part_hash: Some("oldhash"),
-        install_scripts: None,
+        deploy_scripts: None,
         origin: Origin::Manual,
     })
     .await

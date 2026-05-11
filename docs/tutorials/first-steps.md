@@ -8,7 +8,7 @@ Wright is source-first:
 
 - `wright build` manufactures staging and output directories from plans.
 - `wright package` slices staging into output directories and creates archives.
-- `wright install` applies packaged plan outputs to the live system.
+- `wright merge` applies packaged plan outputs to the live system.
 
 ## Build Your First Part
 
@@ -52,19 +52,19 @@ wright build zlib --checksum
 
 ## Apply Plans to the Live System
 
-`wright apply` is the preferred plan-driven combo command. It resolves targets, adds missing or outdated dependencies, builds each wave, and installs or upgrades each wave before continuing:
+`wright install` is the preferred plan-driven combo command. It resolves targets, adds missing or outdated dependencies, builds each wave, and installs or upgrades each wave before continuing:
 
 ```bash
-wright apply hello
-wright apply zlib openssl
-wright apply ./plans/bash
-wright apply hello --dry-run
+wright install hello
+wright install zlib openssl
+wright install ./plans/bash
+wright install hello --dry-run
 ```
 
 ## Install and Upgrade
 
 ```bash
-wright install hello
+wright merge hello
 wright upgrade hello
 wright sysupgrade
 ```
@@ -95,13 +95,13 @@ wright prune --latest --apply
 ```bash
 wright build hello
 wright package hello
-wright install hello
+wright merge hello
 ```
 
 ### Source-First Maintenance
 
 ```bash
-wright apply hello openssl
+wright install hello openssl
 wright sysupgrade
 wright prune --latest --apply
 ```

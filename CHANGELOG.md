@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-05-12
+
+### Added
+- **Two-layer delivery recovery** — `wright install` now uses a Content-Addressed Storage (CAS) layer to skip redundant forge+seal work across runs, and a Write-Ahead Log (WAL) in SQLite (`delivery_transactions` + `transaction_ops` tables) to survive crashes during the deploy phase. Any `wright` command automatically recovers interrupted deliveries at startup.
+
 ### Breaking Changes
 - **Workflow system removed** — the SQLite-backed workflow DAG scheduler (`src/workflow/`) has been deleted. Commands now execute build/package/install waves directly using the existing file-system checkpoint mechanism for resume support. This eliminates the `workflow_steps`, `workflow_runs`, and `step_dependencies` database tables.
 - **`--invalidate` flag removed** — `wright package` and `wright install` no longer accept `--invalidate`. Resume state is managed purely through builder staging checkpoints; use `--clean` or remove `build_dir` contents to force full rebuilds.

@@ -6,8 +6,8 @@ Wright is a single CLI binary backed by one core library.
 
 | CLI surface | Role |
 |-------------|------|
-| `wright build`, `wright package`, `wright resolve`, `wright prune` | build plan outputs and maintain archives in `parts_dir` |
-| `wright install`, `wright upgrade`, `wright apply`, `wright launch`, other system subcommands | apply locally available parts to a target root (the live system or a fresh one) |
+| `wright build`, `wright prune` | forge plan outputs and maintain archives in `parts_dir` |
+| `wright merge`, `wright upgrade`, `wright install`, `wright launch`, other system subcommands | apply locally available parts to a target root (the live system or a fresh one) |
 
 ## Data Flow
 
@@ -17,32 +17,32 @@ flowchart LR
     Build --> Staging["staging/"]
     Staging --> Package["wright package"]
     Package --> Archive[".wright.tar.zst"]
-    Archive --> System["wright install / upgrade / apply"]
+    Archive --> System["wright install / upgrade / merge"]
 ```
 
-`wright apply` and `wright launch` are source-first convergence operations. They
-resolve requested plans, build each dependency-safe wave, package the resulting
-outputs, and install each completed wave before continuing.
+`wright install` and `wright launch` are source-first convergence operations. They
+resolve requested plans, forge each dependency-safe wave, seal the resulting
+outputs, and deploy each completed wave before continuing.
 
 ## Internal Layers
 
 ```text
-bin -> cli -> commands -> operations -> planning
-                                      -> builder / transaction / part / database
+bin -> cli -> commands -> operations -> resolve / forge / seal / deploy
 ```
 
 - `cli` defines command-line schemas.
 - `commands` maps CLI args into operation requests and acquires command locks.
-- `operations` owns command use cases such as apply and launch, and drives batch execution.
-- `planning` resolves targets, expands dependency policy, and constructs build waves.
-- `builder` executes one plan's lifecycle stages.
-- `transaction` mutates a target root and installed-state database.
+- `operations` owns command use cases such as install and launch, and drives batch execution.
+- `resolve` discovers plan files, resolves targets, expands dependency closures, constructs `ForgeExecutionPlan`.  See `src/resolve/`.
+- `forge` fetches sources, runs lifecycle stages in sandboxes, slices outputs.  See `src/forge/`.
+- `seal` validates staging output (FHS, ELF lint), creates `.wright.tar.zst` archives.  See `src/seal/`.
+- `deploy` extracts archives, copies files to target root, records in the database, runs hooks.  See `src/transaction/`.  Crash-safe via the `delivery` state machine (`src/delivery/`).
 
 ## Responsibilities
 
 ### Build-side commands
 
-- `wright resolve` expands dependency and rebuild scope.
+- `wright resolve` expands dependency and reforge scope.
 - `wright build` executes sandboxed stages and writes `staging/` and `outputs/`.
 - `wright package` slices staging output and writes `.wright.tar.zst` archives to `parts_dir`.
 - `wright prune` removes stale archives.
@@ -50,31 +50,32 @@ bin -> cli -> commands -> operations -> planning
 ### `wright`
 
 - resolve local part names by scanning `parts_dir` and reading `.PARTINFO`
-- install and upgrade archives transactionally
+- deploy and upgrade archives transactionally
 - remove parts and cascade orphan cleanup
 - verify and inspect the live system
-- run `apply` as the high-level convergence operation:
-  resolve targets, execute build waves, and install each wave before advancing
-- run `launch` to fill a fresh target root from plans or groups, sharing
-  the install transaction code with the live-system commands
+- run `install` as the high-level convergence operation:
+  resolve targets, execute forge waves, and deploy each wave before advancing
+- run `launch` to fill a fresh target root from plans or folios, sharing
+  the deploy transaction code with the live-system commands
 
 ## Shared State
 
-The installed registry (`wright.db`) records facts about installed parts —
+The deployed registry (`wright.db`) records facts about deployed parts —
 what they declare, not what is enforced. Runtime dependencies are advisory;
 `registered`, `satisfied`, and `runnable` are independent states queried by
-different commands. See [Dependency Philosophy](dependency-philosophy.md) and
+different commands. See
 [ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 
 Detailed database schemas and their roles are documented in [Database Design](../reference/database-design.md).
 
 | Artifact | Written by | Read by |
 |----------|-----------|---------|
-| `plan.toml` | user | `wright build`, `wright resolve`, `wright apply` |
+| `plan.toml` | user | `wright build`, `wright resolve`, `wright install` |
 | `staging/` | `wright build` | `wright package`, user inspection |
-| `.wright.tar.zst` | `wright package`, `wright apply` | `wright install`, `wright upgrade`, `wright sysupgrade`, `wright apply` |
-| `wright.db` | `wright` | `wright`, `wright resolve`, `wright build`, `wright apply` |
+| `.wright.tar.zst` | `wright package`, `wright install` | `wright merge`, `wright upgrade`, `wright install` |
+| `store/<hash>-<name>.part` | `wright install` (post-seal) | `wright install` (pre-forge CAS check) |
+| `wright.db` | `wright` | `wright`, `wright resolve`, `wright build`, `wright install` |
 
-For resumable command execution, see [Build Resume Model](build-resume-model.md).
+For recovery from interrupted deliveries, see [Delivery Recovery](install-transaction-design.md).
 For build sandboxing, see [Isolation Model](isolation-model.md).
 For module-level code organization, see [Module Layout](../dev/module-layout.md).

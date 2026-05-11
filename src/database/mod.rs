@@ -1,4 +1,5 @@
 mod core;
+mod delivery_db;
 mod dependencies;
 mod files;
 mod meta;
@@ -12,8 +13,9 @@ pub use core::InstalledDb;
 use core::PART_COLUMNS;
 pub use plans::PlanRecord;
 pub use types::{
-    Dependency, FileEntry, FileType, InstalledPart, NewPart, NewPlan, Origin, PartWithPlan,
-    TransactionOperation, TransactionRecord, TransactionStatus,
+    DeliveryStatus, DeliveryTransaction, Dependency, FileEntry, FileType, HistoryAction,
+    HistoryRecord, HistoryStatus, InstalledPart, NewPart, NewPlan, OpStatus, Origin, PartWithPlan,
+    SessionContext, TransactionOp,
 };
 
 #[cfg(test)]
@@ -50,7 +52,7 @@ mod tests {
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(part.name, "hello");
-        assert!(part.install_scripts.is_none());
+        assert!(part.deploy_scripts.is_none());
     }
 
     #[tokio::test]
@@ -249,21 +251,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_record_transaction() {
+    async fn test_record_history() {
         let db = test_db().await;
         let id = db
-            .record_transaction(
-                TransactionOperation::Install,
+            .record_history(
+                "session-123",
+                "install hello",
                 "hello",
+                HistoryAction::Install,
                 None,
                 Some("1.0.0"),
-                TransactionStatus::Completed,
+                None,
+                None,
+                HistoryStatus::Completed,
                 None,
             )
             .await
             .unwrap();
         assert!(id > 0);
-        db.update_transaction_status(id, TransactionStatus::RolledBack)
+        db.update_history_status(id, HistoryStatus::RolledBack)
             .await
             .unwrap();
     }
@@ -282,7 +288,7 @@ mod tests {
         db.update_part(NewPart {
             name: "hello",
             plan_id: 1,
-            install_scripts: Some("post_install() { echo hi; }"),
+            deploy_scripts: Some("post_install() { echo hi; }"),
             ..Default::default()
         })
         .await
@@ -290,7 +296,7 @@ mod tests {
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(
-            part.install_scripts.as_deref(),
+            part.deploy_scripts.as_deref(),
             Some("post_install() { echo hi; }")
         );
     }
@@ -377,13 +383,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_scripts_field() {
+    async fn test_deploy_scripts_field() {
         let db = test_db().await;
         let id = db
             .insert_part(NewPart {
                 name: "hello",
                 plan_id: 1,
-                install_scripts: Some("post_install() { echo done; }"),
+                deploy_scripts: Some("post_install() { echo done; }"),
                 ..Default::default()
             })
             .await
@@ -391,7 +397,7 @@ mod tests {
 
         let part = db.get_part("hello").await.unwrap().unwrap();
         assert_eq!(
-            part.install_scripts.as_deref(),
+            part.deploy_scripts.as_deref(),
             Some("post_install() { echo done; }")
         );
 

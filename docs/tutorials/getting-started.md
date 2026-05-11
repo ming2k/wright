@@ -22,7 +22,7 @@ install -m755 target/release/wright /usr/local/bin/
 - `wright build` turns plans into staging directories.
 - `wright package` turns build staging directories into local part archives.
 - `wright` installs and upgrades the live system from packaged plan outputs in `parts_dir`.
-- `wright apply` is the high-level source-first combo workflow: resolve the
+- `wright install` is the high-level source-first combo workflow: resolve the
  build graph, add missing or outdated dependency plans, build each
  wave, and install or upgrade each wave before continuing.
 
@@ -70,7 +70,7 @@ wright install hello
 Or let Wright drive the whole source-first install/upgrade flow:
 
 ```bash
-wright apply plans/hello
+wright install plans/hello
 ```
 
 ## Verify and Remove

@@ -103,5 +103,5 @@ systemctl stop nginx 2>/dev/null || true
 name = "nginx-doc"
 description = "Nginx documentation files"
 include = [
-    "/usr/share/doc/.*",
+    "/usr/share/doc/**",
 ]

@@ -44,7 +44,7 @@ pub(super) fn collect_file_entries(
         let metadata = entry
             .path()
             .symlink_metadata()
-            .map_err(|e| WrightError::InstallError(format!("failed to get metadata: {}", e)))?;
+            .map_err(|e| WrightError::DeployError(format!("failed to get metadata: {}", e)))?;
 
         let file_type = if metadata.is_dir() {
             FileType::Directory
@@ -126,7 +126,7 @@ pub(super) async fn copy_entries_to_root(
         let dest_path = root_dir.join(relative);
         if tokio::fs::metadata(&dest_path).await.is_err() {
             tokio::fs::create_dir_all(&dest_path).await.map_err(|e| {
-                WrightError::InstallError(format!(
+                WrightError::DeployError(format!(
                     "failed to create directory {}: {}",
                     dest_path.display(),
                     e
@@ -154,7 +154,7 @@ pub(super) async fn copy_entries_to_root(
                 None => match tokio::fs::read_link(&src_path).await {
                     Ok(t) => t,
                     Err(e) => {
-                        return Err(WrightError::InstallError(format!(
+                        return Err(WrightError::DeployError(format!(
                             "failed to read symlink {}: {}",
                             src_path.display(),
                             e
@@ -189,7 +189,7 @@ pub(super) async fn copy_entries_to_root(
                     tokio::fs::remove_file(&dest_path).await
                 };
                 if let Err(e) = remove_result {
-                    return Err(WrightError::InstallError(format!(
+                    return Err(WrightError::DeployError(format!(
                         "failed to remove existing file {}: {}",
                         dest_path.display(),
                         e
@@ -198,7 +198,7 @@ pub(super) async fn copy_entries_to_root(
             }
 
             if let Err(e) = tokio::fs::symlink(&link_target, &dest_path).await {
-                return Err(WrightError::InstallError(format!(
+                return Err(WrightError::DeployError(format!(
                     "failed to create symlink {} -> {}: {}",
                     dest_path.display(),
                     link_target.display(),
@@ -215,7 +215,7 @@ pub(super) async fn copy_entries_to_root(
                 new_name.push(".wnew");
                 let side_path = PathBuf::from(new_name);
                 move_or_copy(&src_path, &side_path).await.map_err(|e| {
-                    WrightError::InstallError(format!(
+                    WrightError::DeployError(format!(
                         "failed to write {}: {}",
                         side_path.display(),
                         e
@@ -239,7 +239,7 @@ pub(super) async fn copy_entries_to_root(
                     || tokio::fs::symlink_metadata(&dest_path).await.is_ok()
                 {
                     move_or_copy(&dest_path, &divert_path).await.map_err(|e| {
-                        WrightError::InstallError(format!(
+                        WrightError::DeployError(format!(
                             "failed to divert {} to {}: {}",
                             dest_path.display(),
                             divert_path.display(),
@@ -250,7 +250,7 @@ pub(super) async fn copy_entries_to_root(
                 }
 
                 move_or_copy(&src_path, &dest_path).await.map_err(|e| {
-                    WrightError::InstallError(format!(
+                    WrightError::DeployError(format!(
                         "failed to install {} to {}: {}",
                         src_path.display(),
                         dest_path.display(),
@@ -285,7 +285,7 @@ pub(super) async fn copy_entries_to_root(
                 }
 
                 move_or_copy(&src_path, &dest_path).await.map_err(|e| {
-                    WrightError::InstallError(format!(
+                    WrightError::DeployError(format!(
                         "failed to install {} to {}: {}",
                         src_path.display(),
                         dest_path.display(),

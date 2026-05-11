@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use wright::builder::Builder;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
+use wright::forge::Forger;
 use wright::part::archive;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
@@ -37,10 +37,10 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
     let manifest = PlanManifest::from_file(&plan_dir.join("plan.toml")).unwrap();
     let mut config = GlobalConfig::default();
     let build_tmp = tempfile::tempdir().unwrap();
-    config.build.build_dir = build_tmp.path().to_path_buf();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let builder = Builder::new(config);
-    let result = builder
+    let forger = Forger::new(config);
+    let result = forger
         .build(
             &manifest,
             &plan_dir,
@@ -82,15 +82,15 @@ async fn test_file_diversion_and_restoration() {
     let archive_a = create_test_archive("part-a", "content-a").await;
     let archive_b = create_test_archive("part-b", "content-b").await;
 
-    // 1. Install Part A
-    transaction::install_part(&db, &archive_a, root.path(), false)
+    // 1. Deploy Part A
+    transaction::deploy_part(&db, &archive_a, root.path(), false)
         .await
         .unwrap();
     let shared_path = root.path().join("usr/bin/shared");
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-a");
 
-    // 2. Install Part B (conflicts with A)
-    transaction::install_part(&db, &archive_b, root.path(), false)
+    // 2. Deploy Part B (conflicts with A)
+    transaction::deploy_part(&db, &archive_b, root.path(), false)
         .await
         .unwrap();
 

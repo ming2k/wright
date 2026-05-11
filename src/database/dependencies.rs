@@ -1,7 +1,7 @@
 use super::{Dependency, InstalledDb};
 use crate::error::{Result, WrightError};
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use sqlx::{query, query_as};
 use std::collections::HashSet;
 

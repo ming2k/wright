@@ -1,9 +1,9 @@
-use super::{InstalledDb, InstalledPart, NewPart, Origin, PartWithPlan, PART_COLUMNS};
+use super::{InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS, PartWithPlan};
 use sqlx::Row;
 
 const PART_WITH_PLAN_SQL: &str = "
     SELECT
-        p.id, p.name, p.plan_id, p.installed_at, p.part_hash, p.install_scripts, p.origin,
+        p.id, p.name, p.plan_id, p.installed_at, p.part_hash, p.deploy_scripts, p.origin,
         pl.name as plan_name, pl.version, pl.release, pl.epoch, pl.arch
     FROM parts p
     INNER JOIN plans pl ON p.plan_id = pl.id
@@ -25,13 +25,13 @@ impl InstalledDb {
             })?;
 
         let res = query(
-            "INSERT INTO parts (name, plan_id, part_hash, install_scripts, origin)
+            "INSERT INTO parts (name, plan_id, part_hash, deploy_scripts, origin)
              VALUES (?, ?, ?, ?, ?)",
         )
         .bind(part.name)
         .bind(part.plan_id)
         .bind(part.part_hash)
-        .bind(part.install_scripts)
+        .bind(part.deploy_scripts)
         .bind(part.origin)
         .execute(&self.pool)
         .await
@@ -83,7 +83,7 @@ impl InstalledDb {
         };
 
         query(
-            "INSERT INTO parts (name, plan_id, part_hash, install_scripts, origin)
+            "INSERT INTO parts (name, plan_id, part_hash, deploy_scripts, origin)
              VALUES (?, ?, NULL, NULL, 'external')
              ON CONFLICT(plan_id, name) DO UPDATE SET origin = 'external', plan_id = excluded.plan_id",
         )
@@ -124,12 +124,12 @@ impl InstalledDb {
 
     pub async fn update_part(&self, part: NewPart<'_>) -> Result<()> {
         let res = query(
-            "UPDATE parts SET plan_id = ?, part_hash = ?, install_scripts = ?, origin = ?
+            "UPDATE parts SET plan_id = ?, part_hash = ?, deploy_scripts = ?, origin = ?
              WHERE name = ?",
         )
         .bind(part.plan_id)
         .bind(part.part_hash)
-        .bind(part.install_scripts)
+        .bind(part.deploy_scripts)
         .bind(part.origin)
         .bind(part.name)
         .execute(&self.pool)

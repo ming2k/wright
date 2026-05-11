@@ -1,4 +1,4 @@
-use super::{InstalledDb, TransactionOperation, TransactionRecord, TransactionStatus};
+use super::{HistoryAction, HistoryRecord, HistoryStatus, InstalledDb};
 use crate::error::{Result, WrightError};
 use sqlx::{query, query_as};
 use std::path::Path;
@@ -63,68 +63,72 @@ impl InstalledDb {
         Ok(result)
     }
 
-    pub async fn record_transaction(
+    pub async fn record_history(
         &self,
-        operation: TransactionOperation,
+        session_id: &str,
+        command: &str,
         part_name: &str,
+        action: HistoryAction,
         old_version: Option<&str>,
         new_version: Option<&str>,
-        status: TransactionStatus,
-        backup_path: Option<&str>,
+        old_hash: Option<&str>,
+        new_hash: Option<&str>,
+        status: HistoryStatus,
+        details: Option<&str>,
     ) -> Result<i64> {
         let res = query(
-            "INSERT INTO transactions (operation, part_name, old_version, new_version, status, backup_path)
-             VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(operation)
+            "INSERT INTO history (session_id, command, part_name, action, old_version, new_version, old_hash, new_hash, status, details)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(session_id)
+            .bind(command)
             .bind(part_name)
+            .bind(action)
             .bind(old_version)
             .bind(new_version)
+            .bind(old_hash)
+            .bind(new_hash)
             .bind(status)
-            .bind(backup_path)
+            .bind(details)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to record transaction: {}", e)))?;
+        .map_err(|e| WrightError::DatabaseError(format!("failed to record history: {}", e)))?;
 
         Ok(res.last_insert_rowid())
     }
 
-    pub async fn get_history(&self, part: Option<&str>) -> Result<Vec<TransactionRecord>> {
+    pub async fn get_history(&self, part: Option<&str>) -> Result<Vec<HistoryRecord>> {
         if let Some(name) = part {
-            query_as::<_, TransactionRecord>(
-                "SELECT timestamp, operation, part_name, old_version, new_version, status
-                 FROM transactions WHERE part_name = ? ORDER BY timestamp",
+            query_as::<_, HistoryRecord>(
+                "SELECT timestamp, session_id, command, part_name, action, old_version, new_version, old_hash, new_hash, status, details
+                 FROM history WHERE part_name = ? ORDER BY timestamp",
             )
             .bind(name)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get transaction history: {}", e))
+                WrightError::DatabaseError(format!("failed to get history: {}", e))
             })
         } else {
-            query_as::<_, TransactionRecord>(
-                "SELECT timestamp, operation, part_name, old_version, new_version, status
-                 FROM transactions ORDER BY timestamp",
+            query_as::<_, HistoryRecord>(
+                "SELECT timestamp, session_id, command, part_name, action, old_version, new_version, old_hash, new_hash, status, details
+                 FROM history ORDER BY timestamp",
             )
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get transaction history: {}", e))
+                WrightError::DatabaseError(format!("failed to get history: {}", e))
             })
         }
     }
 
-    pub async fn update_transaction_status(
-        &self,
-        id: i64,
-        status: TransactionStatus,
-    ) -> Result<()> {
-        query("UPDATE transactions SET status = ? WHERE id = ?")
+    pub async fn update_history_status(&self, id: i64, status: HistoryStatus) -> Result<()> {
+        query("UPDATE history SET status = ? WHERE id = ?")
             .bind(status)
             .bind(id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to update transaction status: {}", e))
+                WrightError::DatabaseError(format!("failed to update history status: {}", e))
             })?;
         Ok(())
     }

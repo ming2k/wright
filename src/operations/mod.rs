@@ -1,3 +1,16 @@
-pub mod apply;
+pub mod assume;
+pub mod build;
+pub mod check;
+pub mod doctor;
 pub mod drive;
+pub mod files;
+pub mod history;
+pub mod install;
 pub mod launch;
+pub mod lint;
+pub mod list;
+pub mod merge;
+pub mod prune;
+pub mod remove;
+pub mod unassume;
+pub mod upgrade;

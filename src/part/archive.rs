@@ -76,7 +76,7 @@ pub fn create_part(
         .map_err(|e| WrightError::PartError(format!("failed to write .FILELIST: {}", e)))?;
 
     // Write .HOOKS (TOML) if install scripts exist
-    if let Some(ref scripts) = manifest.install_scripts {
+    if let Some(ref scripts) = manifest.deploy_scripts {
         let hooks_content = generate_hooks_toml(scripts);
         if !hooks_content.is_empty() {
             std::fs::write(part_dir.join(".HOOKS"), &hooks_content)
@@ -343,7 +343,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
 /// pre_remove = "systemctl stop nginx"
 /// post_remove = "userdel nginx"
 /// ```
-fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> String {
+fn generate_hooks_toml(scripts: &crate::plan::manifest::DeployScripts) -> String {
     let has_any = scripts.pre_install.is_some()
         || scripts.post_install.is_some()
         || scripts.post_upgrade.is_some()
@@ -361,7 +361,7 @@ fn generate_hooks_toml(scripts: &crate::plan::manifest::InstallScripts) -> Strin
         ("pre_remove", &scripts.pre_remove),
         ("post_remove", &scripts.post_remove),
     ] {
-        if let Some(ref s) = value {
+        if let Some(s) = value {
             let trimmed = s.trim();
             if trimmed.contains('\n') {
                 content.push_str(&format!("{} = \"\"\"\n{}\n\"\"\"\n", key, trimmed));
@@ -537,9 +537,11 @@ runtime_deps = ["bash"]
         );
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("missing required [plan]"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing required [plan]")
+        );
     }
 }

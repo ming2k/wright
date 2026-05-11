@@ -45,7 +45,7 @@ impl TryFrom<&str> for FileType {
 #[sqlx(rename_all = "lowercase")]
 pub enum Origin {
     Dependency,
-    Build,
+    Forge,
     Manual,
     /// Registered with `wright assume` — provided by the host system, not built
     /// or installed by wright. Has no filesystem footprint; managed exclusively
@@ -57,7 +57,7 @@ impl Origin {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Dependency => "dependency",
-            Self::Build => "build",
+            Self::Forge => "forge",
             Self::Manual => "manual",
             Self::External => "external",
         }
@@ -80,7 +80,7 @@ impl TryFrom<&str> for Origin {
     fn try_from(s: &str) -> Result<Self> {
         match s {
             "dependency" => Ok(Self::Dependency),
-            "build" => Ok(Self::Build),
+            "forge" => Ok(Self::Forge),
             "manual" => Ok(Self::Manual),
             "external" => Ok(Self::External),
             _ => Err(WrightError::DatabaseError(format!("unknown origin: {}", s))),
@@ -90,35 +90,83 @@ impl TryFrom<&str> for Origin {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
-pub enum TransactionOperation {
+pub enum HistoryAction {
     Install,
     Upgrade,
     Remove,
+    Rollback,
 }
 
-impl std::fmt::Display for TransactionOperation {
+impl std::fmt::Display for HistoryAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Install => "install",
             Self::Upgrade => "upgrade",
             Self::Remove => "remove",
+            Self::Rollback => "rollback",
         })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
-pub enum TransactionStatus {
+pub enum HistoryStatus {
     Pending,
+    Completed,
+    Failed,
+    RolledBack,
+}
+
+/// Macro-level delivery transaction state (one per user command).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum DeliveryStatus {
+    Planning,
+    Ready,
+    Applying,
     Completed,
     RolledBack,
 }
 
-impl std::fmt::Display for TransactionStatus {
+/// Per-operation state within a delivery transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum OpStatus {
+    Pending,
+    Extracting,
+    HooksRunning,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DeliveryTransaction {
+    pub id: i64,
+    pub command: String,
+    pub status: DeliveryStatus,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TransactionOp {
+    pub id: i64,
+    pub transaction_id: i64,
+    pub part_name: String,
+    pub part_hash: String,
+    pub action_type: String,
+    pub execution_order: i64,
+    pub status: OpStatus,
+    pub old_hash: Option<String>,
+    pub error_msg: Option<String>,
+}
+
+impl std::fmt::Display for HistoryStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Pending => "pending",
             Self::Completed => "completed",
+            Self::Failed => "failed",
             Self::RolledBack => "rolled_back",
         })
     }
@@ -131,7 +179,7 @@ pub struct InstalledPart {
     pub plan_id: i64,
     pub installed_at: Option<String>,
     pub part_hash: Option<String>,
-    pub install_scripts: Option<String>,
+    pub deploy_scripts: Option<String>,
     pub origin: Origin,
 }
 
@@ -143,7 +191,7 @@ pub struct PartWithPlan {
     pub plan_id: i64,
     pub installed_at: Option<String>,
     pub part_hash: Option<String>,
-    pub install_scripts: Option<String>,
+    pub deploy_scripts: Option<String>,
     pub origin: Origin,
     pub plan_name: String,
     pub version: String,
@@ -167,7 +215,7 @@ pub struct NewPart<'a> {
     pub name: &'a str,
     pub plan_id: i64,
     pub part_hash: Option<&'a str>,
-    pub install_scripts: Option<&'a str>,
+    pub deploy_scripts: Option<&'a str>,
     pub origin: Origin,
 }
 
@@ -177,7 +225,7 @@ impl<'a> Default for NewPart<'a> {
             name: "",
             plan_id: 0,
             part_hash: None,
-            install_scripts: None,
+            deploy_scripts: None,
             origin: Origin::Manual,
         }
     }
@@ -199,12 +247,23 @@ pub struct Dependency {
     pub version_constraint: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionContext {
+    pub id: String,
+    pub command: String,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct TransactionRecord {
+pub struct HistoryRecord {
     pub timestamp: Option<String>,
-    pub operation: TransactionOperation,
+    pub session_id: String,
+    pub command: String,
     pub part_name: String,
+    pub action: HistoryAction,
     pub old_version: Option<String>,
     pub new_version: Option<String>,
-    pub status: TransactionStatus,
+    pub old_hash: Option<String>,
+    pub new_hash: Option<String>,
+    pub status: HistoryStatus,
+    pub details: Option<String>,
 }

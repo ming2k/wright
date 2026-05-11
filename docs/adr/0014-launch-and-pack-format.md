@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded by [ADR-0015](0015-group-manifest-replaces-pack.md)
+Superseded by [ADR-0015](0015-folio-manifest-replaces-pack.md)
 
 ## Context
 

@@ -4,15 +4,15 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{unshare, CloneFlags};
-use nix::sys::wait::{waitpid, WaitStatus};
-use nix::unistd::{chdir, execvp, fork, pivot_root, sethostname, ForkResult, Pid};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, unshare};
+use nix::sys::wait::{WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, chdir, execvp, fork, pivot_root, sethostname};
 use tracing::debug;
 
 use super::{
-    spawn_stream_reader, CapturedOutput, IsolationConfig, IsolationLevel, IsolationOutput,
-    ResourceLimits,
+    CapturedOutput, IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits,
+    spawn_stream_reader,
 };
 use crate::error::{Result, WrightError};
 
@@ -36,8 +36,8 @@ fn make_stream_capture<R: std::io::Read + Send + 'static>(
     spawn_stream_reader(source, echo, log_to, dest)
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Spawn a watchdog thread that kills a process after `timeout` seconds.
@@ -97,7 +97,7 @@ fn apply_cpu_affinity(n: u32) {
 
 /// Apply resource limits via `setrlimit`.
 fn apply_rlimits(rlimits: &ResourceLimits) -> std::result::Result<(), String> {
-    use nix::sys::resource::{setrlimit, Resource};
+    use nix::sys::resource::{Resource, setrlimit};
 
     if let Some(mb) = rlimits.memory_mb {
         let bytes = mb * 1024 * 1024;
@@ -699,13 +699,13 @@ pub fn run_in_isolation(
 
                     // --- Environment ---
                     for (key, _) in std::env::vars_os() {
-                        std::env::remove_var(&key);
+                        unsafe { std::env::remove_var(&key) };
                     }
-                    std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-                    std::env::set_var("HOME", "/build");
-                    std::env::set_var("TERM", "xterm");
+                    unsafe { std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin") };
+                    unsafe { std::env::set_var("HOME", "/build") };
+                    unsafe { std::env::set_var("TERM", "xterm") };
                     for (key, value) in &config.env {
-                        std::env::set_var(key, value);
+                        unsafe { std::env::set_var(key, value) };
                     }
 
                     // --- chdir + exec ---

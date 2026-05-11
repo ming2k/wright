@@ -3,18 +3,24 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{FileType, InstalledDb, TransactionOperation};
+use crate::database::{FileType, HistoryAction, InstalledDb, SessionContext};
 use crate::error::{Result, WrightError};
 
 use super::get_hook;
 use crate::transaction::context::TransactionContext;
-use crate::transaction::hooks::{log_running_hook, run_install_script};
+use crate::transaction::hooks::{log_running_hook, run_deploy_script};
 
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 
-pub async fn remove_part(db: &InstalledDb, name: &str, root_dir: &Path, force: bool) -> Result<()> {
-    remove_part_with_ignored_dependents(db, name, root_dir, force, &HashSet::new()).await
+pub async fn remove_part(
+    db: &InstalledDb,
+    name: &str,
+    root_dir: &Path,
+    force: bool,
+    session: SessionContext,
+) -> Result<()> {
+    remove_part_with_ignored_dependents(db, name, root_dir, force, &HashSet::new(), session).await
 }
 
 pub async fn remove_part_with_ignored_dependents(
@@ -23,6 +29,7 @@ pub async fn remove_part_with_ignored_dependents(
     root_dir: &Path,
     force: bool,
     ignored_dependents: &HashSet<String>,
+    session: SessionContext,
 ) -> Result<()> {
     let part = db
         .get_part(name)
@@ -56,11 +63,14 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = part.install_scripts {
+    if let Some(ref content) = part.deploy_scripts {
         if let Some(script) = get_hook(content, "pre_remove") {
             log_running_hook(name, "pre_remove");
-            if let Err(e) = run_install_script(&script, root_dir, name, "pre_remove").await {
-                warn!("hook [pre_remove] for {} failed (continuing removal): {}", name, e);
+            if let Err(e) = run_deploy_script(&script, root_dir, name, "pre_remove").await {
+                warn!(
+                    "hook [pre_remove] for {} failed (continuing removal): {}",
+                    name, e
+                );
             }
         }
     }
@@ -72,9 +82,12 @@ pub async fn remove_part_with_ignored_dependents(
 
     let mut tx = TransactionContext::begin(
         db,
-        TransactionOperation::Remove,
+        HistoryAction::Remove,
         name,
         Some(&plan.version),
+        None,
+        session,
+        part.part_hash.as_deref(),
         None,
     )
     .await?;
@@ -187,11 +200,14 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = part.install_scripts {
+    if let Some(ref content) = part.deploy_scripts {
         if let Some(script) = get_hook(content, "post_remove") {
             log_running_hook(name, "post_remove");
-            if let Err(e) = run_install_script(&script, root_dir, name, "post_remove").await {
-                warn!("hook [post_remove] for {} failed (continuing removal): {}", name, e);
+            if let Err(e) = run_deploy_script(&script, root_dir, name, "post_remove").await {
+                warn!(
+                    "hook [post_remove] for {} failed (continuing removal): {}",
+                    name, e
+                );
             }
         }
     }

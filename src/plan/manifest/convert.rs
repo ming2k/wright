@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::{
-    BackupConfig, BuildOptions, InstallScripts, PlanManifest, PlanMetadata, Relations, Sources,
+    BackupConfig, DeployScripts, ForgeOptions, PlanManifest, PlanMetadata, Relations, Sources,
     SubFabricateOutput,
 };
 
@@ -13,7 +13,7 @@ impl SubFabricateOutput {
             .clone()
             .unwrap_or_else(|| parent.metadata.description.clone());
 
-        let install_scripts = self.hooks.as_ref().map(|h| InstallScripts {
+        let deploy_scripts = self.hooks.as_ref().map(|h| DeployScripts {
             pre_install: h.pre_install.clone(),
             post_install: h.post_install.clone(),
             post_upgrade: h.post_upgrade.clone(),
@@ -55,13 +55,13 @@ impl SubFabricateOutput {
                 provides: self.provides.clone(),
             },
             sources: Sources::default(),
-            options: BuildOptions::default(),
+            options: ForgeOptions::default(),
             lifecycle: HashMap::new(),
             lifecycle_order: None,
             mvp: None,
             outputs: None,
             discard: Vec::new(),
-            install_scripts,
+            deploy_scripts,
             backup,
             source_plan: Some(parent.metadata.name.clone()),
         }

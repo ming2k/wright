@@ -197,8 +197,8 @@ metadata as well as split outputs.
 |-------|----------|-------|
 | `name` | No | Part name for this output. Omit or set to `""` to use `plan.name` |
 | `description` | Yes for non-catch-all | Human-readable description |
-| `include` | No | Regex patterns for files to claim. Omit on at most one output to define a catch-all |
-| `exclude` | No | Regex patterns to exclude |
+| `include` | No | Glob patterns for files to claim. Omit on at most one output to define a catch-all |
+| `exclude` | No | Glob patterns to exclude |
 | `runtime_deps` | No | Per-output runtime dependencies |
 | `hooks.*` | No | Per-output transaction hooks |
 | `backup` | No | Per-output backup files |
@@ -220,18 +220,20 @@ when only one discard rule is needed.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `include` | **Yes** | Regex patterns for files to ignore |
-| `exclude` | No | Regex patterns to keep out of this discard rule |
+| `include` | **Yes** | Glob patterns for files to ignore |
+| `exclude` | No | Glob patterns to keep out of this discard rule |
 | `reason` | **Yes** | Human-readable explanation for ignoring matched files |
 
-### Implicit Slicing Order
+### Output Slicing Rules
 
-1. Non-catch-all outputs are processed in declared order.
-2. Files matching `include` (and not matching `exclude`) are hard-linked into the output directory.
-3. A file is claimed by the first matching output. Later outputs never see it.
+1. Every staged file is evaluated against **all** non-catch-all `[[output]]` entries simultaneously.
+2. A file matches an output when it hits any `include` pattern and does **not** hit any `exclude` pattern.
+3. **Mutual exclusivity is enforced.** If a file matches more than one output, slicing fails immediately with an error listing the ambiguous file and the conflicting output names.
 4. Remaining files matching `[[discard]]` are ignored.
 5. The optional catch-all keeps whatever remains.
-6. Remaining files fail slicing.
+6. Any file still unclaimed fails slicing.
+
+`[[output]]` order has no effect on slicing. Use `exclude` to carve out files that would otherwise overlap.
 
 ### Part Relations
 

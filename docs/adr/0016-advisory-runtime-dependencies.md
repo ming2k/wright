@@ -176,7 +176,7 @@ from the registry; the plan-source field will be removed in a follow-up.
   install-time/runtime facts.  Human-readable documentation belongs in plan
   source only.
 - Build/link deps remain in plan source and continue to drive the build
-  pipeline (`builder/mvp.rs`, `planning/graph.rs`); only the registry
+  pipeline (`forge/mvp.rs`, `planning/graph.rs`); only the registry
   persistence is removed.
 
 ## Related

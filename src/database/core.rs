@@ -1,8 +1,8 @@
 use super::schema;
 use crate::error::{Result, WrightError};
 use crate::util::lock::ProcessLock;
-use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::SqlitePool;
+use sqlx::sqlite::SqliteConnectOptions;
 use std::path::{Path, PathBuf};
 
 pub struct InstalledDb {
@@ -12,7 +12,7 @@ pub struct InstalledDb {
 }
 
 pub(super) const PART_COLUMNS: &str =
-    "id, name, plan_id, installed_at, part_hash, install_scripts, origin";
+    "id, name, plan_id, installed_at, part_hash, deploy_scripts, origin";
 
 fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     let file_name = db_path

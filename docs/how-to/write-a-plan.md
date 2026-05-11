@@ -90,7 +90,7 @@ include = ["/usr/sbin/nginx", "/etc/nginx/nginx.conf"]
 [[output]]
 name = "nginx-modules"
 runtime_deps = ["openssl", "zlib", "pcre2"]
-include = ["/usr/lib/nginx/modules/.*"]
+include = ["/usr/lib/nginx/modules/**"]
 ```
 
 Rules:
@@ -321,7 +321,7 @@ name = "gcc"
 [[output]]
 name = "libstdc++"
 description = "GNU C++ standard library"
-include = ["/usr/lib/libstdc.*"]
+include = ["/usr/lib/libstdc*"]
 runtime_deps = ["libgcc"]
 ```
 
@@ -349,7 +349,7 @@ Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All 
 5. The optional catch-all output (the one with no `include`) packages whatever remains after earlier outputs and discard rules have handled their files.
 6. Any file still unclaimed fails slicing.
 
-**Critical: `include` patterns must be specific.** Using `include = ["/.*"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
+**Critical: `include` patterns must be specific.** Using `include = ["/**"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
 
 #### Part Relations
 
@@ -589,7 +589,7 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 [[output]]
 name = "nginx-doc"
 description = "Nginx documentation files"
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 ```
 
 ### Multi-Output Examples
@@ -614,13 +614,13 @@ make DESTDIR=${STAGING_DIR} install
 [[output]]
 name = "libfoo"
 description = "Foo runtime libraries"
-include = ["/usr/lib/libfoo\\.so.*"]
+include = ["/usr/lib/libfoo.so*"]
 runtime_deps = ["glibc"]
 
 [[output]]
 name = "libfoo-dev"
 description = "Foo development files"
-include = ["/usr/include/.*", "/usr/lib/libfoo\\.a", "/usr/lib/pkgconfig/libfoo.*"]
+include = ["/usr/include/**", "/usr/lib/libfoo.a", "/usr/lib/pkgconfig/libfoo*"]
 ```
 
 In this example, `libfoo` is the catch-all and packages files not claimed by `libfoo-dev`.
@@ -644,17 +644,17 @@ runtime_deps = ["linux-firmware-amd", "linux-firmware-intel", "linux-firmware-nv
 [[output]]
 name = "linux-firmware-amd"
 description = "AMD GPU/CPU firmware"
-include = ["/usr/lib/firmware/amdgpu/.*", "/usr/lib/firmware/radeon/.*"]
+include = ["/usr/lib/firmware/amdgpu/**", "/usr/lib/firmware/radeon/**"]
 
 [[output]]
 name = "linux-firmware-intel"
 description = "Intel GPU/CPU firmware"
-include = ["/usr/lib/firmware/i915/.*", "/usr/lib/firmware/iwlwifi/.*"]
+include = ["/usr/lib/firmware/i915/**", "/usr/lib/firmware/iwlwifi/**"]
 
 [[output]]
 name = "linux-firmware-nvidia"
 description = "NVIDIA GPU firmware"
-include = ["/usr/lib/firmware/nvidia/.*"]
+include = ["/usr/lib/firmware/nvidia/**"]
 ```
 
 **Note:** The catch-all receives whatever the sub-parts do not claim. If you want a pure meta-part with no files, ensure the sub-parts claim all installed files; otherwise the catch-all will contain the leftovers.
@@ -674,7 +674,7 @@ arch = "x86_64"
 [[output]]
 name = "llvm-opt"
 description = "LLVM optimizer"
-include = ["/usr/bin/opt", "/usr/bin/llvm-opt.*"]
+include = ["/usr/bin/opt", "/usr/bin/llvm-opt*"]
 
 [[output]]
 name = "llvm-dis"
@@ -683,8 +683,8 @@ include = ["/usr/bin/llvm-dis", "/usr/bin/llvm-as"]
 
 [[discard]]
 include = [
-    "/usr/share/doc/.*",
-    "/usr/share/man/.*",
+    "/usr/share/doc/**",
+    "/usr/share/man/**",
 ]
 reason = "documentation and manual pages are intentionally not packaged"
 ```
@@ -698,7 +698,7 @@ If staging contains files like `clang`, `lld`, headers, or libraries, slicing fa
 name = "mypart-doc"
 description = "Documentation for mypart"
 arch = "any"
-include = ["/usr/share/doc/.*"]
+include = ["/usr/share/doc/**"]
 ```
 
 Sub-parts inherit `version`, `release`, `arch`, and `license` from the parent manifest unless overridden.

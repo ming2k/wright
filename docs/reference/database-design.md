@@ -10,7 +10,7 @@
 
 | Artifact | Default path | Lookup method | Role |
 |----------|--------------|---------------|------|
-| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, sysupgrade, apply, and prune |
+| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, sysupgrade, and prune |
 
 ## Migration System
 
@@ -33,7 +33,9 @@
 | `conflicts` | mutually exclusive part name declarations |
 | `replaces` | rename / supersession metadata |
 | `shadowed_files` | file collision records used for divert and safe removal |
-| `transactions` | install, upgrade, remove history |
+| `history` | permanent audit log of install, upgrade, remove actions |
+| `delivery_transactions` | **Temporary WAL**: user-invoked delivery command status (cleaned after commit/rollback) |
+| `transaction_ops` | **Temporary WAL**: per-DAG-node deploy actions (cleaned after commit/rollback) |
 
 Build deps, link deps, and `provides` are deliberately not persisted. See
 [Dependency Philosophy](../explanation/dependency-philosophy.md) and
@@ -50,6 +52,7 @@ erDiagram
     parts ||--o{ replaces : replaces
     parts ||--o{ shadowed_files : "original owner"
     parts ||--o{ shadowed_files : "shadowed by"
+    delivery_transactions ||--o{ transaction_ops : contains
     plans {
         INTEGER id PK
         TEXT name UK
@@ -109,17 +112,40 @@ erDiagram
         DATETIME timestamp
     }
 
-    transactions {
+    history {
         INTEGER id PK
         DATETIME timestamp
-        TEXT operation
+        TEXT session_id
+        TEXT command
         TEXT part_name
+        TEXT action
         TEXT old_version
         TEXT new_version
+        TEXT old_hash
+        TEXT new_hash
         TEXT status
-        TEXT backup_path
+        TEXT details
     }
 
+    delivery_transactions {
+        INTEGER id PK
+        TEXT command
+        TEXT status
+        DATETIME created_at
+        DATETIME updated_at
+    }
+
+    transaction_ops {
+        INTEGER id PK
+        INTEGER transaction_id FK
+        TEXT part_name
+        TEXT part_hash
+        TEXT action_type
+        INTEGER execution_order
+        TEXT status
+        TEXT old_hash
+        TEXT error_msg
+    }
 ```
 
 ## Key Constraints
@@ -129,13 +155,15 @@ erDiagram
 | `parts.name` | `UNIQUE` | Part names are globally unique identifiers |
 | `parts.origin` | `CHECK(origin IN ('dependency','build','manual','external'))` | Enforces valid provenance values at the DB layer |
 | `plans.name` | `UNIQUE` | Each plan name maps to exactly one plan record |
+| `transaction_ops.transaction_id` | `REFERENCES delivery_transactions(id)` | Operations belong to one delivery (temporary) |
 
 ## Non-Foreign-Key References
 
 | Field | References | Purpose |
 |-------|------------|---------|
 | `dependencies.depends_on` | `parts.name` (or `replaces.name`) | Advisory runtime-dependency target. Soft pointer — target may be unresolved (treated as "unsatisfied" rather than an error). |
-| `transactions.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
+| `history.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
+| `history.session_id` | `delivery_transactions.id` (legacy) | Logical grouping for history records |
 
 ## Removed Databases
 

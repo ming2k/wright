@@ -8,7 +8,6 @@ Task-oriented guides for specific problems.
 - [Build a part](build-a-part.md)
 - [Handle circular dependencies](handle-circular-dependencies.md)
 - [Build dependency chains](build-dependency-chains.md)
-- [Rebuild after a library update](rebuild-after-library-update.md)
 - [Resume a failed build](resume-failed-build.md)
 - [Force-rebuild everything](force-rebuild-everything.md)
 - [Build a Rust package](build-rust-package.md)
@@ -21,8 +20,8 @@ Task-oriented guides for specific problems.
 - [Remove packages and clean up](remove-packages-and-cleanup.md)
 - [Inspect dependency trees](inspect-dependency-tree.md)
 - [Maintain OS parts](maintain-os-parts.md)
-- [Perform recursive updates](perform-recursive-updates.md)
-- [Perform security updates](perform-security-updates.md)
+- [Rebuild reverse dependencies](rebuild-reverse-dependencies.md)
+- [Rebuild core system plans](rebuild-core-system-plans.md)
 
 ## Troubleshooting
 

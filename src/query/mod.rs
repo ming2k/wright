@@ -499,7 +499,7 @@ pub struct BrokenDep {
     pub version_constraint: Option<String>,
 }
 
-/// Check all installed parts for unsatisfied runtime dependencies.
+/// Check all deployed parts for unsatisfied runtime dependencies.
 ///
 /// Per ADR-0016 resolution walks `parts.name` first and falls through
 /// to `replaces.name` so renamed targets stay satisfied across plan
@@ -549,7 +549,7 @@ async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
     if db.get_part(target).await?.is_some() {
         return Ok(true);
     }
-    // Replaces fallback: any installed part declaring `replaces = [target]`
+    // Replaces fallback: any deployed part declaring `replaces = [target]`
     // covers the old name. Walk parts → check their replaces list.
     let parts = db.list_parts().await?;
     for p in parts {

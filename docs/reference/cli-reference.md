@@ -1,7 +1,12 @@
 # CLI Reference
 
-Wright provides one CLI, `wright`, with top-level subcommands for both
-build-side and system-side operations.
+Wright provides a single unified `wright` binary. All functionality is accessed
+through subcommands, organised into four groups that match the reader's intent:
+
+- **System Management** — mutate live system state
+- **Query & Inspection** — read-only introspection
+- **Build & Packaging** — forge, lint, and bootstrap workflows
+- **Cache & Maintenance** — house-keeping and cleanup
 
 ## Global Options
 
@@ -13,111 +18,83 @@ build-side and system-side operations.
 | `-v`, `-vv` | Increase log verbosity (info / debug) |
 | `--quiet` | Suppress all output except errors |
 
-## System Commands
+## System Management
+
+### `wright merge <TARGET...>`
+
+Merge part archives into the target root. By default, arguments are plan names
+or plan directories. Wright reads each plan manifest, derives the expected
+output archive names, and merges those archives from `parts_dir`. Use `--path`
+to merge explicit archive paths instead.
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Force redeploy even if already deployed |
+| `--nodeps` | Skip runtime dependency warnings |
+| `--path` | Treat arguments and stdin as explicit archive paths |
 
 ### `wright install <TARGET...>`
 
-Installs outputs produced by plan names or plan directories. Wright reads the
-plan manifests and installs the expected archives from `parts_dir`. Runtime
-dependency problems are reported as warnings, not errors.
+Install plans to the local system with full lifecycle (resolve → forge → seal → deploy).
+Targets may be plan names, plan directories, or folio names prefixed with `@`.
+Automatically pulls in missing or outdated dependencies under the selected
+match policy.
+
+```bash
+wright install zlib
+wright install zlib openssl
+wright install @core
+wright install gcc --match=all
+```
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Reinstall even if the part is already installed and up to date |
-| `--nodeps` | Suppress runtime dependency warnings |
-| `--path` | Treat arguments and stdin as explicit archive paths |
+| `-d`, `--deps [link\|runtime\|build\|all]` | Dependency domain to expand |
+| `-r`, `--rdeps [link\|runtime\|build\|all]` | Reverse dependency domain to expand |
+| `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
+| `--depth <N>` | Maximum expansion depth |
+| `-f`, `--force` | Force reforge and redeploy |
+| `-n`, `--dry-run` | Print the plan without executing it |
 
-### `wright upgrade <PART...>`
+### `wright upgrade <TARGET...>`
 
-Upgrades installed parts by archive path or by the latest matching archive in `parts_dir`.
+Upgrade plans to the latest version. When given plan names, checks if the plan
+has a newer version than what is deployed, then resolves, forges, seals, and deploys it
+along with reverse link dependencies (for ABI consistency). Use `all` to check
+every installed plan.
+
+```bash
+wright upgrade zlib
+wright upgrade all
+wright upgrade zlib --force
+```
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Upgrade even if the incoming version is not newer |
-
-### `wright sysupgrade`
-
-Upgrades every installed part to its newest matching archive in `parts_dir`.
+| `-f`, `--force` | Force reforge and redeploy even if the plan version matches |
+| `--depth <N>` | Maximum depth for reverse dependency expansion |
 
 ### `wright remove <PART...>`
 
-Removes installed parts and optionally cleans up orphaned dependencies.
+Remove deployed parts by name. Removal is blocked when another deployed part
+depends on the target unless `--recursive` or `--force` is used.
+
+```bash
+wright remove zlib
+wright remove zlib --recursive
+wright remove zlib --cascade
+```
 
 | Flag | Description |
 |------|-------------|
-| `--cascade` | Also remove `dependency`-origin parts that become unreferenced |
-| `--force` | Remove even if other parts depend on this one |
-| `--plan <NAME>` | Remove all parts produced by the named plan |
-
-### `wright apply <TARGET...>`
-
-Resolves plans, plan directories, or group names (prefixed with `@`), checks
-archives in `parts_dir`, automatically adds missing or outdated dependency
-plans, builds each wave, and then installs or upgrades each wave before
-continuing.
-
-| Flag | Description |
-|------|-------------|
-| `--deps [link\|runtime\|build\|all]` | Dependency domain to expand |
-| `--rdeps [link\|runtime\|build\|all]` | Reverse dependency domain to expand |
-| `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
-| `--depth <N>` | Maximum expansion depth |
-| `-f`, `--force` | Force rebuild and reinstall |
-| `--dry-run` | Print the plan without executing it |
-
-### `wright list`
-
-Lists installed parts.
-
-| Flag | Description |
-|------|-------------|
-| `-l`, `--long` | Show origin, version, release, arch, and plan columns |
-| `--roots` | Show only parts that nothing else depends on |
-| `--orphans` | Show `dependency`-origin parts no longer needed by anything |
-| `--assumed` | Show `external`-origin parts registered via `wright assume` |
-| `--plan <NAME>` | Show only parts produced by the named plan |
-
-### `wright query <PART>`
-
-Shows dependency tree and reverse-dependency tree for an installed part.
-
-### `wright search <KEYWORD>`
-
-Searches part names and descriptions for the given keyword.
-
-### `wright files <PART>`
-
-Lists all files owned by an installed part.
-
-### `wright owner <FILE>`
-
-Shows which installed part owns the given file path.
-
-### `wright verify [PART]`
-
-Verifies file checksums against recorded hashes. Checks all parts when `PART` is omitted.
-
-### `wright doctor`
-
-Runs comprehensive system health checks: database integrity, file conflicts,
-registry dependency resolution, ELF `DT_NEEDED` verification, and a global
-parts_dir dependency closure scan. Use after batch installations to detect
-missing providers and stale dependencies across the entire archive collection.
-
-| Flag | Description |
-|------|-------------|
-| `--deep` | Walk ELF binaries and verify `DT_NEEDED` entries (always enabled for doctor) |
-
-### `wright history [PART]`
-
-Shows transaction history. Filters to the named part when specified.
+| `--force` | Force removal even if other parts depend on this one |
+| `-r`, `--recursive` | Recursively remove all parts that depend on the target |
+| `-c`, `--cascade` | Also remove orphan dependencies (auto-deployed deps) |
 
 ### `wright assume <NAME> <VERSION>`
 
-Registers a part as externally provided — it is known to be present on the system
-but was not installed by Wright (e.g. host toolchain tools during LFS bootstrap).
-Assumed parts have no filesystem footprint; they only satisfy dependency checks
-and `wright resolve` queries.
+Mark a part as externally provided so dependency checks consider it satisfied.
+Assumed parts have no filesystem footprint; they only satisfy dependency checks.
 
 ```bash
 wright assume gcc 14.2.0
@@ -127,44 +104,105 @@ echo "glibc 2.40" | wright assume
 
 | Flag | Description |
 |------|-------------|
-| `--file <FILE>` | Read `name version` lines from a file |
+| `--file <FILE>` | Read `name version` pairs from a file |
 
 ### `wright unassume <NAME>`
 
-Removes an assumed (`external`-origin) part record.
+Remove an assumed (`external`-origin) part record created with `wright assume`.
 
-### `wright mark <PART...>`
+## Query & Inspection
 
-Changes the recorded origin of one or more installed parts.
+### `wright list`
+
+List deployed parts.
+
+```bash
+wright list
+wright list -l
+wright list --roots
+wright list --orphans
+wright list --assumed
+```
 
 | Flag | Description |
 |------|-------------|
-| `--as-manual` | Mark as `manual` (user-requested; not auto-removable) |
-| `--as-dependency` | Mark as `dependency` (eligible for orphan cleanup) |
+| `-l`, `--long` | Show origin, version, release, and architecture |
+| `--roots` | Show only top-level (root) parts with no deployed dependents |
+| `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
+| `--assumed` | Show assumed (externally provided) parts |
+
+### `wright files <PART>`
+
+List files owned by a deployed part.
+
+### `wright check [PART]`
+
+Perform system health checks covering database integrity, file conflicts,
+shadowed files, and runtime dependency resolution. With `--deep`, walk each
+deployed part's ELF binaries and verify their `DT_NEEDED` entries.
+
+| Flag | Description |
+|------|-------------|
+| `--deep` | Walk ELF binaries and verify `DT_NEEDED` entries |
+| `--integrity-only` | Only run integrity checks (database, file conflicts, shadows) |
+
+### `wright history [PART]`
+
+Show part transaction history (deploy, upgrade, remove). Filters to the named
+part when specified.
+
+### `wright doctor`
+
+Run comprehensive system health checks: database integrity, file conflicts,
+registry dependency resolution, ELF `DT_NEEDED` verification, and a global
+`parts_dir` dependency closure scan. Use after batch deployments to detect
+missing providers and stale dependencies.
+
+## Build & Packaging
+
+### `wright build <TARGET...>`
+
+Build (forge) plans into staging and output directories under `build_dir`.
+
+```bash
+wright build zlib
+wright build zlib --rebuild --clean
+wright build freetype --until-stage=staging
+```
+
+| Flag | Description |
+|------|-------------|
+| `-c`, `--clean` | Clear the forge workspace before building |
+| `-R`, `--rebuild` | Reforge from scratch: bypass stage checkpoints and re-run all lifecycle stages |
+| `--stage <NAME>` | Run only the specified lifecycle stages; may be repeated |
+| `--force-stage <NAME>` | Force re-run of a specific stage even if its checkpoint is valid |
+| `--until-stage <NAME>` | Run a normal forge pipeline and stop after the specified stage |
+| `--skip-check` | Skip the lifecycle `check` stage |
+| `--mvp` | Forge using the MVP dependency set from mvp.toml |
+| `--fetch` | Download sources only; do not forge |
+| `--checksum` | Compute and update SHA256 checksums in plan.toml |
+
+### `wright lint [TARGET...]`
+
+Validate plan syntax, dependency reference format, local plan and output
+references, and dependency graph cycles. When no targets are specified,
+lints all plans found under `plans_dir`.
+
+| Flag | Description |
+|------|-------------|
+| `-r`, `--recursive` | Recurse into subdirectories when scanning for plans |
+| `--verify` | Verify deployed part file integrity (SHA-256 checksums) |
 
 ### `wright launch`
 
-Converges a target root from a group manifest or from explicit plan names.
-Before building, `launch` prepares the target root with a complete Wright
-infrastructure:
-
-1. Creates the directory skeleton (`var/lib/wright/`, `var/log/wright/`,
-   `etc/wright/`, ...).
-2. **Syncs** all source plans into `<root>/var/lib/wright/plans/` so the
-   target can self-maintain later.  Files are compared by size and mtime;
-   only changed files are copied, and stale files in the target are removed.
-3. **Syncs** referenced group manifests into `<root>/var/lib/wright/groups/`.
-4. Writes a minimal `/etc/wright/wright.toml` pointing at the target-local
-   directories.
-5. Initialises the SQLite database with the full schema.
-
-It then resolves dependencies, builds each wave, packages outputs, installs
-them into `--root`, and applies declarative `[config]` (hostname, timezone,
-locale, services).  Build and package outputs are isolated under the target
-root so the host system is not polluted.
+Fill a target root from a folio manifest or from explicit plan names. Before
+forging, `launch` prepares the target root with a complete Wright
+infrastructure: directory skeleton, synced plans and folios, a minimal
+`wright.toml`, and an initialised database. Re-running `launch` on the same
+root converges drift rather than erroring.
 
 ```bash
-wright launch --root /mnt/new --group ./groups/core.toml
+wright launch --root /mnt/new --folio ./folios/core.toml
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc
 wright launch --root /mnt/new --plans ./plans @core
 ```
@@ -172,113 +210,37 @@ wright launch --root /mnt/new --plans ./plans @core
 | Flag | Description |
 |------|-------------|
 | `--root <PATH>` | Required. The target root to fill. |
-| `--group <FILE>` | Path to a `group.toml` manifest naming the plans to build and install. |
-| `--plans <DIR>` | Source path: take plans from this directory. Positional arguments are plan names or `@group` references. |
-| `--dry-run` | Print install order and config actions without writing anything. |
-| `--force` | Rebuild and reinstall parts that are already present in the target. |
+| `--folio <FILE>` | Path to a `folio.toml` manifest naming the plans to forge and deploy. |
+| `--plans <DIR>` | Source path: take plans from this directory. Positional arguments are plan names or `@folio` references. |
+| `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
+| `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
 
-Re-running `launch` on the same root converges drift rather than erroring.
-
----
-
-## Build Commands
-
-### `wright build <TARGET...>`
-
-Builds plans into staging and output directories under `build_dir`.
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Rebuild even if staged outputs already exist; force re-run of all lifecycle stages even when stage sentinels exist |
-| `--clean` | Remove the build workspace before building |
-| `--stage <NAME>` | Start execution at this stage (skip earlier stages) |
-| `--until-stage <NAME>` | Stop after this stage |
-| `--skip-check` | Skip the `check` lifecycle stage |
-| `--mvp` | Run the MVP (bootstrap) build pass only |
-| `--fetch` | Only run the `fetch` and `verify` stages |
-| `--checksum` | Verify source checksums only |
-
-### `wright package <TARGET...>`
-
-Slices existing staging directories into output archives and writes them to `parts_dir`.
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Re-slice outputs from staging and overwrite existing archives |
-| `--out-dir <PATH>` | Write produced archives to this directory instead of `parts_dir` |
-| `--print-parts` | Print produced archive paths on stdout |
-
-### `wright resolve <TARGET...>`
-
-Expands the dependency and rebuild scope without building. Prints a newline-separated list
-of plan names suitable for piping into `wright build`.
-
-| Flag | Description |
-|------|-------------|
-| `--exclude-targets` | Exclude the listed targets from output (print only the expanded set) |
-| `--deps [link\|runtime\|build\|all]` | Dependency domain to expand upward |
-| `--rdeps [link\|runtime\|build\|all]` | Reverse dependency domain to expand downward |
-| `--match [missing\|outdated\|installed\|all]` | Which state triggers inclusion |
-| `--depth <N>` | Maximum expansion depth |
-| `--tree` | Print a tree view instead of a flat list |
-| `--installed` | Only include plans with at least one installed part |
+## Cache & Maintenance
 
 ### `wright prune`
 
-Removes stale archives from `parts_dir`.
+Remove stale archives from `parts_dir`.
 
 | Flag | Description |
 |------|-------------|
 | `--latest` | Keep only the most recent archive for each part name |
-| `--apply` | Actually delete; dry-run by default |
-| `--untracked` | Also remove archives not referenced by any local plan |
-
----
-
-## Lint Command
-
-### `wright lint [TARGET...]`
-
-Validates plan syntax, dependency reference format, local plan and output
-references, and dependency graph cycles. When no targets are specified,
-lints all plans found under `plans_dir`.
-
-| Flag | Description |
-|------|-------------|
-| `-r`, `--recursive` | Recurse into subdirectories when scanning for plans |
-
----
+| `--apply` | Apply deletions; dry-run by default |
 
 ## Common Pipelines
 
-Build a part and install it:
+Forge a part and deploy it:
 
 ```bash
-wright build curl
-wright package curl
+wright build zlib
+wright install zlib
+```
+
+Install with automatic dependency resolution:
+
+```bash
 wright install curl
-```
-
-Let `apply` drive the whole source-first workflow:
-
-```bash
-wright apply curl
-wright apply @core
-wright apply @core openssl
-```
-
-Rebuild all ABI-sensitive reverse dependents and install:
-
-```bash
-wright resolve zlib --rdeps=all --depth=0 > /tmp/wright-rebuild
-wright build --force $(cat /tmp/wright-rebuild)
-wright package --print-parts $(cat /tmp/wright-rebuild) | wright install --path
-```
-
-Mark a previously auto-installed part as user-requested:
-
-```bash
-wright mark openssl --as-manual
+wright install @core
+wright install @core openssl
 ```
 
 Register host-provided parts during LFS bootstrap:
@@ -287,3 +249,19 @@ Register host-provided parts during LFS bootstrap:
 wright assume gcc 14.2.0
 wright assume glibc 2.40
 ```
+
+## Porcelain vs Plumbing
+
+Wright commands fall into two layers:
+
+- **Porcelain** — user-facing commands that are safe to run interactively and
+  produce human-readable output. Examples: `install`, `upgrade`, `doctor`,
+  `check`, `launch`.
+- **Plumbing** — low-level primitives intended for scripting, piping, and CI.
+  They do one thing, produce machine-parseable output by default, and carry
+  fewer guard-rails. Examples: `merge` (direct archive deployment),
+  `build` (compile without auto-deploy), `list` (plain newline-separated
+  names for `xargs`).
+
+This distinction is advisory; no command is artificially restricted from
+interactive use or scripting.

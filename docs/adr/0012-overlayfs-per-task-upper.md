@@ -121,4 +121,4 @@ eliminating contention for that path.
 
 - `src/isolation/native.rs` — overlayfs mount and per-task upper/work setup
 - `src/isolation/sysroot.rs` — `SysrootManager` for shared lower layer
-- `src/builder/executor.rs` — hook that sets `IsolationConfig.base_root` to sysroot path
+- `src/forge/executor.rs` — hook that sets `base_root` to sysroot path

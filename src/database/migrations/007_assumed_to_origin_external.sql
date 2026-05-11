@@ -20,14 +20,14 @@ CREATE TABLE parts_new (
     plan_id INTEGER NOT NULL,
     installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     part_hash TEXT,
-    install_scripts TEXT,
+    deploy_scripts TEXT,
     origin TEXT NOT NULL DEFAULT 'manual',
     FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE,
     UNIQUE(plan_id, name)
 );
 
-INSERT INTO parts_new (id, name, plan_id, installed_at, part_hash, install_scripts, origin)
-SELECT id, name, plan_id, installed_at, part_hash, install_scripts, origin
+INSERT INTO parts_new (id, name, plan_id, installed_at, part_hash, deploy_scripts, origin)
+SELECT id, name, plan_id, installed_at, part_hash, deploy_scripts, origin
 FROM parts;
 
 DROP TABLE parts;

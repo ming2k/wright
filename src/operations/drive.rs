@@ -1,7 +1,7 @@
 //! Direct DAG execution — no persistent workflow state.
 //!
-//! Resume is handled by builder checkpoints (file-system sentinels keyed by
-//! plan fingerprint) and install idempotence (database state). This layer
+//! Resume is handled by forge checkpoints (file-system sentinels keyed by
+//! plan fingerprint) and deploy idempotence (database state). This layer
 //! only schedules dependency batches and reports failures.
 
 use std::path::Path;
@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use tracing::{error, info};
 
 use crate::config::GlobalConfig;
-use crate::planning::BuildExecutionPlan;
+use crate::resolve::ForgeExecutionPlan;
 
 pub struct DriveOptions<'a> {
     pub config: &'a GlobalConfig,
@@ -22,14 +22,14 @@ pub struct DriveOptions<'a> {
     pub quiet: bool,
 }
 
-/// Drive a build plan to completion, executing tasks batch-by-batch.
+/// Drive a forge plan to completion, executing tasks batch-by-batch.
 ///
-/// No persistent workflow state — resume is handled entirely by builder
+/// No persistent workflow state — resume is handled entirely by forger
 /// checkpoints (file-system sentinels keyed by plan fingerprint).
 ///
 /// `concurrency` limits how many tasks within a batch run at once.
 pub async fn drive_batches<F, Fut>(
-    plan: &BuildExecutionPlan,
+    plan: &ForgeExecutionPlan,
     options: &DriveOptions<'_>,
     concurrency: usize,
     task_fn: F,
@@ -46,7 +46,7 @@ where
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if *cancel.borrow() {
-            return Err(WrightError::BuildError("cancelled by user".into()));
+            return Err(WrightError::ForgeError("cancelled by user".into()));
         }
 
         if !options.quiet {
@@ -66,7 +66,7 @@ where
                     let _permit = sem
                         .acquire()
                         .await
-                        .map_err(|e| WrightError::BuildError(format!("semaphore: {}", e)))?;
+                        .map_err(|e| WrightError::ForgeError(format!("semaphore: {}", e)))?;
                     let fut = {
                         let mut guard = f.lock().await;
                         guard(task)

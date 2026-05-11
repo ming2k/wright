@@ -1,6 +1,6 @@
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::part::store::{pick_latest, ResolvedPartVersioned};
+use crate::part::store::{ResolvedPartVersioned, pick_latest};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -60,7 +60,7 @@ pub async fn plan_prune(
         Ok::<Vec<ResolvedPartVersioned>, WrightError>(archives)
     })
     .await
-    .map_err(|e| WrightError::BuildError(format!("prune scan failed: {}", e)))??;
+    .map_err(|e| WrightError::ForgeError(format!("prune scan failed: {}", e)))??;
 
     let mut stale = Vec::new();
 

@@ -161,7 +161,7 @@ fn acquire_lock_path_with_timeout(
 mod tests {
     use std::time::Duration;
 
-    use super::{acquire_lock_with_timeout, lock_dir_from_db, LockIdentity, LockMode};
+    use super::{LockIdentity, LockMode, acquire_lock_with_timeout, lock_dir_from_db};
 
     #[test]
     fn lock_dir_derivation() {

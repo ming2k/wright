@@ -10,7 +10,7 @@ Wright uses the Ship of Theseus metaphor: the ship keeps sailing while its parts
 | **Part** | A built `.wright.tar.zst` archive. The installable unit. |
 | **System** | The live machine under management, tracked in `wright.db`. |
 | **Output** | A named sub-part produced by a single plan. A plan can declare multiple outputs (e.g. `gcc` and `libstdc++` from one build). |
-| **Assembly** | An informal grouping of plans (a directory of plan directories) processed together by `wright apply` or `wright build`. |
+| **Assembly** | An informal grouping of plans (a directory of plan directories) processed together by `wright install` or `wright build`. |
 | **Pack** | A `.wright.pack.tar` artifact bundling a `pack.toml` manifest, the part archives it references, and an optional `overlay/` configuration tree. The unit of distribution for a bootstrappable system. |
 | **Launch** | The act of converging a target root from a pack or from plans, performed by `wright launch`. The target gets its own `wright.db` and starts coherent. |
 | **Overlay** | An optional `/-rooted` tree shipped inside a pack, applied to the target after install waves. Holds base config like `/etc/hostname` and `/etc/fstab`. |
@@ -45,7 +45,7 @@ The `origin` field on an installed part records how it entered the system.
 | Origin | Meaning |
 |--------|---------|
 | `dependency` | Pulled in automatically to satisfy another part's dependency. Eligible for orphan cleanup via `wright remove --cascade`. |
-| `build` | Installed as part of a build wave by `wright apply`. |
+| `build` | Installed as part of a build wave by `wright install`. |
 | `manual` | Explicitly requested by the user. Never auto-removable. |
 | `external` | Declared as provided by the host system via `wright assume`. Has no filesystem footprint; used to satisfy dependency checks during bootstrap. |
 
@@ -54,27 +54,49 @@ automatically promotes an origin when you explicitly install a part that was
 previously pulled in at a lower tier. `external` is managed exclusively via
 `wright assume` / `wright unassume`.
 
+## Execution Metaphor
+
+Wright uses a three-tier conceptual metaphor to describe the journey of source
+code into a running system.  Each tier corresponds to a different scale of
+abstraction.  See [Execution Hierarchy](../explanation/execution-hierarchy.md)
+for a full discussion.
+
+| Abstract Tier | Term | Contains | Metaphor |
+|---------------|------|----------|----------|
+| Macro | **Delivery** | resolve → forge → seal → deploy | The grand journey of an artifact from source code to a live, installed part. |
+| Micro | **Pipeline** | fetch → configure → compile | An automated assembly line that transforms source into build output. |
+| Atomic | **Stage** | e.g. `compile` | A single workstation on that line — one script, one purpose. |
+
+- A **Delivery** is the complete lifecycle of a plan.  A plan is first **resolved**
+  (targets discovered from the plan index, converted to canonical `plan.toml` paths),
+  then **forged**
+  (sources fetched, lifecycle stages executed, outputs sliced), then **sealed**
+  (FHS-validated, ELF-linted, packed into a `.wright.tar.zst` archive), and
+  finally **deployed** (extracted onto the target root, recorded in `wright.db`).
+  Deployments use a temporary **WAL** (Write-Ahead Log) for crash recovery and a
+  permanent **History** table for auditing.
+  Commands like `wright install` orchestrate many deliveries in dependency-safe
+  waves.
+
+- A **Pipeline** is the ordered sequence of stages that constitute the forge
+  step of a delivery.  The default pipeline runs `fetch`, `verify`, `extract`,
+  `prepare`, `configure`, `compile`, `check`, and `staging`.  Plans may declare
+  a custom pipeline order via `lifecycle_order` or per-MVP-phase ordering.
+
+- A **Stage** is the smallest unit of work — a single script fragment declared
+  in `plan.toml` under `[lifecycle.<name>]`.  Each stage runs in an optional
+  sandbox with pre- and post-hooks (`pre_<stage>`, `post_<stage>`).  Stages
+  support checkpoint-based resume: a completed stage is not re-run on retry
+  unless `--force-stage` is used.
+
 ## Build Terms
 
 | Term | Definition |
 |------|------------|
-| **MVP build** | A reduced first-pass build that excludes certain dependencies to break a cycle. Defined by `mvp.toml` alongside `plan.toml`. |
+| **MVP build** | A reduced first-pass **pipeline** run that excludes certain dependencies to break a cycle. Defined by `mvp.toml` alongside `plan.toml`. |
 | **Full build** | The second pass after an MVP build; runs with all dependencies restored. |
-| **Lifecycle stage** | A named step in the build pipeline (e.g. `fetch`, `compile`, `staging`). Each stage runs a script in an optional isolation environment. |
-| **Isolation** | A sandboxed environment for running lifecycle stages. Levels: `none`, `relaxed`, `strict`. |
+| **Isolation** | A sandboxed environment for running pipeline stages. Levels: `none`, `relaxed`, `strict`. |
 | **Sysroot** | A read-only copy of the host's `/usr`, `/bin`, and `/lib` trees used as the root for `strict`-isolation builds. |
-
-## Execution Hierarchy
-
-Wright organizes execution into five layers. See the [Execution Hierarchy Explanation](../explanation/execution-hierarchy.md) for details.
-
-| Term | Level | Definition |
-|------|-------|------------|
-| **Operation** | L1 | A top-level CLI command (e.g. `apply`). |
-| **Workflow** | L2 | A DAG of steps to fulfill an operation. |
-| **Step** | L3 | The unit of scheduling and idempotency. |
-| **Pipeline** | L4 | The internal lifecycle of a complex step (e.g. Build). |
-| **Stage** | L5 | An atomic script or command within a pipeline. |
 
 ## Writing Guidance
 

@@ -1,7 +1,7 @@
 use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
 
 /// Global multi-progress coordinator.  Every progress bar should be registered

@@ -148,7 +148,7 @@ impl LocalPartStore {
             Ok(results)
         })
         .await
-        .map_err(|e| WrightError::BuildError(format!("part store task failed: {}", e)))?
+        .map_err(|e| WrightError::ForgeError(format!("part store task failed: {}", e)))?
     }
 
     pub fn read_part(&self, path: &Path) -> Result<ResolvedPart> {
