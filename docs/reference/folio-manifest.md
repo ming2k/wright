@@ -40,8 +40,15 @@ plans = ["glibc", "bash", "coreutils", "openssl"]
 ## `[[assume]]` — External Assumptions
 
 Parts that the target system is expected to provide but which Wright did not
- deploy.  Common examples: the kernel on a VPS, or the host toolchain during
- an LFS bootstrap.
+deploy.  Common examples: the kernel on a VPS, or the host toolchain during
+an LFS bootstrap.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Part name to assume as provided |
+| `version` | string | yes | Version string for the assumed part |
+
+Example:
 
 ```toml
 [[assume]]

@@ -5,6 +5,7 @@ Task-oriented guides for specific problems.
 ## Building
 
 - [Write a plan](write-a-plan.md)
+- [Write a folio](write-a-folio.md)
 - [Build a part](build-a-part.md)
 - [Handle circular dependencies](handle-circular-dependencies.md)
 - [Build dependency chains](build-dependency-chains.md)
