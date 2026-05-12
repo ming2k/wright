@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::PathBuf;
 
 use crate::cli::common::{DomainArg, MatchPolicyArg};
 
@@ -61,6 +62,10 @@ pub struct MergeArgs {
     /// Treat arguments and stdin as explicit archive paths
     #[arg(long)]
     pub path: bool,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -119,6 +124,10 @@ pub struct InstallArgs {
     /// Preview what would be forged and deployed without making any changes
     #[arg(long, short = 'n')]
     pub dry_run: bool,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -138,6 +147,10 @@ pub struct UpgradeArgs {
     /// Maximum depth for reverse dependency expansion. `0` means unlimited.
     #[arg(long)]
     pub depth: Option<usize>,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -161,6 +174,10 @@ pub struct RemoveArgs {
     /// Also remove orphan dependencies (auto-deployed deps no longer needed)
     #[arg(long, short = 'c')]
     pub cascade: bool,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Args)]

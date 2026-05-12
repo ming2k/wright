@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 use wright::cli::Cli;
 use wright::config::GlobalConfig;
@@ -40,20 +39,7 @@ async fn main() {
             wright::error::WrightError::ConfigError(format!("failed to load config: {}", e))
         })?;
 
-        let root_dir = cli.root.clone().unwrap_or_else(|| PathBuf::from("/"));
-
-        // When --root is set and --db is not, redirect the database under the target
-        // root. Operating on an alternate root with the host's database silently
-        // misrecords every install, so we make this implicit redirection explicit.
-        let db_path = cli.db.clone().unwrap_or_else(|| {
-            if root_dir == Path::new("/") {
-                config.general.db_path.clone()
-            } else {
-                root_dir.join("var/lib/wright/wright.db")
-            }
-        });
-
-        wright::commands::dispatch(cli, &config, db_path, root_dir).await
+        wright::commands::dispatch(cli, &config).await
     }
     .await;
 

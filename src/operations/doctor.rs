@@ -7,7 +7,7 @@ use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use crate::operations::check;
 use crate::part::archive::read_archive_meta;
-use crate::part::lint::SonameIndex;
+use crate::part::soname::SonameIndex;
 use crate::part::version;
 
 /// Run comprehensive system health checks.

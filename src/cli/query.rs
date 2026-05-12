@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::PathBuf;
 
 const WRIGHT_LIST_AFTER_HELP: &str = "\
 Examples:
@@ -91,6 +92,10 @@ pub struct CheckArgs {
     /// Only run integrity checks (database, file conflicts, shadows)
     #[arg(long, conflicts_with = "deep")]
     pub integrity_only: bool,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -114,4 +119,8 @@ pub struct HistoryArgs {
                   archive collection.",
     after_help = WRIGHT_DOCTOR_AFTER_HELP
 )]
-pub struct DoctorArgs;
+pub struct DoctorArgs {
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+}

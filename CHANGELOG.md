@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-05-12
+
+### Changed
+- **`--root` moved from global to local options** — `--root` is now a per-command option on `merge`, `install`, `upgrade`, `remove`, `check`, `doctor`, and `launch`, rather than a global option inherited by every subcommand. Fixes `--root` appearing in help for commands where it has no effect (e.g. `list`, `build`, `lint`).
+- **`--db` made non-global** — `--db` remains a top-level option but no longer propagates as a global argument. Use `wright --db <path> <subcommand>` instead of `wright <subcommand> --db <path>`.
+
 ## [5.0.0] - 2026-05-12
 
 ### Added

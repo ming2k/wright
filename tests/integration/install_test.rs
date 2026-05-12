@@ -306,6 +306,7 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         depth: None,
         force: false,
         dry_run: false,
+        root: None,
     };
     system::dispatch_install(cmd, &config, &db_path, &root, 0, false)
         .await

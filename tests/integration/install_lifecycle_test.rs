@@ -82,6 +82,7 @@ runtime_deps = ["wayland"]
         depth: Some(0),
         force: false,
         dry_run: true,
+        root: None,
     };
 
     let result = system::dispatch_install(cmd, &config, &db_path, &root, 2, false).await;

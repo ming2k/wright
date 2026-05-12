@@ -117,4 +117,8 @@ pub struct LaunchArgs {
     /// Reforge and redeploy parts that already exist in the target root.
     #[arg(long, short = 'f')]
     pub force: bool,
+
+    /// Alternate root directory for file operations
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }

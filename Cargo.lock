@@ -3510,7 +3510,7 @@ dependencies = [
 
 [[package]]
 name = "wright"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "bzip2",
  "chrono",

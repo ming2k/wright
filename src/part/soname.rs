@@ -1,17 +1,12 @@
-//! Package-time runtime-deps lint (per ADR-0017).
+//! SONAME index and runtime-deps validation.
 //!
-//! Compares each output's declared `runtime_deps` against the empirical
-//! `DT_NEEDED` set of its produced ELF binaries. Plan source remains the
-//! single source of truth — this module **never injects** derived data
-//! anywhere; callers act on the report.
+//! `SonameIndex` maps SONAMEs to the `wright` part outputs that provide
+//! them, built by scanning `.wright.tar.zst` archives under `parts_dir`.
+//! It is used by `wright doctor` to verify the global dependency closure.
 //!
-//! Direction-C policy:
-//!   * ELF needs `X`, plan does not declare any dep providing `X` → error
-//!     (forgotten declaration; binary will fail to load at runtime)
-//!   * Plan declares `Y`, ELF has no `DT_NEEDED` mapping to it → warning
-//!     (likely dlopen / data-file dep, may be legitimate)
-//!   * SONAME has no providing part in the index → warning
-//!     (vendored, host-provided, or genuinely missing)
+//! `lint_runtime_deps` compares an output's declared `runtime_deps` against
+//! the empirical `DT_NEEDED` set of its ELF binaries. Currently unused in
+//! the plan execution lifecycle; retained for potential use by `doctor`.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};

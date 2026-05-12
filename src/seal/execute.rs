@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use tracing::info;
 
 use crate::config::GlobalConfig;
@@ -7,7 +5,6 @@ use crate::error::{Result, WrightError};
 use crate::forge::logging;
 use crate::part::archive;
 use crate::part::fhs;
-use crate::part::lint::{LintReport, SonameIndex, lint_runtime_deps};
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
 /// Seal the staging directories for a plan into `.wright.tar.zst` archives.
@@ -21,25 +18,6 @@ pub async fn package_outputs(
         .await
         .map_err(WrightError::IoError)?;
     let output_dir = config.general.parts_dir.clone();
-
-    // SONAME index is built once per seal run, scoped to the plan's
-    // declared link_deps closure. Per ADR-0017 this is a lint input only,
-    // never written back into PARTINFO. When link_deps is empty the
-    // index is also empty — a part that links nothing should not have
-    // any DT_NEEDED edges to begin with.
-    //
-    // Advisory warnings (stale/unmapped) are intentionally NOT emitted
-    // during sealing. In batch forges the dependency closure is usually
-    // incomplete, making them unactionable noise. Use `wright doctor` after
-    // full deployment to surface them globally.
-    let soname_index = SonameIndex::scan_for_link_deps(&output_dir, &manifest.link_deps)
-        .unwrap_or_else(|e| {
-            tracing::warn!(
-                "elf-lint: failed to build SONAME index ({}); error-only lint will proceed",
-                e
-            );
-            SonameIndex::default()
-        });
 
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => {
@@ -55,7 +33,6 @@ pub async fn package_outputs(
                     fhs::validate(part_dir, sub_name)?;
                 }
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
-                maybe_run_elf_lint(part_dir, &sub_manifest, &soname_index)?;
                 let sub_part_path =
                     archive::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
                 info!("{}", logging::plan_packed(sub_name, &sub_part_path));
@@ -68,7 +45,6 @@ pub async fn package_outputs(
             if !manifest.options.skip_fhs_check {
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
-            maybe_run_elf_lint(&result.output_dir, manifest, &soname_index)?;
             let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
             info!(
                 "{}",
@@ -81,67 +57,6 @@ pub async fn package_outputs(
     }
 
     Ok(())
-}
-
-/// Conditionally run the ADR-0017 ELF lint against a staged output.
-///
-/// Skipped when the plan opts out via `options.skip_elf_lint = true`,
-/// or when the plan is marked `static = true` with no `link_deps` — a
-/// common pattern for Go / Rust binaries that have no dynamic edges to
-/// validate.
-///
-/// Only **errors** (forgotten runtime_deps) fail the seal step.
-/// Advisory items (stale, unmapped) are intentionally not reported here;
-/// they are surfaced globally by `wright doctor` after deployment when
-/// the dependency closure is complete.
-fn maybe_run_elf_lint(part_dir: &Path, manifest: &PlanManifest, index: &SonameIndex) -> Result<()> {
-    if manifest.options.skip_elf_lint {
-        tracing::debug!(
-            "elf-lint: skipping {} (skip_elf_lint = true)",
-            manifest.metadata.name
-        );
-        return Ok(());
-    }
-
-    if manifest.options.static_ && manifest.link_deps.is_empty() {
-        tracing::debug!(
-            "elf-lint: skipping {} (static build with no link_deps)",
-            manifest.metadata.name
-        );
-        return Ok(());
-    }
-
-    let report = lint_runtime_deps(
-        part_dir,
-        &manifest.runtime_deps,
-        &manifest.metadata.name,
-        index,
-    )?;
-    if report.has_errors() {
-        return Err(elf_lint_error(&manifest.metadata.name, &report));
-    }
-    Ok(())
-}
-
-fn elf_lint_error(part_name: &str, report: &LintReport) -> WrightError {
-    let mut msg = format!(
-        "elf-lint[{}]: forgotten runtime_deps detected — the binary needs \
-         libraries that are not declared:\n",
-        part_name
-    );
-    for f in &report.forgotten {
-        msg.push_str(&format!(
-            "  - {} (provided by '{}', linked by {})\n",
-            f.soname,
-            f.providing_output,
-            f.seen_in.display()
-        ));
-    }
-    msg.push_str(
-        "Add the listed providers to runtime_deps in plan source (PARTINFO \
-         and the registry remain plan-driven; this lint never auto-injects).",
-    );
-    WrightError::ForgeError(msg)
 }
 
 /// Seal a plan from its existing staging directories.

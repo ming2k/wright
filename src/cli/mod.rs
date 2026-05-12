@@ -25,16 +25,12 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Alternate root directory for file operations
-    #[arg(long, global = true, help_heading = "Global Options")]
-    pub root: Option<PathBuf>,
-
     /// Path to config file
     #[arg(long, global = true, help_heading = "Global Options")]
     pub config: Option<PathBuf>,
 
     /// Path to database file
-    #[arg(long, global = true, help_heading = "Global Options")]
+    #[arg(long, help_heading = "Global Options")]
     pub db: Option<PathBuf>,
 
     /// Increase log verbosity (-v, -vv)
