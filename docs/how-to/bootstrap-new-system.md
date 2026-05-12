@@ -1,174 +1,299 @@
 # How to Bootstrap a New System
 
-Wright covers two starting points when filling a fresh target root: a packaged
-**pack** of parts, or a directory of **plans**. Both go through `wright launch`
-and produce a coherent, origin-aware Wright system on the target.
+`wright launch` fills an empty mount point with a complete, self-contained
+Wright system.  This guide covers the end-to-end process: preparing the target,
+choosing a launch strategy, executing the bootstrap, and verifying the result.
 
-For the rationale behind the launch + pack design, see
-[ADR-0014](../adr/0014-launch-and-pack-format.md).
+For the design rationale, see [Launch Design](../explanation/launch-design.md).
 
 ## Prerequisites
 
 Before launching, prepare the target root yourself: partition the disk, format
-it, and mount it (e.g. at `/mnt/new`). `wright launch` does not partition
+it, and mount it (e.g. at `/mnt/new`).  `wright launch` does not partition
 disks — it fills a mounted root.
 
 If the target is hosted on infrastructure that supplies a kernel and bootloader
-(VPS, container image), declare those as `[[assume]]` entries in your pack
-manifest so dependency checks pass without Wright trying to install them.
+(VPS, container image), declare those as `[[assume]]` entries in your folio so
+dependency checks pass without Wright trying to install them.
 
-## Path A: Launch from a Pack
+The host must have a working toolchain matching the target's architecture.
+If the target uses a different libc or architecture, build a seed system on a
+matching host first.
 
-A **pack** (`.wright.pack.tar`) is a single artifact that bundles every part
-needed to fill a target, plus an optional `overlay/` configuration tree and a
-small declarative `[config]` block. It is the simplest way to install a Wright
-system on a fresh machine.
+## Choose a Launch Strategy
 
-```bash
-wright launch --root /mnt/new ./wright-base-2026.05.wright.pack.tar
-```
+| Strategy | Command | When to use |
+|----------|---------|-------------|
+| **Folio file** | `wright launch --root <root> --folio <file>` | The folio fully describes the system. One command, one artifact. |
+| **Folio reference** | `wright launch --root <root> --plans <dir> @<name>` | The folio lives alongside plans. Composable: `@base @desktop`. |
+| **Plan names** | `wright launch --root <root> --plans <dir> <names...>` | Ad-hoc or experimental target. No folio needed. |
 
-What launch does:
+## Strategy 1: Launch from a Folio File
 
-1. Initializes `/mnt/new/var/lib/wright/` (database, parts dir, lock dir).
-2. Records every `[[assume]]` entry from the pack so dependency checks pass.
-3. Installs every `[[part]]` archive in dependency order, preserving the
-   `origin` (manual or dependency) declared in the manifest.
-4. Extracts the pack's `overlay/` tree into the target, refusing to clobber
-   files owned by an installed part.
-5. Applies the declarative `[config]` block (hostname, timezone, locale,
-   runit service symlinks).
-
-After launch, the target has a fully populated `wright.db`. `wright list
---root /mnt/new` will show every installed part with the right origin.
-
-### Re-running launch
-
-`wright launch` is convergent. If a previous run was interrupted (network,
-power, disk-full), re-running on the same root resumes: parts that already
-match the manifest are skipped, missing ones are added, mismatched ones are
-upgraded.
-
-### Inspecting a pack
+A folio file (`folio.toml`) names every plan in the system, declares external
+assumptions, and optionally sets hostname, timezone, locale, and services.
+Point `--folio` at it directly:
 
 ```bash
-wright pack inspect ./wright-base-2026.05.wright.pack.tar
+wright launch --root /mnt/new --folio ./folios/core.toml
 ```
 
-prints the manifest, the part archives it carries, the overlay file count,
-and the SHA-256 hashes used for verification.
+This is the simplest path: one file fully describes the target.
 
-## Path B: Launch from Plans (Source-First)
+### Example folio for a minimal container
 
-When you have a directory of plans rather than a prebuilt pack, point `launch`
-at it with `--plans`. Wright builds in dependency waves on the host (using the
-host's existing toolchain) and installs each completed wave into the target
-root.
+```toml
+[folio]
+name    = "container-base"
+version = "2026.05"
+arch    = "x86_64"
+plans   = ["glibc", "bash", "coreutils", "sed", "gawk", "grep", "tar", "gzip", "openssl"]
+
+[[assume]]
+name    = "linux"
+version = "6.12.0"
+
+[config]
+hostname = "container"
+timezone = "UTC"
+```
+
+### Example folio for a bare-metal workstation
+
+```toml
+[folio]
+name    = "desktop"
+version = "1"
+arch    = "x86_64"
+plans   = [
+    "glibc", "bash", "coreutils", "util-linux",
+    "e2fsprogs", "eudev", "kmod", "procps-ng",
+    "openssl", "curl", "wget",
+    "mesa", "libdrm", "libinput", "libxkbcommon",
+    "wayland", "wayland-protocols", "wlroots",
+    "sway", "foot", "firefox",
+]
+
+[[assume]]
+name    = "linux"
+version = "6.12.0"
+
+[config]
+hostname = "wright-desktop"
+timezone = "Asia/Shanghai"
+locale   = "en_US.UTF-8"
+services = ["sshd", "dbus"]
+```
+
+See [How to write a folio](write-a-folio.md) for the complete folio format.
+
+## Strategy 2: Launch from a Plans Directory
+
+When folios live alongside plan directories, use `--plans` with `@folio`
+references.  This works well when a single plans tree holds multiple system
+profiles.
+
+```bash
+# Launch the @core folio from a plans directory
+wright launch --root /mnt/new --plans ./plans @core
+
+# Compose multiple folios
+wright launch --root /mnt/new --plans ./plans @base @desktop
+
+# Mix folios with explicit plan names
+wright launch --root /mnt/new --plans ./plans @core vim curl
+```
+
+If `--plans` is omitted, Wright uses the configured `plans_dir`:
+
+```bash
+wright launch --root /mnt/new @core
+```
+
+### How folios are discovered
+
+When you write `@core`, Wright searches:
+
+1. `<plans_dir>/folios/core.toml`
+2. `<plans_dir>/core/folio.toml`
+
+Flat files under `folios/` are the recommended convention.
+
+## Strategy 3: Launch with Explicit Plan Names
+
+For quick experiments or ad-hoc target roots, name the plans directly.
+Wright resolves dependencies, computes forge waves, and deploys everything:
 
 ```bash
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc gcc
 ```
 
-This reuses `wright install`'s wave engine end-to-end. The only difference from
-a normal `install` is that installs target `--root` instead of `/`.
+This path uses no folio — no assumptions, no post-install config.  It is
+useful for testing a small set of plans in isolation before writing a folio.
 
-### Plan and folio synchronisation
+## What Launch Does
 
-`launch` keeps the target's plan definitions in sync with the host so the
-target can self-maintain later.  During every run it:
+Regardless of the strategy, `wright launch` runs the same sequence:
 
-1. Compares each source plan file against the copy in
-   `<root>/var/lib/wright/plans/` (by size and mtime).
-2. Copies only the files that have changed.
-3. Removes files or directories in the target that no longer exist on the
-   host.
+1. Refuses `/` as the target root.
+2. Creates the target directory skeleton (`var/lib/wright/`, `etc/wright/`,
+   `var/log/wright/`).
+3. Redirects `build_dir` and `parts_dir` under the target root — no host
+   pollution.
+4. Copies plan directories and referenced folio manifests into the target by
+   comparing mtime and size; removes entries in the target that no longer
+   exist on the host.
+5. Writes `/etc/wright/wright.toml` inside the target, pointing all paths at
+   target-local directories.
+6. Pre-registers `[[assume]]` entries from folios in the target database.
+7. Drives the full `resolve → forge → seal → deploy` pipeline wave by wave.
+8. Applies `[config]` (hostname, timezone, locale, runit services).
 
-The same logic applies to folio manifests in `<root>/var/lib/wright/folios/`.
-This means you can edit a plan on the host and re-run `launch`; the target
-will receive the updated definition without a full rebuild of plans that
-have not changed.
+After launch, the target has a fully populated `wright.db`.  Running
+`wright list --root /mnt/new` shows every installed part with its origin.
 
-Because the host builds, the host must already have a working toolchain. If
-you are filling a target with a different libc or arch from the host, build a
-seed pack from a host that matches first, then use Path A on the bare target.
+## Dry-Run First
 
-## Path C: Drop a Pack into a Profile Directory
-
-For repeatable installs, place packs in one of the configured `pack_dirs`
-(default: `/var/lib/wright/packs`). Then refer to them by name:
-
-```bash
-wright launch --root /mnt/new --profile minimal
-```
-
-Wright resolves `minimal` to the newest matching pack in `pack_dirs`.
-
-## Building a Pack
-
-To create a pack from your own parts, write a `pack.toml` manifest in a
-directory alongside a `parts/` subdirectory holding the archives, then run:
+Before a full launch, verify what would happen:
 
 ```bash
-wright pack ./my-base/
+wright launch --root /mnt/new --folio ./folios/core.toml --dry-run
+wright launch --root /mnt/new --plans ./plans @core --dry-run
 ```
 
-A minimal `pack.toml`:
+The dry-run prints the deploy order, the plans that would be forged, and the
+assumptions and config that would be applied — without writing any files.
 
-```toml
-[pack]
-name        = "my-base"
-version     = "1"
-description = "My minimal base system"
-arch        = "x86_64"
+## Re-Running Launch (Convergence)
 
-[[part]]
-file   = "parts/glibc-2.41-1-x86_64.wright.tar.zst"
-origin = "manual"
-
-[[part]]
-file   = "parts/bash-5.2-1-x86_64.wright.tar.zst"
-origin = "manual"
-
-[config]
-hostname = "wright"
-timezone = "UTC"
-```
-
-`wright pack` walks the `[[part]]` list, verifies that each file exists,
-records its SHA-256 in the manifest, optionally tars an `overlay/` directory,
-and writes a single `.wright.pack.tar` artifact.
-
-## When to Use `wright assume` Instead
-
-`wright launch` is for filling a fresh target. If Wright is being added to an
-**existing** LFS-style system that you built by hand and you only need to
-register what is already on disk, use `wright assume` directly. See
-[`wright assume` in the CLI reference](../reference/cli-reference.md#wright-assume-name-version).
+`wright launch` is convergent.  If a previous run was interrupted or you
+changed a plan on the host, re-run the same command:
 
 ```bash
-# Existing system; only register what's already there.
-wright assume --file /etc/wright/bootstrap.txt
+wright launch --root /mnt/new --folio ./folios/core.toml
+```
+
+- Plans already deployed and matching their source are **skipped**.
+- Missing plans are **built and installed**.
+- Changed plans are **rebuilt** (forge → seal → deploy).
+- Plan files in the target are **re-synced** if they differ from the host.
+- Stale files in the target that no longer exist on the host are **removed**.
+
+This means an interrupted launch (network failure, power loss, disk-full) is
+recovered by re-running the same command.  The forger's stage-level
+checkpointing means individual plans resume from their last completed stage.
+
+## Forcing a Rebuild
+
+To force every plan to reforge and redeploy, even if already present:
+
+```bash
+wright launch --root /mnt/new --folio ./folios/core.toml --force
 ```
 
 ## Verifying the Result
 
+After launch completes, verify the target from the host:
+
 ```bash
+# List every installed part
 wright list --root /mnt/new --long
+
+# Full health check
 wright doctor --root /mnt/new
-wright verify --root /mnt/new
+
+# File integrity check
+wright check --root /mnt/new
 ```
 
-`doctor` walks the new database for integrity, dependency, and shadow-file
-issues. `verify` recomputes file hashes. Both should report clean immediately
-after a successful launch.
+All three should report clean immediately after a successful launch.
+
+## Inspecting the Target
+
+The target is self-contained.  Examine it directly:
+
+```bash
+# The target has its own database
+ls -lh /mnt/new/var/lib/wright/wright.db
+
+# Plans were copied into the target
+ls /mnt/new/var/lib/wright/plans/
+
+# Folios were copied too
+ls /mnt/new/var/lib/wright/folios/
+
+# The target's own wright.toml
+cat /mnt/new/etc/wright/wright.toml
+```
+
+## Booting Into the Target
+
+After launch and verification, the target is ready to boot.  The exact steps
+depend on the environment:
+
+**Bare metal / VM:**
+
+```bash
+# Install a bootloader (Wright does not deploy one — assume it or install separately)
+# Then configure fstab, reboot, and select the new entry in the boot menu.
+```
+
+**Container (chroot):**
+
+```bash
+chroot /mnt/new /bin/bash
+wright list       # runs inside the target, using the target's own database
+wright doctor
+```
+
+**Container image (OCI):**
+
+```bash
+tar -C /mnt/new -c . | docker import - my-image:latest
+```
+
+## When to Use `wright assume` Instead
+
+`wright launch` is for filling a **fresh** target.  If Wright is being added to
+an **existing** LFS-style system that you built by hand and you only need to
+register what is already on disk, use `wright assume` directly:
+
+```bash
+wright assume --file /etc/wright/bootstrap.txt
+```
+
+See the [CLI reference](../reference/cli-reference.md#wright-assume-name-version).
 
 ## Replacing Assumed Parts
 
-If your pack declared `[[assume]]` entries (e.g. a host-supplied kernel) and
-you later build a Wright-managed replacement, install it normally:
+If your folio declared `[[assume]]` entries (e.g. a host-supplied kernel) and
+you later build a Wright-managed replacement, install it normally into the
+target:
 
 ```bash
 wright install --root /mnt/new linux
 ```
 
 The assumed record is replaced by a fully-managed part entry.
+
+## Troubleshooting
+
+**Launch refuses `/`:**
+The target root must be a separate mount point.  Mount the target first:
+`mount /dev/sda1 /mnt/new`.
+
+**Build fails with "command not found":**
+The host needs a working toolchain matching the target architecture.  If
+cross-compiling, build a seed system on a matching host first.
+
+**Dependency check fails on assumed parts:**
+Ensure every external part (kernel, bootloader, host toolchain) is listed in
+`[[assume]]`.  Launch pre-registers them before any plan builds.
+
+**Launch ran out of disk space:**
+Free space on the target mount, then re-run the same command.  Completed waves
+are not rebuilt; launch resumes where it stopped.
+
+**Host `parts_dir` is polluted after launch:**
+This should not happen — `build_dir` and `parts_dir` are redirected under the
+target root.  If it does, check that `--root` was passed and is not `/`.

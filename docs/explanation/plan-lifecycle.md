@@ -120,7 +120,7 @@ The source cache is persistent across forges. A tarball is only downloaded again
 
 With sources ready, the **Pipeline** runs.  `LifecyclePipeline::run` (`src/forge/pipeline.rs`) executes the plan's lifecycle stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
 
-Before each stage, the pipeline checks for a `.wright-stage-<name>` checkpoint file in `work/`. If the file exists and its stored fingerprint matches the current plan, the stage is skipped. If the stage runs and succeeds, the checkpoint is written immediately after. Failed stages leave no checkpoint, so they rerun on the next attempt.
+Before each stage, the pipeline computes an input hash chained from the stage's script, environment variables, and the preceding stage's hash. If `.wright-pipeline.json` records a matching hash with status `COMPLETED`, the stage is skipped. On success, the hash is committed. A change anywhere upstream cascades invalidation through all downstream stages. See [Checkpoint Recovery](checkpoint-recovery.md) for the full design.
 
 Each stage runs inside an isolation sandbox (OverlayFS) with configurable resource limits. Pre- and post-hooks (`pre_<stage>`, `post_<stage>`) run around the main stage script.
 

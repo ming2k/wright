@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [5.0.2] - 2026-05-12
+
+### Added
+- **Plan lifecycle boundaries in logs** — every forge now opens with `[plan] forge started` and closes with `[plan] forge done` (or `[plan] forge failed` on error), giving each plan a clear lifecycle boundary even when multiple plans run concurrently.
+- **Resident plan lifecycle spinner** — a persistent spinner at the bottom of the terminal tracks each plan through its full lifecycle (fetch → verify → extract → prepare → configure → compile → check → staging), updating its message to reflect the current stage.
+- **`ProgressBarGuard` RAII wrapper** — ensures plan lifecycle spinners are always cleaned up regardless of which return path is taken during forge execution.
+
+### Changed
+- **Documentation restructured** — `install-transaction-design.md` renamed to `delivery-recovery.md`, `system-building-guide.md` replaced by `filesystem-hierarchy-standard.md`, and `bootstrap-new-system.md` rewritten to reflect the folio-based launch workflow.
+- **Documentation style guide moved** from `docs/reference/` to `docs/dev/` per Diátaxis conventions.
+- **Terminology updated** — `pack`, `launch`, and `overlay` definitions in the reference now reflect the folio era.
+
 ## [5.0.1] - 2026-05-12
 
 ### Changed

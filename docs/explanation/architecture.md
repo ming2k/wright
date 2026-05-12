@@ -76,6 +76,6 @@ Detailed database schemas and their roles are documented in [Database Design](..
 | `store/<hash>-<name>.part` | `wright install` (post-seal) | `wright install` (pre-forge CAS check) |
 | `wright.db` | `wright` | `wright`, `wright resolve`, `wright build`, `wright install` |
 
-For recovery from interrupted deliveries, see [Delivery Recovery](install-transaction-design.md).
+For recovery from interrupted deliveries, see [Delivery Recovery](delivery-recovery.md).
 For build sandboxing, see [Isolation Model](isolation-model.md).
 For module-level code organization, see [Module Layout](../dev/module-layout.md).

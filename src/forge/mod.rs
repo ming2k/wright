@@ -333,7 +333,7 @@ impl Forger {
         nproc_per_isolation: Option<u32>,
         configure_lock: Option<Arc<Mutex<()>>>,
         compile_lock: Option<Arc<Mutex<()>>>,
-        progress: Option<indicatif::ProgressBar>,
+        _progress: Option<indicatif::ProgressBar>, // kept for API compatibility; lifecycle bar created internally
     ) -> Result<ForgeResult> {
         let build_root = self.build_root(manifest)?;
         let staging_dir = build_root.join("staging");
@@ -393,8 +393,12 @@ impl Forger {
             }
         }
 
+        let lifecycle_bar = progress::new_plan_lifecycle_spinner(&manifest.metadata.name);
+        let _lifecycle_guard = progress::ProgressBarGuard(lifecycle_bar.clone());
+
         if stages.is_empty() {
             if tokio::fs::metadata(&extracted_marker).await.is_err() {
+                lifecycle_bar.set_message("fetching sources".to_string());
                 self.fetch(manifest, plan_dir).await?;
                 if until_stage == Some("fetch") {
                     return Ok(ForgeResult {
@@ -404,6 +408,7 @@ impl Forger {
                         split_part_dirs: std::collections::HashMap::new(),
                     });
                 }
+                lifecycle_bar.set_message("verifying checksums".to_string());
                 self.verify(manifest).await?;
                 if until_stage == Some("verify") {
                     return Ok(ForgeResult {
@@ -414,6 +419,7 @@ impl Forger {
                     });
                 }
 
+                lifecycle_bar.set_message("hard-linking sources".to_string());
                 // Hardlink sources from global cache into the fetch layer.
                 let lm = layers::LayerManager::new(&build_root)?;
                 let fetch_layer = lm.ensure_fetch_layer()?;
@@ -421,6 +427,7 @@ impl Forger {
                     .await?;
 
                 let extract_layer = lm.ensure_extract_layer()?;
+                lifecycle_bar.set_message("extracting sources".to_string());
                 self.extract(manifest, &extract_layer).await?;
                 tokio::fs::write(&extracted_marker, "").await.map_err(|e| {
                     WrightError::ForgeError(format!(
@@ -442,6 +449,7 @@ impl Forger {
                 }
             } else {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
+                lifecycle_bar.set_message("preparing workspace".to_string());
                 self.ensure_source_layers(manifest, &build_root).await?;
                 if matches!(until_stage, Some("fetch" | "verify" | "extract")) {
                     return Ok(ForgeResult {
@@ -525,11 +533,19 @@ impl Forger {
             configure_lock,
             compile_cpu_count: Some(total_cpus),
             compile_lock,
-            progress,
+            progress: Some(lifecycle_bar),
             build_key: build_key.clone(),
         })?;
 
-        pipeline.run().await?;
+        info!("{}", logging::forge_started(&manifest.metadata.name));
+        if let Err(e) = pipeline.run().await {
+            info!(
+                "{}",
+                logging::forge_failed(&manifest.metadata.name)
+            );
+            return Err(e);
+        }
+        info!("{}", logging::forge_finished(&manifest.metadata.name));
 
         if !partial {
             if let Err(e) = tokio::fs::write(&key_file, &build_key).await {

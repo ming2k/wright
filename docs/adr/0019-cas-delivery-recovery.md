@@ -173,4 +173,4 @@ PENDING → EXTRACTING → HOOKS_RUNNING → DONE
 
 - ADR-0002 (wave-by-wave install)
 - ADR-0005 (two-database design)
-- `docs/explanation/install-transaction-design.md`
+- `docs/explanation/delivery-recovery.md`

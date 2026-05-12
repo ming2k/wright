@@ -11,9 +11,9 @@ Wright uses the Ship of Theseus metaphor: the ship keeps sailing while its parts
 | **System** | The live machine under management, tracked in `wright.db`. |
 | **Output** | A named sub-part produced by a single plan. A plan can declare multiple outputs (e.g. `gcc` and `libstdc++` from one build). |
 | **Assembly** | An informal grouping of plans (a directory of plan directories) processed together by `wright install` or `wright build`. |
-| **Pack** | A `.wright.pack.tar` artifact bundling a `pack.toml` manifest, the part archives it references, and an optional `overlay/` configuration tree. The unit of distribution for a bootstrappable system. |
-| **Launch** | The act of converging a target root from a pack or from plans, performed by `wright launch`. The target gets its own `wright.db` and starts coherent. |
-| **Overlay** | An optional `/-rooted` tree shipped inside a pack, applied to the target after install waves. Holds base config like `/etc/hostname` and `/etc/fstab`. |
+| **Pack** | A `.wright.pack.tar` artifact bundling a `pack.toml` manifest, the part archives it references, and an optional `overlay/` configuration tree. Superseded by the **folio** manifest; retained for backward compatibility only. |
+| **Launch** | The act of converging a target root from a folio manifest or from plan names, performed by `wright launch`. The target gets its own `wright.db`, plan tree, and `wright.toml`, and is fully self-contained. |
+| **Overlay** | An optional `/-rooted` tree that used to ship inside a pack for base config like `/etc/hostname` and `/etc/fstab`. In the folio era, post-install config is handled by the folio's `[config]` block instead. |
 
 ## Dependency Terms
 

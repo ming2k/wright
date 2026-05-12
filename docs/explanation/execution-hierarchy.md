@@ -57,9 +57,12 @@ Plans may override the pipeline order via `lifecycle_order.stages` in
 `[mvp].lifecycle_order`.  The `LifecyclePipeline` struct in
 `src/forge/pipeline.rs` resolves the effective order per build phase.
 
-Pipelines support **checkpoint-based resume**.  After a stage completes,
-Wright writes a `.wright-stage-<name>` marker in `work/`.  On retry, stages
-with valid checkpoints are skipped.  The `--force-stage` flag overrides this.
+Pipelines support **hash-chain checkpoint resume** (see [Checkpoint Recovery](checkpoint-recovery.md)).
+Each stage's input hash is chained to its predecessor: a change to any upstream
+script or environment variable automatically invalidates all downstream stages.
+Checkpoint state is stored in `.wright-pipeline.json` in the build root; there
+are no per-stage sentinel files.  The `--force-stage` flag overrides a single
+stage's checkpoint, while `--reforge` bypasses all checkpoints.
 
 ## Tier 3 (Atomic): Stage
 

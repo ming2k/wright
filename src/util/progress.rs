@@ -94,6 +94,34 @@ pub fn finish_source(pb: &ProgressBar, scope: &str, dest: &Path) {
     finish_source_with_label(pb, scope, "Fetched", &filename);
 }
 
+/// Create a persistent spinner that tracks a plan through its full lifecycle
+/// (fetch → verify → extract → prepare → configure → compile → check → staging).
+///
+/// The spinner stays at the bottom of the terminal while the plan executes.
+/// Callers update `msg` to reflect the current stage.
+pub fn new_plan_lifecycle_spinner(plan_name: &str) -> ProgressBar {
+    let pb = MULTI.add(ProgressBar::new_spinner());
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} [{prefix}] [{elapsed_precise}] {msg}")
+            .expect("valid plan lifecycle template"),
+    );
+    pb.set_prefix(format!("[{}]", plan_name));
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb
+}
+
+/// RAII guard that calls `finish_and_clear()` on the inner [`ProgressBar`] when
+/// dropped.  Use this to ensure a plan lifecycle spinner is always cleaned up
+/// regardless of which return path is taken.
+pub struct ProgressBarGuard(pub ProgressBar);
+
+impl Drop for ProgressBarGuard {
+    fn drop(&mut self) {
+        self.0.finish_and_clear();
+    }
+}
+
 /// A [`std::io::Write`] adapter that routes every complete line through
 /// [`MULTI.println`] so `tracing` output does not overwrite progress bars.
 pub struct MultiProgressWriter;

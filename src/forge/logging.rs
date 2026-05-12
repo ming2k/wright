@@ -54,6 +54,10 @@ pub fn forge_finished(plan_name: &str) -> String {
     format!("{} forge done", plan_scope(plan_name))
 }
 
+pub fn forge_failed(plan_name: &str) -> String {
+    format!("{} forge failed", plan_scope(plan_name))
+}
+
 pub fn plan_packed(plan_name: &str, part_path: &Path) -> String {
     format!("{} packed {}", plan_scope(plan_name), part_path.display())
 }
@@ -76,8 +80,9 @@ pub fn stage_skipped(plan_name: &str, stage_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        describe_batch, describe_build_capacity, forge_finished, forge_started, plan_packed,
-        plan_scope, plan_skipped_existing, stage_finished, stage_skipped, stage_started,
+        describe_batch, describe_build_capacity, forge_failed, forge_finished, forge_started,
+        plan_packed, plan_scope, plan_skipped_existing, stage_finished, stage_skipped,
+        stage_started,
     };
     use crate::isolation::IsolationLevel;
     use std::path::Path;
@@ -99,6 +104,7 @@ mod tests {
         assert_eq!(plan_scope("linux"), "[linux]");
         assert_eq!(forge_started("linux"), "[linux] forge started");
         assert_eq!(forge_finished("linux"), "[linux] forge done");
+        assert_eq!(forge_failed("linux"), "[linux] forge failed");
         assert_eq!(
             stage_started("linux", "prepare", IsolationLevel::Strict),
             "[linux] prepare started (strict isolation)"
