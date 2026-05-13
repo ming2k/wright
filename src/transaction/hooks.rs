@@ -26,11 +26,10 @@ pub(super) struct Hooks {
 
 pub(super) fn read_hooks(extract_dir: &Path) -> (Option<String>, Hooks) {
     let hooks_path = extract_dir.join(".HOOKS");
-    if let Ok(content) = std::fs::read_to_string(&hooks_path) {
-        if let Ok(parsed) = toml::from_str::<HooksFile>(&content) {
+    if let Ok(content) = std::fs::read_to_string(&hooks_path)
+        && let Ok(parsed) = toml::from_str::<HooksFile>(&content) {
             return (Some(content), parsed.hooks);
         }
-    }
 
     (None, Hooks::default())
 }

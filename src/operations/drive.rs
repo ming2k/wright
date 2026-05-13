@@ -73,8 +73,8 @@ where
             );
         }
 
-        if batch_idx > 0 {
-            if let Some(ref flow) = options.flow_progress {
+        if batch_idx > 0
+            && let Some(ref flow) = options.flow_progress {
                 flow.set_message(format!(
                     "batch {}/{}: {} plan{}",
                     batch_idx + 1,
@@ -83,7 +83,6 @@ where
                     if batch.len() == 1 { "" } else { "s" }
                 ));
             }
-        }
 
         let results: Vec<Result<()>> = stream::iter(batch.iter().cloned())
             .map(|task| {

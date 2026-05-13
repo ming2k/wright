@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::forge::logging;
+use tracing::info;
 use crate::forge::mvp::inject_bootstrap_passes;
 
 use crate::config::GlobalConfig;
@@ -231,7 +232,7 @@ pub async fn resolve_build_set(
             .context("failed to open database for dependency resolution")?;
 
         if opts.deps.contains(DepDomain::ALL) {
-            expand_missing_dependencies(
+            let dep_count = expand_missing_dependencies(
                 &mut plans_to_build,
                 &index,
                 &db,
@@ -241,6 +242,9 @@ pub async fn resolve_build_set(
                 &config.build.stable_toolchain,
             )
             .await?;
+            if dep_count > 0 {
+                info!("resolved {} {}", dep_count, if dep_count == 1 { "dependency" } else { "dependencies" });
+            }
         }
 
         if !opts.match_policies.contains(&MatchPolicy::All) {

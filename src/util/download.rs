@@ -95,17 +95,15 @@ fn try_download_http(
     // Reject HTML responses — this usually means the server returned a
     // redirect/mirror-selection page instead of the actual file (common
     // with SourceForge prdownloads URLs).
-    if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-        if let Ok(ct_str) = ct.to_str() {
-            if ct_str.contains("text/html") {
+    if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE)
+        && let Ok(ct_str) = ct.to_str()
+            && ct_str.contains("text/html") {
                 return Err(WrightError::NetworkError(format!(
                     "server returned HTML instead of a file for {} (possible redirect page; \
                      try a direct download URL)",
                     url
                 )));
             }
-        }
-    }
 
     let total_size = response.content_length().unwrap_or(0);
     let pb = progress::new_source_transfer_bar(label, total_size);

@@ -97,8 +97,8 @@ pub(crate) fn collect_phase_deps(
     // A build dependency is useless unless its full transitive runtime dep tree is
     // installed first. Use BFS to add ordering edges for the entire closure.
     // Only do this when the domain includes runtime deps (e.g. `wright install`).
-    if dep_domain.contains(crate::resolve::DepDomain::RUNTIME) {
-        if let Some(idx) = index {
+    if dep_domain.contains(crate::resolve::DepDomain::RUNTIME)
+        && let Some(idx) = index {
             for build_dep in &build {
                 let build_dep_name = version::parse_dependency(build_dep)
                     .unwrap_or_else(|_| (build_dep.clone(), None))
@@ -138,7 +138,6 @@ pub(crate) fn collect_phase_deps(
                 }
             }
         }
-    }
 
     deps
 }

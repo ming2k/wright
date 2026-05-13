@@ -127,9 +127,9 @@ pub async fn upgrade_part(
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
     for entry in &new_entries {
-        if entry.file_type == FileType::File {
-            if let Some(owner) = owners.get(&entry.path) {
-                if *owner != partinfo.name {
+        if entry.file_type == FileType::File
+            && let Some(owner) = owners.get(&entry.path)
+                && *owner != partinfo.name {
                     warn!(
                         "[{}] diverted {} (owned by {})",
                         partinfo.name,
@@ -139,8 +139,6 @@ pub async fn upgrade_part(
                     shadows.push((entry.path.clone(), owner.clone()));
                     divert_paths.insert(entry.path.clone());
                 }
-            }
-        }
     }
     log_debug_timing(
         "upgrade",
@@ -209,16 +207,15 @@ pub async fn upgrade_part(
                     )));
                 }
             }
-        } else if file.file_type == FileType::Symlink {
-            if let Ok(target) = tokio::fs::read_link(&full_path).await {
+        } else if file.file_type == FileType::Symlink
+            && let Ok(target) = tokio::fs::read_link(&full_path).await {
                 tx.rollback_state()
                     .record_symlink_backup(full_path, target.to_string_lossy().to_string());
             }
-        }
     }
 
-    if run_hooks {
-        if let Some(ref script) = hooks.pre_install {
+    if run_hooks
+        && let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
             if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await
@@ -232,7 +229,6 @@ pub async fn upgrade_part(
                 phase_start.elapsed(),
             );
         }
-    }
 
     let config_paths = collect_config_paths(&new_entries);
     phase_start = Instant::now();
@@ -382,8 +378,8 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    if run_hooks {
-        if let Some(ref script) = hooks.post_upgrade {
+    if run_hooks
+        && let Some(ref script) = hooks.post_upgrade {
             log_running_hook(&partinfo.name, "post_upgrade");
             phase_start = Instant::now();
             if let Err(e) =
@@ -398,7 +394,6 @@ pub async fn upgrade_part(
                 phase_start.elapsed(),
             );
         }
-    }
 
     log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
     let installed_ver_rel = if installed_plan.version.is_empty() {

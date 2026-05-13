@@ -36,7 +36,7 @@ pub async fn execute_build(
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         for line in std::io::stdin().lock().lines() {
-            let line = line.map_err(|e| WrightError::IoError(e))?;
+            let line = line.map_err(WrightError::IoError)?;
             let trimmed = line.trim().to_string();
             if !trimmed.is_empty() {
                 all_targets.push(trimmed);
@@ -108,7 +108,7 @@ pub async fn execute_build(
     flow_spinner.set_message("resolving build graph".to_string());
 
     let plan = create_execution_plan(
-        &config,
+        config,
         all_targets,
         &options,
         DepDomain::BUILD | DepDomain::LINK,

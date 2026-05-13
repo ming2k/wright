@@ -12,7 +12,7 @@ pub fn collect_install_args(mut args: Vec<String>) -> Result<Vec<String>> {
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() {
         for line in std::io::stdin().lock().lines() {
-            let line = line.map_err(|e| WrightError::IoError(e))?;
+            let line = line.map_err(WrightError::IoError)?;
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 args.push(trimmed.to_string());

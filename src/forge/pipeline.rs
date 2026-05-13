@@ -28,13 +28,11 @@ pub const DEFAULT_STAGES: &[&str] = &[
 const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 
 pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
-    if build_phase == Some("mvp") {
-        if let Some(ref cfg) = manifest.mvp {
-            if let Some(ref order) = cfg.pipeline_order {
+    if build_phase == Some("mvp")
+        && let Some(ref cfg) = manifest.mvp
+            && let Some(ref order) = cfg.pipeline_order {
                 return order.stages.clone();
             }
-        }
-    }
     if let Some(ref order) = manifest.pipeline_order {
         return order.stages.clone();
     }
@@ -293,8 +291,8 @@ impl<'a> Pipeline<'a> {
                     &self.vars,
                     self.build_phase.as_deref(),
                 );
-                if let Some(eh) = expected.get(stage_name) {
-                    if self.checkpoint.is_complete(stage_name, eh) {
+                if let Some(eh) = expected.get(stage_name)
+                    && self.checkpoint.is_complete(stage_name, eh) {
                         info!(
                             "{}",
                             logging::stage_skipped(&self.manifest.metadata.name, stage_name)
@@ -304,11 +302,10 @@ impl<'a> Pipeline<'a> {
                         }
                         continue;
                     }
-                }
             }
 
             // --- Prepare layer and working directory for this stage ---
-            let prev_stages: Vec<String> = pipeline[..idx].iter().cloned().collect();
+            let prev_stages: Vec<String> = pipeline[..idx].to_vec();
 
             self.layers.prepare_upper_layer(stage_name)?;
 
@@ -428,13 +425,11 @@ impl<'a> Pipeline<'a> {
     }
 
     fn get_stage(&self, name: &str) -> Option<&PipelineStage> {
-        if self.is_mvp_pass() {
-            if let Some(ref cfg) = self.manifest.mvp {
-                if let Some(stage) = cfg.pipeline.get(name) {
+        if self.is_mvp_pass()
+            && let Some(ref cfg) = self.manifest.mvp
+                && let Some(stage) = cfg.pipeline.get(name) {
                     return Some(stage);
                 }
-            }
-        }
         self.manifest.pipeline.get(name)
     }
 

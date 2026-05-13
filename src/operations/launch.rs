@@ -85,9 +85,9 @@ pub async fn execute_launch(
         .await;
     }
 
-    return Err(WrightError::ForgeError(
+    Err(WrightError::ForgeError(
         "wright launch needs --folio or targets to launch; nothing to do".into(),
-    ));
+    ))
 }
 
 async fn launch_from_folio(
@@ -253,11 +253,10 @@ async fn launch_from_plans(
     // Collect folio files that were referenced and sync them too.
     let mut referenced_folios: Vec<PathBuf> = Vec::new();
     for target in &request.plan_targets {
-        if let Some(folio_name) = target.strip_prefix('@') {
-            if let Some(folio_path) = folio::find_folio_manifest(&folios_dirs, folio_name) {
+        if let Some(folio_name) = target.strip_prefix('@')
+            && let Some(folio_path) = folio::find_folio_manifest(&folios_dirs, folio_name) {
                 referenced_folios.push(folio_path);
             }
-        }
     }
     if !referenced_folios.is_empty() {
         sync_folios_to_target(&referenced_folios, &target_folios_dir).map_err(|e| {
@@ -319,8 +318,7 @@ fn redirect_build_paths_for_target(config: &mut GlobalConfig, root_dir: &Path) {
 }
 
 fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
-    crate::resolve::setup_part_store(config).map_err(Into::into)
-}
+    crate::resolve::setup_part_store(config)}
 
 async fn build_and_apply(request: InstallRequest<'_>, dry_run: bool) -> Result<()> {
     if dry_run {
@@ -370,7 +368,7 @@ fn sync_plans_to_target(source_dir: &Path, target_plans_dir: &Path) -> Result<()
             continue;
         }
         let plan_name = path.file_name().unwrap_or_default();
-        let target_plan_dir = target_plans_dir.join(&plan_name);
+        let target_plan_dir = target_plans_dir.join(plan_name);
         let stats = sync_dir_with_stats(&path, &target_plan_dir).map_err(|e| {
             WrightError::ForgeError(format!(
                 "sync plan {} to target: {}",
@@ -551,14 +549,14 @@ default_isolation = "{}"
 "#,
         config.general.arch, config.build.default_isolation,
     );
-    std::fs::write(&target_config, content).map_err(|e| WrightError::IoError(e))?;
+    std::fs::write(&target_config, content).map_err(WrightError::IoError)?;
     Ok(())
 }
 
 async fn apply_folio_config(root_dir: &Path, cfg: &folio::FolioConfig) -> Result<()> {
     if let Some(ref hostname) = cfg.hostname {
         let path = root_dir.join("etc/hostname");
-        std::fs::write(&path, format!("{}\n", hostname)).map_err(|e| WrightError::IoError(e))?;
+        std::fs::write(&path, format!("{}\n", hostname)).map_err(WrightError::IoError)?;
     }
     if let Some(ref tz) = cfg.timezone {
         let target = format!("../usr/share/zoneinfo/{}", tz);
@@ -570,11 +568,11 @@ async fn apply_folio_config(root_dir: &Path, cfg: &folio::FolioConfig) -> Result
     }
     if let Some(ref locale) = cfg.locale {
         let path = root_dir.join("etc/locale.conf");
-        std::fs::write(&path, format!("LANG={}\n", locale)).map_err(|e| WrightError::IoError(e))?;
+        std::fs::write(&path, format!("LANG={}\n", locale)).map_err(WrightError::IoError)?;
     }
     if !cfg.services.is_empty() {
         let svc_root = root_dir.join("var/service");
-        std::fs::create_dir_all(&svc_root).map_err(|e| WrightError::IoError(e))?;
+        std::fs::create_dir_all(&svc_root).map_err(WrightError::IoError)?;
         for service in &cfg.services {
             let target = format!("/etc/sv/{}", service);
             let link = svc_root.join(service);

@@ -220,11 +220,10 @@ pub async fn execute_script(
         "MAKEFLAGS",
         "JOBS",
     ] {
-        if let Ok(value) = std::env::var(key) {
-            if !config.env.iter().any(|(k, _)| k == key) {
+        if let Ok(value) = std::env::var(key)
+            && !config.env.iter().any(|(k, _)| k == key) {
                 config.env.push((key.to_string(), value));
             }
-        }
     }
 
     let mut args = executor.args.clone();

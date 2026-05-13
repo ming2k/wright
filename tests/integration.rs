@@ -5,6 +5,7 @@ mod integration {
     mod install_pipeline_test;
     mod install_test;
     mod isolation_test;
+    mod launch_test;
 
     mod migration_test;
 }

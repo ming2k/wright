@@ -1,6 +1,6 @@
 # Delivery Recovery Design
 
-Wright's delivery pipeline (`wright install`, `wright upgrade`, `wright launch`)
+Wright's delivery workflow (`wright install`, `wright upgrade`, `wright launch`)
 runs three phases for each DAG wave: **forge** (build), **seal** (package), and
 **deploy** (install to system).  A crash during delivery must not leave the
 system corrupted or require the user to manually undo half-finished work.

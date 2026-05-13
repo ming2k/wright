@@ -468,9 +468,9 @@ pub async fn deploy_part_with_origin(
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
     for entry in &file_entries {
-        if entry.file_type == FileType::File {
-            if let Some(owner_name) = owners.get(&entry.path) {
-                if owner_name.as_str() != partinfo.name {
+        if entry.file_type == FileType::File
+            && let Some(owner_name) = owners.get(&entry.path)
+                && owner_name.as_str() != partinfo.name {
                     warn!(
                         "[{}] diverted {} (owned by {})",
                         partinfo.name,
@@ -480,8 +480,6 @@ pub async fn deploy_part_with_origin(
                     shadows.push((entry.path.clone(), owner_name.clone()));
                     divert_paths.insert(entry.path.clone());
                 }
-            }
-        }
     }
     log_debug_timing(
         "deploy",
@@ -505,8 +503,8 @@ pub async fn deploy_part_with_origin(
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::DeployError(format!("failed to create backup dir: {}", e)))?;
 
-    if run_hooks {
-        if let Some(ref script) = hooks.pre_install {
+    if run_hooks
+        && let Some(ref script) = hooks.pre_install {
             log_running_hook(&partinfo.name, "pre_install");
             phase_start = Instant::now();
             if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await
@@ -520,7 +518,6 @@ pub async fn deploy_part_with_origin(
                 phase_start.elapsed(),
             );
         }
-    }
 
     phase_start = Instant::now();
     match copy_entries_to_root(
@@ -615,8 +612,8 @@ pub async fn deploy_part_with_origin(
         phase_start.elapsed(),
     );
 
-    if run_hooks {
-        if let Some(ref script) = hooks.post_install {
+    if run_hooks
+        && let Some(ref script) = hooks.post_install {
             log_running_hook(&partinfo.name, "post_install");
             phase_start = Instant::now();
             if let Err(e) =
@@ -631,7 +628,6 @@ pub async fn deploy_part_with_origin(
                 phase_start.elapsed(),
             );
         }
-    }
 
     let ver_rel = if partinfo.plan.version.is_empty() {
         format!("{}", partinfo.plan.release)

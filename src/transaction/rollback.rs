@@ -110,13 +110,11 @@ impl RollbackState {
 
     /// Delete the journal file, signaling successful completion.
     pub fn commit(&self) {
-        if let Some(ref path) = self.journal_path {
-            if let Err(e) = std::fs::remove_file(path) {
-                if e.kind() != io::ErrorKind::NotFound {
+        if let Some(ref path) = self.journal_path
+            && let Err(e) = std::fs::remove_file(path)
+                && e.kind() != io::ErrorKind::NotFound {
                     warn!("Failed to remove rollback journal: {}", e);
                 }
-            }
-        }
     }
 
     /// Undo all recorded changes.

@@ -95,8 +95,8 @@ fn acquire_lock_path_with_timeout(
     mode: LockMode,
     timeout: Duration,
 ) -> Result<ProcessLock> {
-    if let Some(parent) = lock_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+    if let Some(parent) = lock_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent) {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
                 return Err(WrightError::AccessDenied(format!(
                     "cannot create directory {}",
@@ -109,7 +109,6 @@ fn acquire_lock_path_with_timeout(
                 e
             )));
         }
-    }
 
     let file = OpenOptions::new()
         .read(true)

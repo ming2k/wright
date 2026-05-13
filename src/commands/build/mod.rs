@@ -18,9 +18,7 @@ pub async fn dispatch_build(
 
 pub async fn dispatch_lint(args: LintArgs, config: &GlobalConfig) -> Result<()> {
     crate::operations::lint::execute_lint(args.targets, args.recursive, args.verify, config)
-        .await
-        .map_err(Into::into)
-}
+        .await}
 
 pub async fn dispatch_launch(
     args: LaunchArgs,

@@ -11,7 +11,7 @@ pub async fn execute_assume(
     let mut entries: Vec<(String, String)> = Vec::new();
 
     if let Some(path) = file {
-        let content = std::fs::read_to_string(path).map_err(|e| WrightError::IoError(e))?;
+        let content = std::fs::read_to_string(path).map_err(WrightError::IoError)?;
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -31,7 +31,7 @@ pub async fn execute_assume(
     } else if !std::io::stdin().is_terminal() {
         use std::io::BufRead;
         for line in std::io::stdin().lock().lines() {
-            let line = line.map_err(|e| WrightError::IoError(e))?;
+            let line = line.map_err(WrightError::IoError)?;
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;

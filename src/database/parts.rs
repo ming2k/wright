@@ -36,11 +36,10 @@ impl InstalledDb {
         .execute(&self.pool)
         .await
         .map_err(|e| {
-            if let sqlx::Error::Database(ref db_err) = e {
-                if db_err.is_unique_violation() {
+            if let sqlx::Error::Database(ref db_err) = e
+                && db_err.is_unique_violation() {
                     return WrightError::PartAlreadyInstalled(part.name.to_string());
                 }
-            }
             WrightError::DatabaseError(format!("failed to insert part: {}", e))
         })?;
 
@@ -49,14 +48,13 @@ impl InstalledDb {
 
     pub async fn assume_part(&self, name: &str, version: &str) -> Result<()> {
         // Refuse to overwrite a genuinely installed part.
-        if let Some(existing) = self.get_part(name).await? {
-            if existing.origin != Origin::External {
+        if let Some(existing) = self.get_part(name).await?
+            && existing.origin != Origin::External {
                 return Err(WrightError::PartAlreadyInstalled(format!(
                     "{} is already installed; uninstall it before assuming",
                     name
                 )));
             }
-        }
 
         let plan_id = match self.get_plan_id_by_name(name).await? {
             Some(id) => {
@@ -71,8 +69,8 @@ impl InstalledDb {
                 id
             }
             None => query(
-                "INSERT INTO plans (name, version, release, epoch, description, arch, license)
-                     VALUES (?, ?, 0, 0, 'externally provided', 'any', 'unknown')",
+                "INSERT INTO plans (name, version, release, epoch, arch)
+                     VALUES (?, ?, 0, 0, 'any')",
             )
             .bind(name)
             .bind(version)
@@ -85,7 +83,7 @@ impl InstalledDb {
         query(
             "INSERT INTO parts (name, plan_id, part_hash, deploy_scripts, origin)
              VALUES (?, ?, NULL, NULL, 'external')
-             ON CONFLICT(plan_id, name) DO UPDATE SET origin = 'external', plan_id = excluded.plan_id",
+             ON CONFLICT(name) DO UPDATE SET origin = 'external', plan_id = excluded.plan_id",
         )
         .bind(name)
         .bind(plan_id)

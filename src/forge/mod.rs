@@ -78,11 +78,10 @@ fn is_part_file(filename: &str) -> bool {
 }
 
 async fn ensure_clean_dir(dir: &Path) -> Result<()> {
-    if tokio::fs::metadata(dir).await.is_ok() {
-        if let Err(e) = tokio::fs::remove_dir_all(dir).await {
+    if tokio::fs::metadata(dir).await.is_ok()
+        && let Err(e) = tokio::fs::remove_dir_all(dir).await {
             warn!("Failed to clean directory {}: {}", dir.display(), e);
         }
-    }
     tokio::fs::create_dir_all(dir).await.map_err(|e| {
         WrightError::ForgeError(format!(
             "failed to create forge directory {}: {}",
@@ -543,11 +542,10 @@ impl Forger {
         }
         info!("{}", logging::forge_finished(&manifest.metadata.name));
 
-        if !partial {
-            if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
+        if !partial
+            && let Err(e) = tokio::fs::write(&key_file, &build_key).await {
                 warn!("Failed to write forge key: {}", e);
             }
-        }
 
         Ok(ForgeResult {
             output_dir: staging_dir,
@@ -1332,8 +1330,8 @@ impl Forger {
         // If the repository already exists and the ref resolves locally,
         // skip the network fetch entirely. This avoids redundant fetches
         // when the plan.toml has not changed.
-        if !is_fresh_clone {
-            if let Ok(obj) = repo.revparse_single(actual_ref) {
+        if !is_fresh_clone
+            && let Ok(obj) = repo.revparse_single(actual_ref) {
                 tracing::debug!(
                     "[{}] git ref '{}' already available locally; skipping fetch",
                     scope,
@@ -1341,7 +1339,6 @@ impl Forger {
                 );
                 return Ok(obj.id().to_string());
             }
-        }
 
         let mut remote = repo
             .remote_anonymous(git_url)
@@ -1421,11 +1418,10 @@ impl Forger {
         let mut fetch_opts = git2::FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
         fetch_opts.download_tags(git2::AutotagOption::All);
-        if let Some(d) = effective_depth {
-            if d > 0 {
+        if let Some(d) = effective_depth
+            && d > 0 {
                 fetch_opts.depth(d as i32);
             }
-        }
         let fetch_result = remote.fetch(
             &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
             Some(&mut fetch_opts),

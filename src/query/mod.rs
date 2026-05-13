@@ -567,14 +567,13 @@ pub async fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>
     let mut issues = Vec::new();
 
     for part in all_parts {
-        if let Err(e) = db.get_recursive_dependents(&part.name).await {
-            if e.to_string().contains("circular") {
+        if let Err(e) = db.get_recursive_dependents(&part.name).await
+            && e.to_string().contains("circular") {
                 issues.push(format!(
                     "Circular dependency detected involving part '{}'",
                     part.name
                 ));
             }
-        }
     }
 
     Ok(issues)

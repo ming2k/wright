@@ -10,21 +10,17 @@ use crate::part::store::LocalPartStore;
 use std::path::{Path, PathBuf};
 
 async fn crash_recover(db_path: &Path) {
-    match crate::database::InstalledDb::open(db_path).await {
-        Ok(db) => {
-            let _ = crate::delivery::recover_if_needed(&db).await;
-        }
-        Err(_) => {}
+    if let Ok(db) = crate::database::InstalledDb::open(db_path).await {
+        let _ = crate::delivery::recover_if_needed(&db).await;
     }
 }
 
 fn resolve_db(root: Option<&Path>, top_db: Option<PathBuf>, config: &GlobalConfig) -> PathBuf {
     top_db.unwrap_or_else(|| {
-        if let Some(r) = root {
-            if r != Path::new("/") {
+        if let Some(r) = root
+            && r != Path::new("/") {
                 return r.join("var/lib/wright/wright.db");
             }
-        }
         config.general.db_path.clone()
     })
 }
@@ -126,5 +122,4 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
 
 /// Helper function to setup the local part store for commands that need it.
 pub(crate) fn setup_local_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
-    crate::resolve::setup_part_store(config).map_err(Into::into)
-}
+    crate::resolve::setup_part_store(config)}

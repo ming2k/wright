@@ -34,8 +34,8 @@ pub async fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Resul
                     }
                 }
             }
-        } else if file.file_type == FileType::Symlink {
-            if let Some(ref expected_target) = file.file_hash {
+        } else if file.file_type == FileType::Symlink
+            && let Some(ref expected_target) = file.file_hash {
                 match tokio::fs::read_link(&full_path).await {
                     Ok(actual_target) => {
                         let actual_str = actual_target.to_string_lossy();
@@ -48,7 +48,6 @@ pub async fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Resul
                     }
                 }
             }
-        }
     }
 
     Ok(issues)

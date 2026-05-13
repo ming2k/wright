@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
@@ -19,10 +19,11 @@ pub(super) async fn expand_missing_dependencies(
     domain: DepDomain,
     max_depth: usize,
     stable_toolchain: &[String],
-) -> Result<()> {
+) -> Result<usize> {
     let mut build_set: HashSet<String> = HashSet::new();
     let mut traversal_seen: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    let mut resolved_count: usize = 0;
 
     for path in plans_to_build.iter() {
         if let Ok(m) = PlanManifest::from_file(path) {
@@ -73,19 +74,17 @@ pub(super) async fn expand_missing_dependencies(
                 continue;
             }
 
-            if !build_set.contains(&dep_plan_name) {
-                if let Some(label) =
+            if !build_set.contains(&dep_plan_name)
+                && let Some(label) =
                     dependency_match_label(&dep_output_name, &dep_plan_name, index, db, policies)
                         .await?
-                {
-                    if let Some(plan_path) = index.path_for(&dep_plan_name) {
-                        info!("resolving dependency: {}", dep_plan_name);
+                    && let Some(plan_path) = index.path_for(&dep_plan_name) {
+                        debug!("resolving dependency: {}", dep_plan_name);
                         debug!("{} added (reason: {})", dep_plan_name, label);
+                        resolved_count += 1;
                         plans_to_build.insert(plan_path.clone());
                         build_set.insert(dep_plan_name.clone());
                     }
-                }
-            }
         }
 
         if !policies.contains(&MatchPolicy::All) && domain.contains(DepDomain::BUILD) {
@@ -134,30 +133,28 @@ pub(super) async fn expand_missing_dependencies(
                             queue.push_back((rdep_plan_name.clone(), rdep_depth));
                         }
 
-                        if !build_set.contains(&rdep_plan_name) {
-                            if let Some(label) = dependency_match_label(
-                                &rdep_output_name,
-                                &rdep_plan_name,
-                                index,
-                                db,
-                                policies,
-                            )
-                            .await?
-                            {
-                                if let Some(rdep_plan_path) = index.path_for(&rdep_plan_name) {
-                                    info!(
-                                        "resolving dependency: {} (needed by {})",
-                                        rdep_plan_name, build_dep_plan_name,
-                                    );
-                                    debug!(
-                                        "{} added (reason: {}, needed by {})",
-                                        rdep_plan_name, label, build_dep_plan_name,
-                                    );
-                                    plans_to_build.insert(rdep_plan_path.clone());
-                                    build_set.insert(rdep_plan_name.clone());
-                                }
-                            }
-                        }
+                                if !build_set.contains(&rdep_plan_name)
+                                    && let Some(label) = dependency_match_label(
+                                        &rdep_output_name,
+                                        &rdep_plan_name,
+                                        index,
+                                        db,
+                                        policies,
+                                    )
+                                    .await?
+                                        && let Some(rdep_plan_path) = index.path_for(&rdep_plan_name) {
+                                            debug!(
+                                                "resolving dependency: {} (needed by {})",
+                                                rdep_plan_name, build_dep_plan_name,
+                                            );
+                                            debug!(
+                                                "{} added (reason: {}, needed by {})",
+                                                rdep_plan_name, label, build_dep_plan_name,
+                                            );
+                                            resolved_count += 1;
+                                            plans_to_build.insert(rdep_plan_path.clone());
+                                            build_set.insert(rdep_plan_name.clone());
+                                        }
 
                         runtime_queue.push_back((rdep_plan_name, rdep_depth));
                     }
@@ -166,7 +163,7 @@ pub(super) async fn expand_missing_dependencies(
         }
     }
 
-    Ok(())
+    Ok(resolved_count)
 }
 
 /// Returns the match reason label when the dependency matches any policy, or `None` if it doesn't.
@@ -231,9 +228,9 @@ pub(super) async fn dependency_matches_policy(
     }
 
     // 如果是多 output plan，检查是否有任何 output 匹配
-    if let Some(_path) = index.path_for(dep_name) {
-        if let Ok(Some(manifest)) = index.manifest_for(dep_name) {
-            if let Some(OutputConfig::Multi(ref outputs)) = manifest.outputs {
+    if let Some(_path) = index.path_for(dep_name)
+        && let Ok(Some(manifest)) = index.manifest_for(dep_name)
+            && let Some(OutputConfig::Multi(ref outputs)) = manifest.outputs {
                 for (output_name, _) in outputs {
                     if dependency_match_label(output_name, dep_name, index, db, policies)
                         .await?
@@ -243,8 +240,6 @@ pub(super) async fn dependency_matches_policy(
                     }
                 }
             }
-        }
-    }
 
     Ok(false)
 }
@@ -569,9 +564,9 @@ pub(super) fn build_dep_map(
                 .unwrap_or_else(|_| (dep_raw.to_string(), None))
                 .0;
             let dep_plan_name = version::parse_dep_ref(&dep_name).plan().to_string();
-            if !part_to_plan.contains_key(&dep_plan_name) {
-                if let Some(dep_path) = index.path_for(&dep_plan_name) {
-                    if let Ok(dep_manifest) = PlanManifest::from_file(dep_path) {
+            if !part_to_plan.contains_key(&dep_plan_name)
+                && let Some(dep_path) = index.path_for(&dep_plan_name)
+                    && let Ok(dep_manifest) = PlanManifest::from_file(dep_path) {
                         part_to_plan.insert(dep_plan_name.clone(), dep_plan_name.clone());
                         if let Some(OutputConfig::Multi(ref parts)) = dep_manifest.outputs {
                             for (sub_name, _) in parts {
@@ -579,8 +574,6 @@ pub(super) fn build_dep_map(
                             }
                         }
                     }
-                }
-            }
         }
 
         let mut deps = Vec::new();

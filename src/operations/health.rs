@@ -207,11 +207,10 @@ async fn resolve_soname_owner(db: &InstalledDb, soname: &str) -> Result<Option<S
     for p in parts {
         let files = db.get_files(p.id).await?;
         for f in files {
-            if let Some(base) = f.path.rsplit('/').next() {
-                if base == soname {
+            if let Some(base) = f.path.rsplit('/').next()
+                && base == soname {
                     return Ok(Some(p.name));
                 }
-            }
         }
     }
     Ok(None)

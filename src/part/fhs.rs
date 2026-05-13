@@ -48,9 +48,9 @@ pub fn validate(part_dir: &Path, part_name: &str) -> Result<()> {
         }
 
         // For symlinks, also check that absolute targets resolve to an allowed path.
-        if entry.path_is_symlink() {
-            if let Ok(target) = fs::read_link(entry.path()) {
-                if target.is_absolute() && !is_allowed(&target) {
+        if entry.path_is_symlink()
+            && let Ok(target) = fs::read_link(entry.path())
+                && target.is_absolute() && !is_allowed(&target) {
                     let hint = rejection_hint(&target);
                     return Err(WrightError::ValidationError(format!(
                         "part '{}': symlink '{}' points to '{}' which violates FHS — {}",
@@ -60,8 +60,6 @@ pub fn validate(part_dir: &Path, part_name: &str) -> Result<()> {
                         hint
                     )));
                 }
-            }
-        }
     }
 
     Ok(())

@@ -173,6 +173,33 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let plan = create_execution_plan(config, build_set, &build_opts, dep_domain)
         .map_err(|e| WrightError::ForgeError(format!("create_execution_plan: {}", e)))?;
 
+    let total_packages = plan.build_set().len();
+    let total_batches = plan.batches().len();
+    if !quiet {
+        info!(
+            "build plan: {} package{} in {} batch{}",
+            total_packages,
+            if total_packages == 1 { "" } else { "s" },
+            total_batches,
+            if total_batches == 1 { "" } else { "es" }
+        );
+        for (idx, batch) in plan.batches().iter().enumerate() {
+            let entries: Vec<String> = batch
+                .iter()
+                .map(|t| {
+                    let base = ForgeExecutionPlan::task_base_name(t);
+                    let label = plan.label_for_task(t, &build_opts);
+                    if label == "build" || label == "build:full" {
+                        base.to_string()
+                    } else {
+                        format!("{} ({})", base, label)
+                    }
+                })
+                .collect();
+            info!("  batch {}/{}: {}", idx + 1, total_batches, entries.join(", "));
+        }
+    }
+
     let plan = Arc::new(plan);
     let forger = Arc::new(Forger::new(config.clone()));
     let configure_lock = Arc::new(Mutex::new(()));
@@ -201,8 +228,6 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     // ── Compute plan fingerprints & CAS resolution ──────────────────
     let plan_fps = PlanFingerprints::compute(&plan, &forger)?;
     let cas_store = CasStore::new(config.general.store_dir.clone());
-
-    let total_batches = plan.batches().len();
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if !quiet {
@@ -390,11 +415,10 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             if let Some(fp) = plan_fps.get(base) {
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
-                    if let Ok(Some(resolved)) = part_store.resolve(pn).await {
-                        if let Err(e) = cas_store.store(&resolved.path, pn, fp) {
+                    if let Ok(Some(resolved)) = part_store.resolve(pn).await
+                        && let Err(e) = cas_store.store(&resolved.path, pn, fp) {
                             tracing::warn!("Failed to store {} in CAS: {}", pn, e);
                         }
-                    }
                 }
             }
         }

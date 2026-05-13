@@ -435,12 +435,11 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
         #[cfg(unix)]
         {
             let (mode, is_file, dest) = restore;
-            if is_file {
-                if let Some(m) = mode {
+            if is_file
+                && let Some(m) = mode {
                     use std::os::unix::fs::PermissionsExt;
                     let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m));
                 }
-            }
         }
     }
     Ok(())

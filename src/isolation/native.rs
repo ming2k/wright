@@ -129,11 +129,10 @@ fn isolation_scratch_base(config: &IsolationConfig) -> PathBuf {
 /// crashes or forced termination.
 fn cleanup_isolation_dirs(config: &IsolationConfig) {
     let scratch = isolation_scratch_base(config);
-    if scratch.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&scratch) {
+    if scratch.exists()
+        && let Err(e) = std::fs::remove_dir_all(&scratch) {
             debug!("Failed to clean up {}: {}", scratch.display(), e);
         }
-    }
 }
 
 /// Run a command inside a native Linux namespace isolation.
@@ -497,11 +496,10 @@ pub fn run_in_isolation(
                         // If it's a symlink, remove it so we can mount over it properly
                         // instead of mounting onto a potentially dangling target (e.g.
                         // /etc/resolv.conf -> /run/... when /run is a fresh tmpfs).
-                        if let Ok(meta) = dest.symlink_metadata() {
-                            if meta.file_type().is_symlink() {
+                        if let Ok(meta) = dest.symlink_metadata()
+                            && meta.file_type().is_symlink() {
                                 let _ = std::fs::remove_file(&dest);
                             }
-                        }
 
                         // Fix: ALWAYS ensure the destination mount point exists.
                         if src.is_dir() {
@@ -552,19 +550,17 @@ pub fn run_in_isolation(
 
                     // Extra binds.
                     for (host, dest, ro) in &config.extra_binds {
-                        if host.exists() {
-                            if let Err(e) = bind(host, &dest.to_string_lossy(), *ro) {
+                        if host.exists()
+                            && let Err(e) = bind(host, &dest.to_string_lossy(), *ro) {
                                 die(e);
                             }
-                        }
                     }
                     // Build dependency mounts (read-only).
                     for (host, dest) in &config.dep_mounts {
-                        if host.exists() {
-                            if let Err(e) = bind(host, &dest.to_string_lossy(), true) {
+                        if host.exists()
+                            && let Err(e) = bind(host, &dest.to_string_lossy(), true) {
                                 die(e);
                             }
-                        }
                     }
                     // On merged-/usr systems the lowerdir collapses to a single
                     // directory (e.g. /usr), which overlayfs flattens so that
@@ -573,11 +569,10 @@ pub fn run_in_isolation(
                     // absolute paths like /usr/lib/..., which would fail to
                     // resolve.  Bind-mount the host /usr to restore the
                     // expected hierarchy.
-                    if newroot.join("usr").metadata().is_err() {
-                        if let Err(e) = bind(Path::new("/usr"), "/usr", true) {
+                    if newroot.join("usr").metadata().is_err()
+                        && let Err(e) = bind(Path::new("/usr"), "/usr", true) {
                             die(e);
                         }
-                    }
                     // /dev: try devtmpfs, fall back to tmpfs + bind-mounted devices.
                     let dev = newroot.join("dev");
                     std::fs::create_dir_all(&dev).ok();
@@ -669,21 +664,19 @@ pub fn run_in_isolation(
                         "/etc/ssl",
                     ] {
                         let p = Path::new(etc_file);
-                        if p.exists() {
-                            if let Err(e) = bind(p, etc_file, true) {
+                        if p.exists()
+                            && let Err(e) = bind(p, etc_file, true) {
                                 die(e);
                             }
-                        }
                     }
 
                     // --- pivot_root ---
 
                     let old_root = newroot.join(".old_root");
-                    if old_root.symlink_metadata().is_err() {
-                        if let Err(e) = std::fs::create_dir_all(&old_root) {
+                    if old_root.symlink_metadata().is_err()
+                        && let Err(e) = std::fs::create_dir_all(&old_root) {
                             die(format!("mkdir {}: {e}", old_root.display()));
                         }
-                    }
 
                     if let Err(e) = pivot_root(&newroot, &old_root) {
                         die(format!("pivot_root: {e}"));

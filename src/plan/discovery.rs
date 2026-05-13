@@ -132,7 +132,7 @@ impl PlanIndex {
     /// Lightweight extraction of the `name` field without deserialising the
     /// full manifest.  This is the only parsing cost paid at index-build time.
     fn extract_name(path: &Path) -> Result<String> {
-        let content = std::fs::read_to_string(path).map_err(|e| WrightError::IoError(e))?;
+        let content = std::fs::read_to_string(path).map_err(WrightError::IoError)?;
         #[derive(serde::Deserialize)]
         struct NameOnly {
             name: Option<String>,

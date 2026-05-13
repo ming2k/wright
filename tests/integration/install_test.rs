@@ -125,7 +125,7 @@ fn create_split_archive_from_manifest(
         .find(|(name, _)| name == output_name)
         .map(|(_, sub)| sub)
         .unwrap();
-    let sub_manifest = sub.to_manifest(output_name, &manifest);
+    let sub_manifest = sub.to_manifest(output_name, manifest);
 
     let part_dir = tempfile::tempdir().unwrap();
     let bin_path = part_dir.path().join("usr/bin").join(output_name);
@@ -139,7 +139,7 @@ fn create_split_archive_from_manifest(
     let temp_output_dir = tempfile::tempdir().unwrap();
     let output_dir = output_dir.unwrap_or(temp_output_dir.path());
     let archive =
-        archive::create_part(part_dir.path(), &sub_manifest, output_dir, Some(&manifest)).unwrap();
+        archive::create_part(part_dir.path(), &sub_manifest, output_dir, Some(manifest)).unwrap();
 
     if output_dir == temp_output_dir.path() {
         let version = manifest.metadata.version.as_deref().unwrap_or("noversion");

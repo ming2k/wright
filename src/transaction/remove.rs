@@ -63,8 +63,8 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = part.deploy_scripts {
-        if let Some(script) = get_hook(content, "pre_remove") {
+    if let Some(ref content) = part.deploy_scripts
+        && let Some(script) = get_hook(content, "pre_remove") {
             log_running_hook(name, "pre_remove");
             if let Err(e) = run_deploy_script(&script, root_dir, name, "pre_remove").await {
                 warn!(
@@ -73,7 +73,6 @@ pub async fn remove_part_with_ignored_dependents(
                 );
             }
         }
-    }
 
     // Create backup directory BEFORE transaction context so it outlives the tx
     // on the error/panic path (tx drops first and can still read backups).
@@ -200,8 +199,8 @@ pub async fn remove_part_with_ignored_dependents(
         }
     }
 
-    if let Some(ref content) = part.deploy_scripts {
-        if let Some(script) = get_hook(content, "post_remove") {
+    if let Some(ref content) = part.deploy_scripts
+        && let Some(script) = get_hook(content, "post_remove") {
             log_running_hook(name, "post_remove");
             if let Err(e) = run_deploy_script(&script, root_dir, name, "post_remove").await {
                 warn!(
@@ -210,7 +209,6 @@ pub async fn remove_part_with_ignored_dependents(
                 );
             }
         }
-    }
 
     tx.commit().await?;
 

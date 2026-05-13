@@ -344,13 +344,11 @@ fn dir_mtime(dir: &Path) -> Result<SystemTime> {
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(t) = meta.modified() {
-                    if t > latest {
+            if let Ok(meta) = entry.metadata()
+                && let Ok(t) = meta.modified()
+                    && t > latest {
                         latest = t;
                     }
-                }
-            }
         }
     }
     Ok(latest)

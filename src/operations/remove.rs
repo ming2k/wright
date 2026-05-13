@@ -13,8 +13,8 @@ pub async fn execute_remove(
     root_dir: &std::path::Path,
 ) -> Result<()> {
     for name in parts {
-        if let Some(part) = db.get_part(name).await? {
-            if part.origin == crate::database::Origin::External {
+        if let Some(part) = db.get_part(name).await?
+            && part.origin == crate::database::Origin::External {
                 tracing::error!(
                     "'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.",
                     name,
@@ -22,7 +22,6 @@ pub async fn execute_remove(
                 );
                 std::process::exit(1);
             }
-        }
     }
 
     let parts_owned: Vec<String> = parts.iter().map(|s| s.to_string()).collect();

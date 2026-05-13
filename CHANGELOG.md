@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [5.1.3] - 2026-05-14
+
+### Added
+- **Build plan summary log** — `execute_install` now logs the full build plan (batch count, per-batch entries with pipeline labels) before forging begins, giving operators a preview of what will be built.
+- **Launch integration tests** — 10 integration tests for `wright launch` covering folio mode, plans mode, dry-run, convergence, assumptions registration, post-install configuration, target skeleton structure, `/` refusal, nothing-to-do errors, and multi-plan launches (`tests/integration/launch_test.rs`).
+
+### Fixed
+- **`assume_part` database schema mismatch** — the INSERT for externally-provided plans referenced `description` and `license` columns that were dropped by migration 014, and the `ON CONFLICT` clause used the obsolete `(plan_id, name)` constraint (changed to `UNIQUE(name)` in migration 008). Both caused `wright assume` and folio-driven `wright launch` to fail when registering external parts.
+
+### Changed
+- **Rust 2024 idiom modernization** — replaced nested `if let` with chain syntax (`&&`), removed redundant `.map_err(Into::into)` patterns, simplified closures to function references, and replaced `return Err(...)` with bare `Err(...)` where appropriate across the codebase.
+- **Terminology** — "delivery pipeline" → "delivery workflow" in documentation.
+
 ## [5.1.2] - 2026-05-13
 
 ### Fixed
