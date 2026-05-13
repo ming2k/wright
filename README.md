@@ -1,6 +1,6 @@
 # wright
 
-A declarative, extensible, sandboxed Linux system part manager for LFS-based distributions.
+A from-source package manager for Linux.
 
 Wright uses a ship-maintenance metaphor: `plan.toml` defines how to manufacture
 one replacement **part**, the finished `.wright.tar.zst` is that installable
