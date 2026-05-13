@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [5.1.0] - 2026-05-13
+## [5.1.1] - 2026-05-13
 
 ### Added
 - **`wright check --files`** — verify every deployed file recorded in the database exists on disk and is the correct type (file/symlink/directory). Detects files deleted by external tools or partially-uninstalled parts.
@@ -12,6 +12,7 @@
 - **Spurious rollback journal warnings** — `commit()` and `replay_journal()` no longer emit `WARN: Failed to remove rollback journal: No such file or directory` when the journal was never written (e.g. purely cached installations). The `ENOENT` case is now quietly ignored.
 
 ### Changed
+- **`build --rebuild` renamed to `build --force`** — the `-R`/`--rebuild` flag is now `-f`/`--force`, consistent with `install --force`, `launch --force`, and other subcommands. The short flag changed from `-R` to `-f`.
 - **`doctor` delegates to shared health engine** — `execute_doctor` now calls `health::run_standard_checks` instead of duplicating the integrity + files + deps + ELF orchestration from `check`.
 - **Tightened `pub(super)` visibility** — `RawManifest`, `RawPlanMetadata` (plan manifest parsing) and `parse_hooks_from_db` (transaction hooks) reduced to private; `check` module internal helpers (`integrity_check`, `registry_check`, `elf_check`, `files_check`, and their report structs) reduced to private. None were consumed outside their declaring modules.
 

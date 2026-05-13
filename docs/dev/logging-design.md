@@ -53,7 +53,7 @@ Plan lines use a stable scope prefix and mark pipeline boundaries:
 INFO [linux] forge started
 INFO [linux] forge done
 INFO [linux] forge failed
-INFO [linux] skipped: parts already exist (use --rebuild to rebuild)
+INFO [linux] skipped: parts already exist (use --force to rebuild)
 ```
 
 Rules:

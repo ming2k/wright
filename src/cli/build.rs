@@ -4,11 +4,11 @@ use std::path::PathBuf;
 pub const BUILD_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
-  wright build zlib --rebuild --clean
+  wright build zlib --force --clean
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
   wright resolve openssl --rdeps | wright build
-  echo -e 'curl\nwget' | wright build --rebuild
+  echo -e 'curl\nwget' | wright build --force
 
 Resume is automatic via forge file-system checkpoints keyed by plan content hash.";
 
@@ -57,15 +57,15 @@ pub struct BuildArgs {
 
     /// Clear the forge cache, source tree, and working directory before
     /// starting. Without --clean, work/ is preserved for incremental forges
-    /// when the forge key is unchanged. Composable with --rebuild.
+    /// when the forge key is unchanged. Composable with --force.
     #[arg(long, short = 'c')]
     pub clean: bool,
 
     /// Reforge from scratch: bypass stage checkpoints and re-run all
     /// pipeline stages. Use this when you have modified a plan's forge
     /// script or dependencies and need a clean reforge.
-    #[arg(long, short = 'R')]
-    pub rebuild: bool,
+    #[arg(long, short = 'f')]
+    pub force: bool,
 
     /// Forge using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it

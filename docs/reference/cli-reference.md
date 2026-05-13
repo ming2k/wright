@@ -171,14 +171,14 @@ Build (forge) plans into staging and output directories under `build_dir`.
 
 ```bash
 wright build zlib
-wright build zlib --rebuild --clean
+wright build zlib --force --clean
 wright build freetype --until-stage=staging
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-c`, `--clean` | Clear the forge workspace before building |
-| `-R`, `--rebuild` | Reforge from scratch: bypass stage checkpoints and re-run all pipeline stages |
+| `-f`, `--force` | Reforge from scratch: bypass stage checkpoints and re-run all pipeline stages |
 | `--stage <NAME>` | Run only the specified pipeline stages; may be repeated |
 | `--force-stage <NAME>` | Force re-run of a specific stage even if its checkpoint is valid |
 | `--until-stage <NAME>` | Run a normal forge pipeline and stop after the specified stage |

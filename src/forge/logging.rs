@@ -64,7 +64,7 @@ pub fn plan_packed(plan_name: &str, part_path: &Path) -> String {
 
 pub fn plan_skipped_existing(plan_name: &str) -> String {
     format!(
-        "{} skipped: parts already exist (use --rebuild to rebuild)",
+        "{} skipped: parts already exist (use --force to rebuild)",
         plan_scope(plan_name)
     )
 }
@@ -123,7 +123,7 @@ mod tests {
         );
         assert_eq!(
             plan_skipped_existing("linux"),
-            "[linux] skipped: parts already exist (use --rebuild to rebuild)"
+            "[linux] skipped: parts already exist (use --force to rebuild)"
         );
         assert_eq!(
             stage_skipped("linux", "compile"),
