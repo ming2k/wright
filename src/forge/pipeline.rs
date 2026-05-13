@@ -258,10 +258,18 @@ impl<'a> Pipeline<'a> {
         // --- Execute stages from `start_index` forward ---
         for (idx, stage_name) in pipeline.iter().enumerate() {
             if idx < start_index {
-                info!(
-                    "{}",
-                    logging::stage_skipped(&self.manifest.metadata.name, stage_name)
-                );
+                if checkpoint_enabled {
+                    info!(
+                        "{}",
+                        logging::stage_skipped(&self.manifest.metadata.name, stage_name)
+                    );
+                } else {
+                    debug!(
+                        "{} {} handled externally (--force)",
+                        logging::plan_scope(&self.manifest.metadata.name),
+                        stage_name
+                    );
+                }
                 if stop_after_index == Some(idx) {
                     return Ok(());
                 }

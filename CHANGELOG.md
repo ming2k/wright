@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [5.1.5] - 2026-05-14
+
+### Fixed
+- **Misleading "already completed" log with `--force`** — built-in stages (fetch, verify, extract) handled externally by the Builder were logged as "skipped (already completed)" when `--force` disabled the checkpoint system. The message is now suppressed in that path; it only appears during genuine checkpoint resume.
+- **Stale overlayfs mount causing EBUSY on re-forge** — `ensure_clean_dir` now detects EBUSY (os error 16) from a lingering overlay mount at `<build_root>/target`, lazy-unmounts it, and retries the directory removal instead of emitting a cryptic warning.
+- **Batch summary log indentation** — removed a spurious extra space in the "batch N/M" progress line.
+
 ## [5.1.4] - 2026-05-14
 
 ### Fixed

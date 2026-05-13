@@ -196,7 +196,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     }
                 })
                 .collect();
-            info!("  batch {}/{}: {}", idx + 1, total_batches, entries.join(", "));
+            info!(" batch {}/{}: {}", idx + 1, total_batches, entries.join(", "));
         }
     }
 

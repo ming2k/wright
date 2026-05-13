@@ -78,10 +78,26 @@ fn is_part_file(filename: &str) -> bool {
 }
 
 async fn ensure_clean_dir(dir: &Path) -> Result<()> {
-    if tokio::fs::metadata(dir).await.is_ok()
-        && let Err(e) = tokio::fs::remove_dir_all(dir).await {
-            warn!("Failed to clean directory {}: {}", dir.display(), e);
+    if tokio::fs::metadata(dir).await.is_ok() {
+        match tokio::fs::remove_dir_all(dir).await {
+            Ok(()) => {}
+            Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {
+                // A stale overlayfs mount may linger at <dir>/target from a
+                // previous run.  Lazy-unmount it and retry the removal.
+                let _ = nix::mount::umount2(
+                    &dir.join("target"),
+                    nix::mount::MntFlags::MNT_DETACH,
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                if let Err(e2) = tokio::fs::remove_dir_all(dir).await {
+                    warn!("Failed to clean directory {}: {}", dir.display(), e2);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to clean directory {}: {}", dir.display(), e);
+            }
         }
+    }
     tokio::fs::create_dir_all(dir).await.map_err(|e| {
         WrightError::ForgeError(format!(
             "failed to create forge directory {}: {}",
