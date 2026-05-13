@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [5.1.4] - 2026-05-14
+
+### Fixed
+- **OverlayFS layer ordering** — `mount_overlay()` built the `lowerdir=` list in forward pipeline order, causing earlier (unpatched) stages to shadow later (patched) stages in the overlay merge. Reversed the iteration so later pipeline stages sit higher in the stack and correctly take precedence, matching the hard-link fallback semantics.
+- **Missing failure record in checkpoint** — stage failures were not persisted to `.wright-pipeline.json` (the `mark_failed` method existed but was never called). Failures are now recorded with their input hash, so resume logic can distinguish a failed stage from a fresh "pending" one on retry.
+
 ## [5.1.3] - 2026-05-14
 
 ### Added

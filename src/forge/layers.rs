@@ -226,8 +226,11 @@ impl LayerManager {
     pub fn mount_overlay(&self, current_stage: &str, completed_stages: &[String]) -> Result<bool> {
         use nix::mount::{MsFlags, mount};
 
+        // OverlayFS lowerdir= leftmost entry is the topmost layer in the
+        // merged view (checked first on lookup).  Iterate in reverse so later
+        // pipeline stages sit higher in the stack and shadow earlier ones.
         let mut lower_parts: Vec<String> = Vec::new();
-        for prev_stage in completed_stages {
+        for prev_stage in completed_stages.iter().rev() {
             let prev_dir = self.layer_dir(prev_stage);
             if prev_dir.exists() {
                 lower_parts.push(prev_dir.display().to_string());

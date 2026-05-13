@@ -345,7 +345,17 @@ impl<'a> Pipeline<'a> {
                     }
                 }
                 Err(e) => {
-                    // Rollback: clear the dirty layer.
+                    if checkpoint_enabled {
+                        let expected = compute_expected_hashes(
+                            self.manifest,
+                            &pipeline,
+                            &self.vars,
+                            self.build_phase.as_deref(),
+                        );
+                        if let Some(eh) = expected.get(stage_name) {
+                            let _ = self.checkpoint.mark_failed(stage_name, eh, &e.to_string());
+                        }
+                    }
                     self.layers.clear_layer(stage_name);
                     return Err(e);
                 }
