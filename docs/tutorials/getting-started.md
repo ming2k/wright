@@ -38,7 +38,7 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 isolation = "none"
 script = """
 cat > hello.c << 'EOF'
@@ -47,16 +47,16 @@ int main() { printf("Hello, wright!\\n"); return 0; }
 EOF
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 isolation = "none"
 script = "gcc -o hello hello.c"
 
-[lifecycle.staging]
+[pipeline.staging]
 isolation = "none"
 script = "install -Dm755 hello ${STAGING_DIR}/usr/bin/hello"
 ```
 
-You now have one plan directory, and the lifecycle scripts can use `${NAME}` /
+You now have one plan directory, and the pipeline scripts can use `${NAME}` /
 `${VERSION}` for plan metadata.
 
 Build and install it:

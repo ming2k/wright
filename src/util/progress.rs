@@ -94,25 +94,42 @@ pub fn finish_source(pb: &ProgressBar, scope: &str, dest: &Path) {
     finish_source_with_label(pb, scope, "Fetched", &filename);
 }
 
-/// Create a persistent spinner that tracks a plan through its full lifecycle
+/// Create a persistent spinner that tracks a plan through its full pipeline
 /// (fetch → verify → extract → prepare → configure → compile → check → staging).
 ///
 /// The spinner stays at the bottom of the terminal while the plan executes.
 /// Callers update `msg` to reflect the current stage.
-pub fn new_plan_lifecycle_spinner(plan_name: &str) -> ProgressBar {
+pub fn new_plan_pipeline_spinner(plan_name: &str) -> ProgressBar {
     let pb = MULTI.add(ProgressBar::new_spinner());
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} [{prefix}] [{elapsed_precise}] {msg}")
-            .expect("valid plan lifecycle template"),
+            .expect("valid plan pipeline template"),
     );
     pb.set_prefix(format!("[{}]", plan_name));
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb
 }
 
+/// Create a persistent spinner that tracks the overall build flow — from DAG
+/// resolution through batch execution to completion.  It sits above per-plan
+/// spinners in the terminal, giving the operator a single line that shows what
+/// the scheduler is currently doing.
+///
+/// Uses `[*]` as the prefix to distinguish it from per-plan `[plan-name]` lines.
+pub fn new_build_flow_spinner() -> ProgressBar {
+    let pb = MULTI.add(ProgressBar::new_spinner());
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.magenta} [*] [{elapsed_precise}] {msg}")
+            .expect("valid build flow template"),
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb
+}
+
 /// RAII guard that calls `finish_and_clear()` on the inner [`ProgressBar`] when
-/// dropped.  Use this to ensure a plan lifecycle spinner is always cleaned up
+/// dropped.  Use this to ensure a plan pipeline spinner is always cleaned up
 /// regardless of which return path is taken.
 pub struct ProgressBarGuard(pub ProgressBar);
 

@@ -35,6 +35,7 @@ pub async fn dispatch_check(
         args.part.as_deref(),
         args.deep,
         args.integrity_only,
+        args.check_files,
     )
     .await
 }

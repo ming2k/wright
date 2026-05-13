@@ -17,7 +17,7 @@ ADR-0012.  ADR-0013 is the accepted decision record for the current approach.
 | `relaxed` | host root with namespaces and bind mounts | basic process and mount isolation while still seeing the live host filesystem |
 | `strict` | OverlayFS root from system lowerdirs plus task-private mounts | normal builds |
 
-Each lifecycle stage can override the default through its `isolation` field.
+Each pipeline stage can override the default through its `isolation` field.
 
 ## Strict Root Construction
 
@@ -111,7 +111,7 @@ OverlayFS changes the failure surface:
 There is still an edge case where a host process briefly holds a write reference
 to a lower-layer inode at the exact moment a build task tries to execute it.
 Wright handles that with ETXTBSY retry logic at both the isolation exec layer
-and the lifecycle stage layer.  Contributor details are in
+and the pipeline stage layer.  Contributor details are in
 [Isolation Race Handling](../dev/isolation-pitfalls.md).
 
 ## Relationship to ADRs

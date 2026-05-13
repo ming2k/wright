@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use std::time::Instant;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::database::{
     Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
@@ -132,7 +132,12 @@ pub async fn deploy_parts_with_explicit_targets(
             };
 
             if force || incoming_hash.as_deref() != installed.part_hash.as_deref() {
-                info!("Upgrading deployed part {} from the current archive", name);
+                if force {
+                    debug!("{} hash forced upgrade", name);
+                } else {
+                    debug!("{} hash changed, upgrading", name);
+                }
+                info!("upgrading {}", name);
                 let part = resolved_map.get(&name).expect("resolved part exists");
                 upgrade_part(db, &part.path, root_dir, true, true, session.clone()).await?;
             }
@@ -144,8 +149,17 @@ pub async fn deploy_parts_with_explicit_targets(
         } else {
             Origin::Dependency
         };
+        trace!("{} origin={:?}", name, origin);
         let part = resolved_map.get(&name).expect("resolved part exists");
-        info!("Deploying part {} (origin: {})", name, origin);
+        debug!(
+            "installing {} ({})",
+            name,
+            if explicit_target {
+                "requested"
+            } else {
+                "dependency"
+            }
+        );
         deploy_part_with_origin(
             db,
             &part.path,
@@ -383,7 +397,7 @@ pub async fn deploy_part_with_origin(
 
     for replaced_name in &partinfo.replaces {
         if let Some(existing) = db.get_part(replaced_name).await? {
-            info!("Replacing {} with {}", replaced_name, partinfo.name);
+            info!("replacing {} with {}", replaced_name, partinfo.name);
             if existing.origin == crate::database::Origin::External {
                 // External parts have no filesystem footprint; go through
                 // unassume_part so the associated plan record is cleaned up.
@@ -437,7 +451,11 @@ pub async fn deploy_part_with_origin(
         phase_start.elapsed(),
     );
 
-    info!("Deploying {}: {} files", partinfo.name, file_entries.len());
+    info!(
+        "installing {} ({} files)",
+        partinfo.name,
+        file_entries.len()
+    );
 
     phase_start = Instant::now();
     let file_paths: Vec<&str> = file_entries
@@ -620,7 +638,7 @@ pub async fn deploy_part_with_origin(
     } else {
         format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
-    info!("Deployed {}: {}", partinfo.name, ver_rel);
+    info!("{} installed ({})", partinfo.name, ver_rel);
 
     log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
 

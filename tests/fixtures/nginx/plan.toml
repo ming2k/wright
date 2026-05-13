@@ -27,7 +27,7 @@ static = false
 debug = false
 ccache = true
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -36,7 +36,7 @@ patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
 """
 
-[lifecycle.configure]
+[pipeline.configure]
 executor = "shell"
 isolation = "strict"
 env = { CFLAGS = "-O2 -pipe -march=x86-64", CXXFLAGS = "${CFLAGS}" }
@@ -50,7 +50,7 @@ cd ${WORKDIR}
     --with-pcre-jit
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 executor = "shell"
 isolation = "strict"
 env = { MAKEFLAGS = "-j${NPROC}" }
@@ -59,7 +59,7 @@ cd ${WORKDIR}
 make
 """
 
-[lifecycle.check]
+[pipeline.check]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -67,7 +67,7 @@ cd ${WORKDIR}
 make test
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "strict"
 script = """

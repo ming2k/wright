@@ -141,9 +141,14 @@ Perform system health checks covering database integrity, file conflicts,
 shadowed files, and runtime dependency resolution. With `--deep`, walk each
 deployed part's ELF binaries and verify their `DT_NEEDED` entries.
 
+With `--files`, verify every deployed file recorded in the database exists on
+disk (and is the correct type: file/symlink/directory). Use this to detect
+files deleted by external tools or partially-uninstalled parts.
+
 | Flag | Description |
 |------|-------------|
 | `--deep` | Walk ELF binaries and verify `DT_NEEDED` entries |
+| `--files` | Verify every deployed file exists on disk |
 | `--integrity-only` | Only run integrity checks (database, file conflicts, shadows) |
 
 ### `wright history [PART]`
@@ -154,9 +159,9 @@ part when specified.
 ### `wright doctor`
 
 Run comprehensive system health checks: database integrity, file conflicts,
-registry dependency resolution, ELF `DT_NEEDED` verification, and a global
-`parts_dir` dependency closure scan. Use after batch deployments to detect
-missing providers and stale dependencies.
+deployed file existence, registry dependency resolution, ELF `DT_NEEDED`
+verification, and a global `parts_dir` dependency closure scan. Use after
+batch deployments to detect missing files, providers, and stale dependencies.
 
 ## Build & Packaging
 
@@ -173,11 +178,11 @@ wright build freetype --until-stage=staging
 | Flag | Description |
 |------|-------------|
 | `-c`, `--clean` | Clear the forge workspace before building |
-| `-R`, `--rebuild` | Reforge from scratch: bypass stage checkpoints and re-run all lifecycle stages |
-| `--stage <NAME>` | Run only the specified lifecycle stages; may be repeated |
+| `-R`, `--rebuild` | Reforge from scratch: bypass stage checkpoints and re-run all pipeline stages |
+| `--stage <NAME>` | Run only the specified pipeline stages; may be repeated |
 | `--force-stage <NAME>` | Force re-run of a specific stage even if its checkpoint is valid |
 | `--until-stage <NAME>` | Run a normal forge pipeline and stop after the specified stage |
-| `--skip-check` | Skip the lifecycle `check` stage |
+| `--skip-check` | Skip the pipeline `check` stage |
 | `--mvp` | Forge using the MVP dependency set from mvp.toml |
 | `--fetch` | Download sources only; do not forge |
 | `--checksum` | Compute and update SHA256 checksums in plan.toml |

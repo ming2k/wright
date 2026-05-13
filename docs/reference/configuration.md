@@ -55,7 +55,7 @@ retry_count = 3
 | `logs_dir` | `/var/log/wright` | reserved operation log directory |
 | `executors_dir` | `/etc/wright/executors` | custom executor directory |
 | `build_dir` | `/var/tmp/wright/workshop` | build work directory |
-| `default_isolation` | `strict` | default lifecycle isolation |
+| `default_isolation` | `strict` | default pipeline isolation |
 | `ccache` | `false` | global ccache default |
 | `memory_limit` | unset | virtual memory limit in MB |
 | `cpu_time_limit` | unset | per-process CPU seconds |

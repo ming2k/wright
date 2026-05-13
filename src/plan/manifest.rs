@@ -188,8 +188,8 @@ pub struct PlanManifest {
     pub relations: Relations,
     pub sources: Sources,
     pub options: ForgeOptions,
-    pub lifecycle: HashMap<String, LifecycleStage>,
-    pub lifecycle_order: Option<LifecycleOrder>,
+    pub pipeline: HashMap<String, PipelineStage>,
+    pub pipeline_order: Option<PipelineOrder>,
     pub mvp: Option<PhaseConfig>,
     /// Fabricate output configuration.
     pub outputs: Option<OutputConfig>,
@@ -236,8 +236,8 @@ pub struct ForgeOptions {
     pub debug: bool,
     #[serde(default = "default_true")]
     pub ccache: bool,
-    /// Plan-wide environment variables injected into every lifecycle stage.
-    /// Per-stage `[lifecycle.<stage>.env]` takes precedence over these.
+    /// Plan-wide environment variables injected into every pipeline stage.
+    /// Per-stage `[pipeline.<stage>.env]` takes precedence over these.
     /// Use this to set tool-specific parallelism (e.g. MAKEFLAGS, GOFLAGS)
     /// or any other build knobs the script needs.
     #[serde(default)]
@@ -282,7 +282,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct LifecycleStage {
+pub struct PipelineStage {
     #[serde(default = "default_executor")]
     pub executor: String,
     #[serde(default = "default_isolation_level")]
@@ -302,7 +302,7 @@ fn default_isolation_level() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct LifecycleOrder {
+pub struct PipelineOrder {
     pub stages: Vec<String>,
 }
 
@@ -322,9 +322,9 @@ pub struct PhaseConfig {
     #[serde(default)]
     pub runtime_deps: Vec<String>,
     #[serde(default)]
-    pub lifecycle: HashMap<String, LifecycleStage>,
+    pub pipeline: HashMap<String, PipelineStage>,
     #[serde(default)]
-    pub lifecycle_order: Option<LifecycleOrder>,
+    pub pipeline_order: Option<PipelineOrder>,
 }
 
 impl PlanManifest {
@@ -371,8 +371,8 @@ impl PlanManifest {
             ));
         }
 
-        // Validate lifecycle stage names
-        let stages: Vec<&str> = if let Some(ref order) = self.lifecycle_order {
+        // Validate pipeline stage names
+        let stages: Vec<&str> = if let Some(ref order) = self.pipeline_order {
             order.stages.iter().map(|s| s.as_str()).collect()
         } else {
             crate::forge::pipeline::DEFAULT_STAGES.to_vec()
@@ -383,10 +383,10 @@ impl PlanManifest {
             valid_names.insert(format!("pre_{}", stage));
             valid_names.insert(format!("post_{}", stage));
         }
-        for key in self.lifecycle.keys() {
+        for key in self.pipeline.keys() {
             if !valid_names.contains(key) {
                 return Err(WrightError::ValidationError(format!(
-                    "unknown lifecycle stage '{}'. Valid stages: {}",
+                    "unknown pipeline stage '{}'. Valid stages: {}",
                     key,
                     stages
                         .iter()
@@ -471,8 +471,8 @@ impl PlanManifest {
             }
         }
 
-        // Validate individual lifecycle stage isolation
-        for (name, stage) in &self.lifecycle {
+        // Validate individual pipeline stage isolation
+        for (name, stage) in &self.pipeline {
             if let Err(e) = stage.isolation.parse::<crate::isolation::IsolationLevel>() {
                 return Err(WrightError::ValidationError(format!(
                     "stage '{}': invalid isolation level '{}': {}",
@@ -609,7 +609,7 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "none"
 script = """
@@ -619,14 +619,14 @@ int main() { printf("Hello, wright!\\n"); return 0; }
 EOF
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 executor = "shell"
 isolation = "none"
 script = """
 gcc -o hello hello.c
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -639,9 +639,9 @@ install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
         assert_eq!(manifest.metadata.release, 1);
         assert_eq!(manifest.metadata.arch, "x86_64");
         assert_eq!(manifest.metadata.epoch, 0);
-        assert!(manifest.lifecycle.contains_key("prepare"));
-        assert!(manifest.lifecycle.contains_key("compile"));
-        assert!(manifest.lifecycle.contains_key("staging"));
+        assert!(manifest.pipeline.contains_key("prepare"));
+        assert!(manifest.pipeline.contains_key("compile"));
+        assert!(manifest.pipeline.contains_key("staging"));
     }
 
     #[test]
@@ -672,7 +672,7 @@ static = false
 debug = false
 ccache = true
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -680,7 +680,7 @@ cd ${BUILD_DIR}
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 """
 
-[lifecycle.configure]
+[pipeline.configure]
 executor = "shell"
 isolation = "strict"
 env = { CFLAGS = "-O2 -pipe" }
@@ -689,7 +689,7 @@ cd ${BUILD_DIR}
 ./configure --prefix=/usr
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -697,7 +697,7 @@ cd ${BUILD_DIR}
 make
 """
 
-[lifecycle.check]
+[pipeline.check]
 executor = "shell"
 isolation = "strict"
 optional = true
@@ -706,7 +706,7 @@ cd ${BUILD_DIR}
 make test
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -732,7 +732,7 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
         assert_eq!(manifest.relations.provides, vec!["http-server"]);
         assert_eq!(manifest.sources.entries.len(), 2);
         assert!(!manifest.options.static_);
-        assert!(manifest.lifecycle.contains_key("check"));
+        assert!(manifest.pipeline.contains_key("check"));
 
         let scripts = manifest.deploy_scripts.as_ref().unwrap();
         assert!(scripts.post_install.is_some());
@@ -752,6 +752,40 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
             }
             _ => panic!("expected Multi output config"),
         }
+    }
+
+    #[test]
+    fn test_parse_with_plan_section() {
+        let toml_str = r#"
+[plan]
+name = "hello"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.metadata.name, "hello");
+        assert_eq!(manifest.metadata.version.as_deref(), Some("1.0.0"));
+    }
+
+    #[test]
+    fn test_parse_with_mixed_metadata() {
+        let toml_str = r#"
+name = "overridden"
+[plan]
+name = "hello"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        // Top-level should override [plan] section in my merge implementation
+        assert_eq!(manifest.metadata.name, "overridden");
+        assert_eq!(manifest.metadata.version.as_deref(), Some("1.0.0"));
     }
 
     #[test]
@@ -820,10 +854,10 @@ license = "GPL-3.0-or-later"
 arch = "x86_64"
 
 
-[lifecycle.compile]
+[pipeline.compile]
 script = "make -j4"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
@@ -877,7 +911,7 @@ license = "BSD-2-Clause"
 arch = "x86_64"
 
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
@@ -922,7 +956,7 @@ license = "MIT"
 arch = "x86_64"
 
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "true"
 
 [[output]]
@@ -1257,7 +1291,7 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
@@ -1295,7 +1329,7 @@ license = "GPL-3.0-or-later"
 arch = "x86_64"
 
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "make DESTDIR=${STAGING_DIR} install"
 
 [[output]]
@@ -1344,7 +1378,7 @@ arch = "x86_64"
             r#"
 build_deps = ["gcc"]
 
-[lifecycle.configure]
+[pipeline.configure]
 script = "echo mvp"
 "#,
         )
@@ -1354,7 +1388,7 @@ script = "echo mvp"
         let mvp = manifest.mvp.as_ref().unwrap();
         assert_eq!(mvp.build_deps, vec!["gcc"]);
         assert_eq!(
-            mvp.lifecycle
+            mvp.pipeline
                 .get("configure")
                 .map(|stage| stage.script.as_str()),
             Some("echo mvp")
@@ -1375,7 +1409,7 @@ arch = "x86_64"
         assert!(manifest.runtime_deps.is_empty());
         assert!(manifest.build_deps.is_empty());
         assert!(manifest.sources.entries.is_empty());
-        assert!(manifest.lifecycle.is_empty());
+        assert!(manifest.pipeline.is_empty());
         assert!(manifest.deploy_scripts.is_none());
         assert!(manifest.backup.is_none());
         assert!(!manifest.options.skip_fhs_check);
@@ -1554,7 +1588,7 @@ post_install = "ldconfig"
     }
 
     #[test]
-    fn test_parse_lifecycle_outputs_rejected() {
+    fn test_parse_pipeline_outputs_rejected() {
         let toml_str = r#"
 name = "test"
 version = "1.0.0"
@@ -1563,16 +1597,16 @@ description = "test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "true"
 
-[lifecycle.outputs]
+[pipeline.outputs]
 script = "strip ${STAGING_DIR}/usr/bin/test"
 "#;
         let err = PlanManifest::parse(toml_str).unwrap_err();
         let msg = format!("{}", err);
         assert!(
-            msg.contains("unknown lifecycle stage 'outputs'"),
+            msg.contains("unknown pipeline stage 'outputs'"),
             "expected validation error for 'outputs' stage, got: {}",
             msg
         );

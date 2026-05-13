@@ -1,7 +1,7 @@
 # Isolation Race Handling
 
 Known race conditions and filesystem traps that every contributor should
-understand before touching `src/isolation/`, lifecycle execution, or build
+understand before touching `src/isolation/`, pipeline execution, or build
 output slicing.
 
 For the user-facing architecture model, see

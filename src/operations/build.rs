@@ -13,6 +13,7 @@ use crate::forge::Forger;
 use crate::operations::drive::{DriveOptions, drive_batches};
 use crate::plan::manifest::PlanManifest;
 use crate::resolve::{DepDomain, ForgeExecutionPlan, ForgeOptions, create_execution_plan};
+use crate::util::progress::{self, ProgressBarGuard};
 
 pub async fn execute_build(
     args: BuildArgs,
@@ -27,6 +28,9 @@ pub async fn execute_build(
         crate::util::lock::LockMode::Exclusive,
     )
     .map_err(|e| WrightError::LockError(format!("failed to acquire build command lock: {}", e)))?;
+
+    let flow_spinner = progress::new_build_flow_spinner();
+    let _flow_guard = ProgressBarGuard(flow_spinner.clone());
 
     let mut all_targets = args.targets;
     use std::io::IsTerminal;
@@ -58,6 +62,7 @@ pub async fn execute_build(
         if plan_path.is_dir() {
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
                 .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", target, e)))?;
+            flow_spinner.set_message("building".to_string());
             let forger = Forger::new(config.clone());
             let mut extra_env = HashMap::new();
             if args.mvp {
@@ -77,7 +82,6 @@ pub async fn execute_build(
                     &extra_env,
                     verbose > 0,
                     config.build.nproc_per_isolation,
-                    None,
                     None,
                     None,
                 )
@@ -100,6 +104,8 @@ pub async fn execute_build(
         mvp: args.mvp,
         nproc_per_isolation: config.build.nproc_per_isolation,
     };
+
+    flow_spinner.set_message("resolving build graph".to_string());
 
     let plan = create_execution_plan(
         &config,
@@ -127,6 +133,7 @@ pub async fn execute_build(
             config,
             db_path,
             quiet,
+            flow_progress: Some(flow_spinner.clone()),
         },
         resources.concurrent_tasks,
         |task| {
@@ -204,7 +211,6 @@ pub async fn execute_build(
                         config.build.nproc_per_isolation,
                         Some(configure_lock),
                         Some(compile_lock),
-                        None,
                     )
                     .await
                     .map(|_| ())

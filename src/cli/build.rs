@@ -33,7 +33,7 @@ pub struct BuildArgs {
     #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
 
-    /// Run only the specified lifecycle stages, in pipeline order; may be repeated.
+    /// Run only the specified pipeline stages, in pipeline order; may be repeated.
     /// Skips fetch/verify/extract — requires a previous full forge.
     /// Example: --stage=check --stage=staging
     #[arg(long, conflicts_with = "until_stage")]
@@ -45,12 +45,12 @@ pub struct BuildArgs {
     #[arg(long)]
     pub force_stage: Vec<String>,
 
-    /// Run a normal forge pipeline and stop after the specified lifecycle stage.
+    /// Run a normal forge pipeline and stop after the specified pipeline stage.
     /// Unlike `--stage`, this still runs all prior stages in order.
     #[arg(long, conflicts_with = "stage")]
     pub until_stage: Option<String>,
 
-    /// Skip the lifecycle `check` stage during a normal full forge.
+    /// Skip the pipeline `check` stage during a normal full forge.
     /// Unlike `--stage`, this still runs the full pipeline (including fetch/verify/extract).
     #[arg(long, conflicts_with = "stage")]
     pub skip_check: bool,
@@ -62,7 +62,7 @@ pub struct BuildArgs {
     pub clean: bool,
 
     /// Reforge from scratch: bypass stage checkpoints and re-run all
-    /// lifecycle stages. Use this when you have modified a plan's forge
+    /// pipeline stages. Use this when you have modified a plan's forge
     /// script or dependencies and need a clean reforge.
     #[arg(long, short = 'R')]
     pub rebuild: bool,

@@ -1,4 +1,4 @@
-# Plan Lifecycle
+# Plan Pipeline
 
 This document follows a single **Delivery** — the complete journey of a plan
 through resolve, forge, seal, and deploy.
@@ -18,7 +18,7 @@ flowchart TD
 
     subgraph Forge["2. Forge"]
         FF["fetch / verify / extract"]
-        FP["lifecycle pipeline stages"]
+        FP["pipeline stages"]
         FS["slice outputs"]
     end
 
@@ -109,16 +109,16 @@ Now the plan enters the forge. `Forger::build` (`src/forge/mod.rs`) is responsib
 
 ### 2.1 Source Materialization
 
-The forge first decides whether the source tree in `work/` can be reused. It computes a **build key** — a SHA256 hash of plan metadata, declared sources, lifecycle scripts, and executors — and compares it against `.build_key` in the build directory.
+The forge first decides whether the source tree in `work/` can be reused. It computes a **build key** — a SHA256 hash of plan metadata, declared sources, pipeline scripts, and executors — and compares it against `.build_key` in the build directory.
 
 - If the key matches and `.extracted` exists, `fetch`/`verify`/`extract` are skipped entirely.
 - If the key differs, `work/` is wiped and sources are fetched from the source cache (`source_dir/`), verified against their SHA256 checksums, and extracted into `work/`.
 
 The source cache is persistent across forges. A tarball is only downloaded again if it is missing or its checksum fails.
 
-### 2.2 Lifecycle Pipeline
+### 2.2 Pipeline
 
-With sources ready, the **Pipeline** runs.  `LifecyclePipeline::run` (`src/forge/pipeline.rs`) executes the plan's lifecycle stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
+With sources ready, the **Pipeline** runs.  `Pipeline::run` (`src/forge/pipeline.rs`) executes the plan's pipeline stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
 
 Before each stage, the pipeline computes an input hash chained from the stage's script, environment variables, and the preceding stage's hash. If `.wright-pipeline.json` records a matching hash with status `COMPLETED`, the stage is skipped. On success, the hash is committed. A change anywhere upstream cascades invalidation through all downstream stages. See [Checkpoint Recovery](checkpoint-recovery.md) for the full design.
 

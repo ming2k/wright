@@ -16,10 +16,11 @@ wright.toml
 *.pyc
 
 # AI assistants
+AGENTS.md
+CLAUDE.md
+GEMINI.md
 .claude/
 .codex/
 .gemini/
 .kimi/
 .opencode/
-CLAUDE.md
-AGENTS.md

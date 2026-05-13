@@ -7,15 +7,16 @@ use crate::error::{Result, WrightError};
 
 use super::ForgeOptions;
 use super::{
-    BackupConfig, DeployScripts, DiscardRule, FabricateHooks, LifecycleOrder, LifecycleStage,
-    OutputConfig, PhaseConfig, PlanManifest, PlanMetadata, Relations, Source, Sources,
+    BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig, PhaseConfig,
+    PipelineOrder, PipelineStage, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RawManifest {
+struct RawManifest {
+    #[serde(default)]
+    pub plan: Option<PlanMetadata>,
     #[serde(flatten)]
-    pub plan: PlanMetadata,
+    pub metadata: RawPlanMetadata,
     #[serde(default)]
     pub build_deps: Vec<String>,
     #[serde(default)]
@@ -25,9 +26,9 @@ pub(super) struct RawManifest {
     #[serde(default)]
     pub options: ForgeOptions,
     #[serde(default)]
-    pub lifecycle: Option<HashMap<String, toml::Value>>,
+    pub pipeline: Option<HashMap<String, toml::Value>>,
     #[serde(default)]
-    pub lifecycle_order: Option<LifecycleOrder>,
+    pub pipeline_order: Option<PipelineOrder>,
     /// Top-level [hooks] — legacy syntax; use [[output]].hooks instead.
     #[serde(default)]
     pub hooks: Option<FabricateHooks>,
@@ -35,6 +36,35 @@ pub(super) struct RawManifest {
     pub output: Option<toml::Value>,
     #[serde(default)]
     pub discard: Vec<DiscardRule>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawPlanMetadata {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub release: Option<u32>,
+    pub epoch: Option<u32>,
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub arch: Option<String>,
+    pub url: Option<String>,
+    pub maintainer: Option<String>,
+}
+
+impl RawPlanMetadata {
+    fn merge(self, other: PlanMetadata) -> PlanMetadata {
+        PlanMetadata {
+            name: self.name.unwrap_or(other.name),
+            version: self.version.or(other.version),
+            release: self.release.unwrap_or(other.release),
+            epoch: self.epoch.unwrap_or(other.epoch),
+            description: self.description.unwrap_or(other.description),
+            license: self.license.unwrap_or(other.license),
+            arch: self.arch.unwrap_or(other.arch),
+            url: self.url.or(other.url),
+            maintainer: self.maintainer.or(other.maintainer),
+        }
+    }
 }
 
 struct OutputSection {
@@ -185,17 +215,46 @@ impl PlanManifest {
     pub fn parse(content: &str) -> Result<Self> {
         let raw: RawManifest = toml::from_str(content)?;
         let RawManifest {
-            plan: metadata,
+            plan: section_plan,
+            metadata: flattened_metadata,
             build_deps,
             link_deps,
             sources: raw_sources,
             options,
-            lifecycle: raw_lifecycle,
-            lifecycle_order,
+            pipeline: raw_pipeline,
+            pipeline_order,
             hooks,
             output,
             discard,
         } = raw;
+
+        let metadata = if let Some(plan) = section_plan {
+            flattened_metadata.merge(plan)
+        } else {
+            // If no [plan] section, we expect all required fields in the flattened metadata.
+            if flattened_metadata.name.is_none() {
+                return Err(WrightError::ParseError("missing field `name`".to_string()));
+            }
+            PlanMetadata {
+                name: flattened_metadata.name.unwrap(),
+                version: flattened_metadata.version,
+                release: flattened_metadata.release.ok_or_else(|| {
+                    WrightError::ParseError("missing field `release`".to_string())
+                })?,
+                epoch: flattened_metadata.epoch.unwrap_or(0),
+                description: flattened_metadata.description.ok_or_else(|| {
+                    WrightError::ParseError("missing field `description`".to_string())
+                })?,
+                license: flattened_metadata.license.ok_or_else(|| {
+                    WrightError::ParseError("missing field `license`".to_string())
+                })?,
+                arch: flattened_metadata
+                    .arch
+                    .ok_or_else(|| WrightError::ParseError("missing field `arch`".to_string()))?,
+                url: flattened_metadata.url,
+                maintainer: flattened_metadata.maintainer,
+            }
+        };
 
         let sources = match raw_sources {
             Some(toml::Value::Array(arr)) => {
@@ -224,16 +283,16 @@ impl PlanManifest {
             }
         };
 
-        let mut lifecycle_stages: HashMap<String, LifecycleStage> = HashMap::new();
-        if let Some(raw_lifecycle) = raw_lifecycle {
-            for (key, value) in raw_lifecycle {
-                let stage: LifecycleStage = value.try_into().map_err(|e: toml::de::Error| {
+        let mut pipeline_stages: HashMap<String, PipelineStage> = HashMap::new();
+        if let Some(raw_pipeline) = raw_pipeline {
+            for (key, value) in raw_pipeline {
+                let stage: PipelineStage = value.try_into().map_err(|e: toml::de::Error| {
                     WrightError::ParseError(format!(
-                        "failed to parse lifecycle stage '{}': {}",
+                        "failed to parse pipeline stage '{}': {}",
                         key, e
                     ))
                 })?;
-                lifecycle_stages.insert(key, stage);
+                pipeline_stages.insert(key, stage);
             }
         }
 
@@ -254,8 +313,8 @@ impl PlanManifest {
             relations,
             sources,
             options,
-            lifecycle: lifecycle_stages,
-            lifecycle_order,
+            pipeline: pipeline_stages,
+            pipeline_order,
             mvp: None,
             outputs,
             discard,

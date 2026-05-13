@@ -1,7 +1,7 @@
 # Checkpoint Recovery
 
 Wright's pipeline stage engine provides deterministic incremental rebuilds
-through a content-addressed checkpoint system.  Every lifecycle stage records
+through a content-addressed checkpoint system.  Every pipeline stage records
 its execution state and input fingerprint to a JSON state machine, forming a
 hash chain that detects upstream configuration changes and cascades
 invalidation to all downstream stages automatically.
@@ -21,7 +21,7 @@ hash(stage_N) = sha256(script_N + env_N + hash(stage_{N-1}))
 
 Each stage's fingerprint incorporates:
 
-1. The literal text of the stage's lifecycle script.
+1. The literal text of the stage's pipeline script.
 2. All environment variables visible to that stage (sorted for determinism).
 3. The previous stage's fingerprint, creating a blockchain-style chain.
 
@@ -144,7 +144,7 @@ for the system instance) and uses CAS filenames: `[sha256_hash]-[filename]`.
     └── linux-a1b2c3d4/
 ```
 
-This design decouples network downloads from sandbox lifecycle:
+This design decouples network downloads from sandbox pipeline:
 
 - Deleting a build sandbox (or running `wright clean`) removes only the
   hard-links in `layers/01-fetch/`.
@@ -161,7 +161,7 @@ performs a four-step protocol:
 
 ### 1. Compute expected hashes
 
-For each stage in the lifecycle pipeline, compute what its `input_hash`
+For each stage in the pipeline, compute what its `input_hash`
 **should be** based on the current plan manifest and environment:
 
 ```
@@ -181,7 +181,7 @@ rewind_point = first stage where:
 ```
 
 A rewind happens when:
-- The user edited a lifecycle script (the stage's own hash changes).
+- The user edited a pipeline script (the stage's own hash changes).
 - The user changed an environment variable (the stage's own hash changes).
 - An upstream stage's hash changed (cascade: all downstream hashes change).
 - A stage previously failed and its status is FAILED.

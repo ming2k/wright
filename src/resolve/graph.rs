@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{debug, info, trace};
 
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
@@ -63,6 +63,7 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if traversal_seen.insert(dep_plan_name.clone()) {
+                trace!("{} depth {} enqueued", dep_plan_name, dep_depth);
                 queue.push_back((dep_plan_name.clone(), dep_depth));
             }
 
@@ -78,10 +79,8 @@ pub(super) async fn expand_missing_dependencies(
                         .await?
                 {
                     if let Some(plan_path) = index.path_for(&dep_plan_name) {
-                        info!(
-                            "Scheduling dependency (depth {}, reason: {}): {}",
-                            dep_depth, label, dep_plan_name,
-                        );
+                        info!("resolving dependency: {}", dep_plan_name);
+                        debug!("{} added (reason: {})", dep_plan_name, label);
                         plans_to_build.insert(plan_path.clone());
                         build_set.insert(dep_plan_name.clone());
                     }
@@ -128,6 +127,10 @@ pub(super) async fn expand_missing_dependencies(
                         }
 
                         if traversal_seen.insert(rdep_plan_name.clone()) {
+                            trace!(
+                                "{} depth {} enqueued (from {})",
+                                rdep_plan_name, rdep_depth, build_dep_plan_name
+                            );
                             queue.push_back((rdep_plan_name.clone(), rdep_depth));
                         }
 
@@ -143,8 +146,12 @@ pub(super) async fn expand_missing_dependencies(
                             {
                                 if let Some(rdep_plan_path) = index.path_for(&rdep_plan_name) {
                                     info!(
-                                        "Scheduling transitive runtime dependency of {} (depth {}, reason: {}): {}",
-                                        build_dep_plan_name, rdep_depth, label, rdep_plan_name,
+                                        "resolving dependency: {} (needed by {})",
+                                        rdep_plan_name, build_dep_plan_name,
+                                    );
+                                    debug!(
+                                        "{} added (reason: {}, needed by {})",
+                                        rdep_plan_name, label, build_dep_plan_name,
                                     );
                                     plans_to_build.insert(rdep_plan_path.clone());
                                     build_set.insert(rdep_plan_name.clone());

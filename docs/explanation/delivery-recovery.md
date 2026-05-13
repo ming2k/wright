@@ -32,7 +32,7 @@ Before forging a plan, a *closure fingerprint* is computed:
 sha256( build_key(plan) + dep₁.fingerprint + dep₂.fingerprint + ... )
 ```
 
-`build_key` hashes the plan's metadata, source URLs/SHAs, and lifecycle
+`build_key` hashes the plan's metadata, source URLs/SHAs, and pipeline
 scripts.  Dependency fingerprints are recursively included so that a change
 anywhere in the transitive build tree invalidates all dependents.
 

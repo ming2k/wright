@@ -5,7 +5,7 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -15,14 +15,14 @@ int main() { printf("Hello, wright!\\n"); return 0; }
 EOF
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 executor = "shell"
 isolation = "strict"
 script = """
 gcc -o hello hello.c
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "strict"
 script = """

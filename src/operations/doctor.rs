@@ -5,40 +5,29 @@ use owo_colors::OwoColorize;
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::operations::check;
 use crate::part::archive::read_archive_meta;
 use crate::part::soname::SonameIndex;
 use crate::part::version;
 
 /// Run comprehensive system health checks.
 ///
-/// Performs all checks from `check --deep` and additionally verifies the
-/// dependency closure of archives in parts_dir. Intended to be run manually
-/// after batch installations.
+/// Delegates to `health::run_standard_checks` (integrity + files + deps + ELF)
+/// and additionally verifies the dependency closure of archives in parts_dir.
 pub async fn execute_doctor(
     db: &InstalledDb,
     root_dir: &Path,
     config: &GlobalConfig,
 ) -> Result<()> {
-    let mut total_issues = 0usize;
-
     println!("Running system health checks...\n");
 
-    // 1. Integrity checks (database, file conflicts, shadows)
-    total_issues += check::integrity_check(db).await?;
-    println!();
+    let mut total_issues = super::health::run_standard_checks(
+        db, root_dir, None,  // only_part
+        true,  // deep
+        false, // integrity_only
+        true,  // check_files
+    )
+    .await?;
 
-    // 2. Registry-level dependency checks
-    let registry_findings = check::registry_check(db, None).await?;
-    check::print_registry_findings(&registry_findings);
-    total_issues += registry_findings.len();
-
-    // 3. ELF-level dependency verification (like `check --deep`)
-    let elf_findings = check::elf_check(db, root_dir, None).await?;
-    check::print_elf_findings(&elf_findings);
-    total_issues += elf_findings.missing.len() + elf_findings.unmapped.len();
-
-    // 4. Global parts_dir dependency closure check
     let closure_issues = check_parts_dir_closure(config).await?;
     total_issues += closure_issues;
 
@@ -61,8 +50,6 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         return Ok(0);
     }
 
-    // Count archives first — skip the check entirely when the directory
-    // is empty so we do not report false-positives.
     let mut archive_count = 0usize;
     for entry in std::fs::read_dir(parts_dir)
         .map_err(|e| WrightError::PartError(format!("read {}: {}", parts_dir.display(), e)))?
@@ -84,7 +71,6 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
 
     println!("Checking parts_dir dependency closure...");
 
-    // Build a global SONAME index from *all* archives in parts_dir.
     let index = SonameIndex::scan_parts_dir(parts_dir).unwrap_or_else(|e| {
         tracing::warn!("doctor: failed to build SONAME index: {}", e);
         SonameIndex::default()
@@ -143,8 +129,6 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
     Ok(issues)
 }
 
-/// Resolve a dependency string to the set of output names it could route to,
-/// using the global SONAME index.
 fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {
     let mut targets = Vec::new();
     if dep.is_empty() {
@@ -162,8 +146,6 @@ fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {
             targets.push(o.clone());
         }
     } else {
-        // Unknown plan — fall back to treating the token as an output name,
-        // consistent with the lint logic in `targets_for_dep`.
         targets.push(plan);
     }
     targets

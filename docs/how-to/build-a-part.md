@@ -17,13 +17,13 @@ url   = "https://zlib.net"
 uri = "https://zlib.net/zlib-1.3.1.tar.gz"
 sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 
-[lifecycle.configure]
+[pipeline.configure]
 script = "./configure --prefix=/usr"
 
-[lifecycle.compile]
+[pipeline.compile]
 script = "make"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = "make DESTDIR=$STAGING_DIR install"
 ```
 
@@ -53,14 +53,14 @@ When tuning a stage without re-extracting sources every time, use `--stage` to r
 # Full first build (extracts, configures, compiles, and stages outputs)
 wright build mypart
 
-# Edit lifecycle.staging in plan.toml, then re-run the output phases:
+# Edit pipeline.staging in plan.toml, then re-run the output phases:
 wright build mypart --stage=staging
 ```
 
 When you repeat a full `wright build mypart` without changes (same build key),
 Wright skips stages that already completed successfully (they have
 `.wright-stage-<name>` sentinels in `work/`).  Use `--force` when you want to
-re-run all lifecycle stages — for example after a toolchain update that should
+re-run all pipeline stages — for example after a toolchain update that should
 invalidate cached compilation results:
 
 ```bash

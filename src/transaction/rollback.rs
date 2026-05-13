@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -112,7 +112,9 @@ impl RollbackState {
     pub fn commit(&self) {
         if let Some(ref path) = self.journal_path {
             if let Err(e) = std::fs::remove_file(path) {
-                warn!("Failed to remove rollback journal: {}", e);
+                if e.kind() != io::ErrorKind::NotFound {
+                    warn!("Failed to remove rollback journal: {}", e);
+                }
             }
         }
     }
@@ -234,13 +236,14 @@ impl RollbackState {
             );
         }
 
-        if let Err(e) = std::fs::remove_file(path) {
-            warn!("Failed to remove replayed journal: {}", e);
-        } else {
-            info!(
-                "Filesystem transaction recovery completed; removed rollback journal: {}",
-                path.display()
-            );
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                warn!("Failed to remove replayed journal: {}", e);
+            }
+            _ => {
+                info!("Cleanup complete");
+                debug!("Removed rollback journal: {}", path.display());
+            }
         }
     }
 }

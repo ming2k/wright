@@ -107,9 +107,7 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
             crash_recover(&db_path).await;
             build::dispatch_build(args, config, &db_path, verbose, quiet).await
         }
-        Commands::Lint(args) => {
-            build::dispatch_lint(args, config).await
-        }
+        Commands::Lint(args) => build::dispatch_lint(args, config).await,
         Commands::Launch(mut args) => {
             let root_dir = args.root.take().unwrap_or_else(|| PathBuf::from("/"));
             let db_path = resolve_db(Some(&root_dir), top_db, config);

@@ -18,7 +18,7 @@ use crate::error::{Result, WrightError};
 /// A part's CAS fingerprint captures the full transitive build closure:
 ///
 ///   sha256(
-///     plan.build_key()           // sources + lifecycle scripts
+///     plan.build_key()           // sources + pipeline scripts
 ///     + dep1.fingerprint         // fingerprint of build dependency 1
 ///     + dep2.fingerprint         // fingerprint of build dependency 2
 ///     + ...
@@ -141,7 +141,8 @@ impl CasStore {
             }
         }
 
-        info!("CAS: stored {} -> {}", name, dest.display());
+        info!("cached {}", name);
+        debug!("CAS: {} stored at {}", name, dest.display());
         Ok(dest)
     }
 

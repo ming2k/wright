@@ -47,7 +47,7 @@ async fn run_migrator(pool: &SqlitePool, migrator: Migrator, label: &str) -> Res
     drop(conn);
 
     if pending > 0 {
-        info!("Running {} migrations ({} pending)...", label, pending);
+        info!("updating {} ({} changes pending)", label, pending);
     }
 
     migrator.run(pool).await.map_err(|e| {

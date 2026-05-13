@@ -135,11 +135,26 @@ impl PlanIndex {
         let content = std::fs::read_to_string(path).map_err(|e| WrightError::IoError(e))?;
         #[derive(serde::Deserialize)]
         struct NameOnly {
+            name: Option<String>,
+            plan: Option<PlanTable>,
+        }
+        #[derive(serde::Deserialize)]
+        struct PlanTable {
             name: String,
         }
         let partial: NameOnly = toml::from_str(&content).map_err(|e| {
             WrightError::ValidationError(format!("invalid plan.toml '{}': {}", path.display(), e))
         })?;
-        Ok(partial.name)
+
+        if let Some(name) = partial.name {
+            Ok(name)
+        } else if let Some(plan) = partial.plan {
+            Ok(plan.name)
+        } else {
+            Err(WrightError::ValidationError(format!(
+                "invalid plan.toml '{}': missing field 'name'",
+                path.display()
+            )))
+        }
     }
 }

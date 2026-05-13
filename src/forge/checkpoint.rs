@@ -20,7 +20,7 @@ pub const PIPELINE_STAGE_ORDER: &[&str] = &[
 
 /// The persistent state machine written to `.wright-pipeline.json`.
 ///
-/// Records the completion status and input fingerprint for every lifecycle
+/// Records the completion status and input fingerprint for every pipeline
 /// stage, forming a hash chain that detects configuration changes anywhere
 /// upstream and cascades invalidation to all downstream stages.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -115,7 +115,7 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    info!("Upgrading {}: {} files", partinfo.name, new_entries.len());
+    info!("upgrading {} ({} files)", partinfo.name, new_entries.len());
 
     phase_start = Instant::now();
     let file_paths: Vec<&str> = new_entries
@@ -266,7 +266,7 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
     for path in preserved_configs {
-        info!("Preserved config for {}: {}", partinfo.name, path);
+        info!("preserved config for {}", path);
     }
 
     let to_delete_paths: Vec<&str> = existing_files
@@ -284,10 +284,7 @@ pub async fn upgrade_part(
         }
 
         if file.is_config {
-            info!(
-                "Preserving config file for {}: {}",
-                partinfo.name, file.path
-            );
+            info!("preserving config {}", file.path);
             continue;
         }
 
@@ -415,7 +412,7 @@ pub async fn upgrade_part(
         format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
     info!(
-        "Upgraded {}: {} -> {}",
+        "{} upgraded ({} -> {})",
         partinfo.name, installed_ver_rel, new_ver_rel,
     );
     Ok(())

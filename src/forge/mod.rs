@@ -276,10 +276,10 @@ impl Forger {
                 }
             }
         }
-        let mut stage_names: Vec<_> = manifest.lifecycle.keys().collect();
+        let mut stage_names: Vec<_> = manifest.pipeline.keys().collect();
         stage_names.sort();
         for name in stage_names {
-            if let Some(stage) = manifest.lifecycle.get(name) {
+            if let Some(stage) = manifest.pipeline.get(name) {
                 hasher.update(name.as_bytes());
                 hasher.update(stage.script.as_bytes());
                 hasher.update(stage.executor.as_bytes());
@@ -333,7 +333,6 @@ impl Forger {
         nproc_per_isolation: Option<u32>,
         configure_lock: Option<Arc<Mutex<()>>>,
         compile_lock: Option<Arc<Mutex<()>>>,
-        _progress: Option<indicatif::ProgressBar>, // kept for API compatibility; lifecycle bar created internally
     ) -> Result<ForgeResult> {
         let build_root = self.build_root(manifest)?;
         let staging_dir = build_root.join("staging");
@@ -355,7 +354,7 @@ impl Forger {
             let pipeline = pipeline::stage_order_for_manifest(manifest, build_phase);
             if !pipeline.iter().any(|stage| stage == stage_name) {
                 return Err(WrightError::ForgeError(format!(
-                    "stage '{}' not found in lifecycle pipeline",
+                    "stage '{}' not found in pipeline",
                     stage_name
                 )));
             }
@@ -393,12 +392,12 @@ impl Forger {
             }
         }
 
-        let lifecycle_bar = progress::new_plan_lifecycle_spinner(&manifest.metadata.name);
-        let _lifecycle_guard = progress::ProgressBarGuard(lifecycle_bar.clone());
+        let pipeline_bar = progress::new_plan_pipeline_spinner(&manifest.metadata.name);
+        let _pipeline_guard = progress::ProgressBarGuard(pipeline_bar.clone());
 
         if stages.is_empty() {
             if tokio::fs::metadata(&extracted_marker).await.is_err() {
-                lifecycle_bar.set_message("fetching sources".to_string());
+                pipeline_bar.set_message("fetching sources".to_string());
                 self.fetch(manifest, plan_dir).await?;
                 if until_stage == Some("fetch") {
                     return Ok(ForgeResult {
@@ -408,7 +407,7 @@ impl Forger {
                         split_part_dirs: std::collections::HashMap::new(),
                     });
                 }
-                lifecycle_bar.set_message("verifying checksums".to_string());
+                pipeline_bar.set_message("verifying checksums".to_string());
                 self.verify(manifest).await?;
                 if until_stage == Some("verify") {
                     return Ok(ForgeResult {
@@ -419,7 +418,7 @@ impl Forger {
                     });
                 }
 
-                lifecycle_bar.set_message("hard-linking sources".to_string());
+                pipeline_bar.set_message("hard-linking sources".to_string());
                 // Hardlink sources from global cache into the fetch layer.
                 let lm = layers::LayerManager::new(&build_root)?;
                 let fetch_layer = lm.ensure_fetch_layer()?;
@@ -427,7 +426,7 @@ impl Forger {
                     .await?;
 
                 let extract_layer = lm.ensure_extract_layer()?;
-                lifecycle_bar.set_message("extracting sources".to_string());
+                pipeline_bar.set_message("extracting sources".to_string());
                 self.extract(manifest, &extract_layer).await?;
                 tokio::fs::write(&extracted_marker, "").await.map_err(|e| {
                     WrightError::ForgeError(format!(
@@ -449,7 +448,7 @@ impl Forger {
                 }
             } else {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
-                lifecycle_bar.set_message("preparing workspace".to_string());
+                pipeline_bar.set_message("preparing workspace".to_string());
                 self.ensure_source_layers(manifest, &build_root).await?;
                 if matches!(until_stage, Some("fetch" | "verify" | "extract")) {
                     return Ok(ForgeResult {
@@ -513,7 +512,7 @@ impl Forger {
         }
         vars.extend(extra_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let mut pipeline = pipeline::LifecyclePipeline::new(pipeline::LifecycleContext {
+        let mut pipeline = pipeline::Pipeline::new(pipeline::PipelineContext {
             manifest,
             vars: vars.clone(),
             working_dir: &build_root,
@@ -533,16 +532,13 @@ impl Forger {
             configure_lock,
             compile_cpu_count: Some(total_cpus),
             compile_lock,
-            progress: Some(lifecycle_bar),
+            progress: Some(pipeline_bar),
             build_key: build_key.clone(),
         })?;
 
         info!("{}", logging::forge_started(&manifest.metadata.name));
         if let Err(e) = pipeline.run().await {
-            info!(
-                "{}",
-                logging::forge_failed(&manifest.metadata.name)
-            );
+            info!("{}", logging::forge_failed(&manifest.metadata.name));
             return Err(e);
         }
         info!("{}", logging::forge_finished(&manifest.metadata.name));
@@ -561,12 +557,12 @@ impl Forger {
         })
     }
 
-    /// Ensure the built-in source layers exist for lifecycle overlays.
+    /// Ensure the built-in source layers exist for pipeline overlays.
     ///
     /// Older builds extracted directly into `build_root/source`.  Forced
     /// rebuilds can also clear `layers/` while leaving `.extracted` behind.
     /// In both cases, rebuild the fetch/extract layers from the global cache so
-    /// later lifecycle stages can see sources through the stage overlay.
+    /// later pipeline stages can see sources through the stage overlay.
     async fn ensure_source_layers(&self, manifest: &PlanManifest, build_root: &Path) -> Result<()> {
         let lm = layers::LayerManager::new(build_root)?;
         let fetch_layer = lm.layer_dir("fetch");
@@ -577,7 +573,7 @@ impl Forger {
         }
 
         info!(
-            "[{}] repairing missing source layers for lifecycle overlay",
+            "[{}] repairing missing source layers for pipeline overlay",
             manifest.metadata.name
         );
         lm.clear_layer("fetch");
@@ -1562,7 +1558,7 @@ description = "test overlap detection"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -1601,7 +1597,6 @@ include = ["/usr/**"]
                 false,
                 &std::collections::HashMap::new(),
                 false,
-                None,
                 None,
                 None,
                 None,

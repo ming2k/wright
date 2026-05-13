@@ -71,6 +71,10 @@ pub struct FilesArgs {
                   verify their DT_NEEDED entries against the deployed \
                   file ownership table. This catches forgotten declarations \
                   that the registry-level check would miss.\n\n\
+                  With --files, verify that every deployed file recorded in \
+                  the database still exists on disk.  Use this to detect \
+                  partially-uninstalled parts or files deleted by external \
+                  tools.\n\n\
                   Per ADR-0016 the registry is advisory: this command \
                   reports state, it does not change it. Exit code is 0 \
                   when everything resolves and 1 when any unsatisfied \
@@ -90,8 +94,12 @@ pub struct CheckArgs {
     pub deep: bool,
 
     /// Only run integrity checks (database, file conflicts, shadows)
-    #[arg(long, conflicts_with = "deep")]
+    #[arg(long, conflicts_with_all = ["deep", "check_files"])]
     pub integrity_only: bool,
+
+    /// Verify every deployed file exists on disk
+    #[arg(long = "files")]
+    pub check_files: bool,
 
     /// Alternate root directory for file operations
     #[arg(long)]

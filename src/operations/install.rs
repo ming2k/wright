@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::error::{Result, WrightError};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info, trace};
 
 use crate::config::GlobalConfig;
 use crate::database::{InstalledDb, SessionContext};
@@ -75,6 +75,7 @@ impl PlanFingerprints {
                 }
 
                 let closure_fp = CasStore::compute_closure_fingerprint(&build_key, &dep_fps);
+                trace!("{} closure_fp={}", base, &closure_fp[..8]);
 
                 // Insert for both the full task and its bootstrap variant.
                 // Bootstrap tasks get a different fingerprint to distinguish
@@ -90,6 +91,7 @@ impl PlanFingerprints {
                         bp.update(closure_fp.as_bytes());
                         bp.update(b":bootstrap");
                         let bootstrap_fp = format!("{:x}", bp.finalize());
+                        trace!("{}:bootstrap fp={}", base, &bootstrap_fp[..8]);
                         fingerprints.insert(bootstrap_task, bootstrap_fp);
                     }
                 }
@@ -204,17 +206,25 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if !quiet {
+            let bases: Vec<&str> = batch
+                .iter()
+                .map(|t| ForgeExecutionPlan::task_base_name(t))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
             info!(
-                "install batch {}/{}: {} task(s)",
+                "Build batch {}/{}: {}",
                 batch_idx + 1,
                 total_batches,
-                batch.len()
+                bases.join(", ")
             );
         }
 
         // Collect which bases in this batch have CAS hits.
+        // When --force is set, skip CAS lookup entirely so that forge
+        // and seal always run from scratch.
         let mut cas_hit_bases: HashSet<String> = HashSet::new();
-        {
+        if !force {
             let mut bases_seen = HashSet::new();
             for task in batch {
                 let base = ForgeExecutionPlan::task_base_name(task).to_string();
@@ -231,12 +241,14 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     } else {
                         continue;
                     };
+                    trace!("{} CAS check key={}", base, &fp_key[..8]);
                     let part_names = manifest_part_names(manifest);
                     let all_in_cas = part_names
                         .iter()
                         .all(|pn| cas_store.resolve(pn, &fp_key).is_some());
                     if all_in_cas && !part_names.is_empty() {
-                        info!("CAS hit: {} (fingerprint {})", base, &fp_key[..16]);
+                        info!("using cached build for {}", base);
+                        debug!("{} found in cache", base);
                         cas_hit_bases.insert(base);
                     }
                 }
@@ -288,7 +300,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 }
 
                 let force = if !is_bootstrap && plan.is_post_bootstrap_full(&task_for_handle) {
-                    build_opts.force || true
+                    true
                 } else {
                     build_opts.force
                 };
@@ -317,7 +329,6 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                         config.build.nproc_per_isolation,
                         Some(configure_lock),
                         Some(compile_lock),
-                        None,
                     )
                     .await
                     .map(|_| ())

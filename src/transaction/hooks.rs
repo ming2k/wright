@@ -35,7 +35,7 @@ pub(super) fn read_hooks(extract_dir: &Path) -> (Option<String>, Hooks) {
     (None, Hooks::default())
 }
 
-pub(super) fn parse_hooks_from_db(content: &str) -> Hooks {
+fn parse_hooks_from_db(content: &str) -> Hooks {
     if let Ok(parsed) = toml::from_str::<HooksFile>(content) {
         return parsed.hooks;
     }

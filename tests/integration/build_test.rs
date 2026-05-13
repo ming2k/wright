@@ -15,7 +15,7 @@ fn fixture_path(name: &str) -> PathBuf {
 fn load_manifest_without_isolation(name: &str) -> (PlanManifest, PathBuf) {
     let manifest_path = fixture_path(name).join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
-    for stage in manifest.lifecycle.values_mut() {
+    for stage in manifest.pipeline.values_mut() {
         stage.isolation = "none".to_string();
     }
     (manifest, manifest_path.parent().unwrap().to_path_buf())
@@ -43,7 +43,6 @@ async fn test_build_hello_fixture() {
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -77,7 +76,6 @@ async fn test_build_and_archive_hello() {
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -126,12 +124,12 @@ description = "stage resume test"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "none"
 script = "printf x >> ${{WORKDIR}}/prepare-count"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -161,7 +159,6 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -203,7 +200,6 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -233,7 +229,7 @@ link_deps = ["zlib", "libffi"]
 name = "runtime-link-overlap"
 runtime_deps = ["openssl", "zlib"]
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -262,7 +258,6 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -297,7 +292,7 @@ arch = "x86_64"
 
 link_deps = []
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -338,7 +333,6 @@ include = ["/usr/share/doc/**"]
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -365,7 +359,7 @@ description = "test output coverage"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -403,7 +397,6 @@ include = ["/usr/bin/**"]
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -431,7 +424,7 @@ description = "test output coverage"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -473,7 +466,6 @@ reason = "documentation is intentionally not packaged"
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -504,7 +496,7 @@ description = "test overlap detection"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -543,7 +535,6 @@ include = ["/usr/**"]
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -630,7 +621,6 @@ async fn test_build_single_stage() {
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -649,7 +639,6 @@ async fn test_build_single_stage() {
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -685,7 +674,6 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -730,7 +718,7 @@ arch = "x86_64"
 
 link_deps = []
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -835,7 +823,7 @@ arch = "x86_64"
 
 link_deps = []
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -880,9 +868,9 @@ retry_count = 3
     let install = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
+        .arg("install")
         .arg("--root")
         .arg(root.path())
-        .arg("install")
         .arg("custom-out-dir")
         .output()
         .unwrap();
@@ -927,7 +915,7 @@ arch = "x86_64"
 
 link_deps = []
 
-[lifecycle.prepare]
+[pipeline.prepare]
 executor = "shell"
 isolation = "none"
 script = """
@@ -938,7 +926,7 @@ EOF
 chmod +x hello.sh
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -1048,7 +1036,7 @@ description = "dependency"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -1077,7 +1065,7 @@ arch = "x86_64"
 build_deps = ["resume-dep"]
 link_deps = []
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """

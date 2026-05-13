@@ -70,7 +70,7 @@ for a full discussion.
 - A **Delivery** is the complete lifecycle of a plan.  A plan is first **resolved**
   (targets discovered from the plan index, converted to canonical `plan.toml` paths),
   then **forged**
-  (sources fetched, lifecycle stages executed, outputs sliced), then **sealed**
+  (sources fetched, pipeline stages executed, outputs sliced), then **sealed**
   (FHS-validated, ELF-linted, packed into a `.wright.tar.zst` archive), and
   finally **deployed** (extracted onto the target root, recorded in `wright.db`).
   Deployments use a temporary **WAL** (Write-Ahead Log) for crash recovery and a
@@ -81,10 +81,10 @@ for a full discussion.
 - A **Pipeline** is the ordered sequence of stages that constitute the forge
   step of a delivery.  The default pipeline runs `fetch`, `verify`, `extract`,
   `prepare`, `configure`, `compile`, `check`, and `staging`.  Plans may declare
-  a custom pipeline order via `lifecycle_order` or per-MVP-phase ordering.
+  a custom pipeline order via `pipeline_order` or per-MVP-phase ordering.
 
 - A **Stage** is the smallest unit of work — a single script fragment declared
-  in `plan.toml` under `[lifecycle.<name>]`.  Each stage runs in an optional
+  in `plan.toml` under `[pipeline.<name>]`.  Each stage runs in an optional
   sandbox with pre- and post-hooks (`pre_<stage>`, `post_<stage>`).  Stages
   support checkpoint-based resume: a completed stage is not re-run on retry
   unless `--force-stage` is used.

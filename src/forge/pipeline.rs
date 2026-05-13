@@ -12,7 +12,7 @@ use crate::forge::layers::LayerManager;
 use crate::forge::logging;
 use crate::isolation::IsolationLevel;
 use crate::isolation::ResourceLimits;
-use crate::plan::manifest::{LifecycleStage, PlanManifest};
+use crate::plan::manifest::{PipelineStage, PlanManifest};
 
 pub const DEFAULT_STAGES: &[&str] = &[
     "fetch",
@@ -30,12 +30,12 @@ const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
     if build_phase == Some("mvp") {
         if let Some(ref cfg) = manifest.mvp {
-            if let Some(ref order) = cfg.lifecycle_order {
+            if let Some(ref order) = cfg.pipeline_order {
                 return order.stages.clone();
             }
         }
     }
-    if let Some(ref order) = manifest.lifecycle_order {
+    if let Some(ref order) = manifest.pipeline_order {
         return order.stages.clone();
     }
     DEFAULT_STAGES.iter().map(|s| s.to_string()).collect()
@@ -59,12 +59,9 @@ pub fn compute_expected_hashes(
 
     for name in stage_order {
         let stage = if is_mvp {
-            manifest
-                .mvp
-                .as_ref()
-                .and_then(|cfg| cfg.lifecycle.get(name))
+            manifest.mvp.as_ref().and_then(|cfg| cfg.pipeline.get(name))
         } else {
-            manifest.lifecycle.get(name)
+            manifest.pipeline.get(name)
         };
 
         if let Some(stage) = stage {
@@ -77,8 +74,8 @@ pub fn compute_expected_hashes(
     results
 }
 
-/// Bundle of all information needed by the lifecycle pipeline.
-pub struct LifecycleContext<'a> {
+/// Bundle of all information needed by the pipeline.
+pub struct PipelineContext<'a> {
     pub manifest: &'a PlanManifest,
     pub vars: HashMap<String, String>,
     pub working_dir: &'a Path,
@@ -102,7 +99,7 @@ pub struct LifecycleContext<'a> {
     pub build_key: String,
 }
 
-pub struct LifecyclePipeline<'a> {
+pub struct Pipeline<'a> {
     manifest: &'a PlanManifest,
     vars: HashMap<String, String>,
     logs_dir: &'a Path,
@@ -126,8 +123,8 @@ pub struct LifecyclePipeline<'a> {
     build_phase: Option<String>,
 }
 
-impl<'a> LifecyclePipeline<'a> {
-    pub fn new(ctx: LifecycleContext<'a>) -> Result<Self> {
+impl<'a> Pipeline<'a> {
+    pub fn new(ctx: PipelineContext<'a>) -> Result<Self> {
         let build_phase = ctx.vars.get("WRIGHT_BUILD_PHASE").cloned();
         let plan_name = &ctx.manifest.metadata.name;
         let version = ctx.manifest.metadata.version.as_deref().unwrap_or("");
@@ -181,7 +178,7 @@ impl<'a> LifecyclePipeline<'a> {
                 }
                 if !pipeline.iter().any(|p| p == s) {
                     return Err(WrightError::ForgeError(format!(
-                        "stage '{}' not found in lifecycle pipeline",
+                        "stage '{}' not found in pipeline",
                         s
                     )));
                 }
@@ -201,7 +198,7 @@ impl<'a> LifecyclePipeline<'a> {
                     .position(|p| p == stage_name)
                     .ok_or_else(|| {
                         WrightError::ForgeError(format!(
-                            "stage '{}' not found in lifecycle pipeline",
+                            "stage '{}' not found in pipeline",
                             stage_name
                         ))
                     })?,
@@ -430,15 +427,15 @@ impl<'a> LifecyclePipeline<'a> {
         self.build_phase.as_deref() == Some("mvp")
     }
 
-    fn get_stage(&self, name: &str) -> Option<&LifecycleStage> {
+    fn get_stage(&self, name: &str) -> Option<&PipelineStage> {
         if self.is_mvp_pass() {
             if let Some(ref cfg) = self.manifest.mvp {
-                if let Some(stage) = cfg.lifecycle.get(name) {
+                if let Some(stage) = cfg.pipeline.get(name) {
                     return Some(stage);
                 }
             }
         }
-        self.manifest.lifecycle.get(name)
+        self.manifest.pipeline.get(name)
     }
 
     /// Legacy single-stage execution for --stage mode (no overlay layering).
@@ -498,7 +495,7 @@ impl<'a> LifecyclePipeline<'a> {
     async fn run_stage_in_target(
         &self,
         stage_name: &str,
-        stage: &LifecycleStage,
+        stage: &PipelineStage,
         cpu_count: u32,
     ) -> Result<()> {
         if stage.script.is_empty() {
@@ -627,7 +624,7 @@ impl<'a> LifecyclePipeline<'a> {
     async fn run_stage_legacy(
         &self,
         stage_name: &str,
-        stage: &LifecycleStage,
+        stage: &PipelineStage,
         cpu_count: u32,
     ) -> Result<()> {
         if stage.script.is_empty() {

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
+use wright::database::SessionContext;
 use wright::forge::Forger;
 use wright::part::archive;
 use wright::plan::manifest::PlanManifest;
@@ -21,11 +22,11 @@ arch = "x86_64"
 description = "test part"
 license = "MIT"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 isolation = "none"
 script = "mkdir -p usr/bin"
 
-[lifecycle.compile]
+[pipeline.compile]
 isolation = "none"
 script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/usr/bin/shared"
 "#,
@@ -56,7 +57,6 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -83,16 +83,34 @@ async fn test_file_diversion_and_restoration() {
     let archive_b = create_test_archive("part-b", "content-b").await;
 
     // 1. Deploy Part A
-    transaction::deploy_part(&db, &archive_a, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive_a,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
     let shared_path = root.path().join("usr/bin/shared");
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-a");
 
     // 2. Deploy Part B (conflicts with A)
-    transaction::deploy_part(&db, &archive_b, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive_b,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // 3. Verify diversion
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-b");
@@ -115,9 +133,18 @@ async fn test_file_diversion_and_restoration() {
     );
 
     // 4. Remove Part B
-    transaction::remove_part(&db, "part-b", root.path(), false)
-        .await
-        .unwrap();
+    transaction::remove_part(
+        &db,
+        "part-b",
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // 5. Verify restoration
     assert_eq!(std::fs::read_to_string(&shared_path).unwrap(), "content-a");

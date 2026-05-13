@@ -58,7 +58,7 @@ directory for the build — it presents a merged view of all completed layers
 (lowerdir) with the current stage writing to its own upper layer.
 
 `layers/` replaces the flat `work/` directory from previous versions.  When
-the build key has not changed (same version, sources, and lifecycle scripts),
+the build key has not changed (same version, sources, and pipeline scripts),
 the layers from earlier stages (`fetch` through `extract`) are reused and only
 stages whose inputs changed are re-executed.  Stage completion is tracked in
 `.wright-pipeline.json` using a hash-chain fingerprint scheme — see
@@ -86,7 +86,7 @@ set to that subdirectory (the common case for tarballs that unpack into
 
 ## Log Files
 
-Every lifecycle stage writes a log file under `logs/`:
+Every pipeline stage writes a log file under `logs/`:
 
 ```
 <build_dir>/<name>-<version>/logs/
@@ -129,7 +129,7 @@ their corresponding variables in error messages. If a script fails, you will
 see `${STAGING_DIR}/usr/bin` in the output instead of the internal `/output/usr/bin`
 path.
 
-### Directory lifecycle rules
+### Directory pipeline rules
 
 | Operation | `layers/` | `staging/` | `outputs/` | `logs/` | Checkpoints |
 |-----------|:------:|:------:|:------:|:------:|:------:|
@@ -254,7 +254,7 @@ directory is left intact for inspection after the build completes.
 
 `--clean` and `--force` address orthogonal concerns and compose naturally:
 - `--clean` — force a clean `layers/` re-extraction; clears all stage checkpoints
-- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all lifecycle stages even when their checkpoints exist
+- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all pipeline stages even when their checkpoints exist
 - `--clean --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
 
 ### Incremental builds
@@ -266,9 +266,9 @@ re-executed. This means a repeated `wright build` with no changes completes
 almost instantly — the smart resume algorithm in `.wright-pipeline.json` skips
 all up-to-date stages automatically.
 
-When the build key changes — because the version, sources, or lifecycle scripts
+When the build key changes — because the version, sources, or pipeline scripts
 were modified — `layers/` is automatically cleaned and sources are
 re-extracted. All checkpoint records in `.wright-pipeline.json` are cleared.
 
 To force a clean re-extraction without changing the plan, use `--clean`.
-To re-run all lifecycle stages while keeping `layers/` intact, use `--force`.
+To re-run all pipeline stages while keeping `layers/` intact, use `--force`.

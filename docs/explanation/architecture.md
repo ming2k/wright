@@ -34,7 +34,7 @@ bin -> cli -> commands -> operations -> resolve / forge / seal / deploy
 - `commands` maps CLI args into operation requests and acquires command locks.
 - `operations` owns command use cases such as install and launch, and drives batch execution.
 - `resolve` discovers plan files, resolves targets, expands dependency closures, constructs `ForgeExecutionPlan`.  See `src/resolve/`.
-- `forge` fetches sources, runs lifecycle stages in sandboxes, slices outputs.  See `src/forge/`.
+- `forge` fetches sources, runs pipeline stages in sandboxes, slices outputs.  See `src/forge/`.
 - `seal` validates staging output (FHS, ELF lint), creates `.wright.tar.zst` archives.  See `src/seal/`.
 - `deploy` extracts archives, copies files to target root, records in the database, runs hooks.  See `src/transaction/`.  Crash-safe via the `delivery` state machine (`src/delivery/`).
 

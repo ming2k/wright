@@ -52,13 +52,13 @@ flowchart LR
 Even on a machine with many CPUs, Wright cannot exceed the number of currently
 independent tasks in the graph.
 
-## Serialized Lifecycle Stages
+## Serialized Pipeline Stages
 
 | Stage | Concurrency |
 |-------|-------------|
 | `configure` | One at a time across active build tasks |
 | `compile` | One at a time across active build tasks |
-| Other lifecycle stages | Parallel, subject to dependency ordering and CPU budget |
+| Other pipeline stages | Parallel, subject to dependency ordering and CPU budget |
 
 ## CPU Affinity Isolation
 

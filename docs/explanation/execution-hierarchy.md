@@ -6,7 +6,7 @@ individual build actions relate to each other.
 
 ## Why Three Tiers?
 
-A plan's full lifecycle spans too many levels of abstraction to describe with
+A plan's full pipeline spans too many levels of abstraction to describe with
 a single term.  Collapsing everything into "build" or "install" muddies the
 distinction between strategy (what should happen) and mechanism (how each step
 executes).  Three tiers give each scale its own name and responsibility.
@@ -23,7 +23,7 @@ steps needed to fulfill that delivery.
 | Step | What happens | Code home |
 |------|-------------|-----------|
 | **Resolve** | Discover plan files, build name → path index, resolve targets to canonical `plan.toml` paths | `src/resolve/resolver.rs`, `src/plan/discovery.rs` |
-| **Forge** | Fetch sources, verify checksums, extract, run lifecycle stages, slice outputs | `src/forge/`, `Forger::build` |
+| **Forge** | Fetch sources, verify checksums, extract, run pipeline stages, slice outputs | `src/forge/`, `Forger::build` |
 | **Seal** | FHS-validate staging output, ELF-lint runtime dependencies, create `.wright.tar.zst` archive | `src/seal/`, `src/part/` |
 | **Deploy** | Extract archive, detect conflicts, copy files to target root, record in `wright.db`, run hooks | `src/transaction/` |
 
@@ -48,13 +48,13 @@ fetch → verify → extract → prepare → configure → compile → check →
   `Forger` directly, not by user-defined scripts.  They cannot be targeted
   with `--stage`.
 
-- `prepare`, `configure`, `compile`, `check`, `staging` are **lifecycle
-  stages** — each defined by a `[lifecycle.<name>]` block in `plan.toml`.
+- `prepare`, `configure`, `compile`, `check`, `staging` are **pipeline
+  stages** — each defined by a `[pipeline.<name>]` block in `plan.toml`.
   They run user-provided scripts inside an optional sandbox.
 
-Plans may override the pipeline order via `lifecycle_order.stages` in
+Plans may override the pipeline order via `pipeline_order.stages` in
 `plan.toml`, or specify a different order for the MVP pass via
-`[mvp].lifecycle_order`.  The `LifecyclePipeline` struct in
+`[mvp].pipeline_order`.  The `Pipeline` struct in
 `src/forge/pipeline.rs` resolves the effective order per build phase.
 
 Pipelines support **hash-chain checkpoint resume** (see [Checkpoint Recovery](checkpoint-recovery.md)).
@@ -79,10 +79,10 @@ Each stage declared in `plan.toml` can specify:
 | `env` | Per-stage environment variables |
 
 Stages support hooks: `pre_<stage>` runs before the stage script, and
-`post_<stage>` runs after.  Both hooks live in the same `[lifecycle]`
+`post_<stage>` runs after.  Both hooks live in the same `[pipeline]`
 namespace.
 
-Stage execution in code is handled by `LifecyclePipeline::run_stage`
+Stage execution in code is handled by `Pipeline::run_stage`
 (`src/forge/pipeline.rs`).  The pipeline runner determines the effective CPU
 count (when locks are held), applies variable substitution, logs to
 `logs/<stage>.log`, and retries on ETXTBSY races.
@@ -92,8 +92,8 @@ count (when locks are held), applies variable substitution, logs to
 | Tier | Term | Key Types | Module |
 |------|------|-----------|--------|
 | Macro | Delivery | orchestration across `commands/` → `operations/` → `planning/` → `forge/` → `transaction/` | — (cross-cutting) |
-| Micro | Pipeline | `LifecyclePipeline`, `LifecycleContext`, `DEFAULT_STAGES` | `src/forge/pipeline.rs` |
-| Atomic | Stage | `LifecycleStage`, `ExecutorOptions` | `src/forge/pipeline.rs`, `src/forge/executor.rs` |
+| Micro | Pipeline | `Pipeline`, `PipelineContext`, `DEFAULT_STAGES` | `src/forge/pipeline.rs` |
+| Atomic | Stage | `PipelineStage`, `ExecutorOptions` | `src/forge/pipeline.rs`, `src/forge/executor.rs` |
 
 ## Relationship to CLI Commands
 

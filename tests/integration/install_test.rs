@@ -4,6 +4,7 @@ use wright::cli::system::InstallArgs;
 use wright::commands::system;
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
+use wright::database::SessionContext;
 use wright::forge::Forger;
 use wright::part::archive;
 use wright::part::store::LocalPartStore;
@@ -19,7 +20,7 @@ fn fixture_path(name: &str) -> PathBuf {
 async fn build_hello_archive() -> PathBuf {
     let manifest_path = fixture_path("hello").join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
-    for stage in manifest.lifecycle.values_mut() {
+    for stage in manifest.pipeline.values_mut() {
         stage.isolation = "none".to_string();
     }
     let plan_dir = manifest_path.parent().unwrap();
@@ -42,7 +43,6 @@ async fn build_hello_archive() -> PathBuf {
             false,
             &std::collections::HashMap::new(),
             false,
-            None,
             None,
             None,
             None,
@@ -102,7 +102,7 @@ name = "y"
 description = "y output"
 include = ["/usr/bin/y"]
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -175,7 +175,7 @@ name = "y"
 description = "y output"
 include = ["/usr/bin/y"]
 
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -196,9 +196,18 @@ async fn test_end_to_end_install_query_remove() {
     let archive = build_hello_archive().await;
 
     // Deploy
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // Verify file exists on disk
     let hello_bin = root.path().join("usr/bin/hello");
@@ -224,9 +233,18 @@ async fn test_end_to_end_install_query_remove() {
     assert!(issues.is_empty());
 
     // Remove
-    transaction::remove_part(&db, "hello", root.path(), false)
-        .await
-        .unwrap();
+    transaction::remove_part(
+        &db,
+        "hello",
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // Verify file is gone
     assert!(!hello_bin.exists());
@@ -253,6 +271,10 @@ async fn test_install_accepts_same_revision_split_outputs() {
         &part_store,
         false,
         false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
     )
     .await
     .unwrap();
@@ -335,6 +357,10 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
         &part_store,
         false,
         false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
     )
     .await
     .unwrap_err();
@@ -361,6 +387,10 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &part_store,
         false,
         false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
     )
     .await
     .unwrap();
@@ -372,6 +402,10 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &part_store,
         false,
         false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
     )
     .await
     .unwrap_err();
@@ -394,9 +428,18 @@ async fn test_successful_install_removes_rollback_journal() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     assert!(
         !journal_path.exists(),
@@ -414,12 +457,30 @@ async fn test_file_conflict_detection() {
     let archive = build_hello_archive().await;
 
     // Deploy first copy
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // Try to deploy again — should fail because the part is already installed
-    let result = transaction::deploy_part(&db, &archive, root.path(), false);
+    let result = transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    );
     assert!(result.await.is_err());
 
     let _ = std::fs::remove_file(&archive);
@@ -431,9 +492,18 @@ async fn test_verify_detects_modification() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // Tamper with installed file
     std::fs::write(root.path().join("usr/bin/hello"), b"tampered content").unwrap();
@@ -453,9 +523,18 @@ async fn test_verify_detects_missing_file() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // Delete installed file
     std::fs::remove_file(root.path().join("usr/bin/hello")).unwrap();
@@ -475,9 +554,18 @@ async fn test_list_installed_parts() {
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
-    transaction::deploy_part(&db, &archive, root.path(), false)
-        .await
-        .unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        SessionContext {
+            id: "test".into(),
+            command: "test".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     // list_parts returns all installed parts with plan metadata
     let results = db.list_parts().await.unwrap();

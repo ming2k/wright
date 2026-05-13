@@ -55,7 +55,7 @@ does not.  The database never records whether a plan "was forged successfully".
    sha256( build_key(plan) + dep₁.fingerprint + dep₂.fingerprint + ... )
    ```
    `build_key` is `Forger::compute_build_key`, which hashes the plan's
-   metadata, source URLs/SHAs, and lifecycle scripts.  Dependency fingerprints
+   metadata, source URLs/SHAs, and pipeline scripts.  Dependency fingerprints
    are the same closure fingerprints of the plan's direct build dependencies,
    computed recursively from leaves to roots.
 

@@ -4,6 +4,7 @@ pub mod check;
 pub mod doctor;
 pub mod drive;
 pub mod files;
+mod health;
 pub mod history;
 pub mod install;
 pub mod launch;

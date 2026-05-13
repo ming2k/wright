@@ -36,7 +36,7 @@ Three fields in `[plan]` metadata control how Wright orders and names archives:
 | `release` | Build revision within the same `version` | Bump when the plan changes (patches, build flags, dependencies) while upstream stays the same. **Reset to `1` on every `version` bump.** |
 | `epoch` | Forced ordering override | Bump **only** when upstream changes its versioning scheme so the new `version` would sort lower than the old one (e.g. `2024.1` → `1.0.0`). Never decreases. Omit (default `0`) for normal releases. |
 
-Example lifecycle:
+Example pipeline:
 
 ```
 Upstream releases 1.0.0  → version = "1.0.0", release = 1
@@ -136,7 +136,7 @@ Local paths are relative to the plan directory and must not escape it.
 
 ## Apply Patches
 
-Patches are **not** auto-applied. Include them as `type = "local"` entries and apply them manually in a lifecycle stage. This gives full control over strip level, ordering, and conditions:
+Patches are **not** auto-applied. Include them as `type = "local"` entries and apply them manually in a pipeline stage. This gives full control over strip level, ordering, and conditions:
 
 ```toml
 [[sources]]
@@ -147,7 +147,7 @@ path = "patches/fix-headers.patch"
 type = "local"
 path = "patches/add-feature.patch"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 script = """
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
@@ -157,7 +157,7 @@ patch -Np1 < ${WORKDIR}/add-feature.patch
 For patches that need a different strip level:
 
 ```toml
-[lifecycle.prepare]
+[pipeline.prepare]
 script = """
 patch -Np0 < ${WORKDIR}/special-fix.patch
 patch -Np1 < ${WORKDIR}/normal-fix.patch
@@ -180,12 +180,12 @@ Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cp
 
 **Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
-## Write Lifecycle Scripts
+## Write Pipeline Scripts
 
-Each lifecycle stage is a TOML table under `lifecycle`:
+Each pipeline stage is a TOML table under `pipeline`:
 
 ```toml
-[lifecycle.compile]
+[pipeline.compile]
 executor = "shell"
 isolation = "strict"
 script = """
@@ -198,7 +198,7 @@ The default pipeline order is: `fetch`, `verify`, `extract`, `prepare`, `configu
 Override this order if your build needs a different pipeline:
 
 ```toml
-[lifecycle_order]
+[pipeline_order]
 stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 ```
 
@@ -207,17 +207,17 @@ stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 Any stage can have a pre- or post-hook:
 
 ```toml
-[lifecycle.pre_compile]
+[pipeline.pre_compile]
 script = """
 echo "About to compile..."
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 script = """
 make -j$(nproc)
 """
 
-[lifecycle.post_compile]
+[pipeline.post_compile]
 script = """
 echo "Compilation complete."
 """
@@ -247,7 +247,7 @@ When vendoring is not practical (e.g. bootstrapping the toolchain itself), use `
 
 ## Declare Install Hooks
 
-`[output.hooks]` contains transaction-time scripts that run on the live system, not in the isolated build lifecycle:
+`[output.hooks]` contains transaction-time scripts that run on the live system, not in the isolated build pipeline:
 
 ```toml
 [[output]]
@@ -277,7 +277,7 @@ description = "Hello World"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = """
 install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
@@ -338,7 +338,7 @@ own `reason`.
 
 #### Implicit Slicing
 
-Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to `${STAGING_DIR}` during the `staging` lifecycle phase. On the host, that directory is `build_dir/<name>-<version>/staging`; inside isolation it is mounted at `/output`. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
+Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to `${STAGING_DIR}` during the `staging` pipeline phase. On the host, that directory is `build_dir/<name>-<version>/staging`; inside isolation it is mounted at `/output`. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
 
 **Output processing order:**
 
@@ -397,13 +397,13 @@ The MVP phase can also be triggered **manually** without a cycle being present, 
 wright build freetype --mvp
 ```
 
-For complex parts, provide **dedicated MVP scripts** instead of embedding conditionals. Place the override lifecycle stages inside `mvp.toml`; they are used **only during the MVP pass**:
+For complex parts, provide **dedicated MVP scripts** instead of embedding conditionals. Place the override pipeline stages inside `mvp.toml`; they are used **only during the MVP pass**:
 
 ```toml
 # mvp.toml
 link_deps = ["cairo", "pango", "glib"]
 
-[lifecycle.configure]
+[pipeline.configure]
 script = """
 meson setup build \
  --prefix=/usr \
@@ -413,8 +413,8 @@ meson setup build \
 
 Resolution order for the MVP pass:
 
-1. If `[lifecycle.<stage>]` exists in `mvp.toml`, it is used.
-2. Otherwise, it falls back to `[lifecycle.<stage>]` in `plan.toml`.
+1. If `[pipeline.<stage>]` exists in `mvp.toml`, it is used.
+2. Otherwise, it falls back to `[pipeline.<stage>]` in `plan.toml`.
 
 See [How to Handle Circular Dependencies](handle-circular-dependencies.md) for more details.
 
@@ -426,7 +426,7 @@ For plans with one primary source code archive, **always** use `extract_to = "so
 
 - **Why**: Wright does not normalize or strip the internal directory structure of archives. Some upstream tarballs have a single top-level folder, while others are "flat" and extract files directly into the current directory. Without `extract_to`, a flat tarball would pollute the root of `${WORKDIR}`.
 - **Benefit**: Every plan has a single, predictable root for its main source tree.
-- **Lifecycle scripts must descend further**: After extraction, your build scripts must navigate into the actual source directory inside `source/`. Most archives include a top-level folder, so the correct pattern is `cd source/<project>-${VERSION}`, **not** merely `cd source`.
+- **Pipeline scripts must descend further**: After extraction, your build scripts must navigate into the actual source directory inside `source/`. Most archives include a top-level folder, so the correct pattern is `cd source/<project>-${VERSION}`, **not** merely `cd source`.
 
 ```toml
 [[sources]]
@@ -435,7 +435,7 @@ url = "https://example.com/bash-completion-${VERSION}.tar.gz"
 sha256 = "..."
 extract_to = "source"
 
-[lifecycle.configure]
+[pipeline.configure]
 script = """
 cd source/bash-completion-${VERSION}
 ./configure --prefix=/usr
@@ -459,7 +459,7 @@ Do **not** use `extract_to` for individual files like patches or configuration t
 type = "local"
 path = "fix-build.patch"
 
-[lifecycle.compile]
+[pipeline.compile]
 script = "cd source && patch -p1 < ${WORKDIR}/fix-build.patch"
 ```
 
@@ -499,7 +499,7 @@ description = "Hello World test part"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.prepare]
+[pipeline.prepare]
 script = """
 cat > hello.c << 'EOF'
 #include <stdio.h>
@@ -507,12 +507,12 @@ int main() { printf("Hello, wright!\n"); return 0; }
 EOF
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 script = """
 gcc -o hello hello.c
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 script = """
 install -Dm755 hello ${STAGING_DIR}/usr/bin/hello
 """
@@ -546,29 +546,29 @@ static = false
 debug = false
 ccache = true
 
-[lifecycle.prepare]
+[pipeline.prepare]
 script = """
 patch -Np1 < ${WORKDIR}/fix-headers.patch
 patch -Np1 < ${WORKDIR}/add-feature.patch
 """
 
-[lifecycle.configure]
+[pipeline.configure]
 env = { CFLAGS = "-O2 -pipe" }
 script = """
 ./configure --prefix=/usr
 """
 
-[lifecycle.compile]
+[pipeline.compile]
 script = """
 make -j$(nproc)
 """
 
-[lifecycle.check]
+[pipeline.check]
 script = """
 make test
 """
 
-[lifecycle.staging]
+[pipeline.staging]
 script = """
 make DESTDIR=${STAGING_DIR} install
 """
@@ -606,7 +606,7 @@ description = "Foo library"
 license = "MIT"
 arch = "x86_64"
 
-[lifecycle.staging]
+[pipeline.staging]
 script = """
 make DESTDIR=${STAGING_DIR} install
 """

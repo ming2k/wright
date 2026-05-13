@@ -121,7 +121,7 @@ Array-of-tables with a mandatory `type` field.
 | `static` | bool | `false` | Build statically linked binaries |
 | `debug` | bool | `false` | Build with debug info |
 | `ccache` | bool | `true` | Use ccache for compilation if available |
-| `env` | map of strings | `{}` | Environment variables injected into every lifecycle stage |
+| `env` | map of strings | `{}` | Environment variables injected into every pipeline stage |
 | `memory_limit` | integer | — | Max virtual address space per build process (MB), overrides global |
 | `cpu_time_limit` | integer | — | Max CPU time per build process (seconds), overrides global |
 | `timeout` | integer | — | Wall-clock timeout per build stage (seconds), overrides global |
@@ -129,7 +129,7 @@ Array-of-tables with a mandatory `type` field.
 
 Per-plan values override global (`wright.toml`) settings.
 
-## Lifecycle Stages (`[lifecycle.<stage>]`)
+## Pipeline Stages (`[pipeline.<stage>]`)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -140,12 +140,12 @@ Per-plan values override global (`wright.toml`) settings.
 
 The `env` field supports variable substitution in values.
 
-## Lifecycle Order (`[lifecycle_order]`)
+## Pipeline Order (`[pipeline_order]`)
 
 Override the default pipeline order:
 
 ```toml
-[lifecycle_order]
+[pipeline_order]
 stages = ["fetch", "verify", "extract", "configure", "compile", "staging"]
 ```
 
@@ -155,15 +155,15 @@ Allowed top-level fields in `mvp.toml`:
 
 - `build_deps`
 - `link_deps`
-- `lifecycle`
-- `lifecycle_order`
+- `pipeline`
+- `pipeline_order`
 
 MVP `build_deps` and `link_deps` override the top-level plan fields. Any field omitted falls back to `plan.toml`.
 
 Resolution order for the MVP pass:
 
-1. If `[lifecycle.<stage>]` exists in `mvp.toml`, it is used.
-2. Otherwise, it falls back to `[lifecycle.<stage>]` in `plan.toml`.
+1. If `[pipeline.<stage>]` exists in `mvp.toml`, it is used.
+2. Otherwise, it falls back to `[pipeline.<stage>]` in `plan.toml`.
 
 Do not duplicate part metadata, sources, outputs, or hooks in `mvp.toml`.
 
@@ -252,7 +252,7 @@ Files listed in `backup` are treated as user-owned config files:
 - **On upgrade:** the new default is written as `<path>.wnew`. The live file is left intact.
 - **On remove:** config files are not deleted.
 
-## Default Lifecycle Pipeline
+## Default Pipeline
 
 | Stage | Type | Description |
 |-------|------|-------------|
@@ -267,11 +267,11 @@ Files listed in `backup` are treated as user-owned config files:
 
 Built-in stages are handled automatically. User stages are only run if defined.
 
-Override with `[lifecycle_order]`.
+Override with `[pipeline_order]`.
 
 ## Pre/Post Hooks
 
-Any stage can have `pre_<stage>` or `post_<stage>` tables under `lifecycle`. Execution order: `pre_<stage>` → `<stage>` → `post_<stage>`. They support the same fields as any lifecycle stage.
+Any stage can have `pre_<stage>` or `post_<stage>` tables under `pipeline`. Execution order: `pre_<stage>` → `<stage>` → `post_<stage>`. They support the same fields as any pipeline stage.
 
 ## Variable Substitution
 
@@ -303,7 +303,7 @@ Inside isolation:
 - `/build` is a read-write mount of the host's build work directory.
 - `/output` is a read-write mount of the host `staging/` directory for build products.
 
-After lifecycle stages complete, Wright slices `staging/` into `outputs/default/`
+After pipeline stages complete, Wright slices `staging/` into `outputs/default/`
 and `outputs/<name>/` directories according to `[[output]]` rules. Slicing uses
 hard links, so `staging/` remains available for inspection.
 
@@ -321,7 +321,7 @@ If the kernel does not support the required namespaces, falls back to direct exe
 
 ## Executors
 
-The `executor` field on a lifecycle stage selects which executor to use.
+The `executor` field on a pipeline stage selects which executor to use.
 
 ### Built-in: `shell`
 
@@ -345,7 +345,7 @@ default_isolation = "strict"
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | required | Executor name used in lifecycle stages |
+| `name` | string | required | Executor name used in pipeline stages |
 | `description` | string | `""` | Human-readable description |
 | `command` | string | required | Path to the interpreter |
 | `args` | list of strings | `[]` | Arguments before the script path |

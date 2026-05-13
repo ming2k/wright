@@ -32,7 +32,7 @@ release = 1
 description = "Wayland"
 license = "MIT"
 arch = "x86_64"
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "mkdir -p ${STAGING_DIR}/usr/lib"
@@ -53,7 +53,7 @@ description = "Wayland utils"
 license = "MIT"
 arch = "x86_64"
 link_deps = []
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "mkdir -p ${STAGING_DIR}/usr/bin"
@@ -123,7 +123,7 @@ release = 1
 description = "dep"
 license = "MIT"
 arch = "x86_64"
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/install-resume-dep"
@@ -144,7 +144,7 @@ description = "main"
 license = "MIT"
 arch = "x86_64"
 link_deps = []
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = """
@@ -198,9 +198,9 @@ retry_count = 3
     let first = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
+        .arg("install")
         .arg("--root")
         .arg(&root)
-        .arg("install")
         .arg("install-resume-main")
         .arg("--deps")
         .output()
@@ -226,9 +226,9 @@ retry_count = 3
     let second = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
+        .arg("install")
         .arg("--root")
         .arg(&root)
-        .arg("install")
         .arg("install-resume-main")
         .arg("--deps")
         .output()
@@ -268,7 +268,7 @@ release = 1
 description = "Wayland"
 license = "MIT"
 arch = "x86_64"
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "mkdir -p ${STAGING_DIR}/usr/lib"
@@ -288,7 +288,7 @@ description = "Wayland utils"
 license = "MIT"
 arch = "x86_64"
 link_deps = []
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "mkdir -p ${STAGING_DIR}/usr/bin"
@@ -360,7 +360,7 @@ release = 1
 description = "Wayland"
 license = "MIT"
 arch = "x86_64"
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/wayland-installed"
@@ -380,7 +380,7 @@ description = "Wayland utils"
 license = "MIT"
 arch = "x86_64"
 link_deps = []
-[lifecycle.staging]
+[pipeline.staging]
 executor = "shell"
 isolation = "none"
 script = "install -Dm644 /dev/null ${STAGING_DIR}/usr/share/wayland-utils-installed"
@@ -429,9 +429,9 @@ retry_count = 3
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
         .arg(&config_path)
+        .arg("install")
         .arg("--root")
         .arg(&root)
-        .arg("install")
         .arg("wayland-utils")
         .arg("--deps")
         .output()

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::error::{Result, WrightError};
 use futures_util::stream::{self, StreamExt};
+use indicatif::ProgressBar;
 use tokio::sync::Semaphore;
 use tokio::sync::watch;
 use tracing::{error, info};
@@ -20,6 +21,7 @@ pub struct DriveOptions<'a> {
     pub config: &'a GlobalConfig,
     pub db_path: &'a Path,
     pub quiet: bool,
+    pub flow_progress: Option<ProgressBar>,
 }
 
 /// Drive a forge plan to completion, executing tasks batch-by-batch.
@@ -44,6 +46,19 @@ where
     let total_batches = plan.batches().len();
     let cancel = cancel;
 
+    if let Some(ref flow) = options.flow_progress {
+        flow.set_message(format!(
+            "batch 1/{}: {} plan{}",
+            total_batches,
+            plan.batches().first().map_or(0, |b| b.len()),
+            if plan.batches().first().map_or(0, |b| b.len()) == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if *cancel.borrow() {
             return Err(WrightError::ForgeError("cancelled by user".into()));
@@ -56,6 +71,18 @@ where
                 total_batches,
                 batch.len()
             );
+        }
+
+        if batch_idx > 0 {
+            if let Some(ref flow) = options.flow_progress {
+                flow.set_message(format!(
+                    "batch {}/{}: {} plan{}",
+                    batch_idx + 1,
+                    total_batches,
+                    batch.len(),
+                    if batch.len() == 1 { "" } else { "s" }
+                ));
+            }
         }
 
         let results: Vec<Result<()>> = stream::iter(batch.iter().cloned())
@@ -82,11 +109,22 @@ where
             match result {
                 Ok(()) => {}
                 Err(e) => {
+                    if let Some(ref flow) = options.flow_progress {
+                        flow.set_message(format!(
+                            "batch {}/{}: aborted",
+                            batch_idx + 1,
+                            total_batches
+                        ));
+                    }
                     error!("batch {}/{} failed: {:#}", batch_idx + 1, total_batches, e);
                     return Err(e);
                 }
             }
         }
+    }
+
+    if let Some(ref flow) = options.flow_progress {
+        flow.set_message("complete".to_string());
     }
 
     if !options.quiet {
