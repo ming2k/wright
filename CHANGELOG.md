@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.1.2] - 2026-05-13
+
+### Fixed
+- **Stale overlayfs mounts blocking forge** — `LayerManager` now implements `Drop` to auto-unmount on panic or early return. `reset_target_dir()` retries `umount2(MNT_DETACH)` with exponential backoff on transient `EBUSY`. `mount_overlay()` handles `EBUSY` alongside the existing `ESTALE` recovery, unmounting and retrying the mount.
+
 ## [5.1.1] - 2026-05-13
 
 ### Added

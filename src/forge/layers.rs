@@ -1,5 +1,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::error::{Result, WrightError};
@@ -62,6 +64,12 @@ pub struct LayerManager {
     layers_dir: PathBuf,
     target_dir: PathBuf,
     ovl_work_dir: PathBuf,
+}
+
+impl Drop for LayerManager {
+    fn drop(&mut self) {
+        self.try_unmount();
+    }
 }
 
 impl LayerManager {
@@ -288,9 +296,9 @@ impl LayerManager {
                 );
                 Ok(false)
             }
-            Err(nix::errno::Errno::ESTALE) => {
+            Err(nix::errno::Errno::ESTALE) | Err(nix::errno::Errno::EBUSY) => {
                 warn!(
-                    "OverlayFS mount at {} returned ESTALE; repairing stale mount state and retrying",
+                    "OverlayFS mount at {} returned ESTALE/EBUSY; repairing stale mount state and retrying",
                     self.target_dir.display()
                 );
                 self.reset_target_dir()?;
@@ -326,12 +334,38 @@ impl LayerManager {
 
     /// Unmount the overlay at `target_dir` if mounted.
     pub fn unmount_overlay(&self) {
-        if let Err(e) = nix::mount::umount2(&self.target_dir, nix::mount::MntFlags::MNT_DETACH) {
-            debug!(
-                "unmount overlay at {} (non-fatal): {}",
-                self.target_dir.display(),
-                e
-            );
+        self.try_unmount();
+    }
+
+    /// Attempt a lazy detach of the overlay mount, retrying on transient
+    /// EBUSY with exponential backoff.  Safe to call even when nothing is
+    /// mounted (EINVAL is silently ignored).
+    fn try_unmount(&self) {
+        for attempt in 0..5 {
+            match nix::mount::umount2(&self.target_dir, nix::mount::MntFlags::MNT_DETACH) {
+                Ok(()) => {
+                    debug!("unmounted overlay at {}", self.target_dir.display());
+                    return;
+                }
+                Err(nix::errno::Errno::EINVAL) => return, // not mounted
+                Err(nix::errno::Errno::EBUSY) if attempt < 4 => {
+                    debug!(
+                        "unmount overlay at {} returned EBUSY, retrying (attempt {}/{})",
+                        self.target_dir.display(),
+                        attempt + 1,
+                        5
+                    );
+                    thread::sleep(Duration::from_millis(100 * (1 << attempt)));
+                }
+                Err(e) => {
+                    debug!(
+                        "unmount overlay at {} (non-fatal): {}",
+                        self.target_dir.display(),
+                        e
+                    );
+                    return;
+                }
+            }
         }
     }
 
@@ -417,14 +451,29 @@ impl LayerManager {
     }
 
     fn reset_target_dir(&self) -> Result<()> {
-        let _ = nix::mount::umount2(&self.target_dir, nix::mount::MntFlags::MNT_DETACH);
-        remove_path_if_exists(&self.target_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clear target dir {}: {}",
-                self.target_dir.display(),
-                e
-            ))
-        })?;
+        self.try_unmount();
+
+        match remove_path_if_exists(&self.target_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {
+                return Err(WrightError::ForgeError(format!(
+                    "failed to clear target dir {}: {} — a stale overlay mount may be active. \
+                     Run `umount {}` or reboot to clear it.",
+                    self.target_dir.display(),
+                    e,
+                    self.target_dir.display(),
+                )));
+            }
+            Err(e) => {
+                return Err(WrightError::ForgeError(format!(
+                    "failed to clear target dir {}: {}",
+                    self.target_dir.display(),
+                    e
+                )));
+            }
+        }
+
         std::fs::create_dir_all(&self.target_dir).map_err(|e| {
             WrightError::ForgeError(format!(
                 "failed to create target dir {}: {}",
