@@ -442,12 +442,13 @@ impl PlanManifest {
                             crate::part::version::Version::parse(ver)?;
                         }
                         if let Some(ref rel) = sub_part.release
-                            && *rel == 0 {
-                                return Err(WrightError::ValidationError(format!(
-                                    "output '{}': release must be >= 1",
-                                    sub_name
-                                )));
-                            }
+                            && *rel == 0
+                        {
+                            return Err(WrightError::ValidationError(format!(
+                                "output '{}': release must be >= 1",
+                                sub_name
+                            )));
+                        }
                     }
                 }
             }

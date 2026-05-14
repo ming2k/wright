@@ -115,7 +115,22 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    info!("upgrading {} ({} files)", partinfo.name, new_entries.len());
+    let incoming_ver_rel = if partinfo.plan.version.is_empty() {
+        partinfo.plan.release.to_string()
+    } else {
+        format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
+    };
+    info!(
+        verb = "Upgrading",
+        event = "upgrade.upgrading",
+        plan_name = %partinfo.name,
+        version = %incoming_ver_rel,
+        file_count = new_entries.len(),
+        "{} to {} ({} files)",
+        partinfo.name,
+        incoming_ver_rel,
+        new_entries.len(),
+    );
 
     phase_start = Instant::now();
     let file_paths: Vec<&str> = new_entries
@@ -129,16 +144,18 @@ pub async fn upgrade_part(
     for entry in &new_entries {
         if entry.file_type == FileType::File
             && let Some(owner) = owners.get(&entry.path)
-                && *owner != partinfo.name {
-                    warn!(
-                        "[{}] diverted {} (owned by {})",
-                        partinfo.name,
-                        crate::util::compact_path(&entry.path),
-                        owner
-                    );
-                    shadows.push((entry.path.clone(), owner.clone()));
-                    divert_paths.insert(entry.path.clone());
-                }
+            && *owner != partinfo.name
+        {
+            warn!(
+                event = "upgrade.file_diverted",
+                plan_name = partinfo.name,
+                path = crate::util::compact_path(&entry.path),
+                owner,
+                "File diverted"
+            );
+            shadows.push((entry.path.clone(), owner.clone()));
+            divert_paths.insert(entry.path.clone());
+        }
     }
     log_debug_timing(
         "upgrade",
@@ -208,27 +225,26 @@ pub async fn upgrade_part(
                 }
             }
         } else if file.file_type == FileType::Symlink
-            && let Ok(target) = tokio::fs::read_link(&full_path).await {
-                tx.rollback_state()
-                    .record_symlink_backup(full_path, target.to_string_lossy().to_string());
-            }
+            && let Ok(target) = tokio::fs::read_link(&full_path).await
+        {
+            tx.rollback_state()
+                .record_symlink_backup(full_path, target.to_string_lossy().to_string());
+        }
     }
 
-    if run_hooks
-        && let Some(ref script) = hooks.pre_install {
-            log_running_hook(&partinfo.name, "pre_install");
-            phase_start = Instant::now();
-            if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await
-            {
-                warn!("hook [pre_install] for {} failed: {}", partinfo.name, e);
-            }
-            log_debug_timing(
-                "upgrade",
-                &partinfo.name,
-                "pre_install hook",
-                phase_start.elapsed(),
-            );
+    if run_hooks && let Some(ref script) = hooks.pre_install {
+        log_running_hook(&partinfo.name, "pre_install");
+        phase_start = Instant::now();
+        if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await {
+            warn!(event = "upgrade.hook_failed", plan_name = partinfo.name, hook = "pre_install", error = %e, "Hook failed");
         }
+        log_debug_timing(
+            "upgrade",
+            &partinfo.name,
+            "pre_install hook",
+            phase_start.elapsed(),
+        );
+    }
 
     let config_paths = collect_config_paths(&new_entries);
     phase_start = Instant::now();
@@ -249,7 +265,7 @@ pub async fn upgrade_part(
     {
         Ok(paths) => paths,
         Err(e) => {
-            warn!("Upgrade failed for {}, rolling back: {}", partinfo.name, e);
+            warn!(event = "upgrade.failed_rollback", plan_name = partinfo.name, error = %e, "Upgrade failed, rolling back");
             tx.rollback().await?;
             return Err(e);
         }
@@ -262,7 +278,7 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
     for path in preserved_configs {
-        info!("preserved config for {}", path);
+        info!(event = "upgrade.config_preserved", path, "Preserved config");
     }
 
     let to_delete_paths: Vec<&str> = existing_files
@@ -280,7 +296,11 @@ pub async fn upgrade_part(
         }
 
         if file.is_config {
-            info!("preserving config {}", file.path);
+            info!(
+                event = "upgrade.config_preserved",
+                path = file.path,
+                "Preserving config"
+            );
             continue;
         }
 
@@ -290,9 +310,10 @@ pub async fn upgrade_part(
             .unwrap_or(&[]);
         if !other_owners.is_empty() {
             debug!(
-                "Path {} is also owned by: {}. Skipping deletion.",
-                file.path,
-                other_owners.join(", ")
+                event = "upgrade.skip_shared_path",
+                path = file.path,
+                other_owners = other_owners.join(", "),
+                "Path is also owned by others, skipping deletion"
             );
             continue;
         }
@@ -378,22 +399,19 @@ pub async fn upgrade_part(
         phase_start.elapsed(),
     );
 
-    if run_hooks
-        && let Some(ref script) = hooks.post_upgrade {
-            log_running_hook(&partinfo.name, "post_upgrade");
-            phase_start = Instant::now();
-            if let Err(e) =
-                run_deploy_script(script, root_dir, &partinfo.name, "post_upgrade").await
-            {
-                warn!("hook [post_upgrade] for {} failed: {}", partinfo.name, e);
-            }
-            log_debug_timing(
-                "upgrade",
-                &partinfo.name,
-                "post_upgrade hook",
-                phase_start.elapsed(),
-            );
+    if run_hooks && let Some(ref script) = hooks.post_upgrade {
+        log_running_hook(&partinfo.name, "post_upgrade");
+        phase_start = Instant::now();
+        if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "post_upgrade").await {
+            warn!(event = "upgrade.hook_failed", plan_name = partinfo.name, hook = "post_upgrade", error = %e, "Hook failed");
         }
+        log_debug_timing(
+            "upgrade",
+            &partinfo.name,
+            "post_upgrade hook",
+            phase_start.elapsed(),
+        );
+    }
 
     log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
     let installed_ver_rel = if installed_plan.version.is_empty() {
@@ -406,9 +424,14 @@ pub async fn upgrade_part(
     } else {
         format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
+    // Rule B: no completion line — the next package's "Upgrading …"
+    // (or the workflow's terminal "Finished") implies success.
     info!(
-        "{} upgraded ({} -> {})",
-        partinfo.name, installed_ver_rel, new_ver_rel,
+        event = "upgrade.completed",
+        plan_name = %partinfo.name,
+        old_version = %installed_ver_rel,
+        new_version = %new_ver_rel,
+        "upgrade completed"
     );
     Ok(())
 }

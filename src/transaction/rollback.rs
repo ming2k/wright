@@ -49,8 +49,9 @@ impl RollbackState {
     pub fn with_journal(path: PathBuf) -> Self {
         if path.exists() {
             info!(
-                "Recovering unfinished filesystem transaction from rollback journal: {}",
-                path.display()
+                event = "rollback.recovering",
+                journal_path = ?path,
+                "Recovering unfinished filesystem transaction from rollback journal"
             );
             Self::replay_journal(&path);
         }
@@ -77,7 +78,7 @@ impl RollbackState {
                 Ok(())
             })();
             if let Err(e) = result {
-                warn!("Failed to write rollback journal: {}", e);
+                warn!(event = "rollback.journal_write_failed", error = %e, "Failed to write rollback journal");
             }
         }
     }
@@ -112,9 +113,10 @@ impl RollbackState {
     pub fn commit(&self) {
         if let Some(ref path) = self.journal_path
             && let Err(e) = std::fs::remove_file(path)
-                && e.kind() != io::ErrorKind::NotFound {
-                    warn!("Failed to remove rollback journal: {}", e);
-                }
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            warn!(event = "rollback.journal_remove_failed", error = %e, "Failed to remove rollback journal");
+        }
     }
 
     /// Undo all recorded changes.
@@ -122,7 +124,7 @@ impl RollbackState {
         // Remove created files
         for path in self.created_files.iter().rev() {
             if let Err(e) = std::fs::remove_file(path) {
-                warn!("Rollback: failed to remove file {}: {}", path.display(), e);
+                warn!(event = "rollback.remove_failed", path = ?path, error = %e, "Failed to remove file during rollback");
             }
         }
 
@@ -131,17 +133,19 @@ impl RollbackState {
             let _ = std::fs::remove_file(original);
             if let Err(e) = std::fs::copy(backup, original) {
                 warn!(
-                    "Rollback: failed to restore {} from {}: {}",
-                    original.display(),
-                    backup.display(),
-                    e
+                    event = "rollback.restore_failed",
+                    original = ?original,
+                    backup = ?backup,
+                    error = %e,
+                    "Failed to restore file during rollback"
                 );
             }
             if let Err(e) = std::fs::remove_file(backup) {
                 warn!(
-                    "Rollback: failed to remove backup {}: {}",
-                    backup.display(),
-                    e
+                    event = "rollback.backup_remove_failed",
+                    backup = ?backup,
+                    error = %e,
+                    "Failed to remove backup during rollback"
                 );
             }
         }
@@ -151,10 +155,11 @@ impl RollbackState {
             let _ = std::fs::remove_file(original);
             if let Err(e) = std::os::unix::fs::symlink(target, original) {
                 warn!(
-                    "Rollback: failed to restore symlink {} -> {}: {}",
-                    original.display(),
+                    event = "rollback.symlink_restore_failed",
+                    original = ?original,
                     target,
-                    e
+                    error = %e,
+                    "Failed to restore symlink during rollback"
                 );
             }
         }
@@ -170,7 +175,7 @@ impl RollbackState {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
-                warn!("Failed to read rollback journal: {}", e);
+                warn!(event = "rollback.journal_read_failed", error = %e, "Failed to read rollback journal");
                 return;
             }
         };
@@ -184,9 +189,10 @@ impl RollbackState {
                 Ok(JournalEntry::FileCreated { path }) => {
                     if let Err(e) = std::fs::remove_file(&path) {
                         warn!(
-                            "Journal replay: failed to remove file {}: {}",
-                            path.display(),
-                            e
+                            event = "rollback.replay_remove_failed",
+                            path = ?path,
+                            error = %e,
+                            "Failed to remove file during journal replay"
                         );
                     }
                 }
@@ -201,10 +207,11 @@ impl RollbackState {
                         }
                         Err(e) => {
                             debug!(
-                                "Journal replay: Failed to restore {} from {}: {}",
-                                original.display(),
-                                backup.display(),
-                                e
+                                event = "rollback.replay_restore_failed",
+                                original = ?original,
+                                backup = ?backup,
+                                error = %e,
+                                "Failed to restore file during journal replay"
                             );
                             restore_failures += 1;
                         }
@@ -214,33 +221,34 @@ impl RollbackState {
                     let _ = std::fs::remove_file(&original);
                     if let Err(e) = std::os::unix::fs::symlink(&target, &original) {
                         warn!(
-                            "Journal replay: failed to restore symlink {} -> {}: {}",
-                            original.display(),
+                            event = "rollback.replay_symlink_failed",
+                            original = ?original,
                             target,
-                            e
+                            error = %e,
+                            "Failed to restore symlink during journal replay"
                         );
                     }
                 }
                 Err(e) => {
-                    warn!("Journal replay: failed to parse line: {} - {}", line, e);
+                    warn!(event = "rollback.replay_parse_failed", line, error = %e, "Failed to parse journal line during replay");
                 }
             }
         }
 
         if restore_failures > 0 {
             warn!(
-                "Journal replay: {} file(s) could not be restored (backups missing, likely lost after reboot)",
-                restore_failures
+                event = "rollback.replay_restore_loss",
+                restore_failures, "Files could not be restored during journal replay"
             );
         }
 
         match std::fs::remove_file(path) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                warn!("Failed to remove replayed journal: {}", e);
+                warn!(event = "rollback.journal_cleanup_failed", error = %e, "Failed to remove replayed journal");
             }
             _ => {
-                info!("Cleanup complete");
-                debug!("Removed rollback journal: {}", path.display());
+                info!(event = "rollback.cleanup_complete", "Cleanup complete");
+                debug!(event = "rollback.journal_removed", journal_path = ?path, "Removed rollback journal");
             }
         }
     }

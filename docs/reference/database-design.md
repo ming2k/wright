@@ -10,7 +10,7 @@
 
 | Artifact | Default path | Lookup method | Role |
 |----------|--------------|---------------|------|
-| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, sysupgrade, and prune |
+| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, sysupgrade,  |
 
 ## Migration System
 

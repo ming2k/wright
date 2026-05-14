@@ -6,7 +6,7 @@ Wright is a single CLI binary backed by one core library.
 
 | CLI surface | Role |
 |-------------|------|
-| `wright build`, `wright prune` | forge plan outputs and maintain archives in `parts_dir` |
+| `wright build` | forge plan outputs and maintain archives in `parts_dir` |
 | `wright merge`, `wright upgrade`, `wright install`, `wright launch`, other system subcommands | apply locally available parts to a target root (the live system or a fresh one) |
 
 ## Data Flow
@@ -27,11 +27,14 @@ outputs, and deploy each completed wave before continuing.
 ## Internal Layers
 
 ```text
-bin -> cli -> commands -> operations -> resolve / forge / seal / deploy
+bin -> cli -> operations -> resolve / forge / seal / deploy
 ```
 
-- `cli` defines command-line schemas.
-- `commands` maps CLI args into operation requests and acquires command locks.
+- `cli` owns one file per subcommand: each file defines the clap `Args`
+  struct and a `run` handler that builds an operation request and invokes
+  `operations::*`. The top-level `cli::dispatch` constructs a `Context`
+  (config, db_path, root_dir, verbose, quiet) and routes to the matching
+  handler. See [ADR-0020](../adr/0020-merge-cli-and-commands-directories.md).
 - `operations` owns command use cases such as install and launch, and drives batch execution.
 - `resolve` discovers plan files, resolves targets, expands dependency closures, constructs `ForgeExecutionPlan`.  See `src/resolve/`.
 - `forge` fetches sources, runs pipeline stages in sandboxes, slices outputs.  See `src/forge/`.
@@ -45,7 +48,7 @@ bin -> cli -> commands -> operations -> resolve / forge / seal / deploy
 - `wright resolve` expands dependency and reforge scope.
 - `wright build` executes sandboxed stages and writes `staging/` and `outputs/`.
 - `wright package` slices staging output and writes `.wright.tar.zst` archives to `parts_dir`.
-- `wright prune` removes stale archives.
+- 
 
 ### `wright`
 

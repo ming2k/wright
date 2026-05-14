@@ -163,8 +163,8 @@ PENDING → EXTRACTING → HOOKS_RUNNING → DONE
   only rebuilds the changed plan and its transitive dependents.
 - **Crash recovery is automatic**.  The user does not need to pass `--resume`
   or a special flag — any `wright` command triggers the recovery check.
-- **CAS store is append-only and never garbage-collected**.  A future ADR
-  should address CAS pruning (e.g. `wright prune --cas`).
+- **CAS store is append-only and never garbage-collected**.  A future feature
+  should address CAS garbage collection.
 - **The per-part `RollbackState` journal remains active** within
   `TransactionContext` as the lowest-level safety net for filesystem
   mutations, unchanged from before this ADR.

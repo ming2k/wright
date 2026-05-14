@@ -60,9 +60,10 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         }
         let Some(rel_path) = normalize_part_path(raw_rel_path) else {
             warn!(
-                "Skipping unsafe archive path: {} (source: {})",
-                raw_rel_path.display(),
-                full_path.display()
+                event = "compress.unsafe_path_skipped",
+                path = %raw_rel_path.display(),
+                source = %full_path.display(),
+                "Skipping unsafe archive path"
             );
             continue;
         };
@@ -113,7 +114,11 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                 let file_type = metadata.file_type();
                 if file_type.is_socket() {
                     // Sockets cannot be archived.
-                    warn!("Skipping socket in archive: {}", rel_path.display());
+                    warn!(
+                        event = "compress.socket_skipped",
+                        path = %rel_path.display(),
+                        "Skipping socket in archive"
+                    );
                 } else if file_type.is_fifo()
                     || file_type.is_char_device()
                     || file_type.is_block_device()
@@ -324,7 +329,11 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
         let raw_path = match entry.enclosed_name() {
             Some(p) => p.to_owned(),
             None => {
-                warn!("Skipping unsafe zip entry: {}", entry.name());
+                warn!(
+                    event = "compress.unsafe_zip_entry_skipped",
+                    entry_name = entry.name(),
+                    "Skipping unsafe zip entry"
+                );
                 continue;
             }
         };
@@ -435,11 +444,10 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
         #[cfg(unix)]
         {
             let (mode, is_file, dest) = restore;
-            if is_file
-                && let Some(m) = mode {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m));
-                }
+            if is_file && let Some(m) = mode {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m));
+            }
         }
     }
     Ok(())

@@ -105,5 +105,5 @@ runtime_deps = ["openssl:default", "zlib:default"]
 
 ## Related
 
-- `docs/how-to/bootstrap-new-system.md` — shows `wright assume` for external deps
+- `docs/how-to/bootstrap-new-system.md` — shows `wright provide` for external deps
 - `docs/how-to/perform-security-updates.md` — toolchain rebuild order

@@ -29,12 +29,13 @@ impl InstalledDb {
         .await
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e
-                && db_err.is_unique_violation() {
-                    return WrightError::DatabaseError(format!(
-                        "plan '{}' already registered",
-                        plan.name
-                    ));
-                }
+                && db_err.is_unique_violation()
+            {
+                return WrightError::DatabaseError(format!(
+                    "plan '{}' already registered",
+                    plan.name
+                ));
+            }
             WrightError::DatabaseError(format!("failed to insert plan: {}", e))
         })?;
 

@@ -106,14 +106,11 @@ async fn launch_from_folio(
         root_dir.display()
     );
     info!(
-        "folio carries {} plan(s), {} assumption(s){}",
-        manifest.folio.plans.len(),
-        manifest.assumes.len(),
-        if manifest.config.is_some() {
-            ", config block"
-        } else {
-            ""
-        }
+        event = "launch.folio_loaded",
+        plan_count = manifest.folio.plans.len(),
+        assumption_count = manifest.provides.len(),
+        has_config = manifest.config.is_some(),
+        "Folio loaded"
     );
 
     if request.dry_run {
@@ -125,13 +122,13 @@ async fn launch_from_folio(
         for p in &manifest.folio.plans {
             println!("  {}", p);
         }
-        if !manifest.assumes.is_empty() {
+        if !manifest.provides.is_empty() {
             println!();
             println!(
                 "[dry-run] would assume {} external(s):",
-                manifest.assumes.len()
+                manifest.provides.len()
             );
-            for a in &manifest.assumes {
+            for a in &manifest.provides {
                 println!("  {} {}", a.name, a.version);
             }
         }
@@ -161,8 +158,8 @@ async fn launch_from_folio(
     let db = InstalledDb::open(db_path).await.map_err(|e| {
         WrightError::DatabaseError(format!("failed to open target database: {}", e))
     })?;
-    for assume in &manifest.assumes {
-        db.assume_part(&assume.name, &assume.version)
+    for assume in &manifest.provides {
+        db.provide_part(&assume.name, &assume.version)
             .await
             .map_err(|e| {
                 WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e))
@@ -226,7 +223,7 @@ async fn launch_from_plans(
 
     let folios_dirs: Vec<PathBuf> = vec![config.general.folios_dir.clone()];
 
-    let (targets, folio_assumes, folio_config) =
+    let (targets, folio_provides, folio_config) =
         folio::expand_folio_references(request.plan_targets.clone(), &folios_dirs)?;
 
     if targets.is_empty() {
@@ -254,9 +251,10 @@ async fn launch_from_plans(
     let mut referenced_folios: Vec<PathBuf> = Vec::new();
     for target in &request.plan_targets {
         if let Some(folio_name) = target.strip_prefix('@')
-            && let Some(folio_path) = folio::find_folio_manifest(&folios_dirs, folio_name) {
-                referenced_folios.push(folio_path);
-            }
+            && let Some(folio_path) = folio::find_folio_manifest(&folios_dirs, folio_name)
+        {
+            referenced_folios.push(folio_path);
+        }
     }
     if !referenced_folios.is_empty() {
         sync_folios_to_target(&referenced_folios, &target_folios_dir).map_err(|e| {
@@ -269,15 +267,15 @@ async fn launch_from_plans(
     let part_store = setup_part_store(config)?;
 
     // Pre-register any assumptions collected from folios.
-    if !folio_assumes.is_empty() {
+    if !folio_provides.is_empty() {
         let db = InstalledDb::open(db_path).await.map_err(|e| {
             WrightError::DatabaseError(format!("failed to open target database: {}", e))
         })?;
-        for assume in &folio_assumes {
-            db.assume_part(&assume.name, &assume.version)
+        for provide in &folio_provides {
+            db.provide_part(&provide.name, &provide.version)
                 .await
                 .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e))
+                    WrightError::DatabaseError(format!("failed to assume {}: {}", provide.name, e))
                 })?;
         }
         drop(db);
@@ -318,7 +316,8 @@ fn redirect_build_paths_for_target(config: &mut GlobalConfig, root_dir: &Path) {
 }
 
 fn setup_part_store(config: &GlobalConfig) -> Result<LocalPartStore> {
-    crate::resolve::setup_part_store(config)}
+    crate::resolve::setup_part_store(config)
+}
 
 async fn build_and_apply(request: InstallRequest<'_>, dry_run: bool) -> Result<()> {
     if dry_run {
@@ -382,22 +381,31 @@ fn sync_plans_to_target(source_dir: &Path, target_plans_dir: &Path) -> Result<()
         plan_count += 1;
 
         if stats.copied == 0 && stats.removed == 0 {
-            debug!("Plan {} up-to-date", plan_name.to_string_lossy());
+            debug!(
+                event = "launch.plan_uptodate",
+                plan_name = %plan_name.to_string_lossy(),
+                "Plan up-to-date"
+            );
         } else {
             debug!(
-                "Plan {} synced ({} copied, {} skipped, {} removed)",
-                plan_name.to_string_lossy(),
-                stats.copied,
-                stats.skipped,
-                stats.removed
+                event = "launch.plan_synced",
+                plan_name = %plan_name.to_string_lossy(),
+                copied = stats.copied,
+                skipped = stats.skipped,
+                removed = stats.removed,
+                "Plan synced"
             );
         }
     }
 
     if plan_count > 0 {
         info!(
-            "Synced {} plan(s): {} copied, {} skipped, {} removed",
-            plan_count, total_stats.copied, total_stats.skipped, total_stats.removed
+            event = "launch.plans_synced",
+            plan_count,
+            copied = total_stats.copied,
+            skipped = total_stats.skipped,
+            removed = total_stats.removed,
+            "Plans synced"
         );
     }
     Ok(())
@@ -420,19 +428,28 @@ fn sync_folios_to_target(source_folios: &[PathBuf], target_folios_dir: &Path) ->
                     e
                 ))
             })?;
-            debug!("Folio {} synced", file_name.to_string_lossy());
+            debug!(
+                event = "launch.folio_synced",
+                folio_name = %file_name.to_string_lossy(),
+                "Folio synced"
+            );
             synced += 1;
         } else {
-            debug!("Folio {} up-to-date", file_name.to_string_lossy());
+            debug!(
+                event = "launch.folio_uptodate",
+                folio_name = %file_name.to_string_lossy(),
+                "Folio up-to-date"
+            );
             up_to_date += 1;
         }
     }
     if synced > 0 || up_to_date > 0 {
         info!(
-            "Synced {} folio(s): {} updated, {} up-to-date",
-            synced + up_to_date,
-            synced,
-            up_to_date
+            event = "launch.folios_synced",
+            total = synced + up_to_date,
+            updated = synced,
+            up_to_date,
+            "Folios synced"
         );
     }
     Ok(())
@@ -563,7 +580,13 @@ async fn apply_folio_config(root_dir: &Path, cfg: &folio::FolioConfig) -> Result
         let link = root_dir.join("etc/localtime");
         let _ = std::fs::remove_file(&link);
         if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
-            warn!("failed to symlink {} -> {}: {}", link.display(), target, e);
+            warn!(
+                event = "launch.symlink_failed",
+                link = %link.display(),
+                target = %target,
+                error = %e,
+                "Failed to symlink timezone"
+            );
         }
     }
     if let Some(ref locale) = cfg.locale {
@@ -581,11 +604,12 @@ async fn apply_folio_config(root_dir: &Path, cfg: &folio::FolioConfig) -> Result
             }
             if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
                 warn!(
-                    "failed to enable runit service {}: {} -> {}: {}",
+                    event = "launch.service_enable_failed",
                     service,
-                    link.display(),
-                    target,
-                    e
+                    link = %link.display(),
+                    target = %target,
+                    error = %e,
+                    "Failed to enable runit service"
                 );
             }
         }

@@ -84,6 +84,11 @@ pub struct NetworkConfig {
     pub download_timeout: u64,
     #[serde(default = "default_retry")]
     pub retry_count: u32,
+    /// Maximum number of concurrent source downloads across the whole
+    /// process. Prevents thundering-herd on mirror servers when a batch
+    /// triggers many parallel fetches.
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: usize,
 }
 
 fn default_general() -> GeneralConfig {
@@ -204,6 +209,9 @@ fn default_timeout() -> u64 {
 fn default_retry() -> u32 {
     3
 }
+fn default_max_concurrent_downloads() -> usize {
+    8
+}
 
 impl Default for GlobalConfig {
     fn default() -> Self {
@@ -236,6 +244,7 @@ impl Default for NetworkConfig {
         Self {
             download_timeout: default_timeout(),
             retry_count: default_retry(),
+            max_concurrent_downloads: default_max_concurrent_downloads(),
         }
     }
 }

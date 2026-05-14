@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-05-15
+
+### Added
+- **Cargo-style CLI output** — every user-facing message now renders as a 12-character right-aligned bold-green verb followed by a target string, matching the visual cadence of `cargo`. See [ADR-0021](docs/adr/0021-cargo-style-span-driven-output.md) and [docs/dev/tracing-output-design.md](docs/dev/tracing-output-design.md).
+- **Span-driven persistent live rows** — long-running work (per-stage forge, source download, seal, deploy) appears as a live spinner row at the bottom of the terminal for the duration of its tracing span. Rows appear and disappear automatically; no per-call-site `ProgressBar` plumbing.
+- **`Sealing` and `Deploying` action lines** — the full install lifecycle is now visible. `Sealing <plan>` shows during archive packaging; `Deploying N parts` (or `Deploying batch K/M (N parts)` for multi-batch installs) shows during the delivery transaction.
+- **Per-source parallel fetch** — `Forger::fetch` now runs all source futures concurrently via `futures_util::future::try_join_all`, bounded by a new `Forger.network_pool` semaphore.
+- **`network.max_concurrent_downloads` config** — default `8`. Caps concurrent source downloads across the whole process; tune up for fast pipes and many small plans, tune down for fragile mirrors.
+- **CPU-sized compile pool** — `compile_lock` migrated from a binary mutex to `tokio::sync::Semaphore` sized at `total_cpus`. Each `compile` stage acquires `compile_cpu_count` permits, so single-core compiles no longer block the whole batch on a multi-core box.
+- **Cargo / anyhow-style failure reports** — terminal failures now emit a multi-line block: `error: <headline>` / `Caused by:` block / `See <log path>`. The cause chain is reconstructed by splitting the flattened `WrightError` Display and dropping variant prefixes.
+- **`Failed` and `Aborted` terminal verbs** — Cargo-style red 12-col verb lines for workflow-terminal failures and Ctrl+C interrupts. New macros `cli_failed!` and `cli_aborted!`.
+- **Batch processing documentation** — added `docs/explanation/batch-processing.md` explaining how tasks are grouped into waves, why batches are sealed and deployed as a unit, and how per-task independence works inside a batch.
+- **Dependency DAG documentation** — added `docs/explanation/dependency-dag.md` explaining Wright's two separate DAGs (build dependency DAG for batch construction and runtime dependency DAG for deploy ordering).
+
+### Changed
+- **`Forger::clean` is overlay-mount-aware** — replaces the previous one-shot `remove_dir_all` with `force_clean_dir`, which scans `/proc/self/mounts` for stale overlay mounts under the build root, lazy-unmounts each (deepest first), and retries the removal. Fixes the recurring `Device or resource busy (os error 16)` failures on re-forge after a prior crashed run.
+- **Reworded technical warnings** — `OverlayFS mount returned ESTALE/EBUSY; repairing stale mount state and retrying` was demoted from `warn!` to `debug!` since the recovery is automatic. `Failed to write forge key` demoted to `debug!` as an internal cache-marker miss. `OverlayFS mount requires CAP_SYS_ADMIN` reworded to `overlay mount needs root (or CAP_SYS_ADMIN); using slower directory-based layering instead`.
+- **Rewrote every status command's output** — `wright doctor`, `wright check`, `wright lint`, `wright remove`, `wright provide` no longer emit ad-hoc `println!` clusters with `.green()` / `.red()` / `"OK"` / `"FAILED"`. Each command now uses verb action lines (`Checking …`, `Linting …`, `Removing …`, `Providing …`) and a single terminal `Finished` line per command.
+- **Implicit-silence on intermediate completion** — there is no longer a `Compiled foo` / `Fetched foo` / `Extracted foo` past-tense scroll after each step. The next `-ing` action implies the previous step succeeded. Per-stage completion still goes to the structured file log.
+- **`util::logging::today_log_path`** — the failure-line hint now points at the actual rolling-daily file (`wright.log.YYYY-MM-DD`) instead of the non-existent `wright.log`.
+- **Log verb consistency** — batch-level progress lines now use `Forging` instead of `Building`, aligning CLI output with the project's core `forge` terminology.
+
+### Removed
+- **Old spinner API** — `new_plan_pipeline_spinner`, `new_source_spinner`, `new_source_transfer_bar`, `new_build_flow_spinner`, `set_source_bytes`, `set_source_git_objects`, and `ProgressBarGuard` are gone. Replaced by `cli_span!` + `record_bytes`. The two-tier `[*]` / `[plan-name]` spinner system no longer exists.
+- **`progress: Option<ProgressBar>` plumbing** — removed from `PipelineContext`, `Pipeline`, `DriveOptions`. Long-running operations open a span instead.
+- **`cli_info!` macro** — renamed to `cli_action!(verb, ...)`; the verb is now a required argument so authors choose deliberately at each callsite.
+
+### Fixed
+- **Documentation path errors** in `docs/explanation/plan-pipeline.md` — corrected `src/planning/execute.rs` to `src/seal/execute.rs` and `src/transaction/install.rs` to `src/transaction/deploy.rs`.
+- **Broken index link** — removed non-existent `apply-design.md` link from `docs/explanation/index.md`.
+
 ## [5.1.5] - 2026-05-14
 
 ### Fixed

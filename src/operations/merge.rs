@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WrightError};
 
-use crate::commands::system::install::collect_install_args;
 use crate::config::GlobalConfig;
+use crate::util::stdin::collect_stdin_args;
 use crate::database::{InstalledDb, SessionContext};
 use crate::part::store::LocalPartStore;
 use crate::plan::manifest::PlanManifest;
@@ -25,7 +25,7 @@ pub async fn execute_merge(
     root_dir: &Path,
     part_store: &LocalPartStore,
 ) -> Result<()> {
-    let parts = collect_install_args(parts)?;
+    let parts = collect_stdin_args(parts)?;
     use std::io::IsTerminal;
     if parts.is_empty() {
         if !std::io::stdin().is_terminal() {

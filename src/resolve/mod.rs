@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WrightError, WrightResultExt};
 use crate::forge::logging;
-use tracing::info;
 use crate::forge::mvp::inject_bootstrap_passes;
+use tracing::info;
 
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
@@ -243,7 +243,15 @@ pub async fn resolve_build_set(
             )
             .await?;
             if dep_count > 0 {
-                info!("resolved {} {}", dep_count, if dep_count == 1 { "dependency" } else { "dependencies" });
+                info!(
+                    "resolved {} {}",
+                    dep_count,
+                    if dep_count == 1 {
+                        "dependency"
+                    } else {
+                        "dependencies"
+                    }
+                );
             }
         }
 

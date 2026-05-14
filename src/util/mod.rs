@@ -2,7 +2,9 @@ pub mod checksum;
 pub mod compress;
 pub mod download;
 pub mod lock;
+pub mod logging;
 pub mod progress;
+pub mod stdin;
 
 /// Compact a file path for logging by replacing middle segments with `…`
 /// when the path exceeds 45 characters.

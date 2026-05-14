@@ -16,6 +16,12 @@ fn main() {
     println!("cargo:rerun-if-changed=src/cli/build.rs");
     println!("cargo:rerun-if-changed=src/cli/wright.rs");
 
+    // Tell the main crate that handler functions in src/cli/*.rs may be
+    // compiled. The build script itself does NOT see this cfg, so it skips
+    // the handler bodies that reference crate::operations etc.
+    println!("cargo::rustc-check-cfg=cfg(with_handlers)");
+    println!("cargo::rustc-cfg=with_handlers");
+
     // 1. Generate shell completions
     let completions_out = completions_output_dir();
     fs::create_dir_all(&completions_out).expect("failed to create completions output directory");

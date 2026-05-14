@@ -1,9 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use wright::cli::common::{DomainArg, MatchPolicyArg};
-use wright::cli::system::InstallArgs;
-use wright::commands::system;
+use wright::cli::common::{Context, DomainArg, MatchPolicyArg};
+use wright::cli::install::{self, InstallArgs};
 use wright::config::GlobalConfig;
 
 #[tokio::test]
@@ -85,7 +84,14 @@ runtime_deps = ["wayland"]
         root: None,
     };
 
-    let result = system::dispatch_install(cmd, &config, &db_path, &root, 2, false).await;
+    let ctx = Context {
+        config: &config,
+        db_path: db_path.clone(),
+        root_dir: root.clone(),
+        verbose: 2,
+        quiet: false,
+    };
+    let result = install::run(cmd, &ctx).await;
 
     std::env::set_current_dir(old_cwd).unwrap();
 

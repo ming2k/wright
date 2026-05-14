@@ -73,7 +73,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
    land on the host filesystem.
 
 4. **Discover** — resolve folio references (`@core`), expand plan names, and
-   collect any `[[assume]]` and `[config]` blocks from the resolved folios.
+   collect any `[[provide]]` and `[config]` blocks from the resolved folios.
 
 5. **Sync plans and folios** — copy each plan directory and referenced folio
    manifest into `<root>/var/lib/wright/plans/` and
@@ -85,7 +85,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
    target, pointing `plans_dir`, `folios_dir`, `parts_dir`, `source_dir`,
    `db_path`, and `forge_dir` at target-local paths.
 
-7. **Pre-register assumptions** — insert each `[[assume]]` entry into the
+7. **Pre-register assumptions** — insert each `[[provide]]` entry into the
    target's fresh `wright.db` so dependency checks pass without Wright
    attempting to deploy the kernel, host toolchain, or other externals.
 
@@ -153,7 +153,7 @@ means:
 ## When Not to Use Launch
 
 - **Adding Wright to an existing system.**  If you already have a hand-built
-  LFS system and only need to register what is on disk, use `wright assume`.
+  LFS system and only need to register what is on disk, use `wright provide`.
   Launch expects an empty target root.
 
 - **Installing or upgrading parts on a live system.**  Use `wright install` or

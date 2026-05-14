@@ -76,6 +76,6 @@ No output means the system is consistent.
 - **Use `link_deps`, not `runtime_deps`.** `link_deps` tells Wright which parts
   must be rebuilt when the dependency changes. `runtime_deps` are only needed
   after installation.
-- **Assume bootstrap parts.** Use `wright assume <name> <version>` (or
+- **Assume bootstrap parts.** Use `wright provide <name> <version>` (or
   `--file` for bulk) for external packages that satisfy the dependency graph
   but are not managed by Wright.

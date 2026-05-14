@@ -16,19 +16,19 @@ flowchart TD
         EP["Expand dependencies\nand topologically sort\ninto batches"]
     end
 
-    subgraph Forge["2. Forge"]
+    subgraph Forge["2. Forge (per task, parallel within batch)"]
         FF["fetch / verify / extract"]
-        FP["pipeline stages"]
+        FP["prepare → configure → compile → check → staging"]
         FS["slice outputs"]
     end
 
-    subgraph Seal["3. Seal"]
+    subgraph Seal["3. Seal (batch-level, after all forges succeed)"]
         SV["FHS validation"]
         SL["ELF lint"]
         SC["create .wright.tar.zst"]
     end
 
-    subgraph Deploy["4. Deploy"]
+    subgraph Deploy["4. Deploy (batch-level)"]
         IX["extract archive"]
         IC["conflict detection"]
         IF["copy files to root"]
@@ -103,6 +103,11 @@ The build set is not executed in arbitrary order. `create_execution_plan` (`src/
 
 The batches are ordered so that every plan in batch *n* depends only on plans in batches *0..n-1*. This guarantees that when a plan begins its delivery, all of its dependencies have already been resolved, forged, sealed, and deployed.
 
+Because all tasks in a batch are compiled against the same system state,
+the batch is also **sealed and deployed as a unit**.  Deploying individual
+tasks mid-batch would mutate the live system while sibling tasks were
+still compiling, causing them to see an inconsistent dependency snapshot.
+
 ## 2. Forge
 
 Now the plan enters the forge. `Forger::build` (`src/forge/mod.rs`) is responsible for turning the `plan.toml` description into a populated `staging/` directory.
@@ -116,9 +121,13 @@ The forge first decides whether the source tree in `work/` can be reused. It com
 
 The source cache is persistent across forges. A tarball is only downloaded again if it is missing or its checksum fails.
 
+These three stages are **not** a batch-level preprocessing step.  Each task in a batch runs its own `fetch` → `verify` → `extract` sequence inside the `tokio::spawn` that calls `forger.build()`.  A task that finishes extract proceeds directly into `configure`; it does **not** wait for sibling tasks to finish extracting.
+
 ### 2.2 Pipeline
 
 With sources ready, the **Pipeline** runs.  `Pipeline::run` (`src/forge/pipeline.rs`) executes the plan's pipeline stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
+
+`Pipeline::run` explicitly skips the built-in stages (`fetch`, `verify`, `extract`) because `Forger::build` has already handled them.  The pipeline therefore begins at `prepare` and proceeds through the user-defined stages.
 
 Before each stage, the pipeline computes an input hash chained from the stage's script, environment variables, and the preceding stage's hash. If `.wright-pipeline.json` records a matching hash with status `COMPLETED`, the stage is skipped. On success, the hash is committed. A change anywhere upstream cascades invalidation through all downstream stages. See [Checkpoint Recovery](checkpoint-recovery.md) for the full design.
 
@@ -132,7 +141,7 @@ The result is a `BuildResult` containing paths to the sliced output directories.
 
 ## 3. Seal
 
-A populated `staging/` directory is not the final product. `package_outputs` (`src/planning/execute.rs`) turns the sliced outputs into `.wright.tar.zst` archives.
+A populated `staging/` directory is not the final product. `package_outputs` (`src/seal/execute.rs`) turns the sliced outputs into `.wright.tar.zst` archives.
 
 For each output:
 
@@ -146,7 +155,7 @@ If the archive already exists and `--force` was not passed, sealing is skipped e
 
 ## 4. Deploy
 
-The final step is moving the archive's contents onto the target system. `install_parts_with_explicit_targets` (`src/transaction/install.rs`) handles this.
+The final step is moving the archive's contents onto the target system. `deploy_parts_with_explicit_targets` (`src/transaction/deploy.rs`) handles this.
 
 ### 4.1 Batch Validation
 

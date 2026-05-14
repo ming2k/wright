@@ -52,6 +52,7 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
             false,
             false,
             false,
+            false,
             &HashMap::new(),
             false,
             None,

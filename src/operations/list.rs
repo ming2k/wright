@@ -5,11 +5,11 @@ pub async fn execute_list(
     db: &InstalledDb,
     long: bool,
     roots: bool,
-    assumed: bool,
+    provided: bool,
     orphans: bool,
 ) -> Result<()> {
-    let parts = if assumed {
-        db.get_assumed_parts().await?
+    let parts = if provided {
+        db.get_provided_parts().await?
     } else if orphans {
         db.get_orphan_parts().await?
     } else if roots {
@@ -19,7 +19,7 @@ pub async fn execute_list(
     };
 
     if parts.is_empty() {
-        if !assumed && !roots && !orphans {
+        if !provided && !roots && !orphans {
             println!("no parts installed");
         }
     } else {
@@ -51,3 +51,4 @@ pub async fn execute_list(
     }
     Ok(())
 }
+

@@ -91,24 +91,24 @@ wright remove zlib --cascade
 | `-r`, `--recursive` | Recursively remove all parts that depend on the target |
 | `-c`, `--cascade` | Also remove orphan dependencies (auto-deployed deps) |
 
-### `wright assume <NAME> <VERSION>`
+### `wright provide <NAME> <VERSION>`
 
 Mark a part as externally provided so dependency checks consider it satisfied.
-Assumed parts have no filesystem footprint; they only satisfy dependency checks.
+Provided parts have no filesystem footprint; they only satisfy dependency checks.
 
 ```bash
-wright assume gcc 14.2.0
-wright assume --file assumed-parts.txt
-echo "glibc 2.40" | wright assume
+wright provide gcc 14.2.0
+wright provide --file provided-parts.txt
+echo "glibc 2.40" | wright provide
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--file <FILE>` | Read `name version` pairs from a file |
 
-### `wright unassume <NAME>`
+### `wright remove <NAME>`
 
-Remove an assumed (`external`-origin) part record created with `wright assume`.
+Remove an provided (`external`-origin) part record created with `wright provide`.
 
 ## Query & Inspection
 
@@ -121,7 +121,7 @@ wright list
 wright list -l
 wright list --roots
 wright list --orphans
-wright list --assumed
+wright list --provided
 ```
 
 | Flag | Description |
@@ -129,7 +129,7 @@ wright list --assumed
 | `-l`, `--long` | Show origin, version, release, and architecture |
 | `--roots` | Show only top-level (root) parts with no deployed dependents |
 | `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
-| `--assumed` | Show assumed (externally provided) parts |
+| `--provided` | Show provided (externally provided) parts |
 
 ### `wright files <PART>`
 
@@ -220,17 +220,6 @@ wright launch --root /mnt/new --plans ./plans @core
 | `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
 | `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
 
-## Cache & Maintenance
-
-### `wright prune`
-
-Remove stale archives from `parts_dir`.
-
-| Flag | Description |
-|------|-------------|
-| `--latest` | Keep only the most recent archive for each part name |
-| `--apply` | Apply deletions; dry-run by default |
-
 ## Common Pipelines
 
 Forge a part and deploy it:
@@ -251,8 +240,8 @@ wright install @core openssl
 Register host-provided parts during LFS bootstrap:
 
 ```bash
-wright assume gcc 14.2.0
-wright assume glibc 2.40
+wright provide gcc 14.2.0
+wright provide glibc 2.40
 ```
 
 ## Porcelain vs Plumbing
@@ -270,3 +259,9 @@ Wright commands fall into two layers:
 
 This distinction is advisory; no command is artificially restricted from
 interactive use or scripting.
+ile without auto-deploy), `list` (plain newline-separated
+  names for `xargs`).
+
+This distinction is advisory; no command is artificially restricted from
+interactive use or scripting.
+or scripting.

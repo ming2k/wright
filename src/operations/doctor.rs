@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use owo_colors::OwoColorize;
-
 use crate::config::GlobalConfig;
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
@@ -18,7 +16,8 @@ pub async fn execute_doctor(
     root_dir: &Path,
     config: &GlobalConfig,
 ) -> Result<()> {
-    println!("Running system health checks...\n");
+    let t0 = std::time::Instant::now();
+    crate::cli_action!("Checking", "system health");
 
     let mut total_issues = super::health::run_standard_checks(
         db, root_dir, None,  // only_part
@@ -31,12 +30,17 @@ pub async fn execute_doctor(
     let closure_issues = check_parts_dir_closure(config).await?;
     total_issues += closure_issues;
 
+    let elapsed = t0.elapsed().as_secs_f64();
     if total_issues == 0 {
-        println!("{}: system reports clean", "doctor".green());
+        crate::cli_action!(
+            "Finished",
+            "doctor in {}: clean",
+            crate::forge::logging::format_duration(elapsed)
+        );
         Ok(())
     } else {
         Err(WrightError::DependencyError(format!(
-            "{} issue(s) reported by `wright doctor`",
+            "doctor found {} issue(s)",
             total_issues
         )))
     }
@@ -69,14 +73,14 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         return Ok(0);
     }
 
-    println!("Checking parts_dir dependency closure...");
+    crate::cli_action!("Checking", "dependency closure ({} archives)", archive_count);
 
     let index = SonameIndex::scan_parts_dir(parts_dir).unwrap_or_else(|e| {
-        tracing::warn!("doctor: failed to build SONAME index: {}", e);
+        crate::cli_warn!("failed to build SONAME index: {}", e);
         SonameIndex::default()
     });
 
-    let mut issues = 0usize;
+    let mut missing: Vec<String> = Vec::new();
 
     for entry in std::fs::read_dir(parts_dir)
         .map_err(|e| WrightError::PartError(format!("read {}: {}", parts_dir.display(), e)))?
@@ -95,11 +99,7 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         let meta = match read_archive_meta(&path) {
             Ok(m) => m,
             Err(e) => {
-                tracing::warn!(
-                    "doctor: skipping unreadable archive {}: {}",
-                    path.display(),
-                    e
-                );
+                crate::cli_warn!("skipping unreadable archive {}: {}", path.display(), e);
                 continue;
             }
         };
@@ -111,22 +111,21 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
             }
             let targets = resolve_dep_targets(dep, &index);
             if targets.is_empty() {
-                println!(
-                    "  {}: '{}' declares '{}' but no archive provides it",
-                    "missing".red(),
-                    meta.partinfo.name,
-                    dep
-                );
-                issues += 1;
+                missing.push(format!("{} needs {} (no provider in parts_dir)", meta.partinfo.name, dep));
             }
         }
     }
 
-    if issues == 0 {
-        println!("  {}: all runtime_deps resolve in parts_dir", "OK".green());
+    if !missing.is_empty() {
+        crate::cli_warn!("{} missing runtime dependencies", missing.len());
+        for line in &missing {
+            // Indent each finding under the warning line; one bullet per
+            // missing dep keeps the output scannable.
+            let _ = crate::util::progress::MULTI.println(format!("             - {}", line));
+        }
     }
 
-    Ok(issues)
+    Ok(missing.len())
 }
 
 fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {

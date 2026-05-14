@@ -96,19 +96,20 @@ fn acquire_lock_path_with_timeout(
     timeout: Duration,
 ) -> Result<ProcessLock> {
     if let Some(parent) = lock_path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent) {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                return Err(WrightError::AccessDenied(format!(
-                    "cannot create directory {}",
-                    parent.display()
-                )));
-            }
-            return Err(WrightError::LockError(format!(
-                "failed to create lock directory {}: {}",
-                parent.display(),
-                e
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            return Err(WrightError::AccessDenied(format!(
+                "cannot create directory {}",
+                parent.display()
             )));
         }
+        return Err(WrightError::LockError(format!(
+            "failed to create lock directory {}: {}",
+            parent.display(),
+            e
+        )));
+    }
 
     let file = OpenOptions::new()
         .read(true)

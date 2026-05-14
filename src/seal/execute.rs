@@ -2,7 +2,6 @@ use tracing::info;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
-use crate::forge::logging;
 use crate::part::archive;
 use crate::part::fhs;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
@@ -35,7 +34,19 @@ pub async fn package_outputs(
                 let sub_manifest = sub_part.to_manifest(sub_name, manifest);
                 let sub_part_path =
                     archive::create_part(part_dir, &sub_manifest, &output_dir, Some(manifest))?;
-                info!("{}", logging::plan_packed(sub_name, &sub_part_path));
+                let file_name = sub_part_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                // Rule B: no completion line for the seal step; the next
+                // package's "Building …" announces implicit success.
+                info!(
+                    event = "seal.packed",
+                    plan_name = %sub_name,
+                    part_path = %sub_part_path.display(),
+                    file_name = %file_name,
+                    "packed"
+                );
                 if print_parts {
                     println!("{}", sub_part_path.display());
                 }
@@ -46,9 +57,16 @@ pub async fn package_outputs(
                 fhs::validate(&result.output_dir, &manifest.metadata.name)?;
             }
             let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
+            let file_name = part_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
             info!(
-                "{}",
-                logging::plan_packed(&manifest.metadata.name, &part_path)
+                event = "seal.packed",
+                plan_name = %manifest.metadata.name,
+                part_path = %part_path.display(),
+                file_name = %file_name,
+                "packed"
             );
             if print_parts {
                 println!("{}", part_path.display());

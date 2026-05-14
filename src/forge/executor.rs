@@ -221,9 +221,10 @@ pub async fn execute_script(
         "JOBS",
     ] {
         if let Ok(value) = std::env::var(key)
-            && !config.env.iter().any(|(k, _)| k == key) {
-                config.env.push((key.to_string(), value));
-            }
+            && !config.env.iter().any(|(k, _)| k == key)
+        {
+            config.env.push((key.to_string(), value));
+        }
     }
 
     let mut args = executor.args.clone();

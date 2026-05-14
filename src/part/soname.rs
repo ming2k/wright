@@ -346,9 +346,10 @@ fn dir_mtime(dir: &Path) -> Result<SystemTime> {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata()
                 && let Ok(t) = meta.modified()
-                    && t > latest {
-                        latest = t;
-                    }
+                && t > latest
+            {
+                latest = t;
+            }
         }
     }
     Ok(latest)

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use wright::cli::system::InstallArgs;
-use wright::commands::system;
+use wright::cli::common::Context;
+use wright::cli::install::{self, InstallArgs};
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
 use wright::database::SessionContext;
@@ -38,6 +38,7 @@ async fn build_hello_archive() -> PathBuf {
             &[],
             &[] as &[String],
             None,
+            false,
             false,
             false,
             false,
@@ -330,9 +331,14 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         dry_run: false,
         root: None,
     };
-    system::dispatch_install(cmd, &config, &db_path, &root, 0, false)
-        .await
-        .unwrap();
+    let ctx = Context {
+        config: &config,
+        db_path: db_path.clone(),
+        root_dir: root.clone(),
+        verbose: 0,
+        quiet: false,
+    };
+    install::run(cmd, &ctx).await.unwrap();
 
     assert!(root.join("usr/bin/x").exists());
     assert!(root.join("usr/bin/y").exists());

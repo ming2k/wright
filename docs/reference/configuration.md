@@ -41,6 +41,7 @@ stable_toolchain = ["gcc", "glibc", "binutils", "make", "bison", "flex",
 [network]
 download_timeout = 300
 retry_count = 3
+max_concurrent_downloads = 8
 ```
 
 ## Important Paths
@@ -65,6 +66,7 @@ retry_count = 3
 | `stable_toolchain` | (see below) | part names treated as stable for rebuild cascade decisions |
 | `download_timeout` | `300` | network timeout in seconds |
 | `retry_count` | `3` | download retry count |
+| `max_concurrent_downloads` | `8` | upper bound on parallel source downloads across the whole process (prevents thundering-herd on mirror servers when many plans fetch at once) |
 
 ## Notes
 

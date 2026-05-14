@@ -24,17 +24,6 @@ Or use `wright install` for plan-driven maintenance:
 wright install curl
 ```
 
-## Cleaning Old Parts
-
-Use `wright prune` to clean the parts directory:
-
-```bash
-wright prune --latest --apply
-```
-
-- `--latest` keeps only the newest archive per part name while preserving installed versions
-- `--apply` performs deletions; otherwise prints a dry-run report
-
 ## Low-Level Pipeline
 
 For explicit control over build and merge phases:

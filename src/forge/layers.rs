@@ -6,6 +6,95 @@ use tracing::{debug, warn};
 
 use crate::error::{Result, WrightError};
 
+/// Best-effort recursive removal that handles two failure modes plain
+/// `remove_dir_all` doesn't:
+///
+/// 1. **Stale overlay mounts.** A prior crashed run can leave an active
+///    `overlay` mount under the path.  The kernel returns `EBUSY` from
+///    `rmdir`/`unlinkat` against the mount point.  We enumerate
+///    `/proc/self/mounts`, lazy-unmount any mount whose target falls inside
+///    `path`, then retry.
+///
+/// 2. **Transient `EBUSY`.** Sometimes a sibling process is holding a
+///    handle that drops momentarily later.  We retry with a short backoff.
+pub async fn force_clean_dir(path: &Path) -> Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || force_clean_dir_blocking(&path))
+        .await
+        .map_err(|e| WrightError::ForgeError(format!("clean join: {}", e)))?
+}
+
+fn force_clean_dir_blocking(path: &Path) -> Result<()> {
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..3 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                let is_busy = e.raw_os_error() == Some(libc::EBUSY);
+                last_err = Some(e);
+                if !is_busy {
+                    break;
+                }
+                let detached = detach_mounts_under(path);
+                debug!(
+                    event = "clean.ebusy",
+                    path = %path.display(),
+                    attempt = attempt + 1,
+                    detached = detached,
+                    "EBUSY on clean; detached {} stale mount(s) and retrying",
+                    detached,
+                );
+                thread::sleep(Duration::from_millis(100 * (1 << attempt)));
+            }
+        }
+    }
+    let e = last_err.expect("loop only exits with last_err set on failure");
+    Err(WrightError::ForgeError(format!(
+        "failed to clean forge directory {}: {}",
+        path.display(),
+        e,
+    )))
+}
+
+/// Detach every mount whose target is `path` or a descendant. Returns
+/// the number of mounts detached.
+fn detach_mounts_under(path: &Path) -> usize {
+    let mounts = match std::fs::read_to_string("/proc/self/mounts") {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let mut targets: Vec<PathBuf> = mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let _src = fields.next()?;
+            let target = fields.next()?;
+            Some(PathBuf::from(target))
+        })
+        .filter(|t| t == path || t.starts_with(path))
+        .collect();
+    targets.sort_by_key(|t| std::cmp::Reverse(t.components().count()));
+
+    let mut detached = 0;
+    for target in targets {
+        match nix::mount::umount2(&target, nix::mount::MntFlags::MNT_DETACH) {
+            Ok(()) => {
+                detached += 1;
+                debug!(event = "clean.umount", target = %target.display(), "Detached stale mount");
+            }
+            Err(e) => {
+                warn!(event = "clean.umount_failed",
+                    target = %target.display(),
+                    error = %e,
+                    "Failed to detach stale mount; continuing",
+                );
+            }
+        }
+    }
+    detached
+}
+
 /// Layer index numbers for the canonical pipeline stage order.
 const LAYER_INDICES: &[(&str, &str)] = &[
     ("fetch", "01"),
@@ -52,23 +141,21 @@ pub fn canonical_layer_order() -> Vec<String> {
 
 /// Manage the per-stage OverlayFS layers for a single plan build.
 ///
-/// Layers are stacked: layer 0 is the bottom-most read-only layer, layer N
-/// is the writable upper layer for stage N.  OverlayFS merges them into
-/// `target_dir`.
-///
-/// The overlay mount is performed inside a mount namespace.  When the
-/// caller does not have `CAP_SYS_ADMIN` (e.g. in unprivileged test
-/// scenarios), the mount is skipped gracefully and `target_dir` is used
-/// as a plain directory populated from previous completed layers.
+/// Each stage gets a **disposable mount point** under `stages/`.  The stable
+/// `target/` entry is a symlink that is atomically repointed to the current
+/// stage's mount point.  Because we never remount the same directory, the
+/// `EBUSY` stale-state race is eliminated from the hot path.
 pub struct LayerManager {
     layers_dir: PathBuf,
     target_dir: PathBuf,
+    stages_dir: PathBuf,
     ovl_work_dir: PathBuf,
+    current_mount: Option<PathBuf>,
 }
 
 impl Drop for LayerManager {
     fn drop(&mut self) {
-        self.try_unmount();
+        self.unmount_overlay();
     }
 }
 
@@ -80,14 +167,17 @@ impl LayerManager {
     /// <build_root>/
     /// ├── layers/
     /// │   ├── 01-fetch/
-    /// │   ├── 02-verify/
     /// │   └── ...
-    /// ├── target/         (merged view for stage execution)
-    /// └── .ovl_work/      (OverlayFS internal working directory)
+    /// ├── stages/         (disposable mount points, one per stage)
+    /// │   ├── 01-fetch/
+    /// │   └── ...
+    /// ├── target/ -> stages/<current-stage>/   (stable symlink)
+    /// └── .ovl_work/      (OverlayFS internal working directories)
     /// ```
     pub fn new(build_root: &Path) -> Result<Self> {
         let layers_dir = build_root.join("layers");
         let target_dir = build_root.join("target");
+        let stages_dir = build_root.join("stages");
         let ovl_work_dir = build_root.join(".ovl_work");
 
         std::fs::create_dir_all(&layers_dir).map_err(|e| {
@@ -104,18 +194,35 @@ impl LayerManager {
                 e
             ))
         })?;
+        std::fs::create_dir_all(&stages_dir).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to create stages dir {}: {}",
+                stages_dir.display(),
+                e
+            ))
+        })?;
 
-        let manager = Self {
+        // Create a dummy directory so that the initial symlink has something
+        // valid to point at before the first stage mounts.
+        let empty_stage = stages_dir.join(".empty");
+        std::fs::create_dir_all(&empty_stage).ok();
+
+        remove_path_if_exists(&target_dir)?;
+        std::os::unix::fs::symlink(&empty_stage, &target_dir).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to create target symlink {}: {}",
+                target_dir.display(),
+                e
+            ))
+        })?;
+
+        Ok(Self {
             layers_dir,
             target_dir,
+            stages_dir,
             ovl_work_dir,
-        };
-
-        // Clean stale mount points before starting.  target/ is scratch state;
-        // recreating it avoids reusing a path backed by a stale overlay dentry.
-        manager.reset_target_dir()?;
-
-        Ok(manager)
+            current_mount: None,
+        })
     }
 
     // --- Directory paths ---
@@ -139,7 +246,7 @@ impl LayerManager {
     pub fn prepare_upper_layer(&self, stage: &str) -> Result<PathBuf> {
         let dir = self.layer_dir(stage);
         if dir.exists() {
-            debug!("Clearing existing layer directory: {}", dir.display());
+            debug!(event = "layer.clear", dir = %dir.display(), "Clearing existing layer directory");
             std::fs::remove_dir_all(&dir).map_err(|e| {
                 WrightError::ForgeError(format!(
                     "failed to clear layer dir {}: {}",
@@ -192,26 +299,29 @@ impl LayerManager {
     /// (but not including) `current_stage`.
     ///
     /// This is the non-OverlayFS fallback: files from prior layers are
-    /// hard-linked into `target_dir`, with later layers taking precedence.
-    /// The caller then runs the stage script inside `target_dir` directly.
-    ///
-    /// After the stage, call [`commit_layer`] or [`clear_layer`].
+    /// hard-linked into the directory that `target_dir` currently points to,
+    /// with later layers taking precedence.
     pub fn populate_target(&self, completed_stages: &[String]) -> Result<()> {
-        self.reset_target_dir()?;
+        let resolved = std::fs::canonicalize(&self.target_dir)
+            .unwrap_or_else(|_| self.target_dir.clone());
 
-        // Hard-link files from each completed layer into target, with later
-        // layers overwriting earlier ones.
+        let Ok(read_dir) = std::fs::read_dir(&resolved) else { return Ok(()); };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink() {
+                let _ = std::fs::remove_dir_all(&path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+
         for stage_name in completed_stages {
             let layer_dir = self.layer_dir(stage_name);
             if !layer_dir.exists() {
                 continue;
             }
-            debug!(
-                "Hard-linking layer '{}' into target: {}",
-                stage_name,
-                layer_dir.display()
-            );
-            hard_link_all_sync(&layer_dir, &self.target_dir)?;
+            debug!(event = "layer.hardlink", stage = %stage_name, layer = %layer_dir.display(), "Hard-linking layer into target");
+            hard_link_all_sync(&layer_dir, &resolved)?;
         }
 
         Ok(())
@@ -220,23 +330,31 @@ impl LayerManager {
     /// Attempt an OverlayFS mount merging `completed_stages` with
     /// `current_stage` as the writable upper layer.
     ///
+    /// The mount point is a **fresh disposable directory** under `stages/`;
+    /// it is never reused.  The stable `target/` symlink is atomically
+    /// repointed to it.  This eliminates the `EBUSY` race that plagued the
+    /// old design, where `target/` itself was reused as the mount point.
+    ///
     /// Returns `true` if the mount succeeded, `false` if OverlayFS was
     /// unavailable (e.g. missing `CAP_SYS_ADMIN`).  When false, the caller
     /// should fall back to [`populate_target`].
-    pub fn mount_overlay(&self, current_stage: &str, completed_stages: &[String]) -> Result<bool> {
+    pub fn mount_overlay(&mut self, current_stage: &str, completed_stages: &[String]) -> Result<bool> {
         use nix::mount::{MsFlags, mount};
 
-        // OverlayFS lowerdir= leftmost entry is the topmost layer in the
-        // merged view (checked first on lookup).  Iterate in reverse so later
-        // pipeline stages sit higher in the stack and shadow earlier ones.
-        let mut lower_parts: Vec<String> = Vec::new();
-        for prev_stage in completed_stages.iter().rev() {
-            let prev_dir = self.layer_dir(prev_stage);
-            if prev_dir.exists() {
-                lower_parts.push(prev_dir.display().to_string());
-            }
-        }
+        // --- 1. Allocate a disposable mount point ---
+        let stage_point = self.stages_dir.join(layer_dir_name(current_stage));
 
+        // Cold path: a prior crashed run may have left a stale overlay here.
+        let _ = force_clean_dir_blocking(&stage_point);
+        std::fs::create_dir_all(&stage_point).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to create stage mount point {}: {}",
+                stage_point.display(),
+                e
+            ))
+        })?;
+
+        // --- 2. Upper layer & workdir ---
         let upper_dir = self.layer_dir(current_stage);
         if !upper_dir.exists() {
             std::fs::create_dir_all(&upper_dir).map_err(|e| {
@@ -247,13 +365,17 @@ impl LayerManager {
                 ))
             })?;
         }
-
         let ovl_work = self.work_dir_for_stage(current_stage);
         self.reset_overlay_work_dir(&ovl_work)?;
 
-        // Unmount any prior overlay at target and recreate the scratch
-        // mountpoint before asking the kernel to attach a new overlay.
-        self.reset_target_dir()?;
+        // --- 3. Build lowerdir stack ---
+        let mut lower_parts: Vec<String> = Vec::new();
+        for prev_stage in completed_stages.iter().rev() {
+            let prev_dir = self.layer_dir(prev_stage);
+            if prev_dir.exists() {
+                lower_parts.push(prev_dir.display().to_string());
+            }
+        }
 
         let opts = if lower_parts.is_empty() {
             let dummy_lower = self.layers_dir.join(".empty-lower");
@@ -273,100 +395,88 @@ impl LayerManager {
             )
         };
 
+        let lowerdirs_str = if lower_parts.is_empty() {
+            "(none)".to_string()
+        } else {
+            lower_parts.join(":")
+        };
         debug!(
-            "Mounting stage overlay: lowerdirs=[{}], upperdir={}",
-            if lower_parts.is_empty() {
-                "(none)".to_string()
-            } else {
-                lower_parts.join(":")
-            },
-            upper_dir.display(),
+            event = "layer.mount",
+            stage = %current_stage,
+            point = %stage_point.display(),
+            lowerdirs = %lowerdirs_str,
+            upperdir = %upper_dir.display(),
+            "Mounting stage overlay to disposable point"
         );
 
+        // --- 4. Mount (no retry: each point is used exactly once) ---
         let mount_result = mount(
             Some("overlay"),
-            &self.target_dir,
+            &stage_point,
             Some("overlay"),
             MsFlags::empty(),
             Some(opts.as_str()),
         );
 
         match mount_result {
-            Ok(()) => Ok(true),
+            Ok(()) => {
+                // Atomically rotate the stable symlink.
+                let temp_link = self.target_dir.with_extension("tmp");
+                std::os::unix::fs::symlink(&stage_point, &temp_link).map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to create target symlink {}: {}",
+                        temp_link.display(),
+                        e
+                    ))
+                })?;
+                std::fs::rename(&temp_link, &self.target_dir).map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to rotate target symlink to {}: {}",
+                        stage_point.display(),
+                        e
+                    ))
+                })?;
+
+                self.current_mount = Some(stage_point);
+                Ok(true)
+            }
             Err(nix::errno::Errno::EPERM) => {
                 warn!(
-                    "OverlayFS mount requires CAP_SYS_ADMIN; falling back to directory-based layering"
+                    event = "layer.mount_no_cap",
+                    "overlay mount needs root (or CAP_SYS_ADMIN); using slower directory-based layering instead"
                 );
                 Ok(false)
             }
-            Err(nix::errno::Errno::ESTALE) | Err(nix::errno::Errno::EBUSY) => {
-                warn!(
-                    "OverlayFS mount at {} returned ESTALE/EBUSY; repairing stale mount state and retrying",
-                    self.target_dir.display()
-                );
-                self.reset_target_dir()?;
-                self.reset_overlay_work_dir(&ovl_work)?;
-                match mount(
-                    Some("overlay"),
-                    &self.target_dir,
-                    Some("overlay"),
-                    MsFlags::empty(),
-                    Some(opts.as_str()),
-                ) {
-                    Ok(()) => Ok(true),
-                    Err(nix::errno::Errno::EPERM) => {
-                        warn!(
-                            "OverlayFS mount requires CAP_SYS_ADMIN; falling back to directory-based layering"
-                        );
-                        Ok(false)
-                    }
-                    Err(e) => Err(WrightError::ForgeError(format!(
-                        "failed to mount overlay at {} after stale-state repair: {}",
-                        self.target_dir.display(),
-                        e
-                    ))),
-                }
-            }
             Err(e) => Err(WrightError::ForgeError(format!(
                 "failed to mount overlay at {}: {}",
-                self.target_dir.display(),
+                stage_point.display(),
                 e
             ))),
         }
     }
 
-    /// Unmount the overlay at `target_dir` if mounted.
-    pub fn unmount_overlay(&self) {
-        self.try_unmount();
-    }
-
-    /// Attempt a lazy detach of the overlay mount, retrying on transient
-    /// EBUSY with exponential backoff.  Safe to call even when nothing is
-    /// mounted (EINVAL is silently ignored).
-    fn try_unmount(&self) {
-        for attempt in 0..5 {
-            match nix::mount::umount2(&self.target_dir, nix::mount::MntFlags::MNT_DETACH) {
+    /// Unmount the current stage overlay (lazy detach).
+    ///
+    /// Because the mount point is disposable, we do not need to wait for
+    /// the kernel to finish tearing it down; the next stage will use a
+    /// completely fresh directory.
+    pub fn unmount_overlay(&mut self) {
+        if let Some(ref mount) = self.current_mount.take() {
+            match nix::mount::umount2(mount, nix::mount::MntFlags::MNT_DETACH) {
                 Ok(()) => {
-                    debug!("unmounted overlay at {}", self.target_dir.display());
-                    return;
-                }
-                Err(nix::errno::Errno::EINVAL) => return, // not mounted
-                Err(nix::errno::Errno::EBUSY) if attempt < 4 => {
                     debug!(
-                        "unmount overlay at {} returned EBUSY, retrying (attempt {}/{})",
-                        self.target_dir.display(),
-                        attempt + 1,
-                        5
+                        event = "layer.unmount",
+                        point = %mount.display(),
+                        "Lazy-unmounted stage overlay"
                     );
-                    thread::sleep(Duration::from_millis(100 * (1 << attempt)));
                 }
+                Err(nix::errno::Errno::EINVAL) => {} // not mounted
                 Err(e) => {
                     debug!(
                         "unmount overlay at {} (non-fatal): {}",
-                        self.target_dir.display(),
+                        mount.display(),
                         e
                     );
-                    return;
                 }
             }
         }
@@ -383,7 +493,6 @@ impl LayerManager {
             return Ok(());
         }
 
-        // Collect all files currently in target.
         let mut all_files: Vec<PathBuf> = Vec::new();
         collect_files_recursive(&self.target_dir, &self.target_dir, &mut all_files)?;
 
@@ -392,8 +501,6 @@ impl LayerManager {
                 .strip_prefix(&self.target_dir)
                 .unwrap_or(target_file);
 
-            // Check whether this file already exists with identical content
-            // in any previous layer (scan in reverse order for precedence).
             let already_present = completed_stages.iter().rev().any(|s| {
                 let prev_path = self.layer_dir(s).join(rel_path);
                 if !prev_path.exists() {
@@ -403,12 +510,10 @@ impl LayerManager {
             });
 
             if !already_present {
-                // Write this file into the current stage's layer.
                 let dest = layer_dir.join(rel_path);
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                // Prefer hard-link if possible (same filesystem), fall back to copy.
                 if std::fs::hard_link(target_file, &dest).is_err() {
                     let _ = std::fs::copy(target_file, &dest);
                 }
@@ -422,12 +527,12 @@ impl LayerManager {
     pub fn clear_layer(&self, stage: &str) {
         let dir = self.layer_dir(stage);
         if dir.exists() {
-            debug!("Clearing failed stage layer: {}", dir.display());
+            debug!(event = "layer.clear_failed", dir = %dir.display(), "Clearing failed stage layer");
             if let Err(e) = std::fs::remove_dir_all(&dir) {
-                warn!(
-                    "Failed to clear failed stage layer {}: {}",
-                    dir.display(),
-                    e
+                warn!(event = "layer.clear_failed",
+                    dir = %dir.display(),
+                    error = %e,
+                    "Failed to clear failed stage layer"
                 );
             }
         }
@@ -440,10 +545,10 @@ impl LayerManager {
             self.clear_layer(stage);
             let work_dir = self.work_dir_for_stage(stage);
             if let Err(e) = remove_path_if_exists(&work_dir) {
-                warn!(
-                    "Failed to clear overlay work dir {}: {}",
-                    work_dir.display(),
-                    e
+                warn!(event = "layer.workdir_clear_failed",
+                    dir = %work_dir.display(),
+                    error = %e,
+                    "Failed to clear overlay work dir"
                 );
             }
         }
@@ -451,40 +556,6 @@ impl LayerManager {
 
     fn work_dir_for_stage(&self, stage: &str) -> PathBuf {
         self.ovl_work_dir.join(layer_dir_name(stage))
-    }
-
-    fn reset_target_dir(&self) -> Result<()> {
-        self.try_unmount();
-
-        match remove_path_if_exists(&self.target_dir) {
-            Ok(()) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {
-                return Err(WrightError::ForgeError(format!(
-                    "failed to clear target dir {}: {} — a stale overlay mount may be active. \
-                     Run `umount {}` or reboot to clear it.",
-                    self.target_dir.display(),
-                    e,
-                    self.target_dir.display(),
-                )));
-            }
-            Err(e) => {
-                return Err(WrightError::ForgeError(format!(
-                    "failed to clear target dir {}: {}",
-                    self.target_dir.display(),
-                    e
-                )));
-            }
-        }
-
-        std::fs::create_dir_all(&self.target_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create target dir {}: {}",
-                self.target_dir.display(),
-                e
-            ))
-        })?;
-        Ok(())
     }
 
     fn reset_overlay_work_dir(&self, work_dir: &Path) -> Result<()> {
@@ -540,19 +611,16 @@ fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
             match file_type {
                 Some(ft) if ft.is_symlink() => {
                     if let Ok(target) = std::fs::read_link(&path) {
-                        // Remove existing entry at dest to allow symlink overwrite.
                         let _ = std::fs::remove_file(&dest_path);
                         let _ = std::os::unix::fs::symlink(&target, &dest_path);
                     }
                 }
                 Some(ft) if ft.is_dir() => {
-                    // Don't follow symlinks to dirs.
                     if !path.is_symlink() {
                         dirs_to_visit.push(path);
                     }
                 }
                 _ => {
-                    // Hard-link, fall back to copy.
                     let _ = std::fs::remove_file(&dest_path);
                     if std::fs::hard_link(&path, &dest_path).is_err() {
                         let _ = std::fs::copy(&path, &dest_path);

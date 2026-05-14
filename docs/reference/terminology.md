@@ -47,12 +47,12 @@ The `origin` field on an installed part records how it entered the system.
 | `dependency` | Pulled in automatically to satisfy another part's dependency. Eligible for orphan cleanup via `wright remove --cascade`. |
 | `build` | Installed as part of a build wave by `wright install`. |
 | `manual` | Explicitly requested by the user. Never auto-removable. |
-| `external` | Declared as provided by the host system via `wright assume`. Has no filesystem footprint; used to satisfy dependency checks during bootstrap. |
+| `external` | Declared as provided by the host system via `wright provide`. Has no filesystem footprint; used to satisfy dependency checks during bootstrap. |
 
 Origins follow a promotion hierarchy: `dependency < build < manual`. Wright
 automatically promotes an origin when you explicitly install a part that was
 previously pulled in at a lower tier. `external` is managed exclusively via
-`wright assume` / `wright unassume`.
+`wright provide` / `wright remove`.
 
 ## Execution Metaphor
 

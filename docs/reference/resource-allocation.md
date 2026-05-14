@@ -52,13 +52,48 @@ flowchart LR
 Even on a machine with many CPUs, Wright cannot exceed the number of currently
 independent tasks in the graph.
 
-## Serialized Pipeline Stages
+## Pipeline Stage Concurrency
 
-| Stage | Concurrency |
-|-------|-------------|
-| `configure` | One at a time across active build tasks |
-| `compile` | One at a time across active build tasks |
-| Other pipeline stages | Parallel, subject to dependency ordering and CPU budget |
+Wright uses three independent `tokio::sync::Semaphore` pools to gate
+concurrency on the three resources that need it. The pools are
+process-wide and shared across every active build task.
+
+| Pool | Size | Each stage acquires | Effect |
+|------|------|---------------------|--------|
+| `configure_lock` | `1` permit | `acquire()` (1 permit) | One `configure` stage runs at a time across the whole batch. Autotools-style configure scripts are not thread-safe in shared work directories. |
+| `compile_lock` | `total_cpus` permits | `acquire_many(compile_cpu_count)` | Each compile takes one permit per CPU it intends to use. The total in-flight permit count stays ≤ `total_cpus`. |
+| `network_pool` | `network.max_concurrent_downloads` (default 8) | `acquire()` per source download | Caps concurrent HTTP/git fetches across the whole process. |
+
+Other pipeline stages (`prepare`, `check`, `staging`) take no lock — they
+run in parallel subject only to dependency ordering and the scheduler's
+batch concurrency limit.
+
+### Why compile is a counted pool, not a mutex
+
+A binary mutex would limit the entire build to **one compile in flight**, even
+on a 32-core machine where many small single-core compiles could overlap
+safely. The counted pool gives correct utilization: an 8-core compile takes
+8 permits, a single-threaded compile takes 1 — and two single-threaded
+compiles can overlap with one 14-core compile on a 16-core box.
+
+### Per-source parallel fetch
+
+Within a single plan's `fetch` stage, every source (HTTP archives, git repos,
+local files) runs as an independent future joined via
+`futures_util::future::try_join_all`. Each future acquires one permit from
+`network_pool` before opening a connection.
+
+This means a plan with 5 sources fetches all 5 concurrently (up to 5 permits
+of the global 8), not serially. Configure with `network.max_concurrent_downloads`
+in `wright.toml`:
+
+```toml
+[network]
+max_concurrent_downloads = 8   # default; raise for fast pipes, lower for fragile mirrors
+```
+
+See [ADR-0021](../adr/0021-cargo-style-span-driven-output.md) for the design
+rationale.
 
 ## CPU Affinity Isolation
 
@@ -75,6 +110,9 @@ cpu_share = total_cpus / active_tasks
 `active_tasks` is the number of parts actually building at the moment a stage
 launches. When the graph fans out, each part gets a smaller share; when it
 collapses to a single runnable part, that part gets the full CPU budget.
+
+The `compile_lock` semaphore then enforces that the *sum* of `cpu_share`
+values across in-flight compiles never exceeds `total_cpus`.
 
 **CPU shares are locked when a stage starts.** A stage already running is not re-pinned if another isolation finishes mid-flight.
 

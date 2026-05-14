@@ -29,14 +29,12 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64, scope: &str) -> Resul
             )));
         }
 
-        let pb = progress::new_source_spinner(&label, "copying");
+        let _span = crate::cli_span!("Fetching", "{} ({})", label, scope);
         if src_path.is_dir() {
-            pb.set_message("packing".to_string());
             compress::create_tar_zst(src_path, dest)?;
         } else {
             std::fs::copy(src_path, dest).map_err(WrightError::IoError)?;
         }
-        progress::finish_source_with_label(&pb, scope, "Fetched", &label);
         return Ok(());
     }
 
@@ -97,17 +95,18 @@ fn try_download_http(
     // with SourceForge prdownloads URLs).
     if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE)
         && let Ok(ct_str) = ct.to_str()
-            && ct_str.contains("text/html") {
-                return Err(WrightError::NetworkError(format!(
-                    "server returned HTML instead of a file for {} (possible redirect page; \
+        && ct_str.contains("text/html")
+    {
+        return Err(WrightError::NetworkError(format!(
+            "server returned HTML instead of a file for {} (possible redirect page; \
                      try a direct download URL)",
-                    url
-                )));
-            }
+            url
+        )));
+    }
 
     let total_size = response.content_length().unwrap_or(0);
-    let pb = progress::new_source_transfer_bar(label, total_size);
-    progress::set_source_bytes(&pb, 0, total_size);
+    let span = crate::cli_span!("Fetching", "{} ({})", label, scope);
+    progress::record_bytes(&span, 0, total_size);
 
     // Write to a temporary file in the same directory, then rename on success.
     let dest_dir = dest.parent().unwrap_or(Path::new("."));
@@ -130,14 +129,13 @@ fn try_download_http(
         file.write_all(&buffer[..n]).map_err(WrightError::IoError)?;
 
         downloaded += n as u64;
-        progress::set_source_bytes(&pb, downloaded, total_size);
+        progress::record_bytes(&span, downloaded, total_size);
     }
 
     // Atomically move the completed download into place
     tmp_file
         .persist(dest)
         .map_err(|e| WrightError::IoError(e.error))?;
-    progress::finish_source_with_label(&pb, scope, "Fetched", label);
 
     Ok(())
 }

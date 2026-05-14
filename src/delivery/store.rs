@@ -74,17 +74,17 @@ impl CasStore {
             // .wright.tar.zst archive is always non-empty.
             match std::fs::metadata(&path) {
                 Ok(meta) if meta.len() > 0 => {
-                    debug!("CAS hit: {} ({} bytes)", path.display(), meta.len());
+                    debug!(event = "cas.hit", path = %path.display(), size = meta.len(), "CAS hit");
                     Some(path)
                 }
                 Ok(_) => {
-                    debug!("CAS miss: {} (empty file, discarding)", path.display());
+                    debug!(event = "cas.miss_empty", path = %path.display(), "CAS miss: empty file, discarding");
                     None
                 }
                 Err(_) => None,
             }
         } else {
-            debug!("CAS miss: {} (not in store)", filename);
+            debug!(event = "cas.miss", filename = %filename, "CAS miss: not in store");
             None
         }
     }
@@ -110,25 +110,17 @@ impl CasStore {
 
         // If destination already exists with the same content, skip.
         if dest.exists() {
-            debug!("CAS: {} already in store, skipping copy", dest.display());
+            debug!(event = "cas.exists", dest = %dest.display(), "CAS already exists, skipping copy");
             return Ok(dest);
         }
 
         // Try hard-link first, fall back to copy.
         match std::fs::hard_link(part_path, &dest) {
             Ok(()) => {
-                debug!(
-                    "CAS: hard-linked {} -> {}",
-                    part_path.display(),
-                    dest.display()
-                );
+                debug!(event = "cas.hardlinked", src = %part_path.display(), dest = %dest.display(), "CAS hard-linked");
             }
             Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-                debug!(
-                    "CAS: cross-device, copying {} -> {}",
-                    part_path.display(),
-                    dest.display()
-                );
+                debug!(event = "cas.cross_device_copy", src = %part_path.display(), dest = %dest.display(), "CAS cross-device, copying");
                 std::fs::copy(part_path, &dest).map_err(|e| {
                     WrightError::ForgeError(format!("CAS: failed to copy part to store: {}", e))
                 })?;
@@ -141,8 +133,17 @@ impl CasStore {
             }
         }
 
-        info!("cached {}", name);
-        debug!("CAS: {} stored at {}", name, dest.display());
+        let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+        // Rule B: CAS storage is a transparent side-effect of building;
+        // no separate CLI line — the structured log keeps the audit trail.
+        info!(
+            event = "cas.cached",
+            plan_name = %name,
+            size = size,
+            fingerprint = %&fingerprint[..16],
+            "cas stored",
+        );
+        debug!(event = "cas.stored", name = %name, dest = %dest.display(), "CAS stored");
         Ok(dest)
     }
 

@@ -1,114 +1,73 @@
 # Logging
 
-This page explains where Wright writes logs, how to control verbosity, and which
-settings affect log locations. For the operator-facing log style and message
-constraints, see [logging-design.md](../dev/logging-design.md).
+Where Wright writes logs and how to control verbosity. For the design rationale
+see [tracing-output-design](../dev/tracing-output-design.md) and
+[ADR-0021](../adr/0021-cargo-style-span-driven-output.md).
 
-## What Gets Logged
+## Output Surfaces
 
-Wright has two logging channels:
+| Surface | What | Where |
+|---------|------|-------|
+| Scrolling CLI lines | Cargo-style 12-col verb-aligned actions and `warning:` / `error:` messages | stderr |
+| Persistent CLI rows | Live spinners for in-flight work; one row per open span | bottom of terminal (stderr) |
+| Diagnostic file log | Structured JSON, full event/field context | `<logs_dir>/wright.log.YYYY-MM-DD` |
+| Build tool log | Per-stage stdout/stderr from build commands (`make`, etc.) | `<build_dir>/<plan>-<version>/logs/<stage>.log` |
 
-- **CLI logs**: structured logs from `wright` system and build subcommands.
-- **Build logs**: per-stage stdout/stderr captured for part builds.
+## Verbosity
 
-They are configured separately.
+CLI verbosity and file-log verbosity are independent.
 
-## Log Format
+| Flag | CLI level | File level |
+|------|-----------|------------|
+| (none) | `info` | `debug` |
+| `-v` | `debug` | `debug` |
+| `-vv` | `trace` | `debug` |
+| `--quiet` | `warn` | `debug` |
 
-CLI log lines are structured by ownership:
+The file log always defaults to `debug` so a post-mortem trace is available
+without re-running with `-v`. Override with `WRIGHT_LOG=<level>` for the
+session (e.g. `WRIGHT_LOG=trace wright install foo`).
 
-- Scheduler lines announce capacity, batches, resume state, and final summary.
-- Plan lines use a stable `[plan]` scope for build and stage progress.
-- Transaction lines report install/upgrade work.
+## Log File Location
 
-Example:
+| Field | Default | Notes |
+|-------|---------|-------|
+| `logs_dir` (root) | `/var/log/wright` | system-wide install |
+| `logs_dir` (user) | `~/.local/state/wright` | non-root install |
+| Filename | `wright.log.YYYY-MM-DD` | rolling daily via `tracing_appender::rolling::daily` |
 
-```
-INFO Build capacity: 16 parallel tasks on 16 CPU cores.
-INFO Build batch 1/1: build go.
-INFO [go] build started
-INFO [go] configure started (strict isolation)
-INFO [go] configure done in 2.3s
-INFO [go] Fetched go1.26.2.linux-amd64.tar.gz
-INFO [go] packed /var/lib/wright/parts/go-1.26.2-1-x86_64.wright.tar.zst
-INFO [go] build done
-INFO Installing go: 16681 files
-INFO Installed go: 1.26.2-1
-```
+A failed CLI command points at today's file in the `Failed` line's
+`See <path> for the full trace` hint.
 
-## CLI Verbosity
+## Build Tool Logs
 
-All `wright` subcommands use the same verbosity flags:
+Per-stage logs land at `<build_dir>/<plan>-<version>/logs/<stage>.log`:
 
-- `-v` enables debug logs.
-- `-vv` enables trace logs.
-- `--quiet` shows warnings and errors only.
+| Stage | File |
+|-------|------|
+| `prepare` | `prepare.log` |
+| `configure` | `configure.log` |
+| `compile` | `compile.log` |
+| `check` | `check.log` |
+| `staging` | `staging.log` |
 
-Default level is `info`. Logs are printed to stderr by the CLI.
+Each run **recreates** the per-stage directory, so build output is always fresh
+for the most recent attempt. Older runs' build logs are not preserved — use the
+diagnostic file log for cross-run history.
 
-### Debug Timing for Install and Upgrade
+## Field Conventions
 
-At `-v`, install and upgrade flows emit phase timing at `DEBUG` level. This is
-primarily intended for large packages with many files, where the slow phase may
-be archive extraction, file metadata scanning, owner checks, filesystem writes,
-or database updates.
+Events and spans use the following well-known fields. The CLI layers (scroll
+and spinner) read them; the file layer logs them all.
 
-Example:
-
-```text
-INFO Installing texlive-texmf: 252553 files
-DEBUG install texlive-texmf: archive extraction completed in 12.418s
-DEBUG install texlive-texmf: file scan and metadata collection completed in 44.903s
-DEBUG install texlive-texmf: owner conflict check completed in 1.731s
-DEBUG install texlive-texmf: filesystem copy into target root completed in 318.442s
-DEBUG install texlive-texmf: database update completed in 201.557s
-INFO Installed texlive-texmf: 2025-1
-DEBUG install texlive-texmf: total completed in 579.395s
-```
-
-This breakdown is often more useful than CPU usage alone when diagnosing slow
-installs of very large small-file packages.
-
-## Build Logs (per-stage files)
-
-`wright build` captures build tool output (make, cmake, etc.) to per-stage files
-under `<build_dir>/<name>-<version>/logs/`. Every run recreates this directory
-so logs are always fresh.
-
-For the full layout, log format, and recreation rules per operation, see
-[build-mechanics.md — Log Files](build-mechanics.md#log-files).
-
-### Seeing Output in Real Time
-
-To stream subprocess output to the terminal instead of capturing it:
-
-```bash
-wright build -v <target>
-```
-
-Verbose subprocess output is mirrored to stderr, not stdout. `wright build`
-does not print archive paths; use `wright package --print-parts` when you need
-pipe-safe archive paths for `wright install --path`.
-
-When Wright runs multiple build tasks in parallel, `-v` still keeps subprocess
-output captured per task to avoid interleaving noise. For fully live output,
-build a single target or narrow the build set.
-
-## Configuration
-
-### Change the Build Log Location
-
-Build logs follow the build directory. Configure it in `wright.toml`:
-
-```toml
-[build]
-build_dir = "/var/tmp/wright/workshop" # build logs end up under <build_dir>/<name>-<version>/logs
-```
-
-If you want persistent logs, choose a non-temporary path.
-
-### `logs_dir` (Operation Logs)
-
-`[general].logs_dir` is reserved for system/operation logs and defaults to
-`/var/log/wright` (root) or `~/.local/state/wright` (non-root). It is not wired
-to build logs, which always live under `build_dir` today.
+| Field | Type | Purpose |
+|-------|------|---------|
+| `verb` | string | Drives the 12-col scrolling verb column and the spinner row prefix |
+| `target` | string | The thing being acted on (plan, file, batch) — span field |
+| `plan_name` | string | Plan scope |
+| `stage_name` | string | Pipeline stage |
+| `event` | string | Stable event slug for aggregation (e.g. `forge.started`) |
+| `error` | display | Underlying error — folded into the body on WARN/ERROR levels |
+| `bytes_done` / `bytes_total` | u64 | Recorded on spans to swap the row to a download bar |
+| `elapsed_secs` | f64 | Duration of completed stage |
+| `trace_id` | string | Per-command UUID, propagated across the call tree |

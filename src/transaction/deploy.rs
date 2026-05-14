@@ -133,12 +133,28 @@ pub async fn deploy_parts_with_explicit_targets(
 
             if force || incoming_hash.as_deref() != installed.part_hash.as_deref() {
                 if force {
-                    debug!("{} hash forced upgrade", name);
+                    debug!(
+                        event = "deploy.hash_forced_upgrade",
+                        plan_name = name,
+                        "Hash forced upgrade"
+                    );
                 } else {
-                    debug!("{} hash changed, upgrading", name);
+                    debug!(
+                        event = "deploy.hash_changed",
+                        plan_name = name,
+                        "Hash changed, upgrading"
+                    );
                 }
-                info!("upgrading {}", name);
                 let part = resolved_map.get(&name).expect("resolved part exists");
+                info!(
+                    verb = "Upgrading",
+                    event = "deploy.upgrading",
+                    plan_name = %name,
+                    version = %part.version,
+                    "{} to {}",
+                    name,
+                    part.version,
+                );
                 upgrade_part(db, &part.path, root_dir, true, true, session.clone()).await?;
             }
             continue;
@@ -149,16 +165,22 @@ pub async fn deploy_parts_with_explicit_targets(
         } else {
             Origin::Dependency
         };
-        trace!("{} origin={:?}", name, origin);
+        trace!(
+            event = "deploy.origin_set",
+            plan_name = name,
+            ?origin,
+            "Origin set"
+        );
         let part = resolved_map.get(&name).expect("resolved part exists");
         debug!(
-            "installing {} ({})",
-            name,
-            if explicit_target {
+            event = "deploy.installing",
+            plan_name = name,
+            target_type = if explicit_target {
                 "requested"
             } else {
                 "dependency"
-            }
+            },
+            "Installing"
         );
         deploy_part_with_origin(
             db,
@@ -267,8 +289,9 @@ async fn warn_about_runtime_dependencies(
             let dep = dep.trim();
             if dep.is_empty() {
                 warn!(
-                    "Part {} declares an empty runtime dependency; continuing deploy",
-                    name
+                    event = "deploy.empty_dependency",
+                    plan_name = name,
+                    "Part declares an empty runtime dependency; continuing deploy"
                 );
                 continue;
             }
@@ -277,8 +300,11 @@ async fn warn_about_runtime_dependencies(
                 Ok(parsed) => parsed,
                 Err(e) => {
                     warn!(
-                        "Part {} declares invalid runtime dependency '{}': {}; continuing deploy",
-                        name, dep, e
+                        event = "deploy.invalid_dependency",
+                        plan_name = name,
+                        dependency = dep,
+                        error = %e,
+                        "Part declares invalid runtime dependency; continuing deploy"
                     );
                     continue;
                 }
@@ -316,8 +342,10 @@ async fn warn_about_runtime_dependencies(
             }
 
             warn!(
-                "Runtime dependency {} required by {} is not deployed; continuing deploy",
-                output_name, name
+                event = "deploy.missing_dependency",
+                dependency = output_name,
+                plan_name = name,
+                "Runtime dependency not deployed; continuing deploy"
             );
         }
     }
@@ -343,8 +371,12 @@ fn warn_if_constraint_not_satisfied(
         Ok(installed_ver) if constraint.satisfies(&installed_ver) => {}
         _ => {
             warn!(
-                "Runtime dependency {} required by {} has version {} which does not satisfy {}; continuing deploy",
-                dependency, dependent, version, constraint
+                event = "deploy.version_constraint_unsatisfied",
+                dependency,
+                dependent,
+                version,
+                constraint = %constraint,
+                "Runtime dependency version does not satisfy constraint; continuing deploy"
             );
         }
     }
@@ -396,15 +428,14 @@ pub async fn deploy_part_with_origin(
     );
 
     for replaced_name in &partinfo.replaces {
-        if let Some(existing) = db.get_part(replaced_name).await? {
-            info!("replacing {} with {}", replaced_name, partinfo.name);
-            if existing.origin == crate::database::Origin::External {
-                // External parts have no filesystem footprint; go through
-                // unassume_part so the associated plan record is cleaned up.
-                db.unassume_part(replaced_name).await?;
-            } else {
-                remove_part(db, replaced_name, root_dir, true, session.clone()).await?;
-            }
+        if db.get_part(replaced_name).await?.is_some() {
+            info!(
+                event = "deploy.replacing",
+                old_part = replaced_name,
+                new_part = partinfo.name,
+                "Replacing part"
+            );
+            remove_part(db, replaced_name, root_dir, true, session.clone()).await?;
         }
     }
 
@@ -433,8 +464,9 @@ pub async fn deploy_part_with_origin(
     if db.get_part(&partinfo.name).await?.is_some() {
         if force {
             debug!(
-                "Part {} already deployed, attempting upgrade/redeploy",
-                partinfo.name
+                event = "deploy.already_deployed",
+                plan_name = partinfo.name,
+                "Part already deployed, attempting upgrade/redeploy"
             );
             return upgrade_part(db, part_path, root_dir, true, run_hooks, session.clone()).await;
         }
@@ -452,9 +484,10 @@ pub async fn deploy_part_with_origin(
     );
 
     info!(
-        "installing {} ({} files)",
-        partinfo.name,
-        file_entries.len()
+        event = "deploy.installing",
+        plan_name = partinfo.name,
+        file_count = file_entries.len(),
+        "Installing package"
     );
 
     phase_start = Instant::now();
@@ -470,16 +503,18 @@ pub async fn deploy_part_with_origin(
     for entry in &file_entries {
         if entry.file_type == FileType::File
             && let Some(owner_name) = owners.get(&entry.path)
-                && owner_name.as_str() != partinfo.name {
-                    warn!(
-                        "[{}] diverted {} (owned by {})",
-                        partinfo.name,
-                        crate::util::compact_path(&entry.path),
-                        owner_name
-                    );
-                    shadows.push((entry.path.clone(), owner_name.clone()));
-                    divert_paths.insert(entry.path.clone());
-                }
+            && owner_name.as_str() != partinfo.name
+        {
+            warn!(
+                event = "deploy.file_diverted",
+                plan_name = partinfo.name,
+                path = crate::util::compact_path(&entry.path),
+                owner = owner_name,
+                "File diverted"
+            );
+            shadows.push((entry.path.clone(), owner_name.clone()));
+            divert_paths.insert(entry.path.clone());
+        }
     }
     log_debug_timing(
         "deploy",
@@ -503,21 +538,19 @@ pub async fn deploy_part_with_origin(
     let backup_dir = tempfile::tempdir()
         .map_err(|e| WrightError::DeployError(format!("failed to create backup dir: {}", e)))?;
 
-    if run_hooks
-        && let Some(ref script) = hooks.pre_install {
-            log_running_hook(&partinfo.name, "pre_install");
-            phase_start = Instant::now();
-            if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await
-            {
-                warn!("hook [pre_install] for {} failed: {}", partinfo.name, e);
-            }
-            log_debug_timing(
-                "install",
-                &partinfo.name,
-                "pre_install hook",
-                phase_start.elapsed(),
-            );
+    if run_hooks && let Some(ref script) = hooks.pre_install {
+        log_running_hook(&partinfo.name, "pre_install");
+        phase_start = Instant::now();
+        if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await {
+            warn!(event = "deploy.hook_failed", plan_name = partinfo.name, hook = "pre_install", error = %e, "Hook failed");
         }
+        log_debug_timing(
+            "install",
+            &partinfo.name,
+            "pre_install hook",
+            phase_start.elapsed(),
+        );
+    }
 
     phase_start = Instant::now();
     match copy_entries_to_root(
@@ -533,7 +566,7 @@ pub async fn deploy_part_with_origin(
     {
         Ok(_) => {}
         Err(e) => {
-            warn!("Deployment failed, rolling back: {}", e);
+            warn!(event = "deploy.failed_rollback", error = %e, "Deployment failed, rolling back");
             tx.rollback().await?;
             return Err(e);
         }
@@ -612,29 +645,31 @@ pub async fn deploy_part_with_origin(
         phase_start.elapsed(),
     );
 
-    if run_hooks
-        && let Some(ref script) = hooks.post_install {
-            log_running_hook(&partinfo.name, "post_install");
-            phase_start = Instant::now();
-            if let Err(e) =
-                run_deploy_script(script, root_dir, &partinfo.name, "post_install").await
-            {
-                warn!("hook [post_install] for {} failed: {}", partinfo.name, e);
-            }
-            log_debug_timing(
-                "install",
-                &partinfo.name,
-                "post_install hook",
-                phase_start.elapsed(),
-            );
+    if run_hooks && let Some(ref script) = hooks.post_install {
+        log_running_hook(&partinfo.name, "post_install");
+        phase_start = Instant::now();
+        if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "post_install").await {
+            warn!(event = "deploy.hook_failed", plan_name = partinfo.name, hook = "post_install", error = %e, "Hook failed");
         }
+        log_debug_timing(
+            "install",
+            &partinfo.name,
+            "post_install hook",
+            phase_start.elapsed(),
+        );
+    }
 
     let ver_rel = if partinfo.plan.version.is_empty() {
         format!("{}", partinfo.plan.release)
     } else {
         format!("{}-{}", partinfo.plan.version, partinfo.plan.release)
     };
-    info!("{} installed ({})", partinfo.name, ver_rel);
+    info!(
+        event = "deploy.installed",
+        plan_name = partinfo.name,
+        version = ver_rel,
+        "Installed"
+    );
 
     log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
 

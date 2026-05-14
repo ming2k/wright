@@ -1,7 +1,6 @@
 use crate::config::GlobalConfig;
 use crate::error::Result;
 use crate::resolve;
-use tracing::{error, info};
 
 pub async fn execute_lint(
     targets: Vec<String>,
@@ -17,6 +16,7 @@ pub async fn execute_lint(
 }
 
 async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
+    let t0 = std::time::Instant::now();
     let db_path = config.general.db_path.clone();
     let db = crate::database::InstalledDb::open(&db_path)
         .await
@@ -26,43 +26,53 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
     let root_dir = std::path::PathBuf::from("/");
 
     let parts = db.list_parts().await?;
-    let mut all_ok = true;
+    crate::cli_action!("Verifying", "{} installed part(s)", parts.len());
+
+    let mut failed: Vec<(String, Vec<String>)> = Vec::new();
 
     for part in &parts {
         let issues = crate::transaction::verify_part(&db, &part.name, &root_dir).await?;
-        if issues.is_empty() {
-            println!("{}: OK", part.name);
-        } else {
-            all_ok = false;
-            println!("{}:", part.name);
-            for issue in &issues {
-                println!("  {}", issue);
-            }
+        if !issues.is_empty() {
+            failed.push((part.name.clone(), issues));
         }
     }
 
-    if !all_ok {
-        return Err(crate::error::WrightError::ValidationError(
-            "verify failed: some parts have integrity issues".to_string(),
-        ));
+    if failed.is_empty() {
+        crate::cli_action!(
+            "Finished",
+            "verify in {}: {} parts clean",
+            crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+            parts.len(),
+        );
+        return Ok(());
     }
 
-    Ok(())
+    crate::cli_warn!("{} part(s) failed verification", failed.len());
+    for (name, issues) in &failed {
+        let _ = crate::util::progress::MULTI
+            .println(format!("             - {}: {}", name, issues.join("; ")));
+    }
+
+    Err(crate::error::WrightError::ValidationError(format!(
+        "verify failed for {} part(s)",
+        failed.len()
+    )))
 }
 
 async fn execute_plan_lint(targets: Vec<String>, config: &GlobalConfig) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    crate::cli_action!("Linting", "{} plan(s)", targets.len());
     if let Err(e) = resolve::lint_dependency_graph_for_targets(config, &targets) {
-        report_lint_error(format!("Dependency graph analysis failed: {}", e));
         return Err(crate::error::WrightError::ValidationError(format!(
-            "Lint failed: {}",
+            "lint failed: {}",
             e
         )));
     }
-    info!("Lint passed: {} plans.", targets.len());
+    crate::cli_action!(
+        "Finished",
+        "lint in {}: {} plans clean",
+        crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+        targets.len(),
+    );
     Ok(())
-}
-
-fn report_lint_error(message: impl AsRef<str>) {
-    let message = message.as_ref();
-    error!("{}", message);
 }

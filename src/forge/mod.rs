@@ -6,11 +6,12 @@ pub mod mvp;
 pub mod pipeline;
 pub mod variables;
 
-use indicatif::HumanBytes;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
+
+use crate::forge::layers::force_clean_dir;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
@@ -29,6 +30,9 @@ pub struct ForgeResult {
 pub struct Forger {
     config: GlobalConfig,
     executors: executor::ExecutorRegistry,
+    /// Counted semaphore that caps concurrent source downloads across
+    /// the whole process. Sized by `config.network.max_concurrent_downloads`.
+    network_pool: Arc<Semaphore>,
 }
 
 fn source_cache_filename(part_name: &str, uri: &str) -> String {
@@ -84,17 +88,14 @@ async fn ensure_clean_dir(dir: &Path) -> Result<()> {
             Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {
                 // A stale overlayfs mount may linger at <dir>/target from a
                 // previous run.  Lazy-unmount it and retry the removal.
-                let _ = nix::mount::umount2(
-                    &dir.join("target"),
-                    nix::mount::MntFlags::MNT_DETACH,
-                );
+                let _ = nix::mount::umount2(&dir.join("target"), nix::mount::MntFlags::MNT_DETACH);
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 if let Err(e2) = tokio::fs::remove_dir_all(dir).await {
-                    warn!("Failed to clean directory {}: {}", dir.display(), e2);
+                    warn!(event = "cleanup.directory_failed", path = %dir.display(), error = %e2, reason = "stale_overlayfs", "could not clean {} (busy after retry); a process or mount may still hold it", dir.display());
                 }
             }
             Err(e) => {
-                warn!("Failed to clean directory {}: {}", dir.display(), e);
+                warn!(event = "cleanup.directory_failed", path = %dir.display(), error = %e, "could not clean {}: {}", dir.display(), e);
             }
         }
     }
@@ -240,7 +241,14 @@ impl Forger {
                 e
             );
         }
-        Self { config, executors }
+        let network_pool = Arc::new(Semaphore::new(
+            config.network.max_concurrent_downloads.max(1),
+        ));
+        Self {
+            config,
+            executors,
+            network_pool,
+        }
     }
 
     pub fn compute_build_key(&self, manifest: &PlanManifest) -> Result<String> {
@@ -343,12 +351,17 @@ impl Forger {
         fetch_only: bool,
         skip_check: bool,
         force: bool,
+        clean: bool,
         extra_env: &std::collections::HashMap<String, String>,
         verbose: bool,
         nproc_per_isolation: Option<u32>,
-        configure_lock: Option<Arc<Mutex<()>>>,
-        compile_lock: Option<Arc<Mutex<()>>>,
+        configure_lock: Option<Arc<Semaphore>>,
+        compile_lock: Option<Arc<Semaphore>>,
     ) -> Result<ForgeResult> {
+        if clean {
+            self.clean(manifest).await?;
+        }
+
         let build_root = self.build_root(manifest)?;
         let staging_dir = build_root.join("staging");
         let outputs_dir = build_root.join("outputs");
@@ -407,13 +420,12 @@ impl Forger {
             }
         }
 
-        let pipeline_bar = progress::new_plan_pipeline_spinner(&manifest.metadata.name);
-        let _pipeline_guard = progress::ProgressBarGuard(pipeline_bar.clone());
-
         if stages.is_empty() {
             if tokio::fs::metadata(&extracted_marker).await.is_err() {
-                pipeline_bar.set_message("fetching sources".to_string());
-                self.fetch(manifest, plan_dir).await?;
+                {
+                    let _s = crate::cli_span!("Fetching", "{}", manifest.metadata.name);
+                    self.fetch(manifest, plan_dir).await?;
+                }
                 if until_stage == Some("fetch") {
                     return Ok(ForgeResult {
                         output_dir: staging_dir.clone(),
@@ -422,8 +434,10 @@ impl Forger {
                         split_part_dirs: std::collections::HashMap::new(),
                     });
                 }
-                pipeline_bar.set_message("verifying checksums".to_string());
-                self.verify(manifest).await?;
+                {
+                    let _s = crate::cli_span!("Verifying", "{}", manifest.metadata.name);
+                    self.verify(manifest).await?;
+                }
                 if until_stage == Some("verify") {
                     return Ok(ForgeResult {
                         output_dir: staging_dir.clone(),
@@ -433,7 +447,6 @@ impl Forger {
                     });
                 }
 
-                pipeline_bar.set_message("hard-linking sources".to_string());
                 // Hardlink sources from global cache into the fetch layer.
                 let lm = layers::LayerManager::new(&build_root)?;
                 let fetch_layer = lm.ensure_fetch_layer()?;
@@ -441,8 +454,10 @@ impl Forger {
                     .await?;
 
                 let extract_layer = lm.ensure_extract_layer()?;
-                pipeline_bar.set_message("extracting sources".to_string());
-                self.extract(manifest, &extract_layer).await?;
+                {
+                    let _s = crate::cli_span!("Extracting", "{}", manifest.metadata.name);
+                    self.extract(manifest, &extract_layer).await?;
+                }
                 tokio::fs::write(&extracted_marker, "").await.map_err(|e| {
                     WrightError::ForgeError(format!(
                         "failed to write extraction marker {}: {}",
@@ -451,7 +466,9 @@ impl Forger {
                     ))
                 })?;
                 if let Err(e) = tokio::fs::write(&key_file, &build_key).await {
-                    warn!("Failed to write forge key: {}", e);
+                    // Cache-marker write failure — purely an optimization
+                    // miss for the next run; not user-actionable.
+                    debug!("failed to write forge cache marker: {}", e);
                 }
                 if until_stage == Some("extract") {
                     return Ok(ForgeResult {
@@ -463,7 +480,6 @@ impl Forger {
                 }
             } else {
                 debug!("Sources already extracted — skipping fetch/verify/extract");
-                pipeline_bar.set_message("preparing workspace".to_string());
                 self.ensure_source_layers(manifest, &build_root).await?;
                 if matches!(until_stage, Some("fetch" | "verify" | "extract")) {
                     return Ok(ForgeResult {
@@ -547,21 +563,42 @@ impl Forger {
             configure_lock,
             compile_cpu_count: Some(total_cpus),
             compile_lock,
-            progress: Some(pipeline_bar),
             build_key: build_key.clone(),
         })?;
 
-        info!("{}", logging::forge_started(&manifest.metadata.name));
+        let plan_name = &manifest.metadata.name;
+        let forge_t0 = std::time::Instant::now();
+        info!(
+            verb = "Forging",
+            event = "forge.started",
+            plan_name = %plan_name,
+            "{}",
+            plan_name,
+        );
         if let Err(e) = pipeline.run().await {
-            info!("{}", logging::forge_failed(&manifest.metadata.name));
+            info!(
+                event = "forge.failed",
+                plan_name = %plan_name,
+                error = %e,
+                "Forge pipeline failed"
+            );
             return Err(e);
         }
-        info!("{}", logging::forge_finished(&manifest.metadata.name));
+        let forge_elapsed = forge_t0.elapsed().as_secs_f64();
+        // Per Rule B (implicit success): no per-package completion line.
+        // The overall "Finished" line is emitted by the top-level install
+        // operation once the whole workflow ends.
+        info!(
+            event = "forge.completed",
+            plan_name = %plan_name,
+            elapsed_secs = forge_elapsed,
+            "forge completed"
+        );
 
-        if !partial
-            && let Err(e) = tokio::fs::write(&key_file, &build_key).await {
-                warn!("Failed to write forge key: {}", e);
-            }
+        if !partial && let Err(e) = tokio::fs::write(&key_file, &build_key).await {
+            // Cache-marker write failure — internal optimization only.
+            debug!(event = "forge.key_write_failed", plan_name = %plan_name, path = %key_file.display(), error = %e, "failed to write forge cache marker");
+        }
 
         Ok(ForgeResult {
             output_dir: staging_dir,
@@ -1015,13 +1052,7 @@ impl Forger {
     pub async fn clean(&self, manifest: &PlanManifest) -> Result<()> {
         let build_root = self.build_root(manifest)?;
         if tokio::fs::metadata(&build_root).await.is_ok() {
-            tokio::fs::remove_dir_all(&build_root).await.map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to clean forge directory {}: {}",
-                    build_root.display(),
-                    e
-                ))
-            })?;
+            force_clean_dir(&build_root).await?;
             tracing::debug!("Removed forge directory: {}", build_root.display());
         }
         Ok(())
@@ -1145,19 +1176,18 @@ impl Forger {
                     };
                     if is_part_file(&filename) {
                         let label = progress::source_label(&processed_url);
-                        let pb = progress::new_source_spinner(&label, "extracting");
+                        let _span = crate::cli_span!(
+                            "Extracting",
+                            "{} ({})",
+                            label,
+                            manifest.metadata.name
+                        );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
                             WrightError::ForgeError(format!(
                                 "failed to extract source {}: {}",
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source_with_label(
-                            &pb,
-                            &manifest.metadata.name,
-                            "Extracted",
-                            &label,
-                        );
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -1183,19 +1213,18 @@ impl Forger {
                     };
                     if is_part_file(&filename) {
                         let label = progress::source_label(&processed_path);
-                        let pb = progress::new_source_spinner(&label, "extracting");
+                        let _span = crate::cli_span!(
+                            "Extracting",
+                            "{} ({})",
+                            label,
+                            manifest.metadata.name
+                        );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
                             WrightError::ForgeError(format!(
                                 "failed to extract local source {}: {}",
                                 filename, e
                             ))
                         })?;
-                        progress::finish_source_with_label(
-                            &pb,
-                            &manifest.metadata.name,
-                            "Extracted",
-                            &label,
-                        );
                     } else {
                         let dest = final_dest.join(&filename);
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
@@ -1346,22 +1375,20 @@ impl Forger {
         // If the repository already exists and the ref resolves locally,
         // skip the network fetch entirely. This avoids redundant fetches
         // when the plan.toml has not changed.
-        if !is_fresh_clone
-            && let Ok(obj) = repo.revparse_single(actual_ref) {
-                tracing::debug!(
-                    "[{}] git ref '{}' already available locally; skipping fetch",
-                    scope,
-                    actual_ref
-                );
-                return Ok(obj.id().to_string());
-            }
+        if !is_fresh_clone && let Ok(obj) = repo.revparse_single(actual_ref) {
+            tracing::debug!(
+                "[{}] git ref '{}' already available locally; skipping fetch",
+                scope,
+                actual_ref
+            );
+            return Ok(obj.id().to_string());
+        }
 
         let mut remote = repo
             .remote_anonymous(git_url)
             .map_err(|e| WrightError::ForgeError(format!("git remote setup failed: {}", e)))?;
-        let pb = progress::new_source_transfer_bar(&label, 0);
-        progress::set_source_git_objects(&pb, 0, 0, 0);
-        let pb_clone = pb.clone();
+        let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
+        let span_for_cb = git_span.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.transfer_progress(move |stats| {
             let total_objects = stats.total_objects() as u64;
@@ -1372,72 +1399,29 @@ impl Forger {
             let indexed = stats.indexed_objects() as u64;
             let total_deltas = stats.total_deltas() as u64;
             let indexed_deltas = stats.indexed_deltas() as u64;
-            let received_bytes = stats.received_bytes() as u64;
 
-            // Calculate bar position/length to include all phases
-            let (position, length, msg) = if received < total_objects {
-                let pct = if total_objects > 0 {
-                    received * 100 / total_objects
-                } else {
-                    0
-                };
-                (
-                    received,
-                    total_objects,
-                    format!(
-                        "receiving objects {}/{} ({}%)",
-                        received, total_objects, pct
-                    ),
-                )
+            // Calculate progress position/length across all phases.
+            let (position, length) = if received < total_objects {
+                (received, total_objects)
             } else if indexed < total_objects {
-                let pct = if total_objects > 0 {
-                    indexed * 100 / total_objects
-                } else {
-                    0
-                };
-                (
-                    indexed,
-                    total_objects,
-                    format!("indexing objects {}/{} ({}%)", indexed, total_objects, pct),
-                )
+                (indexed, total_objects)
             } else if total_deltas > 0 && indexed_deltas < total_deltas {
-                let pct = if total_deltas > 0 {
-                    indexed_deltas * 100 / total_deltas
-                } else {
-                    0
-                };
-                (
-                    indexed_deltas,
-                    total_deltas,
-                    format!(
-                        "resolving deltas {}/{} ({}%)",
-                        indexed_deltas, total_deltas, pct
-                    ),
-                )
+                (indexed_deltas, total_deltas)
             } else {
-                (
-                    total_objects,
-                    total_objects,
-                    format!(
-                        "done ({}, {} objects)",
-                        HumanBytes(received_bytes),
-                        total_objects
-                    ),
-                )
+                (total_objects, total_objects)
             };
 
-            pb_clone.set_length(length);
-            pb_clone.set_position(position);
-            pb_clone.set_message(msg);
+            progress::record_bytes(&span_for_cb, position, length);
             true
         });
         let mut fetch_opts = git2::FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
         fetch_opts.download_tags(git2::AutotagOption::All);
         if let Some(d) = effective_depth
-            && d > 0 {
-                fetch_opts.depth(d as i32);
-            }
+            && d > 0
+        {
+            fetch_opts.depth(d as i32);
+        }
         let fetch_result = remote.fetch(
             &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
             Some(&mut fetch_opts),
@@ -1446,7 +1430,7 @@ impl Forger {
         if let Err(e) = fetch_result {
             return Err(WrightError::ForgeError(format!("git fetch failed: {e}")));
         }
-        progress::finish_source_with_label(&pb, scope, "Fetched", &label);
+        drop(git_span);
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
             WrightError::ForgeError(format!("failed to resolve git ref '{}': {}", actual_ref, e))
         })?;
@@ -1460,92 +1444,127 @@ impl Forger {
                 .await
                 .map_err(WrightError::IoError)?;
         }
-        for source in &manifest.sources.entries {
-            match source {
-                Source::Git(git) => {
-                    let processed_url = self.process_uri(&git.url, manifest);
-                    let git_dir_name = git_cache_dir_name(&processed_url);
-                    let git_cache_dir = cache_dir.join("git");
-                    if tokio::fs::metadata(&git_cache_dir).await.is_err() {
-                        tokio::fs::create_dir_all(&git_cache_dir).await.ok();
-                    }
-                    let dest = git_cache_dir.join(&git_dir_name);
-                    let processed_ref = git.r#ref.as_deref().map(|r| self.process_uri(r, manifest));
-                    let commit_id = self
-                        .fetch_git_repo(
-                            &processed_url,
-                            processed_ref.as_deref(),
-                            git.depth,
-                            &dest,
-                            &manifest.metadata.name,
-                        )
-                        .await?;
-                    debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
+
+        // Fan out: one future per source. Concurrency is bounded by the
+        // network semaphore (config.network.max_concurrent_downloads).
+        // For packages with one source the loop body just runs once;
+        // for packages with many (kernel, gtk, etc.) the wall-clock
+        // cost drops to roughly max(individual sources).
+        let futs = manifest
+            .sources
+            .entries
+            .iter()
+            .map(|source| self.fetch_one_source(manifest, plan_dir, source));
+        futures_util::future::try_join_all(futs).await?;
+        Ok(())
+    }
+
+    async fn fetch_one_source(
+        &self,
+        manifest: &PlanManifest,
+        plan_dir: &Path,
+        source: &Source,
+    ) -> Result<()> {
+        let cache_dir = &self.config.general.source_dir;
+        match source {
+            Source::Git(git) => {
+                let _permit = self
+                    .network_pool
+                    .acquire()
+                    .await
+                    .expect("network semaphore closed");
+                let processed_url = self.process_uri(&git.url, manifest);
+                let git_dir_name = git_cache_dir_name(&processed_url);
+                let git_cache_dir = cache_dir.join("git");
+                if tokio::fs::metadata(&git_cache_dir).await.is_err() {
+                    tokio::fs::create_dir_all(&git_cache_dir).await.ok();
                 }
-                Source::Http(http) => {
-                    let processed_url = self.process_uri(&http.url, manifest);
-                    let filename = http.r#as.clone().unwrap_or_else(|| {
-                        source_cache_filename(&manifest.metadata.name, &processed_url)
-                    });
-                    let dest = cache_dir.join(&filename);
-                    let skip_verify = http.sha256 == "SKIP";
-                    let mut needs_download = true;
-                    if tokio::fs::metadata(&dest).await.is_ok() {
-                        if skip_verify {
-                            debug!("Source {} already cached (SKIP verification)", filename);
-                            needs_download = false;
-                        } else if let Ok(actual_hash) = checksum::sha256_file(&dest) {
-                            if actual_hash == http.sha256 {
-                                debug!("Source {} already cached and verified", filename);
-                                needs_download = false;
-                            } else {
-                                warn!(
-                                    "Cached source {} hash mismatch, re-downloading...",
-                                    filename
-                                );
-                                let _ = tokio::fs::remove_file(&dest).await;
-                            }
-                        }
-                    }
-                    if needs_download {
-                        download::download_file(
-                            &processed_url,
-                            &dest,
-                            self.config.network.download_timeout,
-                            &manifest.metadata.name,
-                        )?;
-                        if !skip_verify {
-                            let actual_hash = checksum::sha256_file(&dest)?;
-                            if actual_hash != http.sha256 {
-                                return Err(WrightError::ValidationError(format!(
-                                    "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
-                                    filename, http.sha256, actual_hash
-                                )));
-                            }
-                        }
-                    }
-                }
-                Source::Local(local) => {
-                    let processed_path = self.process_uri(&local.path, manifest);
-                    let local_path = validate_local_path(plan_dir, &processed_path)?;
-                    let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
-                    let dest = cache_dir.join(&filename);
-                    let label = progress::source_label(&processed_path);
-                    let pb = progress::new_source_spinner(&label, "copying");
-                    tokio::fs::copy(&local_path, &dest).await.map_err(|e| {
-                        WrightError::ForgeError(format!(
-                            "failed to copy local file {} to cache: {}",
-                            local_path.display(),
-                            e
-                        ))
-                    })?;
-                    progress::finish_source_with_label(
-                        &pb,
+                let dest = git_cache_dir.join(&git_dir_name);
+                let processed_ref = git.r#ref.as_deref().map(|r| self.process_uri(r, manifest));
+                let commit_id = self
+                    .fetch_git_repo(
+                        &processed_url,
+                        processed_ref.as_deref(),
+                        git.depth,
+                        &dest,
                         &manifest.metadata.name,
-                        "Fetched",
-                        &label,
-                    );
+                    )
+                    .await?;
+                debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
+            }
+            Source::Http(http) => {
+                let processed_url = self.process_uri(&http.url, manifest);
+                let filename = http.r#as.clone().unwrap_or_else(|| {
+                    source_cache_filename(&manifest.metadata.name, &processed_url)
+                });
+                let dest = cache_dir.join(&filename);
+                let skip_verify = http.sha256 == "SKIP";
+                let mut needs_download = true;
+                if tokio::fs::metadata(&dest).await.is_ok() {
+                    if skip_verify {
+                        debug!("Source {} already cached (SKIP verification)", filename);
+                        needs_download = false;
+                    } else if let Ok(actual_hash) = checksum::sha256_file(&dest) {
+                        if actual_hash == http.sha256 {
+                            debug!("Source {} already cached and verified", filename);
+                            needs_download = false;
+                        } else {
+                            warn!(
+                                "Cached source {} hash mismatch, re-downloading...",
+                                filename
+                            );
+                            let _ = tokio::fs::remove_file(&dest).await;
+                        }
+                    }
                 }
+                if needs_download {
+                    let _permit = self
+                        .network_pool
+                        .acquire()
+                        .await
+                        .expect("network semaphore closed");
+                    // download::download_file is sync (reqwest::blocking),
+                    // so push it to the blocking pool to keep the async
+                    // runtime worker free.
+                    let url = processed_url.clone();
+                    let dest_owned = dest.clone();
+                    let timeout = self.config.network.download_timeout;
+                    let scope = manifest.metadata.name.clone();
+                    tokio::task::spawn_blocking(move || {
+                        download::download_file(&url, &dest_owned, timeout, &scope)
+                    })
+                    .await
+                    .map_err(|e| WrightError::ForgeError(format!("download join: {}", e)))??;
+                    if !skip_verify {
+                        let actual_hash = checksum::sha256_file(&dest)?;
+                        if actual_hash != http.sha256 {
+                            return Err(WrightError::ValidationError(format!(
+                                "Downloaded file {} failed verification!\n  Expected: {}\n  Actual:   {}",
+                                filename, http.sha256, actual_hash
+                            )));
+                        }
+                    }
+                }
+            }
+            Source::Local(local) => {
+                let processed_path = self.process_uri(&local.path, manifest);
+                let local_path = validate_local_path(plan_dir, &processed_path)?;
+                let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
+                let dest = cache_dir.join(&filename);
+                let label = progress::source_label(&processed_path);
+                let _span = crate::cli_span!(
+                    "Fetching",
+                    "{} ({})",
+                    label,
+                    manifest.metadata.name
+                );
+                tokio::fs::copy(&local_path, &dest).await.map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to copy local file {} to cache: {}",
+                        local_path.display(),
+                        e
+                    ))
+                })?;
             }
         }
         Ok(())
@@ -1604,6 +1623,7 @@ include = ["/usr/**"]
                 &[] as &[String],
                 &[],
                 None,
+                false,
                 false,
                 false,
                 false,

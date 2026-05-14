@@ -88,16 +88,16 @@ folio's plan list or configuration changes.
 
 ## Declaring External Assumptions
 
-Use `[[assume]]` to mark parts the target system provides externally.  Wright
+Use `[[provide]]` to mark parts the target system provides externally.  Wright
 records these assumptions in the target database before building any plans, so
 dependency checks pass even though Wright did not deploy those parts.
 
 ```toml
-[[assume]]
+[[provide]]
 name = "linux"
 version = "6.12.0"
 
-[[assume]]
+[[provide]]
 name = "busybox"
 version = "1.36"
 ```
@@ -108,7 +108,7 @@ Common use cases:
 - A **host-provided toolchain** during LFS-style bootstrapping.
 - A **pre-installed bootloader** (`grub`, `systemd-boot`).
 
-Each `[[assume]]` entry requires both `name` and `version`.
+Each `[[provide]]` entry requires both `name` and `version`.
 
 ## System Configuration
 
@@ -221,7 +221,7 @@ plans = [
     "fontconfig", "freetype", "noto-fonts",
 ]
 
-[[assume]]
+[[provide]]
 name = "linux"
 version = "6.12.0"
 

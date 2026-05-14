@@ -1,8 +1,7 @@
-use indicatif::ProgressBar;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::error::{Result, WrightError};
@@ -30,9 +29,10 @@ const BUILTIN_STAGES: &[&str] = &["fetch", "verify", "extract"];
 pub fn stage_order_for_manifest(manifest: &PlanManifest, build_phase: Option<&str>) -> Vec<String> {
     if build_phase == Some("mvp")
         && let Some(ref cfg) = manifest.mvp
-            && let Some(ref order) = cfg.pipeline_order {
-                return order.stages.clone();
-            }
+        && let Some(ref order) = cfg.pipeline_order
+    {
+        return order.stages.clone();
+    }
     if let Some(ref order) = manifest.pipeline_order {
         return order.stages.clone();
     }
@@ -90,10 +90,15 @@ pub struct PipelineContext<'a> {
     pub rlimits: ResourceLimits,
     pub verbose: bool,
     pub cpu_count: Option<u32>,
-    pub configure_lock: Option<Arc<Mutex<()>>>,
+    /// Binary semaphore (1 permit) that serializes `configure` stages
+    /// across the whole batch. Autotools-style configure scripts are
+    /// not thread-safe in shared work directories.
+    pub configure_lock: Option<Arc<Semaphore>>,
     pub compile_cpu_count: Option<u32>,
-    pub compile_lock: Option<Arc<Mutex<()>>>,
-    pub progress: Option<ProgressBar>,
+    /// Counted semaphore sized by total CPUs. Each compile stage
+    /// acquires `compile_cpu_count` permits, so single-core compiles
+    /// no longer block the whole batch.
+    pub compile_lock: Option<Arc<Semaphore>>,
     pub build_key: String,
 }
 
@@ -112,10 +117,9 @@ pub struct Pipeline<'a> {
     rlimits: ResourceLimits,
     verbose: bool,
     cpu_count: u32,
-    configure_lock: Option<Arc<Mutex<()>>>,
+    configure_lock: Option<Arc<Semaphore>>,
     compile_cpu_count: Option<u32>,
-    compile_lock: Option<Arc<Mutex<()>>>,
-    progress: Option<ProgressBar>,
+    compile_lock: Option<Arc<Semaphore>>,
     checkpoint: ForgeCheckpoint,
     layers: LayerManager,
     build_phase: Option<String>,
@@ -148,7 +152,6 @@ impl<'a> Pipeline<'a> {
             configure_lock: ctx.configure_lock,
             compile_cpu_count: ctx.compile_cpu_count,
             compile_lock: ctx.compile_lock,
-            progress: ctx.progress,
             checkpoint,
             layers,
             build_phase,
@@ -231,16 +234,14 @@ impl<'a> Pipeline<'a> {
                     .iter()
                     .position(|stage| stage == rewind_stage)
                     .unwrap_or(0);
-                info!(
-                    "Smart resume: rewinding from stage '{}' (index {}) due to config change or prior failure",
-                    rewind_stage, start_idx
-                );
+                let plan_name = &self.manifest.metadata.name;
+                info!(event = "resume.smart", plan_name = %plan_name, rewind_stage = %rewind_stage, start_index = start_idx, reason = "config_change_or_prior_failure", "Smart resume triggered");
                 self.checkpoint
                     .rewind_from(&checkpoint_stages, rewind_idx)?;
                 self.layers.clear_layers_from(rewind_stage);
                 start_idx
             } else {
-                info!("All stages up-to-date — nothing to do");
+                info!(event = "stage.all_up_to_date", plan_name = %self.manifest.metadata.name, "All stages up-to-date — nothing to do");
                 return Ok(());
             }
         } else {
@@ -255,21 +256,26 @@ impl<'a> Pipeline<'a> {
             start_idx
         };
 
+        // --- Emit one summary line for everything we'll skip up front ---
+        if start_index > 0 {
+            let plan_name = &self.manifest.metadata.name;
+            let skipped: Vec<&str> = pipeline[..start_index].iter().map(|s| s.as_str()).collect();
+            info!(
+                verb = "Skipping",
+                event = "stage.skipped_batch",
+                plan_name = %plan_name,
+                stages = %skipped.join(", "),
+                "{} ({})",
+                skipped.join(", "),
+                plan_name,
+            );
+        }
+
         // --- Execute stages from `start_index` forward ---
         for (idx, stage_name) in pipeline.iter().enumerate() {
             if idx < start_index {
-                if checkpoint_enabled {
-                    info!(
-                        "{}",
-                        logging::stage_skipped(&self.manifest.metadata.name, stage_name)
-                    );
-                } else {
-                    debug!(
-                        "{} {} handled externally (--force)",
-                        logging::plan_scope(&self.manifest.metadata.name),
-                        stage_name
-                    );
-                }
+                let plan_name = &self.manifest.metadata.name;
+                debug!(event = "stage.skipped", plan_name = %plan_name, stage_name = %stage_name, reason = "before_start_index", "Stage skipped");
                 if stop_after_index == Some(idx) {
                     return Ok(());
                 }
@@ -277,14 +283,16 @@ impl<'a> Pipeline<'a> {
             }
 
             if BUILTIN_STAGES.contains(&stage_name.as_str()) {
-                debug!("Built-in stage {} is handled by Builder", stage_name);
+                let plan_name = &self.manifest.metadata.name;
+                debug!(event = "stage.builtin_handled", plan_name = %plan_name, stage_name = %stage_name, "Built-in stage is handled by Builder");
                 if stop_after_index == Some(idx) {
                     return Ok(());
                 }
                 continue;
             }
             if self.skip_check && stage_name == "check" {
-                debug!("Skipping check stage due to --skip-check");
+                let plan_name = &self.manifest.metadata.name;
+                debug!(event = "stage.skipped_by_flag", plan_name = %plan_name, stage_name = %stage_name, flag = "--skip-check", "Skipping check stage due to flag");
                 if stop_after_index == Some(idx) {
                     return Ok(());
                 }
@@ -300,16 +308,15 @@ impl<'a> Pipeline<'a> {
                     self.build_phase.as_deref(),
                 );
                 if let Some(eh) = expected.get(stage_name)
-                    && self.checkpoint.is_complete(stage_name, eh) {
-                        info!(
-                            "{}",
-                            logging::stage_skipped(&self.manifest.metadata.name, stage_name)
-                        );
-                        if stop_after_index == Some(idx) {
-                            return Ok(());
-                        }
-                        continue;
+                    && self.checkpoint.is_complete(stage_name, eh)
+                {
+                    let plan_name = &self.manifest.metadata.name;
+                    info!(event = "stage.skipped", plan_name = %plan_name, stage_name = %stage_name, reason = "checkpoint_up_to_date", "Stage skipped (up-to-date)");
+                    if stop_after_index == Some(idx) {
+                        return Ok(());
                     }
+                    continue;
+                }
             }
 
             // --- Prepare layer and working directory for this stage ---
@@ -378,20 +385,26 @@ impl<'a> Pipeline<'a> {
     /// mount point instead of the flat work directory.
     async fn run_ordered_stage_in_target(&self, stage_name: &str) -> Result<()> {
         if stage_name == "configure" {
-            let _guard = if let Some(ref l) = self.configure_lock {
-                Some(l.lock().await)
+            let _permit = if let Some(ref s) = self.configure_lock {
+                Some(s.acquire().await.expect("configure semaphore closed"))
             } else {
                 None
             };
             self.run_stage_with_hooks_in_target(stage_name, self.cpu_count)
                 .await
         } else if stage_name == "compile" {
-            let _guard = if let Some(ref l) = self.compile_lock {
-                Some(l.lock().await)
+            let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
+            // Acquire one permit per CPU this compile intends to use, so the
+            // batch-wide pool stays exactly at total_cpus in flight.
+            let _permit = if let Some(ref s) = self.compile_lock {
+                Some(
+                    s.acquire_many(effective_cpu)
+                        .await
+                        .expect("compile semaphore closed"),
+                )
             } else {
                 None
             };
-            let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
             self.run_stage_with_hooks_in_target(stage_name, effective_cpu)
                 .await
         } else {
@@ -401,32 +414,27 @@ impl<'a> Pipeline<'a> {
     }
 
     async fn run_stage_with_hooks_in_target(&self, stage_name: &str, cpu_count: u32) -> Result<()> {
+        let plan_name = &self.manifest.metadata.name;
         let pre_hook = format!("pre_{}", stage_name);
         if let Some(stage) = self.get_stage(&pre_hook) {
-            debug!("Running hook: {}", pre_hook);
+            debug!(event = "hook.running", plan_name = %plan_name, hook = %pre_hook, "Running pre-hook");
             self.run_stage_in_target(&pre_hook, stage, cpu_count)
                 .await?;
         }
 
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            if let Some(ref pb) = self.progress {
-                pb.set_message(stage_name.to_string());
-            }
             self.run_stage_in_target(stage_name, stage, cpu_count)
                 .await?;
             let elapsed = t0.elapsed().as_secs_f64();
-            info!(
-                "{}",
-                logging::stage_finished(&self.manifest.metadata.name, stage_name, elapsed)
-            );
+            info!(event = "stage.completed", plan_name = %plan_name, stage_name = %stage_name, elapsed_secs = elapsed, "Stage completed");
         } else {
-            debug!("Skipping undefined stage: {}", stage_name);
+            debug!(event = "stage.undefined", plan_name = %plan_name, stage_name = %stage_name, "Skipping undefined stage");
         }
 
         let post_hook = format!("post_{}", stage_name);
         if let Some(stage) = self.get_stage(&post_hook) {
-            debug!("Running hook: {}", post_hook);
+            debug!(event = "hook.running", plan_name = %plan_name, hook = %post_hook, "Running post-hook");
             self.run_stage_in_target(&post_hook, stage, cpu_count)
                 .await?;
         }
@@ -445,28 +453,33 @@ impl<'a> Pipeline<'a> {
     fn get_stage(&self, name: &str) -> Option<&PipelineStage> {
         if self.is_mvp_pass()
             && let Some(ref cfg) = self.manifest.mvp
-                && let Some(stage) = cfg.pipeline.get(name) {
-                    return Some(stage);
-                }
+            && let Some(stage) = cfg.pipeline.get(name)
+        {
+            return Some(stage);
+        }
         self.manifest.pipeline.get(name)
     }
 
     /// Legacy single-stage execution for --stage mode (no overlay layering).
     async fn run_ordered_stage(&self, stage_name: &str) -> Result<()> {
         if stage_name == "configure" {
-            let _guard = if let Some(ref l) = self.configure_lock {
-                Some(l.lock().await)
+            let _permit = if let Some(ref s) = self.configure_lock {
+                Some(s.acquire().await.expect("configure semaphore closed"))
             } else {
                 None
             };
             self.run_stage_with_hooks(stage_name, self.cpu_count).await
         } else if stage_name == "compile" {
-            let _guard = if let Some(ref l) = self.compile_lock {
-                Some(l.lock().await)
+            let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
+            let _permit = if let Some(ref s) = self.compile_lock {
+                Some(
+                    s.acquire_many(effective_cpu)
+                        .await
+                        .expect("compile semaphore closed"),
+                )
             } else {
                 None
             };
-            let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
             self.run_stage_with_hooks(stage_name, effective_cpu).await
         } else {
             self.run_stage_with_hooks(stage_name, self.cpu_count).await
@@ -482,14 +495,14 @@ impl<'a> Pipeline<'a> {
 
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            if let Some(ref pb) = self.progress {
-                pb.set_message(stage_name.to_string());
-            }
             self.run_stage_legacy(stage_name, stage, cpu_count).await?;
             let elapsed = t0.elapsed().as_secs_f64();
             info!(
-                "{}",
-                logging::stage_finished(&self.manifest.metadata.name, stage_name, elapsed)
+                event = "stage.completed",
+                plan_name = %self.manifest.metadata.name,
+                stage_name = %stage_name,
+                elapsed_secs = elapsed,
+                "stage completed"
             );
         } else {
             debug!("Skipping undefined stage: {}", stage_name);
@@ -540,9 +553,17 @@ impl<'a> Pipeline<'a> {
         let stdout_log_path_owned = PathBuf::from(&log_path);
 
         let t0 = std::time::Instant::now();
-        info!(
+        let _stage_span = crate::cli_span!(
+            logging::stage_verb(stage_name),
             "{}",
-            logging::stage_started(&self.manifest.metadata.name, stage_name, isolation_level)
+            self.manifest.metadata.name
+        );
+        debug!(
+            event = "stage.started",
+            plan_name = %self.manifest.metadata.name,
+            stage_name = %stage_name,
+            isolation = ?isolation_level,
+            "stage started"
         );
 
         let max_etxtbsy_retries: u32 = 10;
@@ -668,9 +689,17 @@ impl<'a> Pipeline<'a> {
         let stdout_log_path_owned = PathBuf::from(&log_path);
 
         let t0 = std::time::Instant::now();
-        info!(
+        let _stage_span = crate::cli_span!(
+            logging::stage_verb(stage_name),
             "{}",
-            logging::stage_started(&self.manifest.metadata.name, stage_name, isolation_level)
+            self.manifest.metadata.name
+        );
+        debug!(
+            event = "stage.started",
+            plan_name = %self.manifest.metadata.name,
+            stage_name = %stage_name,
+            isolation = ?isolation_level,
+            "stage started"
         );
 
         let max_etxtbsy_retries: u32 = 10;

@@ -37,7 +37,7 @@ version = "1.0"
 plans = ["glibc", "bash", "coreutils", "openssl"]
 ```
 
-## `[[assume]]` — External Assumptions
+## `[[provide]]` — External Assumptions
 
 Parts that the target system is expected to provide but which Wright did not
 deploy.  Common examples: the kernel on a VPS, or the host toolchain during
@@ -46,17 +46,17 @@ an LFS bootstrap.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Part name to assume as provided |
-| `version` | string | yes | Version string for the assumed part |
+| `version` | string | yes | Version string for the provided part |
 
 Example:
 
 ```toml
-[[assume]]
+[[provide]]
 name    = "linux"
 version = "6.12.0"
 ```
 
-Each assumption is recorded in the target database via `wright assume` before
+Each assumption is recorded in the target database via `wright provide` before
 any plans are built, so dependency checks pass.
 
 ## `[config]` — Declarative System Configuration

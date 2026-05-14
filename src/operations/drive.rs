@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use crate::error::{Result, WrightError};
 use futures_util::stream::{self, StreamExt};
-use indicatif::ProgressBar;
 use tokio::sync::Semaphore;
 use tokio::sync::watch;
 use tracing::{error, info};
@@ -21,7 +20,6 @@ pub struct DriveOptions<'a> {
     pub config: &'a GlobalConfig,
     pub db_path: &'a Path,
     pub quiet: bool,
-    pub flow_progress: Option<ProgressBar>,
 }
 
 /// Drive a forge plan to completion, executing tasks batch-by-batch.
@@ -46,43 +44,21 @@ where
     let total_batches = plan.batches().len();
     let cancel = cancel;
 
-    if let Some(ref flow) = options.flow_progress {
-        flow.set_message(format!(
-            "batch 1/{}: {} plan{}",
-            total_batches,
-            plan.batches().first().map_or(0, |b| b.len()),
-            if plan.batches().first().map_or(0, |b| b.len()) == 1 {
-                ""
-            } else {
-                "s"
-            }
-        ));
-    }
-
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if *cancel.borrow() {
             return Err(WrightError::ForgeError("cancelled by user".into()));
         }
 
+        let current_batch = batch_idx + 1;
         if !options.quiet {
             info!(
-                "batch {}/{}: {} task(s)",
-                batch_idx + 1,
-                total_batches,
-                batch.len()
+                event = "batch.started",
+                batch_num = current_batch,
+                total_batches = total_batches,
+                task_count = batch.len(),
+                "Build batch started"
             );
         }
-
-        if batch_idx > 0
-            && let Some(ref flow) = options.flow_progress {
-                flow.set_message(format!(
-                    "batch {}/{}: {} plan{}",
-                    batch_idx + 1,
-                    total_batches,
-                    batch.len(),
-                    if batch.len() == 1 { "" } else { "s" }
-                ));
-            }
 
         let results: Vec<Result<()>> = stream::iter(batch.iter().cloned())
             .map(|task| {
@@ -108,26 +84,19 @@ where
             match result {
                 Ok(()) => {}
                 Err(e) => {
-                    if let Some(ref flow) = options.flow_progress {
-                        flow.set_message(format!(
-                            "batch {}/{}: aborted",
-                            batch_idx + 1,
-                            total_batches
-                        ));
-                    }
-                    error!("batch {}/{} failed: {:#}", batch_idx + 1, total_batches, e);
+                    error!(event = "batch.failed", batch_num = batch_idx + 1, total_batches = total_batches, error = %e, "Build batch failed");
                     return Err(e);
                 }
             }
         }
     }
 
-    if let Some(ref flow) = options.flow_progress {
-        flow.set_message("complete".to_string());
-    }
-
     if !options.quiet {
-        info!("all batches completed");
+        info!(
+            event = "batch.all_completed",
+            total_batches = total_batches,
+            "All batches completed"
+        );
     }
 
     Ok(())

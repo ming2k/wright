@@ -172,15 +172,16 @@ pub(super) async fn copy_entries_to_root(
                         );
                     }
                 } else if existing_meta.is_file()
-                    && let Some(bdir) = backup_dir {
-                        let backup_path = bdir.join(relative);
-                        if let Some(parent) = backup_path.parent() {
-                            let _ = tokio::fs::create_dir_all(parent).await;
-                        }
-                        if tokio::fs::copy(&dest_path, &backup_path).await.is_ok() {
-                            rollback.record_backup(dest_path.clone(), backup_path);
-                        }
+                    && let Some(bdir) = backup_dir
+                {
+                    let backup_path = bdir.join(relative);
+                    if let Some(parent) = backup_path.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
                     }
+                    if tokio::fs::copy(&dest_path, &backup_path).await.is_ok() {
+                        rollback.record_backup(dest_path.clone(), backup_path);
+                    }
+                }
 
                 let remove_result = if existing_meta.file_type().is_dir() {
                     tokio::fs::remove_dir_all(&dest_path).await

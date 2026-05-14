@@ -237,9 +237,11 @@ async fn test_launch_folio_basic() {
     assert!(root_dir.join("usr/share/simple-a").exists());
 
     // Verify plan was synced into the target.
-    assert!(root_dir
-        .join("var/lib/wright/plans/simple-a/plan.toml")
-        .exists());
+    assert!(
+        root_dir
+            .join("var/lib/wright/plans/simple-a/plan.toml")
+            .exists()
+    );
 
     // Verify target config was written.
     let target_config = root_dir.join("etc/wright/wright.toml");
@@ -249,9 +251,7 @@ async fn test_launch_folio_basic() {
     assert!(cfg_text.contains("arch = \"x86_64\""));
 
     // Verify the folio was synced into the target.
-    assert!(root_dir
-        .join("var/lib/wright/folios/test.toml")
-        .exists());
+    assert!(root_dir.join("var/lib/wright/folios/test.toml").exists());
 }
 
 #[tokio::test]
@@ -277,9 +277,11 @@ async fn test_launch_plans_mode() {
         .unwrap();
 
     assert!(root_dir.join("usr/share/simple-c").exists());
-    assert!(root_dir
-        .join("var/lib/wright/plans/simple-c/plan.toml")
-        .exists());
+    assert!(
+        root_dir
+            .join("var/lib/wright/plans/simple-c/plan.toml")
+            .exists()
+    );
 }
 
 #[tokio::test]

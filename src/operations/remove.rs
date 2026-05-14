@@ -12,18 +12,6 @@ pub async fn execute_remove(
     cascade: bool,
     root_dir: &std::path::Path,
 ) -> Result<()> {
-    for name in parts {
-        if let Some(part) = db.get_part(name).await?
-            && part.origin == crate::database::Origin::External {
-                tracing::error!(
-                    "'{}' is externally provided. Use 'wright unassume {}' instead of 'remove'.",
-                    name,
-                    name
-                );
-                std::process::exit(1);
-            }
-    }
-
     let parts_owned: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
 
     let command_str = format!("remove {}", parts_owned.join(" "));
@@ -50,6 +38,9 @@ pub async fn execute_remove(
             .map_err(|e| WrightError::RemoveError(format!("failed to plan removal order: {}", e)))?
     };
 
+    let workflow_t0 = std::time::Instant::now();
+    let mut total_removed = 0usize;
+
     for name in &removal_order {
         if recursive {
             let dependents = db.get_recursive_dependents(name).await.map_err(|e| {
@@ -60,23 +51,26 @@ pub async fn execute_remove(
             })?;
 
             if !dependents.is_empty() {
-                println!(
-                    "will also remove (depends on {}): {}",
+                crate::cli_action!(
+                    "Cascading",
+                    "{} depends on {}: {}",
+                    dependents.len(),
                     name,
                     dependents.join(", ")
                 );
             }
 
             for dep in &dependents {
-                match transaction::remove_part(db, dep, root_dir, true, session.clone()).await {
-                    Ok(()) => println!("removed: {}", dep),
-                    Err(e) => {
-                        let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-                        let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
-                        tracing::error!("removing {}: {}", dep, e);
-                        std::process::exit(1);
-                    }
+                crate::cli_action!("Removing", "{}", dep);
+                if let Err(e) =
+                    transaction::remove_part(db, dep, root_dir, true, session.clone()).await
+                {
+                    let _ = crate::delivery::rollback_delivery(db, tx_id).await;
+                    let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+                    tracing::error!(event = "remove.failed", part_name = %dep, error = %e, "Removal failed");
+                    std::process::exit(1);
                 }
+                total_removed += 1;
             }
         }
 
@@ -90,8 +84,9 @@ pub async fn execute_remove(
                     ))
                 })?;
             if !list.is_empty() {
-                println!(
-                    "will also remove orphan dependencies of {}: {}",
+                crate::cli_action!(
+                    "Cascading",
+                    "orphans of {}: {}",
                     name,
                     list.join(", ")
                 );
@@ -101,6 +96,7 @@ pub async fn execute_remove(
             Vec::new()
         };
 
+        crate::cli_action!("Removing", "{}", name);
         let result = if recursive {
             transaction::remove_part(db, name, root_dir, force || recursive, session.clone()).await
         } else {
@@ -120,31 +116,38 @@ pub async fn execute_remove(
             .await
         };
 
-        match result {
-            Ok(()) => println!("removed: {}", name),
-            Err(e) => {
-                let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-                let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
-                tracing::error!("removing {}: {}", name, e);
-                std::process::exit(1);
-            }
+        if let Err(e) = result {
+            let _ = crate::delivery::rollback_delivery(db, tx_id).await;
+            let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+            tracing::error!(event = "remove.failed", part_name = %name, error = %e, "Removal failed");
+            std::process::exit(1);
         }
+        total_removed += 1;
 
         for orphan in &cascade_list {
-            match transaction::remove_part(db, orphan, root_dir, true, session.clone()).await {
-                Ok(()) => println!("removed: {}", orphan),
-                Err(e) => {
-                    let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-                    let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
-                    tracing::error!("removing {}: {}", orphan, e);
-                    std::process::exit(1);
-                }
+            crate::cli_action!("Removing", "{}", orphan);
+            if let Err(e) =
+                transaction::remove_part(db, orphan, root_dir, true, session.clone()).await
+            {
+                let _ = crate::delivery::rollback_delivery(db, tx_id).await;
+                let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+                tracing::error!(event = "remove.failed", part_name = %orphan, error = %e, "Removal failed");
+                std::process::exit(1);
             }
+            total_removed += 1;
         }
     }
 
     crate::delivery::complete_delivery(db, tx_id).await?;
     let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+
+    let elapsed = workflow_t0.elapsed().as_secs_f64();
+    crate::cli_action!(
+        "Finished",
+        "remove in {}: {} part(s)",
+        crate::forge::logging::format_duration(elapsed),
+        total_removed,
+    );
 
     Ok(())
 }

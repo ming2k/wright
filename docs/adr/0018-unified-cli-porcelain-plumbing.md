@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. The file-layout section (§4, §5) is **superseded by
+[ADR-0020](0020-merge-cli-and-commands-directories.md)**, which merges
+`src/cli/` and `src/commands/` into a single directory. All other rulings
+in this ADR — one unified binary, command groups via `help_heading`, and
+the porcelain/plumbing distinction — remain in force.
 
 ## Context
 
@@ -94,61 +98,63 @@ not by separate binaries:
 This distinction is documented in the CLI reference; clap groupings do not
 enforce it mechanically.
 
-### 4. Convergent file layout
+### 4. Convergent file layout (Flattened)
 
-The source tree is reorganised so that **file paths mirror help headings**.
+The source tree is now **fully flattened**.
 
 ```
 src/cli/
-  mod.rs              # Top-level Cli struct and Commands enum (groups only)
-  system.rs           # System Management subcommands + args
-  query.rs            # Query & Inspection subcommands + args
-  build.rs            # Build & Packaging subcommands + args
-  maintenance.rs      # Cache & Maintenance subcommands + args
-  common.rs           # Shared ValueEnum types
+  mod.rs              # Top-level Cli aggregator
+  install.rs          # Install args
+  remove.rs           # Remove args
+  ...                 # Every command has its own .rs file
 
 src/commands/
   mod.rs              # Dispatch router
-  system.rs           # Dispatcher for System Management handlers
-  query.rs            # Dispatcher for Query & Inspection handlers
-  build.rs            # Dispatcher for Build & Packaging handlers
-  maintenance.rs      # Dispatcher for Cache & Maintenance handlers
-  handlers/
-    system/           # Impl files for install, remove, upgrade, merge, assume…
-    query/            # Impl files for list, files, check, doctor, history
-    build/            # Impl files for build, lint, launch
-    maintenance/      # Impl files for prune
+  common.rs           # Shared dispatch helpers (locks, db resolution)
+  install.rs          # Dispatcher for install
+  remove.rs           # Dispatcher for remove
+  ...                 # Every command has its own .rs file
 ```
 
 Rules:
-- `src/cli/<group>.rs` owns **argument definitions** for that group.
-- `src/commands/<group>.rs` owns the **dispatch logic** for that group.
-- `src/commands/handlers/<group>/` owns the **implementation details**.
-- The dispatch module matches on the CLI enum and calls the handler; it does
-  not contain business logic.
+- `src/cli/<command>.rs` owns **argument definitions** for that command.
+- `src/commands/<command>.rs` owns the **dispatch logic** for that command.
 
-This convergence means: if a user sees `wright doctor` under "Query &
-Inspection" in `--help`, the argument struct is in `src/cli/query.rs` and the
-handler is reachable through `src/commands/query.rs`.
+### 5. Updated Command Mapping
 
-### 5. What we keep and what we move
+| Command | Args location | Dispatch location |
+|---------|---------------|-------------------|
+| `merge` | `cli/merge.rs` | `commands/merge.rs` |
+| `install` | `cli/install.rs` | `commands/install.rs` |
+| `upgrade` | `cli/upgrade.rs` | `commands/upgrade.rs` |
+| `remove` | `cli/remove.rs` | `commands/remove.rs` |
+| `provide` | `cli/provide.rs` | `commands/provide.rs` |
+| `list` | `cli/list.rs` | `commands/list.rs` |
+| `files` | `cli/files.rs` | `commands/files.rs` |
+| `check` | `cli/check.rs` | `commands/check.rs` |
+| `doctor` | `cli/doctor.rs` | `commands/doctor.rs` |
+| `history` | `cli/history.rs` | `commands/history.rs` |
+| `build` | `cli/build.rs` | `commands/build.rs` |
+| `lint` | `cli/lint.rs` | `commands/lint.rs` |
+| `launch` | `cli/launch.rs` | `commands/launch.rs` |
 
-Existing commands are retained without behaviour changes; only their
-organisation moves:
+## Consequences
 
-| Command | Old location | New CLI group | New dispatch |
-|---------|-------------|---------------|--------------|
-| `merge` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `install` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `upgrade` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `remove` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `assume` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `unassume` | `cli/system.rs` | System Management | `commands/system.rs` |
-| `list` | `cli/system.rs` | Query & Inspection | `commands/query.rs` |
-| `files` | `cli/system.rs` | Query & Inspection | `commands/query.rs` |
-| `check` | `cli/system.rs` | Query & Inspection | `commands/query.rs` |
-| `doctor` | `cli/system.rs` | Query & Inspection | `commands/query.rs` |
-| `history` | `cli/system.rs` | Query & Inspection | `commands/query.rs` |
+- `--help` output becomes self-documenting. Users immediately see which
+  commands are safe read-only queries and which mutate system state.
+- There is a single binary to install, complete, and document.
+- Contributors can locate command code by following the group name from
+  `--help` into `src/cli/<group>.rs` and `src/commands/<group>.rs`.
+- The refactor is mechanical (moving code, no logic changes). Existing tests
+  continue to pass because CLI flag names and semantics are unchanged.
+- Future commands are added by choosing a group, creating the args struct in
+  the corresponding `src/cli/<group>.rs`, and adding the handler path through
+  the matching `src/commands/<group>.rs`.
+- The porcelain/plumbing distinction is social/documentation-based rather than
+  enforced by code. This is intentional: a power user should be able to pipe
+  plumbing commands together without artificial barriers.
+s/query.rs` |
 | `build` | `cli/build.rs` | Build & Packaging | `commands/build.rs` |
 | `lint` | `cli/mod.rs` | Build & Packaging | `commands/build.rs` |
 | `launch` | `cli/launch.rs` | Build & Packaging | `commands/build.rs` |

@@ -34,8 +34,9 @@ build_deps = ["binutils:default", "glibc:default"]     # MVP: build without gcc 
 Wright detects the cycle automatically and schedules:
 
 ```
-INFO Build batch 1/2: bootstrap gcc, build binutils.  ← first pass, no gcc dep
-INFO Build batch 2/2: full rebuild gcc.               ← second pass, full deps
+    Planning 2 packages across 2 batches
+    Building batch 1/2: bootstrap gcc, build binutils    ← first pass, no gcc dep
+    Building batch 2/2: full rebuild gcc                 ← second pass, full deps
 ```
 
 ## Test the MVP Pass Explicitly

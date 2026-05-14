@@ -27,9 +27,10 @@ pub(super) struct Hooks {
 pub(super) fn read_hooks(extract_dir: &Path) -> (Option<String>, Hooks) {
     let hooks_path = extract_dir.join(".HOOKS");
     if let Ok(content) = std::fs::read_to_string(&hooks_path)
-        && let Ok(parsed) = toml::from_str::<HooksFile>(&content) {
-            return (Some(content), parsed.hooks);
-        }
+        && let Ok(parsed) = toml::from_str::<HooksFile>(&content)
+    {
+        return (Some(content), parsed.hooks);
+    }
 
     (None, Hooks::default())
 }
@@ -54,7 +55,12 @@ pub fn get_hook(content: &str, hook_name: &str) -> Option<String> {
 }
 
 pub(super) fn log_running_hook(part_name: &str, hook_name: &str) {
-    tracing::info!("Running hook [{}] for {}", hook_name, part_name);
+    tracing::info!(
+        event = "hooks.running",
+        hook_name,
+        part_name,
+        "Running hook"
+    );
 }
 
 fn normalize_hook_output_line(line: &str) -> &str {
@@ -77,9 +83,21 @@ where
             continue;
         }
         if stderr {
-            tracing::warn!("hook [{}] for {}: {}", hook_name, part_name, line);
+            tracing::warn!(
+                event = "hooks.stderr",
+                hook_name,
+                part_name,
+                line,
+                "Hook stderr output"
+            );
         } else {
-            tracing::info!("hook [{}] for {}: {}", hook_name, part_name, line);
+            tracing::info!(
+                event = "hooks.stdout",
+                hook_name,
+                part_name,
+                line,
+                "Hook stdout output"
+            );
         }
     }
     Ok(())

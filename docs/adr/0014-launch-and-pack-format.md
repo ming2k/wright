@@ -6,9 +6,9 @@ Superseded by [ADR-0015](0015-folio-manifest-replaces-pack.md)
 
 ## Context
 
-Until now, Wright's bootstrap story for a brand-new machine assumed an LFS-style
+Until now, Wright's bootstrap story for a brand-new machine provided an LFS-style
 hand-built base system already existed. The user installed Wright onto that
-system and ran `wright assume` to register what was already there. That works
+system and ran `wright provide` to register what was already there. That works
 for the maintainer of an LFS host but does not answer the more common question:
 
 > "I just got Wright, I have plans (or a packaged set of parts), and a bare
@@ -41,7 +41,7 @@ Add two pieces:
 
 1. **The pack format**: a single `.wright.pack.tar` artifact containing a
    `pack.toml` manifest, the parts archives it references, an optional
-   `overlay/` tree of base configuration, and an optional list of assumed
+   `overlay/` tree of base configuration, and an optional list of provided
    externals. A pack is the unit of distribution for "a system you can
    bootstrap from."
 
@@ -78,8 +78,8 @@ file   = "parts/libgcc-14.2.0-1-x86_64.wright.tar.zst"
 origin = "dependency"
 
 # Externals the target is expected to provide (e.g. host-supplied kernel on a
-# VPS). Recorded via assume_part before installing.
-[[assume]]
+# VPS). Recorded via provide_part before installing.
+[[provide]]
 name    = "linux"
 version = "6.12.0"
 
@@ -111,7 +111,7 @@ Launch responsibilities:
 
 1. Initialize `<root>/var/lib/wright/` (db file, parts dir, lock dir) and open
    a fresh `InstalledDb` rooted there.
-2. Record `[[assume]]` entries via `assume_part` so dependency checks pass.
+2. Record `[[provide]]` entries via `provide_part` so dependency checks pass.
 3. Compute install order from declared part archives (DAG sort, same path as
    `install_parts_with_explicit_targets`).
 4. Install each wave into `--root` using the existing transaction code, with

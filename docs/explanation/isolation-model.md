@@ -114,6 +114,32 @@ Wright handles that with ETXTBSY retry logic at both the isolation exec layer
 and the pipeline stage layer.  Contributor details are in
 [Isolation Race Handling](../dev/isolation-pitfalls.md).
 
+## Recovering From a Crashed Run
+
+If a Wright process is killed unexpectedly (SIGKILL, panic, OOM, power loss)
+mid-build, an overlayfs mount can remain active in the kernel mount table
+at `<build_dir>/<plan>-<version>/target` even though no Wright process holds
+it. A subsequent `wright install` would then fail when trying to wipe the
+build directory because the kernel returns `EBUSY` against a path that is
+itself a mount point.
+
+Wright recovers from this automatically. The first command after the crash
+reads `/proc/self/mounts`, finds any mount targets that fall inside the
+forge directory it's about to clean, lazy-unmounts them (`MNT_DETACH`,
+deepest-first so parents become free), and retries the cleanup. The user
+sees no warning — recovery is silent because nothing is wrong; the next
+build proceeds normally.
+
+You can still recover manually if the automatic cleanup somehow fails:
+
+```bash
+sudo umount -R /var/tmp/wright/workshop/<plan>-<version>/target
+sudo rm -rf /var/tmp/wright/workshop/<plan>-<version>
+```
+
+Contributor implementation details are in
+[Isolation Race Handling — EBUSY on cleanup](../dev/isolation-pitfalls.md).
+
 ## Relationship to ADRs
 
 The current design is ADR-0013:

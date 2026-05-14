@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use owo_colors::OwoColorize;
-
 use crate::database::{FileType, InstalledDb, InstalledPart, Origin};
 use crate::error::{Result, WrightError};
 use crate::part::elf;
@@ -21,17 +19,13 @@ pub(super) async fn run_standard_checks(
 ) -> Result<usize> {
     let mut total_issues = 0usize;
 
-    let integrity_issues = integrity_check(db).await?;
-    total_issues += integrity_issues;
-
+    total_issues += integrity_check(db).await?;
     if integrity_only {
         return Ok(total_issues);
     }
 
     if check_files {
-        println!();
-        let files_issues = files_check(db, root_dir, only_part).await?;
-        total_issues += files_issues;
+        total_issues += files_check(db, root_dir, only_part).await?;
     }
 
     let registry_findings = registry_check(db, only_part).await?;
@@ -41,9 +35,9 @@ pub(super) async fn run_standard_checks(
         DeepReport::default()
     };
 
-    print_registry_findings(&registry_findings);
+    report_registry_findings(&registry_findings);
     if deep {
-        print_elf_findings(&elf_findings);
+        report_elf_findings(&elf_findings);
     }
 
     total_issues +=
@@ -52,39 +46,48 @@ pub(super) async fn run_standard_checks(
     Ok(total_issues)
 }
 
+/// Emit a list of bullet findings indented under a verb line.
+fn emit_bullets<I, S>(lines: I)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for line in lines {
+        // 13 spaces lines up with the 12-col verb column + 1 pivot space.
+        let _ = crate::util::progress::MULTI
+            .println(format!("             - {}", line.as_ref()));
+    }
+}
+
 // ── integrity ───────────────────────────────────────────────────────────
 
 async fn integrity_check(db: &InstalledDb) -> Result<usize> {
     let mut issues = 0usize;
 
-    print!("Checking database integrity... ");
+    crate::cli_action!("Checking", "database integrity");
     match db.integrity_check().await {
-        Ok(issues_list) if issues_list.is_empty() => println!("{}", "OK".green()),
-        Ok(issues_list) => {
-            println!("{}", "FAILED".red());
-            for issue in issues_list {
-                println!("  - {}", issue);
-                issues += 1;
-            }
+        Ok(list) if list.is_empty() => {}
+        Ok(list) => {
+            crate::cli_warn!("{} database integrity issue(s)", list.len());
+            issues += list.len();
+            emit_bullets(&list);
         }
         Err(e) => {
-            println!("{} ({})", "ERROR".red(), e);
+            crate::cli_error!("integrity check failed: {}", e);
             issues += 1;
         }
     }
 
-    print!("Checking for file shadowing conflicts... ");
+    crate::cli_action!("Checking", "file shadowing conflicts");
     match db.get_shadowed_conflicts().await {
-        Ok(conflicts) if conflicts.is_empty() => println!("{}", "OK".green()),
-        Ok(conflicts) => {
-            println!("{}", "WARNING".yellow());
-            for conflict in conflicts {
-                println!("  - {}", conflict);
-                issues += 1;
-            }
+        Ok(list) if list.is_empty() => {}
+        Ok(list) => {
+            crate::cli_warn!("{} shadowed file conflict(s)", list.len());
+            issues += list.len();
+            emit_bullets(&list);
         }
         Err(e) => {
-            println!("{} ({})", "ERROR".red(), e);
+            crate::cli_error!("shadow check failed: {}", e);
             issues += 1;
         }
     }
@@ -98,6 +101,7 @@ async fn registry_check(
     db: &InstalledDb,
     only_part: Option<&str>,
 ) -> Result<Vec<query::BrokenDep>> {
+    crate::cli_action!("Checking", "registry dependencies");
     let mut broken = query::check_dependencies_structured(db).await?;
     if let Some(filter) = only_part {
         broken.retain(|b| b.part == filter);
@@ -105,24 +109,23 @@ async fn registry_check(
     Ok(broken)
 }
 
-fn print_registry_findings(broken: &[query::BrokenDep]) {
+fn report_registry_findings(broken: &[query::BrokenDep]) {
     if broken.is_empty() {
         return;
     }
-    println!(
-        "{}: {} unsatisfied registry edge(s)",
-        "advisory".yellow(),
-        broken.len()
-    );
-    for b in broken {
-        let vc = b
-            .version_constraint
-            .as_deref()
-            .map(|c| format!(" ({})", c))
-            .unwrap_or_default();
-        println!("  {} → {}{}", b.part.bold(), b.required_name, vc);
-    }
-    println!();
+    crate::cli_warn!("{} unsatisfied registry edge(s)", broken.len());
+    let lines: Vec<String> = broken
+        .iter()
+        .map(|b| {
+            let vc = b
+                .version_constraint
+                .as_deref()
+                .map(|c| format!(" ({})", c))
+                .unwrap_or_default();
+            format!("{} -> {}{}", b.part, b.required_name, vc)
+        })
+        .collect();
+    emit_bullets(&lines);
 }
 
 // ── ELF deep check ──────────────────────────────────────────────────────
@@ -146,6 +149,7 @@ async fn elf_check(
     root_dir: &Path,
     only_part: Option<&str>,
 ) -> Result<DeepReport> {
+    crate::cli_action!("Checking", "ELF dynamic loads");
     let mut report = DeepReport::default();
 
     let parts: Vec<(i64, String)> = match only_part {
@@ -208,37 +212,29 @@ async fn resolve_soname_owner(db: &InstalledDb, soname: &str) -> Result<Option<S
         let files = db.get_files(p.id).await?;
         for f in files {
             if let Some(base) = f.path.rsplit('/').next()
-                && base == soname {
-                    return Ok(Some(p.name));
-                }
+                && base == soname
+            {
+                return Ok(Some(p.name));
+            }
         }
     }
     Ok(None)
 }
 
-fn print_elf_findings(report: &DeepReport) {
+fn report_elf_findings(report: &DeepReport) {
     if report.missing.is_empty() {
         return;
     }
-    println!(
-        "{}: {} ELF binary load(s) cannot be resolved",
-        "advisory".yellow(),
+    crate::cli_warn!(
+        "{} ELF binary load(s) cannot be resolved",
         report.missing.len()
     );
-    for m in &report.missing {
-        println!(
-            "  {} ({}) needs {} — no deployed part owns this SONAME",
-            m.part.bold(),
-            m.binary,
-            m.soname.red()
-        );
-    }
-    println!();
-    println!(
-        "These binaries will fail to start with `error while loading shared \
-         libraries`. Install the providing part or `wright assume` it as \
-         externally provided."
-    );
+    let lines: Vec<String> = report
+        .missing
+        .iter()
+        .map(|m| format!("{} ({}) needs {} — no part provides this SONAME", m.part, m.binary, m.soname))
+        .collect();
+    emit_bullets(&lines);
 }
 
 // ── file existence ──────────────────────────────────────────────────────
@@ -253,7 +249,7 @@ struct PartMissing {
 }
 
 async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>) -> Result<usize> {
-    print!("Checking deployed file existence... ");
+    crate::cli_action!("Checking", "deployed file existence");
 
     let parts: Vec<InstalledPart> = match only_part {
         Some(name) => match db.get_part(name).await? {
@@ -280,7 +276,6 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
         missing: Vec::new(),
     };
     let mut total_missing = 0usize;
-    let mut total_checked = 0usize;
 
     for part in &parts {
         if part.origin == Origin::External {
@@ -288,8 +283,6 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
         }
 
         let files = db.get_files(part.id).await?;
-        total_checked += files.len();
-
         let mut missing_paths: Vec<String> = Vec::new();
 
         for f in &files {
@@ -338,41 +331,30 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
     }
 
     if total_missing == 0 {
-        println!("{} ({} file(s) verified)", "OK".green(), total_checked);
         return Ok(0);
     }
 
-    println!("{}", "FAILED".red());
-    print_files_findings(&report);
-
-    Ok(total_missing)
-}
-
-fn print_files_findings(report: &FilesReport) {
     let part_count = report.missing.len();
-    let total_files: usize = report.missing.iter().map(|p| p.paths.len()).sum();
-
-    println!(
-        "  {}: {} missing file(s) across {} part(s)",
-        "missing".red(),
-        total_files,
+    crate::cli_warn!(
+        "{} missing file(s) across {} part(s) — run `wright install --force <part>` to repair",
+        total_missing,
         part_count
     );
-
+    let mut lines: Vec<String> = Vec::new();
     for pm in &report.missing {
         let count = pm.paths.len();
         if count <= 5 {
             for path in &pm.paths {
-                println!("    {}: {}", pm.part_name, path);
+                lines.push(format!("{}: {}", pm.part_name, path));
             }
         } else {
             for path in pm.paths.iter().take(3) {
-                println!("    {}: {}", pm.part_name, path);
+                lines.push(format!("{}: {}", pm.part_name, path));
             }
-            println!("    {}: ... and {} more", pm.part_name, count - 3);
+            lines.push(format!("{}: ... and {} more", pm.part_name, count - 3));
         }
     }
+    emit_bullets(&lines);
 
-    println!();
-    println!("To repair, reinstall the affected part(s):\n  wright install --force <part>");
+    Ok(total_missing)
 }

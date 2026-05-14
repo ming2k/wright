@@ -200,8 +200,11 @@ impl ForgeCheckpoint {
 
             if stored_status != StageStatus::Completed {
                 debug!(
-                    "Rewind point at stage '{}' (index {}): status is {:?}",
-                    name, idx, stored_status
+                    event = "checkpoint.rewind_status",
+                    stage = %name,
+                    index = idx,
+                    ?stored_status,
+                    "Rewind point: stage not completed"
                 );
                 return Some(idx);
             }
@@ -209,11 +212,12 @@ impl ForgeCheckpoint {
             let expected = expected_hashes.get(name).map(|s| s.as_str()).unwrap_or("");
             if stored_hash != expected {
                 debug!(
-                    "Rewind point at stage '{}' (index {}): hash mismatch (stored={}, expected={})",
-                    name,
-                    idx,
-                    &stored_hash[..16.min(stored_hash.len())],
-                    &expected[..16.min(expected.len())]
+                    event = "checkpoint.rewind_hash",
+                    stage = %name,
+                    index = idx,
+                    stored_hash = %&stored_hash[..16.min(stored_hash.len())],
+                    expected_hash = %&expected[..16.min(expected.len())],
+                    "Rewind point: hash mismatch"
                 );
                 return Some(idx);
             }
@@ -256,8 +260,10 @@ impl ForgeCheckpoint {
     /// Both the JSON records and on-disk layer directories are cleared.
     pub fn rewind_from(&mut self, stage_order: &[String], from_idx: usize) -> Result<()> {
         info!(
-            "Rewinding pipeline from stage '{}' (index {})",
-            stage_order[from_idx], from_idx
+            event = "checkpoint.rewind",
+            stage = %stage_order[from_idx],
+            index = from_idx,
+            "Rewinding pipeline"
         );
 
         // Reset JSON state for stage N and beyond.
@@ -278,9 +284,18 @@ impl ForgeCheckpoint {
                 .join("layers")
                 .join(crate::forge::layers::layer_dir_name(name));
             if layer_dir.exists() {
-                debug!("Clearing layer directory: {}", layer_dir.display());
+                debug!(
+                    event = "checkpoint.layer_clear",
+                    dir = %layer_dir.display(),
+                    "Clearing layer directory"
+                );
                 if let Err(e) = std::fs::remove_dir_all(&layer_dir) {
-                    warn!("Failed to clear layer {}: {}", layer_dir.display(), e);
+                    warn!(
+                        event = "checkpoint.layer_clear_failed",
+                        dir = %layer_dir.display(),
+                        error = %e,
+                        "Failed to clear layer"
+                    );
                 }
             }
         }

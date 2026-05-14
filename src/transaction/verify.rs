@@ -35,19 +35,20 @@ pub async fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Resul
                 }
             }
         } else if file.file_type == FileType::Symlink
-            && let Some(ref expected_target) = file.file_hash {
-                match tokio::fs::read_link(&full_path).await {
-                    Ok(actual_target) => {
-                        let actual_str = actual_target.to_string_lossy();
-                        if &actual_str != expected_target {
-                            issues.push(format!("MODIFIED: {}", file.path));
-                        }
-                    }
-                    Err(_) => {
-                        issues.push(format!("UNREADABLE: {}", file.path));
+            && let Some(ref expected_target) = file.file_hash
+        {
+            match tokio::fs::read_link(&full_path).await {
+                Ok(actual_target) => {
+                    let actual_str = actual_target.to_string_lossy();
+                    if &actual_str != expected_target {
+                        issues.push(format!("MODIFIED: {}", file.path));
                     }
                 }
+                Err(_) => {
+                    issues.push(format!("UNREADABLE: {}", file.path));
+                }
             }
+        }
     }
 
     Ok(issues)

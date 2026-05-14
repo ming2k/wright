@@ -85,7 +85,6 @@ wright doctor
 ## Clean Up Old Archives
 
 ```bash
-wright prune --latest --apply
 ```
 
 ## Typical Workflows
@@ -103,7 +102,6 @@ wright merge hello
 ```bash
 wright install hello openssl
 wright sysupgrade
-wright prune --latest --apply
 ```
 
 ### Explicit Rebuild Scope

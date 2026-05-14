@@ -37,7 +37,7 @@ We want:
 
 1. **Remove the pack format** (`wright pack`, `.wright.pack.tar`, `pack.toml`).
 2. **Introduce the folio manifest** (`folio.toml`) — a pure declaration that
-   names plans, assumed externals, and optional post-install configuration.
+   names plans, provided externals, and optional post-install configuration.
 3. **Extend `wright launch`** to accept either `--folio <file>` or `--plans <dir>`
    (with optional `@folio` references), drive the full
    `resolve → build → package → install` pipeline, and automatically redirect
@@ -53,7 +53,7 @@ description = "Wright minimal base system"
 arch        = "x86_64"
 plans       = ["glibc", "bash", "coreutils", "openssl"]
 
-[[assume]]
+[[provide]]
 name    = "linux"
 version = "6.12.0"
 
@@ -65,7 +65,7 @@ services = ["sshd"]
 ```
 
 - `plans` — names of plans to resolve, build, and install.
-- `[[assume]]` — externals pre-registered before any build starts.
+- `[[provide]]` — externals pre-registered before any build starts.
 - `[config]` — declarative post-install system configuration.
 
 Unlike `pack.toml`, a folio does **not** reference pre-built archives or carry

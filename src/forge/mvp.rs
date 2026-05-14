@@ -98,46 +98,45 @@ pub(crate) fn collect_phase_deps(
     // installed first. Use BFS to add ordering edges for the entire closure.
     // Only do this when the domain includes runtime deps (e.g. `wright install`).
     if dep_domain.contains(crate::resolve::DepDomain::RUNTIME)
-        && let Some(idx) = index {
-            for build_dep in &build {
-                let build_dep_name = version::parse_dependency(build_dep)
-                    .unwrap_or_else(|_| (build_dep.clone(), None))
-                    .0;
-                let build_dep_plan_name =
-                    version::parse_dep_ref(&build_dep_name).plan().to_string();
-                let build_dep_plan = part_to_plan
-                    .get(&build_dep_plan_name)
-                    .cloned()
-                    .unwrap_or(build_dep_plan_name);
+        && let Some(idx) = index
+    {
+        for build_dep in &build {
+            let build_dep_name = version::parse_dependency(build_dep)
+                .unwrap_or_else(|_| (build_dep.clone(), None))
+                .0;
+            let build_dep_plan_name = version::parse_dep_ref(&build_dep_name).plan().to_string();
+            let build_dep_plan = part_to_plan
+                .get(&build_dep_plan_name)
+                .cloned()
+                .unwrap_or(build_dep_plan_name);
 
-                let mut queue = VecDeque::new();
-                queue.push_back(build_dep_plan);
-                let mut visited = HashSet::new();
+            let mut queue = VecDeque::new();
+            queue.push_back(build_dep_plan);
+            let mut visited = HashSet::new();
 
-                while let Some(cur) = queue.pop_front() {
-                    if !visited.insert(cur.clone()) {
-                        continue;
-                    }
-                    if let Ok(Some(dep_manifest)) = idx.manifest_for(&cur) {
-                        for rdep in &dep_manifest.runtime_deps {
-                            let rdep_name = version::parse_dependency(rdep)
-                                .unwrap_or_else(|_| (rdep.clone(), None))
-                                .0;
-                            let rdep_plan_name =
-                                version::parse_dep_ref(&rdep_name).plan().to_string();
-                            let rdep_plan = part_to_plan
-                                .get(&rdep_plan_name)
-                                .cloned()
-                                .unwrap_or(rdep_plan_name);
-                            if rdep_plan != manifest.metadata.name {
-                                deps.push(rdep_plan.clone());
-                            }
-                            queue.push_back(rdep_plan);
+            while let Some(cur) = queue.pop_front() {
+                if !visited.insert(cur.clone()) {
+                    continue;
+                }
+                if let Ok(Some(dep_manifest)) = idx.manifest_for(&cur) {
+                    for rdep in &dep_manifest.runtime_deps {
+                        let rdep_name = version::parse_dependency(rdep)
+                            .unwrap_or_else(|_| (rdep.clone(), None))
+                            .0;
+                        let rdep_plan_name = version::parse_dep_ref(&rdep_name).plan().to_string();
+                        let rdep_plan = part_to_plan
+                            .get(&rdep_plan_name)
+                            .cloned()
+                            .unwrap_or(rdep_plan_name);
+                        if rdep_plan != manifest.metadata.name {
+                            deps.push(rdep_plan.clone());
                         }
+                        queue.push_back(rdep_plan);
                     }
                 }
             }
         }
+    }
 
     deps
 }
@@ -328,13 +327,17 @@ pub(crate) fn format_cycle_path(scc: &[String], graph: &HashMap<String, Vec<Stri
 pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
     let cycles = find_cycles(&graph.deps_map);
     if cycles.is_empty() {
-        debug!("Dependency graph is acyclic.");
+        debug!(event = "mvp.acyclic", "Dependency graph is acyclic");
         return Ok(());
     }
 
     for cycle in &cycles {
         let cycle_display = format_cycle_path(cycle, &graph.deps_map);
-        info!("Detected dependency cycle: {}", cycle_display);
+        info!(
+            event = "mvp.cycle_detected",
+            cycle = %cycle_display,
+            "Detected dependency cycle"
+        );
 
         let candidates = cycle_candidates_for(cycle, graph);
         let chosen = pick_candidate(candidates.clone());
@@ -389,9 +392,10 @@ pub(crate) fn inject_bootstrap_passes(graph: &mut PlanGraph) -> Result<()> {
         }
 
         info!(
-            "Scheduling cycle resolution for {}: build:mvp without {}, then build:full",
-            part,
-            excl.join(", ")
+            event = "mvp.cycle_resolution_scheduled",
+            part = %part,
+            excluded = %excl.join(", "),
+            "Scheduling cycle resolution"
         );
     }
 

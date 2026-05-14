@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::error::{Result, WrightError};
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
-use tracing::{debug, info, trace};
+use tokio::sync::Semaphore;
+use tracing::{debug, info, trace, warn};
 
 use crate::config::GlobalConfig;
 use crate::database::{InstalledDb, SessionContext};
@@ -75,7 +75,7 @@ impl PlanFingerprints {
                 }
 
                 let closure_fp = CasStore::compute_closure_fingerprint(&build_key, &dep_fps);
-                trace!("{} closure_fp={}", base, &closure_fp[..8]);
+                trace!(event = "fingerprint.closure", plan_name = %base, closure_fp = %&closure_fp[..8], "Computed closure fingerprint");
 
                 // Insert for both the full task and its bootstrap variant.
                 // Bootstrap tasks get a different fingerprint to distinguish
@@ -91,7 +91,7 @@ impl PlanFingerprints {
                         bp.update(closure_fp.as_bytes());
                         bp.update(b":bootstrap");
                         let bootstrap_fp = format!("{:x}", bp.finalize());
-                        trace!("{}:bootstrap fp={}", base, &bootstrap_fp[..8]);
+                        trace!(event = "fingerprint.bootstrap", plan_name = %base, bootstrap_fp = %&bootstrap_fp[..8], "Computed bootstrap fingerprint");
                         fingerprints.insert(bootstrap_task, bootstrap_fp);
                     }
                 }
@@ -107,6 +107,7 @@ impl PlanFingerprints {
 }
 
 pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
+    let workflow_t0 = std::time::Instant::now();
     let InstallRequest {
         targets,
         dep_domain,
@@ -175,16 +176,14 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
     let total_packages = plan.build_set().len();
     let total_batches = plan.batches().len();
-    if !quiet {
-        info!(
-            "build plan: {} package{} in {} batch{}",
-            total_packages,
-            if total_packages == 1 { "" } else { "s" },
-            total_batches,
-            if total_batches == 1 { "" } else { "es" }
-        );
-        for (idx, batch) in plan.batches().iter().enumerate() {
-            let entries: Vec<String> = batch
+    // Pre-render every batch's task list once; we reuse it for the planning
+    // summary (one line per batch when there are >1) and the per-batch
+    // structured log entries.
+    let batch_entries: Vec<Vec<String>> = plan
+        .batches()
+        .iter()
+        .map(|batch| {
+            batch
                 .iter()
                 .map(|t| {
                     let base = ForgeExecutionPlan::task_base_name(t);
@@ -195,16 +194,59 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                         format!("{} ({})", base, label)
                     }
                 })
-                .collect();
-            info!(" batch {}/{}: {}", idx + 1, total_batches, entries.join(", "));
+                .collect()
+        })
+        .collect();
+    if !quiet {
+        let pkg_word = if total_packages == 1 { "package" } else { "packages" };
+        if total_batches == 1 {
+            // Single batch: one line is enough — list the packages directly.
+            info!(
+                verb = "Planning",
+                event = "plan.summary",
+                total_packages = total_packages,
+                total_batches = total_batches,
+                "{} {}: {}",
+                total_packages,
+                pkg_word,
+                batch_entries[0].join(", "),
+            );
+        } else {
+            // For multi-batch plans, the planning line shows totals only.
+            // Each batch's contents are announced at execution time via the
+            // "Batch N/M: …" line in the loop below, which interleaves with
+            // the actual build progress.
+            info!(
+                verb = "Planning",
+                event = "plan.summary",
+                total_packages = total_packages,
+                total_batches = total_batches,
+                "{} {} across {} batches",
+                total_packages, pkg_word, total_batches
+            );
+            // Structured per-batch entries still go to the file log for
+            // post-mortem analysis.
+            for (idx, entries) in batch_entries.iter().enumerate() {
+                tracing::debug!(
+                    event = "plan.batch",
+                    batch_num = idx + 1,
+                    total_batches = total_batches,
+                    tasks = %entries.join(", "),
+                    "plan batch contents",
+                );
+            }
         }
     }
 
     let plan = Arc::new(plan);
     let forger = Arc::new(Forger::new(config.clone()));
-    let configure_lock = Arc::new(Mutex::new(()));
-    let compile_lock = Arc::new(Mutex::new(()));
-    let _resources = resolve::summarize_forge_resources(config);
+    let resources = resolve::summarize_forge_resources(config);
+    // configure_lock = 1 permit (serializes autotools-style configure scripts).
+    // compile_lock   = total_cpus permits; each compile stage takes N permits
+    //                  matching its declared CPU usage, so the pool stays at
+    //                  exactly total_cpus in flight across the whole batch.
+    let configure_lock = Arc::new(Semaphore::new(1));
+    let compile_lock = Arc::new(Semaphore::new(resources.total_cpus));
 
     let db = InstalledDb::open(db_path)
         .await
@@ -230,15 +272,21 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let cas_store = CasStore::new(config.general.store_dir.clone());
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
-        if !quiet {
+        if !quiet && total_batches > 1 {
             let bases: Vec<&str> = batch
                 .iter()
                 .map(|t| ForgeExecutionPlan::task_base_name(t))
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();
+            // "Forging" is the gerund verb; the message conveys which
+            // batch and its members.
             info!(
-                "Build batch {}/{}: {}",
+                verb = "Forging",
+                event = "build.batch_started",
+                batch_num = batch_idx + 1,
+                total_batches = total_batches,
+                "batch {}/{}: {}",
                 batch_idx + 1,
                 total_batches,
                 bases.join(", ")
@@ -266,14 +314,14 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     } else {
                         continue;
                     };
-                    trace!("{} CAS check key={}", base, &fp_key[..8]);
+                    trace!(event = "fingerprint.cas_check", plan_name = %base, fp_key = %&fp_key[..8], "CAS check key computed");
                     let part_names = manifest_part_names(manifest);
                     let all_in_cas = part_names
                         .iter()
                         .all(|pn| cas_store.resolve(pn, &fp_key).is_some());
                     if all_in_cas && !part_names.is_empty() {
-                        info!("using cached build for {}", base);
-                        debug!("{} found in cache", base);
+                        info!(event = "cas.hit", plan_name = %base, "Using cached build");
+                        debug!(event = "cas.found", plan_name = %base, "Found in cache");
                         cas_hit_bases.insert(base);
                     }
                 }
@@ -349,6 +397,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                         build_opts.fetch_only,
                         build_opts.skip_check,
                         force,
+                        build_opts.clean,
                         &extra_env,
                         build_opts.verbose,
                         config.build.nproc_per_isolation,
@@ -407,6 +456,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             let manifest = PlanManifest::from_file(plan_path)
                 .map_err(|e| WrightError::ForgeError(format!("parse plan {}: {}", base, e)))?;
 
+            let _seal_span = crate::cli_span!("Sealing", "{}", base);
             crate::seal::package_manifest(&manifest, config, false, force)
                 .await
                 .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", base, e)))?;
@@ -416,9 +466,10 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
                     if let Ok(Some(resolved)) = part_store.resolve(pn).await
-                        && let Err(e) = cas_store.store(&resolved.path, pn, fp) {
-                            tracing::warn!("Failed to store {} in CAS: {}", pn, e);
-                        }
+                        && let Err(e) = cas_store.store(&resolved.path, pn, fp)
+                    {
+                        warn!(event = "cas.store_failed", part_name = %pn, error = %e, "Failed to store part in CAS");
+                    }
                 }
             }
         }
@@ -566,6 +617,20 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 crate::delivery::delivery_ready(&db, tx_id).await?;
                 crate::delivery::begin_applying(&db, tx_id).await?;
 
+                let part_word = if archive_paths.len() == 1 { "part" } else { "parts" };
+                let deploy_target = if total_batches == 1 {
+                    format!("{} {}", archive_paths.len(), part_word)
+                } else {
+                    format!(
+                        "batch {}/{} ({} {})",
+                        batch_idx + 1,
+                        total_batches,
+                        archive_paths.len(),
+                        part_word,
+                    )
+                };
+                let _deploy_span = crate::cli_span!("Deploying", "{}", deploy_target);
+
                 let result = crate::transaction::deploy_parts_with_explicit_targets(
                     &db,
                     &archive_paths,
@@ -594,14 +659,26 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     crate::delivery::complete_delivery(&db, tx_id).await?;
     let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
 
+    // Rule C: terminal completion line for the entire install workflow.
+    if !quiet {
+        let elapsed = workflow_t0.elapsed().as_secs_f64();
+        info!(
+            verb = "Finished",
+            event = "install.completed",
+            elapsed_secs = elapsed,
+            "install in {}",
+            crate::forge::logging::format_duration(elapsed),
+        );
+    }
+
     Ok(())
 }
 
 async fn register_folio_assumptions(
     db_path: &Path,
-    assumptions: &[folio::FolioAssume],
+    provides: &[folio::FolioProvide],
 ) -> Result<()> {
-    if assumptions.is_empty() {
+    if provides.is_empty() {
         return Ok(());
     }
 
@@ -611,11 +688,11 @@ async fn register_folio_assumptions(
             e
         ))
     })?;
-    for assume in assumptions {
-        db.assume_part(&assume.name, &assume.version)
+    for provide in provides {
+        db.provide_part(&provide.name, &provide.version)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to assume {}: {}", assume.name, e))
+                WrightError::DatabaseError(format!("failed to assume {}: {}", provide.name, e))
             })?;
     }
     Ok(())
@@ -627,3 +704,4 @@ fn manifest_part_names(manifest: &PlanManifest) -> Vec<String> {
         _ => vec![manifest.metadata.name.clone()],
     }
 }
+

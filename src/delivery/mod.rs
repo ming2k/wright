@@ -104,14 +104,21 @@ pub async fn recover_if_needed(db: &InstalledDb) -> Result<bool> {
     };
 
     info!(
-        "Found incomplete delivery transaction {} (status: {:?}, command: {})",
-        active.id, active.status, active.command
+        event = "delivery.incomplete_found",
+        tx_id = active.id,
+        ?active.status,
+        command = %active.command,
+        "Found incomplete delivery transaction"
     );
 
     match active.status {
         DeliveryStatus::Planning => {
             // Never reached system mutation — safe to discard.
-            info!("Delivery was still in PLANNING phase — discarding");
+            info!(
+                event = "delivery.discard_planning",
+                tx_id = active.id,
+                "Delivery was still in PLANNING phase — discarding"
+            );
             db.set_delivery_status(active.id, DeliveryStatus::RolledBack)
                 .await?;
         }
@@ -129,7 +136,11 @@ async fn recover_from_applying(db: &InstalledDb, tx: &DeliveryTransaction) -> Re
     let ops = db.get_ops_for_delivery(tx.id).await?;
 
     if ops.is_empty() {
-        info!("No operations found for transaction {} — completing", tx.id);
+        info!(
+            event = "delivery.no_ops_complete",
+            tx_id = tx.id,
+            "No operations found for transaction — completing"
+        );
         db.set_delivery_status(tx.id, DeliveryStatus::Completed)
             .await?;
         return Ok(());
@@ -156,8 +167,10 @@ async fn recover_from_applying(db: &InstalledDb, tx: &DeliveryTransaction) -> Re
                 // before the crash.  Leave the whole thing as-is for them to
                 // manually resolve, or re-run the command.
                 warn!(
-                    "Delivery {} has a FAILED op ({}); aborting recovery — re-run the command",
-                    tx.id, op.part_name
+                    event = "delivery.recovery_failed_op",
+                    tx_id = tx.id,
+                    part_name = %op.part_name,
+                    "Delivery has a FAILED op; aborting recovery — re-run the command"
                 );
                 return Err(WrightError::DeployError(format!(
                     "delivery transaction {} has a failed op ({}); re-run the install/upgrade command",
@@ -175,8 +188,11 @@ async fn recover_from_applying(db: &InstalledDb, tx: &DeliveryTransaction) -> Re
     // retried.
     for (op, old_status) in &midflight_ops {
         warn!(
-            "Cleaning up mid-flight op {} (was {:?}) — resetting to pending",
-            op.part_name, old_status
+            event = "delivery.midflight_cleanup",
+            tx_id = tx.id,
+            part_name = %op.part_name,
+            ?old_status,
+            "Cleaning up mid-flight op — resetting to pending"
         );
         db.reset_op_to_pending(op.id).await?;
     }
@@ -188,14 +204,14 @@ async fn recover_from_applying(db: &InstalledDb, tx: &DeliveryTransaction) -> Re
     let done_names: Vec<_> = done_ops.iter().map(|s| s.as_str()).collect();
 
     info!(
-        "Delivery {} recovery: {} done ({}), {} mid-flight reset to pending ({}), {} remaining pending. \
-         Re-run your install/upgrade command to continue.",
-        tx.id,
-        done_ops.len(),
-        done_names.join(", "),
-        midflight_names.len(),
-        midflight_names.join(", "),
-        if pending_exists { "some" } else { "no" },
+        event = "delivery.recovery_summary",
+        tx_id = tx.id,
+        done_count = done_ops.len(),
+        done = %done_names.join(", "),
+        midflight_count = midflight_names.len(),
+        midflight = %midflight_names.join(", "),
+        has_pending = pending_exists,
+        "Delivery recovery summary"
     );
 
     // Mark the transaction as ROLLED_BACK so the user knows to re-run.

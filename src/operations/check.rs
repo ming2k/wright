@@ -1,6 +1,5 @@
 use std::path::Path;
-
-use owo_colors::OwoColorize;
+use std::time::Instant;
 
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
@@ -17,6 +16,7 @@ pub async fn execute_check(
     integrity_only: bool,
     check_files: bool,
 ) -> Result<()> {
+    let t0 = Instant::now();
     let issues = super::health::run_standard_checks(
         db,
         root_dir,
@@ -27,24 +27,23 @@ pub async fn execute_check(
     )
     .await?;
 
-    if integrity_only {
-        if issues == 0 {
-            println!("{}: system integrity reports clean", "check".green());
-        }
-        return Ok(());
-    }
-
     if issues == 0 {
         let scope = scope_label(only_part);
-        let mode = check_mode_label(deep, check_files);
-        println!("{}: {} reports clean{}", "check".green(), scope, mode);
+        let mode = check_mode_label(deep, check_files, integrity_only);
+        crate::cli_action!(
+            "Finished",
+            "check {} in {}: {} clean",
+            mode,
+            crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+            scope,
+        );
         return Ok(());
     }
 
     let flag = error_flag_label(deep, check_files);
     Err(WrightError::DependencyError(format!(
-        "{} issue(s) reported by `wright check{}`",
-        issues, flag
+        "check{} found {} issue(s)",
+        flag, issues,
     )))
 }
 
@@ -55,13 +54,15 @@ fn scope_label(only_part: Option<&str>) -> String {
     }
 }
 
-fn check_mode_label(deep: bool, check_files: bool) -> &'static str {
-    if deep {
-        " (integrity + deps + ELF)"
+fn check_mode_label(deep: bool, check_files: bool, integrity_only: bool) -> &'static str {
+    if integrity_only {
+        "(integrity)"
+    } else if deep {
+        "(integrity + deps + ELF)"
     } else if check_files {
-        " (integrity + files + deps)"
+        "(integrity + files + deps)"
     } else {
-        " (integrity + deps)"
+        "(integrity + deps)"
     }
 }
 

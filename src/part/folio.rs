@@ -25,8 +25,8 @@ pub struct FolioManifest {
     pub folio: FolioMeta,
 
     /// Externals the target is expected to provide.
-    #[serde(default, rename = "assume")]
-    pub assumes: Vec<FolioAssume>,
+    #[serde(default, rename = "provide")]
+    pub provides: Vec<FolioProvide>,
 
     /// Optional declarative system configuration applied after install.
     #[serde(default)]
@@ -47,7 +47,7 @@ pub struct FolioMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FolioAssume {
+pub struct FolioProvide {
     pub name: String,
     pub version: String,
 }
@@ -95,9 +95,9 @@ pub fn find_folio_manifest(folios_dirs: &[PathBuf], name: &str) -> Option<PathBu
 pub fn expand_folio_references(
     targets: Vec<String>,
     folios_dirs: &[PathBuf],
-) -> Result<(Vec<String>, Vec<FolioAssume>, Option<FolioConfig>)> {
+) -> Result<(Vec<String>, Vec<FolioProvide>, Option<FolioConfig>)> {
     let mut expanded = Vec::new();
-    let mut all_assumes = Vec::new();
+    let mut all_provides = Vec::new();
     let mut folio_config: Option<FolioConfig> = None;
 
     for target in targets {
@@ -116,7 +116,7 @@ pub fn expand_folio_references(
             let manifest = read_manifest(&folio_path)
                 .map_err(|e| folio_err(format!("read folio {}: {}", folio_path.display(), e)))?;
             expanded.extend(manifest.folio.plans);
-            all_assumes.extend(manifest.assumes);
+            all_provides.extend(manifest.provides);
             if manifest.config.is_some() {
                 folio_config = manifest.config;
             }
@@ -125,7 +125,7 @@ pub fn expand_folio_references(
         }
     }
 
-    Ok((expanded, all_assumes, folio_config))
+    Ok((expanded, all_provides, folio_config))
 }
 
 fn folio_err(msg: String) -> WrightError {
@@ -166,7 +166,7 @@ arch = "x86_64"
 
 plans = ["glibc", "bash", "coreutils"]
 
-[[assume]]
+[[provide]]
 name = "linux"
 version = "6.12.0"
 
@@ -180,7 +180,7 @@ services = ["sshd"]
         .unwrap();
         assert_eq!(m.folio.name, "base");
         assert_eq!(m.folio.plans.len(), 3);
-        assert_eq!(m.assumes.len(), 1);
+        assert_eq!(m.provides.len(), 1);
         let cfg = m.config.unwrap();
         assert_eq!(cfg.hostname.as_deref(), Some("wright"));
         assert_eq!(cfg.services, vec!["sshd".to_string()]);

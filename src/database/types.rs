@@ -47,9 +47,9 @@ pub enum Origin {
     Dependency,
     Forge,
     Manual,
-    /// Registered with `wright assume` — provided by the host system, not built
+    /// Registered with `wright provide` — provided by the host system, not built
     /// or installed by wright. Has no filesystem footprint; managed exclusively
-    /// via `wright assume` / `wright unassume`.
+    /// via `wright provide` / `wright remove`.
     External,
 }
 

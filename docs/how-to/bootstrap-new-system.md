@@ -13,7 +13,7 @@ it, and mount it (e.g. at `/mnt/new`).  `wright launch` does not partition
 disks — it fills a mounted root.
 
 If the target is hosted on infrastructure that supplies a kernel and bootloader
-(VPS, container image), declare those as `[[assume]]` entries in your folio so
+(VPS, container image), declare those as `[[provide]]` entries in your folio so
 dependency checks pass without Wright trying to install them.
 
 The host must have a working toolchain matching the target's architecture.
@@ -49,7 +49,7 @@ version = "2026.05"
 arch    = "x86_64"
 plans   = ["glibc", "bash", "coreutils", "sed", "gawk", "grep", "tar", "gzip", "openssl"]
 
-[[assume]]
+[[provide]]
 name    = "linux"
 version = "6.12.0"
 
@@ -74,7 +74,7 @@ plans   = [
     "sway", "foot", "firefox",
 ]
 
-[[assume]]
+[[provide]]
 name    = "linux"
 version = "6.12.0"
 
@@ -145,7 +145,7 @@ Regardless of the strategy, `wright launch` runs the same sequence:
    exist on the host.
 5. Writes `/etc/wright/wright.toml` inside the target, pointing all paths at
    target-local directories.
-6. Pre-registers `[[assume]]` entries from folios in the target database.
+6. Pre-registers `[[provide]]` entries from folios in the target database.
 7. Drives the full `resolve → forge → seal → deploy` pipeline wave by wave.
 8. Applies `[config]` (hostname, timezone, locale, runit services).
 
@@ -252,21 +252,21 @@ wright doctor
 tar -C /mnt/new -c . | docker import - my-image:latest
 ```
 
-## When to Use `wright assume` Instead
+## When to Use `wright provide` Instead
 
 `wright launch` is for filling a **fresh** target.  If Wright is being added to
 an **existing** LFS-style system that you built by hand and you only need to
-register what is already on disk, use `wright assume` directly:
+register what is already on disk, use `wright provide` directly:
 
 ```bash
-wright assume --file /etc/wright/bootstrap.txt
+wright provide --file /etc/wright/bootstrap.txt
 ```
 
-See the [CLI reference](../reference/cli-reference.md#wright-assume-name-version).
+See the [CLI reference](../reference/cli-reference.md#wright-provide-name-version).
 
-## Replacing Assumed Parts
+## Replacing Provided Parts
 
-If your folio declared `[[assume]]` entries (e.g. a host-supplied kernel) and
+If your folio declared `[[provide]]` entries (e.g. a host-supplied kernel) and
 you later build a Wright-managed replacement, install it normally into the
 target:
 
@@ -274,7 +274,7 @@ target:
 wright install --root /mnt/new linux
 ```
 
-The assumed record is replaced by a fully-managed part entry.
+The provided record is replaced by a fully-managed part entry.
 
 ## Troubleshooting
 
@@ -286,9 +286,9 @@ The target root must be a separate mount point.  Mount the target first:
 The host needs a working toolchain matching the target architecture.  If
 cross-compiling, build a seed system on a matching host first.
 
-**Dependency check fails on assumed parts:**
+**Dependency check fails on provided parts:**
 Ensure every external part (kernel, bootloader, host toolchain) is listed in
-`[[assume]]`.  Launch pre-registers them before any plan builds.
+`[[provide]]`.  Launch pre-registers them before any plan builds.
 
 **Launch ran out of disk space:**
 Free space on the target mount, then re-run the same command.  Completed waves

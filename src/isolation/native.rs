@@ -61,11 +61,21 @@ fn spawn_timeout_watchdog(pid: u32, timeout: u64, kill_pgroup: bool) -> Arc<Atom
         if !done_clone.load(Ordering::Acquire) {
             let target = if kill_pgroup {
                 tracing::error!(
-                    "Wall-clock timeout ({timeout}s) exceeded, killing process group {pid}"
+                    event = "isolation.timeout",
+                    timeout_secs = timeout,
+                    pid,
+                    kill_pgroup = true,
+                    "Wall-clock timeout exceeded, killing process group"
                 );
                 -(pid as i32)
             } else {
-                tracing::error!("Wall-clock timeout ({timeout}s) exceeded, killing process {pid}");
+                tracing::error!(
+                    event = "isolation.timeout",
+                    timeout_secs = timeout,
+                    pid,
+                    kill_pgroup = false,
+                    "Wall-clock timeout exceeded, killing process"
+                );
                 pid as i32
             };
             unsafe {
@@ -130,9 +140,15 @@ fn isolation_scratch_base(config: &IsolationConfig) -> PathBuf {
 fn cleanup_isolation_dirs(config: &IsolationConfig) {
     let scratch = isolation_scratch_base(config);
     if scratch.exists()
-        && let Err(e) = std::fs::remove_dir_all(&scratch) {
-            debug!("Failed to clean up {}: {}", scratch.display(), e);
-        }
+        && let Err(e) = std::fs::remove_dir_all(&scratch)
+    {
+        debug!(
+            event = "isolation.cleanup_failed",
+            path = %scratch.display(),
+            error = %e,
+            "Failed to clean up isolation scratch directory"
+        );
+    }
 }
 
 /// Run a command inside a native Linux namespace isolation.
@@ -167,7 +183,10 @@ pub fn run_in_isolation(
                 config.base_root.display()
             )));
         }
-        debug!("Isolation isolation disabled for this stage");
+        debug!(
+            event = "isolation.disabled",
+            "Isolation disabled for this stage"
+        );
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
         cmd.current_dir(&config.src_dir);
@@ -263,8 +282,8 @@ pub fn run_in_isolation(
             )));
         }
         tracing::warn!(
-            "Namespace isolation unavailable (unshare blocked by kernel/container); \
-             falling back to direct execution"
+            event = "isolation.unavailable",
+            "Namespace isolation unavailable, falling back to direct execution"
         );
         let mut cmd = std::process::Command::new(command);
         cmd.args(args);
@@ -470,10 +489,11 @@ pub fn run_in_isolation(
                     );
 
                     debug!(
-                        "Mounting overlayfs: lowerdir={} upperdir={} workdir={}",
-                        lowerdir,
-                        upper.display(),
-                        work.display(),
+                        event = "isolation.mount_overlay",
+                        lowerdir = %lowerdir,
+                        upperdir = %upper.display(),
+                        workdir = %work.display(),
+                        "Mounting overlayfs"
                     );
 
                     if let Err(e) = mount(
@@ -497,9 +517,10 @@ pub fn run_in_isolation(
                         // instead of mounting onto a potentially dangling target (e.g.
                         // /etc/resolv.conf -> /run/... when /run is a fresh tmpfs).
                         if let Ok(meta) = dest.symlink_metadata()
-                            && meta.file_type().is_symlink() {
-                                let _ = std::fs::remove_file(&dest);
-                            }
+                            && meta.file_type().is_symlink()
+                        {
+                            let _ = std::fs::remove_file(&dest);
+                        }
 
                         // Fix: ALWAYS ensure the destination mount point exists.
                         if src.is_dir() {
@@ -551,16 +572,18 @@ pub fn run_in_isolation(
                     // Extra binds.
                     for (host, dest, ro) in &config.extra_binds {
                         if host.exists()
-                            && let Err(e) = bind(host, &dest.to_string_lossy(), *ro) {
-                                die(e);
-                            }
+                            && let Err(e) = bind(host, &dest.to_string_lossy(), *ro)
+                        {
+                            die(e);
+                        }
                     }
                     // Build dependency mounts (read-only).
                     for (host, dest) in &config.dep_mounts {
                         if host.exists()
-                            && let Err(e) = bind(host, &dest.to_string_lossy(), true) {
-                                die(e);
-                            }
+                            && let Err(e) = bind(host, &dest.to_string_lossy(), true)
+                        {
+                            die(e);
+                        }
                     }
                     // On merged-/usr systems the lowerdir collapses to a single
                     // directory (e.g. /usr), which overlayfs flattens so that
@@ -570,9 +593,10 @@ pub fn run_in_isolation(
                     // resolve.  Bind-mount the host /usr to restore the
                     // expected hierarchy.
                     if newroot.join("usr").metadata().is_err()
-                        && let Err(e) = bind(Path::new("/usr"), "/usr", true) {
-                            die(e);
-                        }
+                        && let Err(e) = bind(Path::new("/usr"), "/usr", true)
+                    {
+                        die(e);
+                    }
                     // /dev: try devtmpfs, fall back to tmpfs + bind-mounted devices.
                     let dev = newroot.join("dev");
                     std::fs::create_dir_all(&dev).ok();
@@ -665,18 +689,20 @@ pub fn run_in_isolation(
                     ] {
                         let p = Path::new(etc_file);
                         if p.exists()
-                            && let Err(e) = bind(p, etc_file, true) {
-                                die(e);
-                            }
+                            && let Err(e) = bind(p, etc_file, true)
+                        {
+                            die(e);
+                        }
                     }
 
                     // --- pivot_root ---
 
                     let old_root = newroot.join(".old_root");
                     if old_root.symlink_metadata().is_err()
-                        && let Err(e) = std::fs::create_dir_all(&old_root) {
-                            die(format!("mkdir {}: {e}", old_root.display()));
-                        }
+                        && let Err(e) = std::fs::create_dir_all(&old_root)
+                    {
+                        die(format!("mkdir {}: {e}", old_root.display()));
+                    }
 
                     if let Err(e) = pivot_root(&newroot, &old_root) {
                         die(format!("pivot_root: {e}"));
@@ -837,7 +863,11 @@ pub fn run_in_isolation(
 
             cleanup_isolation_dirs(config);
 
-            debug!("Isolation child exited with: {:?}", status);
+            debug!(
+                event = "isolation.child_exited",
+                ?status,
+                "Isolation child exited"
+            );
             Ok(IsolationOutput {
                 status,
                 stdout,

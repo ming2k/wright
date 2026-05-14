@@ -37,24 +37,26 @@ impl InstalledDb {
         .await
         .map_err(|e| {
             if let sqlx::Error::Database(ref db_err) = e
-                && db_err.is_unique_violation() {
-                    return WrightError::PartAlreadyInstalled(part.name.to_string());
-                }
+                && db_err.is_unique_violation()
+            {
+                return WrightError::PartAlreadyInstalled(part.name.to_string());
+            }
             WrightError::DatabaseError(format!("failed to insert part: {}", e))
         })?;
 
         Ok(res.last_insert_rowid())
     }
 
-    pub async fn assume_part(&self, name: &str, version: &str) -> Result<()> {
+    pub async fn provide_part(&self, name: &str, version: &str) -> Result<()> {
         // Refuse to overwrite a genuinely installed part.
         if let Some(existing) = self.get_part(name).await?
-            && existing.origin != Origin::External {
-                return Err(WrightError::PartAlreadyInstalled(format!(
-                    "{} is already installed; uninstall it before assuming",
-                    name
-                )));
-            }
+            && existing.origin != Origin::External
+        {
+            return Err(WrightError::PartAlreadyInstalled(format!(
+                "{} is already installed; uninstall it before providing",
+                name
+            )));
+        }
 
         let plan_id = match self.get_plan_id_by_name(name).await? {
             Some(id) => {
@@ -89,34 +91,9 @@ impl InstalledDb {
         .bind(plan_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to register external part: {}", e)))?;
-        Ok(())
-    }
-
-    pub async fn unassume_part(&self, name: &str) -> Result<()> {
-        let res = query("DELETE FROM parts WHERE name = ? AND origin = 'external'")
-            .bind(name)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to unassume part: {}", e)))?;
-
-        if res.rows_affected() == 0 {
-            return Err(WrightError::PartNotFound(name.to_string()));
-        }
-
-        // Clean up the plan record if no other parts reference it.
-        if let Some(plan) = self.get_plan(name).await? {
-            let count: i64 = query("SELECT COUNT(*) FROM parts WHERE plan_id = ?")
-                .bind(plan.id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
-                .try_get(0)
-                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
-            if count == 0 {
-                let _ = self.remove_plan(name).await;
-            }
-        }
+        .map_err(|e| {
+            WrightError::DatabaseError(format!("failed to register external part: {}", e))
+        })?;
         Ok(())
     }
 
@@ -141,6 +118,8 @@ impl InstalledDb {
     }
 
     pub async fn remove_part(&self, name: &str) -> Result<()> {
+        let plan_opt = self.get_plan(name).await?;
+
         let res = query("DELETE FROM parts WHERE name = ?")
             .bind(name)
             .execute(&self.pool)
@@ -150,6 +129,21 @@ impl InstalledDb {
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
         }
+
+        // Clean up the plan record if no other parts reference it.
+        if let Some(plan) = plan_opt {
+            let count: i64 = query("SELECT COUNT(*) FROM parts WHERE plan_id = ?")
+                .bind(plan.id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?
+                .try_get(0)
+                .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+            if count == 0 {
+                let _ = self.remove_plan(name).await;
+            }
+        }
+
         Ok(())
     }
 
@@ -213,7 +207,7 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan parts: {}", e)))
     }
 
-    pub async fn get_assumed_parts(&self) -> Result<Vec<PartWithPlan>> {
+    pub async fn get_provided_parts(&self) -> Result<Vec<PartWithPlan>> {
         let sql = format!(
             "{} WHERE p.origin = 'external' ORDER BY p.name",
             PART_WITH_PLAN_SQL
@@ -221,7 +215,7 @@ impl InstalledDb {
         query_as::<_, PartWithPlan>(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get assumed parts: {}", e)))
+            .map_err(|e| WrightError::DatabaseError(format!("failed to get provided parts: {}", e)))
     }
 
     pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<PartWithPlan>> {

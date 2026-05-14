@@ -52,8 +52,10 @@ pub async fn remove_part_with_ignored_dependents(
 
         if force {
             warn!(
-                "Warning: forcing removal of {} which is depended on by: {}",
-                name, deps_str
+                event = "remove.forced",
+                plan_name = name,
+                dependents = deps_str,
+                "Forcing removal of part with dependents"
             );
         } else {
             return Err(WrightError::DependencyError(format!(
@@ -64,15 +66,19 @@ pub async fn remove_part_with_ignored_dependents(
     }
 
     if let Some(ref content) = part.deploy_scripts
-        && let Some(script) = get_hook(content, "pre_remove") {
-            log_running_hook(name, "pre_remove");
-            if let Err(e) = run_deploy_script(&script, root_dir, name, "pre_remove").await {
-                warn!(
-                    "hook [pre_remove] for {} failed (continuing removal): {}",
-                    name, e
-                );
-            }
+        && let Some(script) = get_hook(content, "pre_remove")
+    {
+        log_running_hook(name, "pre_remove");
+        if let Err(e) = run_deploy_script(&script, root_dir, name, "pre_remove").await {
+            warn!(
+                event = "remove.hook_failed",
+                plan_name = name,
+                hook = "pre_remove",
+                error = %e,
+                "Hook failed, continuing removal"
+            );
         }
+    }
 
     // Create backup directory BEFORE transaction context so it outlives the tx
     // on the error/panic path (tx drops first and can still read backups).
@@ -135,7 +141,11 @@ pub async fn remove_part_with_ignored_dependents(
         let full_path = root_dir.join(file.path.trim_start_matches('/'));
 
         if file.is_config {
-            info!("Preserving config file: {}", file.path);
+            info!(
+                event = "remove.config_preserved",
+                path = file.path,
+                "Preserving config file"
+            );
             continue;
         }
 
@@ -145,9 +155,10 @@ pub async fn remove_part_with_ignored_dependents(
             .unwrap_or(&[]);
         if !other_owners.is_empty() {
             tracing::debug!(
-                "Path {} is also owned by: {}. Skipping deletion.",
-                file.path,
-                other_owners.join(", ")
+                event = "remove.skip_shared_path",
+                path = file.path,
+                other_owners = other_owners.join(", "),
+                "Path is also owned by others, skipping deletion"
             );
             continue;
         }
@@ -192,27 +203,35 @@ pub async fn remove_part_with_ignored_dependents(
 
         let metadata = tokio::fs::symlink_metadata(&full_diverted).await;
         if metadata.is_ok() {
-            info!("Restoring diverted file: {}", original_path);
+            info!(
+                event = "remove.diversion_restored",
+                path = original_path,
+                "Restoring diverted file"
+            );
             if let Err(e) = tokio::fs::rename(&full_diverted, &full_original).await {
-                warn!("Failed to restore diverted file {}: {}", original_path, e);
+                warn!(event = "remove.diversion_restore_failed", path = original_path, error = %e, "Failed to restore diverted file");
             }
         }
     }
 
     if let Some(ref content) = part.deploy_scripts
-        && let Some(script) = get_hook(content, "post_remove") {
-            log_running_hook(name, "post_remove");
-            if let Err(e) = run_deploy_script(&script, root_dir, name, "post_remove").await {
-                warn!(
-                    "hook [post_remove] for {} failed (continuing removal): {}",
-                    name, e
-                );
-            }
+        && let Some(script) = get_hook(content, "post_remove")
+    {
+        log_running_hook(name, "post_remove");
+        if let Err(e) = run_deploy_script(&script, root_dir, name, "post_remove").await {
+            warn!(
+                event = "remove.hook_failed",
+                plan_name = name,
+                hook = "post_remove",
+                error = %e,
+                "Hook failed, continuing removal"
+            );
         }
+    }
 
     tx.commit().await?;
 
-    info!("Removed {}", name);
+    info!(event = "remove.completed", plan_name = name, "Removed");
     Ok(())
 }
 

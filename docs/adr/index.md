@@ -19,5 +19,7 @@
 | [ADR-0015](0015-folio-manifest-replaces-pack.md) | Folio manifest replaces pack format | Accepted |
 | [ADR-0016](0016-advisory-runtime-dependencies.md) | Runtime dependencies are advisory, not enforced | Accepted |
 | [ADR-0017](0017-plan-source-single-dep-truth.md) | Plan source as single dep truth + ELF lint | Accepted |
-| [ADR-0018](0018-unified-cli-porcelain-plumbing.md) | Unified CLI with porcelain–plumbing separation and convergent file layout | Accepted |
+| [ADR-0018](0018-unified-cli-porcelain-plumbing.md) | Unified CLI with porcelain–plumbing separation and convergent file layout | Accepted (file layout superseded by ADR-0020) |
 | [ADR-0019](0019-cas-delivery-recovery.md) | Two-layer CAS + WAL recovery for delivery | Accepted |
+| [ADR-0020](0020-merge-cli-and-commands-directories.md) | Merge `src/cli/` and `src/commands/` into a single directory | Accepted |
+| [ADR-0021](0021-cargo-style-span-driven-output.md) | Cargo-style span-driven CLI output (+ companion correctness fixes) | Accepted |

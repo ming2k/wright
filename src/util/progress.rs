@@ -1,22 +1,15 @@
-use indicatif::{HumanBytes, MultiProgress, ProgressBar, ProgressStyle};
-use std::path::Path;
+use indicatif::MultiProgress;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::info;
+use std::sync::atomic::AtomicBool;
 
-/// Global multi-progress coordinator.  Every progress bar should be registered
+/// Global multi-progress coordinator. Every progress bar should be registered
 /// through this instance so `indicatif` can manage terminal lines without
-/// flickering.  Log output is routed here via [`MultiProgressWriter`] so that
-/// `tracing` lines are inserted above active progress bars.
+/// flickering.
 pub static MULTI: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
 
-/// When set, suppress INFO-level tracing output so that fail-fast failures
-/// are not buried under logs from tasks already in flight.
-pub static SUPPRESS_INFO_LOGS: AtomicBool = AtomicBool::new(false);
-
-fn source_prefix(label: &str) -> String {
-    format!("fetch {}", label)
-}
+/// When set, suppress CLI INFO-level output so that fail-fast failures
+/// are not buried under output from tasks already in flight.
+pub static SUPPRESS_INFO_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 pub fn source_label(uri: &str) -> String {
     let uri = uri.strip_prefix("git+").unwrap_or(uri);
@@ -30,142 +23,118 @@ pub fn source_label(uri: &str) -> String {
     tail.trim_end_matches(".git").to_string()
 }
 
-pub fn new_source_transfer_bar(label: &str, total: u64) -> ProgressBar {
-    let pb = MULTI.add(ProgressBar::new(total));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{prefix} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent:>3}% {msg}")
-            .expect("valid source transfer template")
-            .progress_chars("#>-"),
-    );
-    pb.set_prefix(source_prefix(label));
-    pb
-}
-
-pub fn set_source_bytes(pb: &ProgressBar, transferred: u64, total: u64) {
-    pb.set_length(total);
-    pb.set_position(transferred);
+/// Record byte-progress on an in-flight `cli_span!`. The SpinnerLayer
+/// swaps the row from spinner to byte-progress bar the first time
+/// `bytes_total` is recorded, then animates as `bytes_done` changes.
+pub fn record_bytes(span: &tracing::Span, transferred: u64, total: u64) {
+    span.record("bytes_done", transferred);
     if total > 0 {
-        pb.set_message(format!(
-            "{} / {}",
-            HumanBytes(transferred),
-            HumanBytes(total)
-        ));
-    } else {
-        pb.set_message(format!("{}", HumanBytes(transferred)));
+        span.record("bytes_total", total);
     }
 }
 
-pub fn set_source_git_objects(pb: &ProgressBar, received: u64, total: u64, bytes: u64) {
-    pb.set_length(total);
-    pb.set_position(received);
-    pb.set_message(format!(
-        "{}/{} objects, {}",
-        received,
-        total,
-        HumanBytes(bytes)
-    ));
-}
-
-pub fn new_source_spinner(label: &str, action: &str) -> ProgressBar {
-    let pb = MULTI.add(ProgressBar::new_spinner());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {prefix} [{elapsed_precise}] {msg}")
-            .expect("valid source spinner template"),
-    );
-    pb.set_prefix(source_prefix(label));
-    pb.set_message(action.to_string());
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb
-}
-
-pub fn finish_source_with_label(pb: &ProgressBar, scope: &str, action: &str, label: &str) {
-    pb.finish_and_clear();
-    info!("[{}] {} {}", scope, action, label);
-}
-
-pub fn finish_source(pb: &ProgressBar, scope: &str, dest: &Path) {
-    let filename = dest
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-    finish_source_with_label(pb, scope, "Fetched", &filename);
-}
-
-/// Create a persistent spinner that tracks a plan through its full pipeline
-/// (fetch → verify → extract → prepare → configure → compile → check → staging).
+/// Emit a Cargo-style action line (e.g. `   Compiling linux-lts`) plus the
+/// equivalent structured tracing event for the file log.
 ///
-/// The spinner stays at the bottom of the terminal while the plan executes.
-/// Callers update `msg` to reflect the current stage.
-pub fn new_plan_pipeline_spinner(plan_name: &str) -> ProgressBar {
-    let pb = MULTI.add(ProgressBar::new_spinner());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} [{prefix}] [{elapsed_precise}] {msg}")
-            .expect("valid plan pipeline template"),
-    );
-    pb.set_prefix(format!("[{}]", plan_name));
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb
-}
-
-/// Create a persistent spinner that tracks the overall build flow — from DAG
-/// resolution through batch execution to completion.  It sits above per-plan
-/// spinners in the terminal, giving the operator a single line that shows what
-/// the scheduler is currently doing.
-///
-/// Uses `[*]` as the prefix to distinguish it from per-plan `[plan-name]` lines.
-pub fn new_build_flow_spinner() -> ProgressBar {
-    let pb = MULTI.add(ProgressBar::new_spinner());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.magenta} [*] [{elapsed_precise}] {msg}")
-            .expect("valid build flow template"),
-    );
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb
-}
-
-/// RAII guard that calls `finish_and_clear()` on the inner [`ProgressBar`] when
-/// dropped.  Use this to ensure a plan pipeline spinner is always cleaned up
-/// regardless of which return path is taken.
-pub struct ProgressBarGuard(pub ProgressBar);
-
-impl Drop for ProgressBarGuard {
-    fn drop(&mut self) {
-        self.0.finish_and_clear();
-    }
-}
-
-/// A [`std::io::Write`] adapter that routes every complete line through
-/// [`MULTI.println`] so `tracing` output does not overwrite progress bars.
-pub struct MultiProgressWriter;
-
-impl std::io::Write for MultiProgressWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if SUPPRESS_INFO_LOGS.load(Ordering::Relaxed) {
-            let s = String::from_utf8_lossy(buf);
-            let trimmed = s.trim_start();
-            if trimmed.starts_with("INFO ") || trimmed.starts_with("INFO\t") {
-                return Ok(buf.len());
-            }
+/// Usage: `cli_action!("Compiling", "{}", plan_name);`
+#[macro_export]
+macro_rules! cli_action {
+    ($verb:expr, $($arg:tt)*) => {{
+        if !$crate::util::progress::SUPPRESS_INFO_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!(verb = %$verb, $($arg)*);
         }
-        let s = String::from_utf8_lossy(buf);
-        let _ = MULTI.println(s.trim_end());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    }};
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for MultiProgressWriter {
-    type Writer = MultiProgressWriter;
+/// Open a tracing span that drives a persistent live-status row via the
+/// `SpinnerLayer`. The row appears the moment the span enters scope and
+/// disappears the moment the span drops. The `verb` is rendered in the
+/// 12-col right-aligned bold-green column; the formatted target string
+/// follows.
+///
+/// Long-running work (compile, configure, source download, extract)
+/// should use this; one-shot announcements should use [`cli_action!`].
+///
+/// Usage:
+/// ```ignore
+/// let _stage = cli_span!("Compiling", "{}", plan_name);
+/// // ... do compile work; spinner is live this whole scope
+/// // span drops here, spinner clears
+/// ```
+///
+/// For byte-progress (HTTP downloads), record the size fields on the
+/// span to swap to a download-bar display:
+/// ```ignore
+/// let s = cli_span!("Fetching", "{}", filename);
+/// s.record("bytes_total", &total);
+/// s.record("bytes_done", &done);
+/// ```
+#[macro_export]
+macro_rules! cli_span {
+    ($verb:expr, $($arg:tt)*) => {{
+        let target = format!($($arg)*);
+        // Scroll the action line into history at span-open time (Rule A:
+        // present-participle announces start). Rule B (implicit silence
+        // on completion) is honored because spans don't emit anything on
+        // close — the spinner just disappears.
+        if !$crate::util::progress::SUPPRESS_INFO_OUTPUT
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::info!(verb = %$verb, "{}", target);
+        }
+        tracing::info_span!(
+            "cli_op",
+            verb = %$verb,
+            target = %target,
+            // Pre-declare the byte-progress fields so `Span::record` can
+            // update them later without a "field not declared" warning.
+            bytes_done = tracing::field::Empty,
+            bytes_total = tracing::field::Empty,
+        )
+    }};
+}
 
-    fn make_writer(&'a self) -> Self::Writer {
-        MultiProgressWriter
-    }
+/// Print a `warning:` line. Goes through tracing so file logs match.
+#[macro_export]
+macro_rules! cli_warn {
+    ($($arg:tt)*) => {{
+        tracing::warn!($($arg)*);
+    }};
+}
+
+/// Print an `error:` line. Goes through tracing so file logs match.
+#[macro_export]
+macro_rules! cli_error {
+    ($($arg:tt)*) => {{
+        tracing::error!($($arg)*);
+    }};
+}
+
+/// Print a Cargo-style red `Failed` action line at ERROR level. Use for
+/// terminal failures (whole workflow gave up). For mid-flight problems
+/// that are still recoverable, use [`cli_warn!`]; for outright errors
+/// that aren't a workflow conclusion, use [`cli_error!`].
+#[macro_export]
+macro_rules! cli_failed {
+    ($($arg:tt)*) => {{
+        tracing::error!(verb = "Failed", $($arg)*);
+    }};
+}
+
+/// Print a Cargo-style red `Aborted` action line at ERROR level. Use when
+/// the user interrupts the workflow (Ctrl+C, SIGTERM).
+#[macro_export]
+macro_rules! cli_aborted {
+    ($($arg:tt)*) => {{
+        tracing::error!(verb = "Aborted", $($arg)*);
+    }};
+}
+
+/// Print a raw CLI message without any level prefix.
+#[macro_export]
+macro_rules! cli_output {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        let _ = $crate::util::progress::MULTI.println(msg);
+    }};
 }

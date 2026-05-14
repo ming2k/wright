@@ -114,6 +114,69 @@ during tight parallel exec windows.
 - Preserve jitter in retry delays.  Deterministic backoff can synchronize
   parallel retriers and recreate the collision.
 
+## EBUSY on cleanup (stale overlay mount from prior run)
+
+### Symptom
+
+```
+error: forge bison: failed to clean forge directory /var/tmp/wright/workshop/bison-3.8.2:
+Device or resource busy (os error 16)
+```
+
+Happens at the start of a fresh forge, when Wright tries to wipe the build
+root before populating it. Reproduces reliably after a previous run died
+unexpectedly (SIGKILL, power loss, panic, OOM).
+
+### Root cause
+
+`LayerManager` mounts a per-task overlay at `<build_root>/target` during
+each stage. Normal exit unmounts via `Drop`. An abnormal exit (the process
+disappears before drops run) leaves the overlay mount active in the kernel
+mount table even though no Wright process holds it.
+
+The next run's `Forger::clean()` then calls `remove_dir_all` on the build
+root, the kernel walks into the still-mounted `target/` subdirectory, and
+returns `EBUSY` — you cannot `rmdir` a directory that is itself a mount
+point.
+
+### Fix in place
+
+`force_clean_dir` (`src/forge/layers.rs`) wraps every `Forger::clean` removal:
+
+1. Attempt `remove_dir_all`. Return on success or `NotFound`.
+2. On `EBUSY`, call `detach_mounts_under(path)`:
+   - Parse `/proc/self/mounts` line-by-line.
+   - Filter to mounts whose target is `path` or a descendant.
+   - Sort deepest-first so parents become free as we unmount.
+   - `umount2(target, MNT_DETACH)` each one. Lazy detach succeeds even if
+     a process still has the mount open.
+3. Sleep `100ms · 2^attempt` and retry, up to 3 attempts total.
+4. Return the original `EBUSY` if all retries fail (something other than
+   stale mounts is holding the directory).
+
+The whole helper is `tokio::task::spawn_blocking`'d because `remove_dir_all`
+and `umount2` are synchronous syscalls.
+
+### Why /proc/self/mounts instead of tracking what we mounted
+
+The point of this recovery path is to clean up mounts the **previous**
+process created. The current process has no in-memory record of those
+mounts, so we have to ask the kernel via `/proc/self/mounts`. Tracking
+"what we mounted" only helps when the same process unmounts; the failure
+mode here is exactly that the original process is gone.
+
+### Prevention
+
+- Do not bypass `Forger::clean` with a direct `remove_dir_all` of build
+  artifacts. The helper is the right entry point for forge-directory
+  cleanup.
+- When adding new mounts under the forge directory, ensure they are
+  unmounted on every error path (RAII via `Drop` is the cleanest pattern).
+- The recovery is silent at INFO level — operators do not see a warning
+  when self-healing succeeds. If you find a need to debug, set
+  `WRIGHT_LOG=debug` and look for `event = "clean.ebusy"` and
+  `event = "clean.umount"` records.
+
 ## Bind-mount ordering vs overlayfs directory shadowing
 
 ### Symptom

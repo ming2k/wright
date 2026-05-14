@@ -271,24 +271,26 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
 
     let mut backup_toml = String::new();
     if let Some(ref backup) = manifest.backup
-        && !backup.files.is_empty() {
-            backup_toml.push_str("\n[backup]\nfiles = [");
-            for (i, f) in backup.files.iter().enumerate() {
-                if i > 0 {
-                    backup_toml.push_str(", ");
-                }
-                backup_toml.push_str(&format!("\"{}\"", f));
+        && !backup.files.is_empty()
+    {
+        backup_toml.push_str("\n[backup]\nfiles = [");
+        for (i, f) in backup.files.iter().enumerate() {
+            if i > 0 {
+                backup_toml.push_str(", ");
             }
-            backup_toml.push_str("]\n");
+            backup_toml.push_str(&format!("\"{}\"", f));
         }
+        backup_toml.push_str("]\n");
+    }
 
     let mut plan_toml = String::new();
     plan_toml.push_str("\n[plan]\n");
     plan_toml.push_str(&format!("name = \"{}\"\n", plan.metadata.name));
     if let Some(ref v) = plan.metadata.version
-        && !v.is_empty() {
-            plan_toml.push_str(&format!("version = \"{}\"\n", v));
-        }
+        && !v.is_empty()
+    {
+        plan_toml.push_str(&format!("version = \"{}\"\n", v));
+    }
     plan_toml.push_str(&format!("release = {}\n", plan.metadata.release));
     if plan.metadata.epoch > 0 {
         plan_toml.push_str(&format!("epoch = {}\n", plan.metadata.epoch));

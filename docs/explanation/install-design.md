@@ -94,7 +94,8 @@ This consolidates the previous separate flags into a single control for situatio
 
 ## Execution Model
 
-The implementation in `src/commands/system.rs` follows this pipeline.
+The implementation in `src/cli/install.rs` (handler) and
+`src/operations/install.rs` (`execute_install`) follows this pipeline.
 
 ### 1. Determine Explicit Targets
 
@@ -160,6 +161,18 @@ For every batch:
 4. install that batch onto the live system
 
 This wave-by-wave installation model is the defining behavior of `install`.
+
+#### Why the entire batch is sealed and deployed together
+
+Within a single batch, all tasks are forged in parallel against the **same
+system state** — the state left by the previous fully-deployed wave.  If a
+task were sealed and deployed as soon as it finished compiling, the live
+system would change while other tasks in the same batch were still building.
+Those later tasks would then observe a partially-updated system, breaking the
+guarantee that every task in a batch sees a consistent snapshot of its
+dependencies.  Batch-level seal and deploy preserves this consistency:
+either the whole wave succeeds and the system advances atomically, or none
+of it is deployed and the system remains unchanged.
 
 For the rationale behind this design, see [ADR-0002: Wave-by-Wave Install](../adr/0002-wave-by-wave-install.md).
 

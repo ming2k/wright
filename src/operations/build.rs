@@ -4,8 +4,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::error::{Result, WrightError};
+use tracing::info;
 
-use tokio::sync::Mutex;
+use tokio::sync::Semaphore;
 
 use crate::cli::build::BuildArgs;
 use crate::config::GlobalConfig;
@@ -13,7 +14,6 @@ use crate::forge::Forger;
 use crate::operations::drive::{DriveOptions, drive_batches};
 use crate::plan::manifest::PlanManifest;
 use crate::resolve::{DepDomain, ForgeExecutionPlan, ForgeOptions, create_execution_plan};
-use crate::util::progress::{self, ProgressBarGuard};
 
 pub async fn execute_build(
     args: BuildArgs,
@@ -28,9 +28,6 @@ pub async fn execute_build(
         crate::util::lock::LockMode::Exclusive,
     )
     .map_err(|e| WrightError::LockError(format!("failed to acquire build command lock: {}", e)))?;
-
-    let flow_spinner = progress::new_build_flow_spinner();
-    let _flow_guard = ProgressBarGuard(flow_spinner.clone());
 
     let mut all_targets = args.targets;
     use std::io::IsTerminal;
@@ -62,7 +59,6 @@ pub async fn execute_build(
         if plan_path.is_dir() {
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
                 .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", target, e)))?;
-            flow_spinner.set_message("building".to_string());
             let forger = Forger::new(config.clone());
             let mut extra_env = HashMap::new();
             if args.mvp {
@@ -79,6 +75,7 @@ pub async fn execute_build(
                     args.fetch,
                     args.skip_check,
                     args.force,
+                    args.clean,
                     &extra_env,
                     verbose > 0,
                     config.build.nproc_per_isolation,
@@ -105,8 +102,6 @@ pub async fn execute_build(
         nproc_per_isolation: config.build.nproc_per_isolation,
     };
 
-    flow_spinner.set_message("resolving build graph".to_string());
-
     let plan = create_execution_plan(
         config,
         all_targets,
@@ -117,9 +112,9 @@ pub async fn execute_build(
 
     let plan = Arc::new(plan);
     let forger = Arc::new(Forger::new(config.clone()));
-    let configure_lock = Arc::new(Mutex::new(()));
-    let compile_lock = Arc::new(Mutex::new(()));
     let resources = crate::resolve::summarize_forge_resources(config);
+    let configure_lock = Arc::new(Semaphore::new(1));
+    let compile_lock = Arc::new(Semaphore::new(resources.total_cpus));
 
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
@@ -133,7 +128,6 @@ pub async fn execute_build(
             config,
             db_path,
             quiet,
-            flow_progress: Some(flow_spinner.clone()),
         },
         resources.concurrent_tasks,
         |task| {
@@ -191,7 +185,7 @@ pub async fn execute_build(
                     && options.until_stage.is_none()
                     && !options.fetch_only;
                 if can_short_circuit && staging_is_populated(&build_root) {
-                    tracing::info!("{} already built; reusing populated staging/", base);
+                    info!(event = "build.short_circuited", plan_name = %base, reason = "staging_populated", "Build short-circuited — staging already populated");
                     return Ok(());
                 }
 
@@ -206,6 +200,7 @@ pub async fn execute_build(
                         options.fetch_only,
                         options.skip_check,
                         force,
+                        options.clean,
                         &extra_env,
                         options.verbose,
                         config.build.nproc_per_isolation,

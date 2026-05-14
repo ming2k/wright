@@ -2,7 +2,7 @@ use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use std::io::IsTerminal;
 
-pub async fn execute_assume(
+pub async fn execute_provide(
     db: &InstalledDb,
     name: Option<&str>,
     version: Option<&str>,
@@ -50,15 +50,15 @@ pub async fn execute_assume(
         std::process::exit(1);
     }
 
+    let count = entries.len();
     for (n, v) in entries {
-        match db.assume_part(&n, &v).await {
-            Ok(()) => println!("assumed: {} {}", n, v),
-            Err(e) => {
-                tracing::error!("assuming {}: {:#}", n, e);
-                std::process::exit(1);
-            }
+        crate::cli_action!("Providing", "{} {}", n, v);
+        if let Err(e) = db.provide_part(&n, &v).await {
+            tracing::error!("providing {}: {:#}", n, e);
+            std::process::exit(1);
         }
     }
 
+    crate::cli_action!("Finished", "provide: {} entry(s)", count);
     Ok(())
 }
