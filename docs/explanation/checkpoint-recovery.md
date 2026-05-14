@@ -1,7 +1,7 @@
 # Checkpoint Recovery
 
-Wright's pipeline stage engine provides deterministic incremental rebuilds
-through a content-addressed checkpoint system.  Every pipeline stage records
+Wright's forge stage engine provides deterministic incremental rebuilds
+through a content-addressed checkpoint system.  Every forge stage records
 its execution state and input fingerprint to a JSON state machine, forming a
 hash chain that detects upstream configuration changes and cascades
 invalidation to all downstream stages automatically.
@@ -21,7 +21,7 @@ hash(stage_N) = sha256(script_N + env_N + hash(stage_{N-1}))
 
 Each stage's fingerprint incorporates:
 
-1. The literal text of the stage's pipeline script.
+1. The literal text of the stage's forge script.
 2. All environment variables visible to that stage (sorted for determinism).
 3. The previous stage's fingerprint, creating a blockchain-style chain.
 

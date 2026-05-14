@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::{
-    BackupConfig, DeployScripts, ForgeOptions, PlanManifest, PlanMetadata, Relations, Sources,
+    BackupConfig, DeployScripts, PlanBuildOptions, PlanManifest, PlanMetadata, Relations, Sources,
     SubFabricateOutput,
 };
 
@@ -55,7 +55,7 @@ impl SubFabricateOutput {
                 provides: self.provides.clone(),
             },
             sources: Sources::default(),
-            options: ForgeOptions::default(),
+            options: PlanBuildOptions::default(),
             pipeline: HashMap::new(),
             pipeline_order: None,
             mvp: None,

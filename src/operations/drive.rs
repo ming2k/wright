@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use tracing::{error, info};
 
 use crate::config::GlobalConfig;
-use crate::resolve::ForgeExecutionPlan;
+use crate::resolve::BuildExecutionPlan;
 
 pub struct DriveOptions<'a> {
     pub config: &'a GlobalConfig,
@@ -24,12 +24,12 @@ pub struct DriveOptions<'a> {
 
 /// Drive a forge plan to completion, executing tasks batch-by-batch.
 ///
-/// No persistent workflow state — resume is handled entirely by forger
+/// No persistent workflow state — resume is handled entirely by the foundry
 /// checkpoints (file-system sentinels keyed by plan fingerprint).
 ///
 /// `concurrency` limits how many tasks within a batch run at once.
 pub async fn drive_batches<F, Fut>(
-    plan: &ForgeExecutionPlan,
+    plan: &BuildExecutionPlan,
     options: &DriveOptions<'_>,
     concurrency: usize,
     task_fn: F,

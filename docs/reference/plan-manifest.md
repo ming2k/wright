@@ -129,7 +129,7 @@ Array-of-tables with a mandatory `type` field.
 
 Per-plan values override global (`wright.toml`) settings.
 
-## Pipeline Stages (`[pipeline.<stage>]`)
+## Forge Stages (`[pipeline.<stage>]`)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -140,9 +140,9 @@ Per-plan values override global (`wright.toml`) settings.
 
 The `env` field supports variable substitution in values.
 
-## Pipeline Order (`[pipeline_order]`)
+## Stage Order (`[pipeline_order]`)
 
-Override the default pipeline order:
+Override the default stage order:
 
 ```toml
 [pipeline_order]
@@ -252,13 +252,13 @@ Files listed in `backup` are treated as user-owned config files:
 - **On upgrade:** the new default is written as `<path>.wnew`. The live file is left intact.
 - **On remove:** config files are not deleted.
 
-## Default Pipeline
+## Default Stages
 
 | Stage | Type | Description |
 |-------|------|-------------|
-| `fetch` | built-in | Download sources and copy local files |
-| `verify` | built-in | Verify SHA-256 checksums |
-| `extract` | built-in | Extract archives, copy non-archives to `${WORKDIR}` |
+| `fetch` | built-in (Charge) | Download sources and copy local files |
+| `verify` | built-in (Charge) | Verify SHA-256 checksums |
+| `extract` | built-in (Charge) | Extract archives, copy non-archives to `${WORKDIR}` |
 | `prepare` | user | Pre-build setup (e.g. apply patches) |
 | `configure` | user | Run configure scripts |
 | `compile` | user | Compile the software |

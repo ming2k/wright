@@ -41,7 +41,7 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
         crate::cli_action!(
             "Finished",
             "verify in {}: {} parts clean",
-            crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+            crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
             parts.len(),
         );
         return Ok(());
@@ -71,7 +71,7 @@ async fn execute_plan_lint(targets: Vec<String>, config: &GlobalConfig) -> Resul
     crate::cli_action!(
         "Finished",
         "lint in {}: {} plans clean",
-        crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+        crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
         targets.len(),
     );
     Ok(())

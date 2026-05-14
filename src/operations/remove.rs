@@ -145,7 +145,7 @@ pub async fn execute_remove(
     crate::cli_action!(
         "Finished",
         "remove in {}: {} part(s)",
-        crate::forge::logging::format_duration(elapsed),
+        crate::foundry::logging::format_duration(elapsed),
         total_removed,
     );
 

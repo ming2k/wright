@@ -70,7 +70,7 @@ pub struct InstallArgs {
     #[arg(long)]
     pub depth: Option<usize>,
 
-    /// Force a clean reforge and redeploy even if matching parts already exist
+    /// Force a clean rebuild and redeploy even if matching parts already exist
     #[arg(long, short = 'f')]
     pub force: bool,
 
@@ -151,7 +151,7 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         verbose: ctx.verbose,
         quiet: ctx.quiet,
         part_store: &part_store,
-        forge_opts: None,
+        build_opts: None,
     })
     .await
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 
 use crate::error::{Result, WrightError};
-use crate::forge::variables;
+use crate::foundry::variables;
 use crate::isolation::{
     IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits, run_in_isolation,
 };

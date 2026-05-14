@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::error::{Result, WrightError};
 
-use super::ForgeOptions;
+use super::PlanBuildOptions;
 use super::{
     BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig, PhaseConfig,
     PipelineOrder, PipelineStage, PlanManifest, PlanMetadata, Relations, Source, Sources,
@@ -24,7 +24,7 @@ struct RawManifest {
     #[serde(default)]
     pub sources: Option<toml::Value>,
     #[serde(default)]
-    pub options: ForgeOptions,
+    pub options: PlanBuildOptions,
     #[serde(default)]
     pub pipeline: Option<HashMap<String, toml::Value>>,
     #[serde(default)]

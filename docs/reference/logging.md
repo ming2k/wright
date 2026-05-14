@@ -65,7 +65,7 @@ and spinner) read them; the file layer logs them all.
 | `verb` | string | Drives the 12-col scrolling verb column and the spinner row prefix |
 | `target` | string | The thing being acted on (plan, file, batch) — span field |
 | `plan_name` | string | Plan scope |
-| `stage_name` | string | Pipeline stage |
+| `stage_name` | string | Forge stage |
 | `event` | string | Stable event slug for aggregation (e.g. `forge.started`) |
 | `error` | display | Underlying error — folded into the body on WARN/ERROR levels |
 | `bytes_done` / `bytes_total` | u64 | Recorded on spans to swap the row to a download bar |

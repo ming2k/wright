@@ -4,12 +4,12 @@ use tracing::{debug, trace};
 
 use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::forge::mvp::{PlanGraph, collect_phase_deps};
+use crate::foundry::mvp::{PlanGraph, collect_phase_deps};
 use crate::part::version;
 use crate::plan::discovery::PlanIndex;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 
-use crate::resolve::{DepDomain, ForgeOptions, MatchPolicy, RebuildReason};
+use crate::resolve::{BuildPlanOptions, DepDomain, MatchPolicy, RebuildReason};
 
 pub(super) async fn expand_missing_dependencies(
     plans_to_build: &mut HashSet<PathBuf>,
@@ -353,7 +353,7 @@ pub(super) fn construction_plan_label(
     name: &str,
     build_set: &HashSet<String>,
     rebuild_reasons: &HashMap<String, RebuildReason>,
-    opts: &ForgeOptions,
+    opts: &BuildPlanOptions,
 ) -> &'static str {
     let is_bootstrap_task = name.ends_with(":bootstrap");
     let is_full_after_bootstrap =

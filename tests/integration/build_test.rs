@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use wright::config::GlobalConfig;
-use wright::forge::Forger;
+use wright::foundry::mold::Mold;
+use wright::foundry::{BuildOptions, Foundry};
 use wright::part::archive;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
 
@@ -29,30 +30,19 @@ async fn test_build_hello_fixture() {
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     // Verify the binary was built
-    assert!(result.output_dir.join("usr/bin/hello").exists());
+    assert!(result.staging_dir.join("usr/bin/hello").exists());
 }
 
 #[tokio::test]
@@ -63,31 +53,20 @@ async fn test_build_and_archive_hello() {
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.staging_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Verify archive exists
     assert!(archive_path.exists());
@@ -146,37 +125,26 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
     .unwrap();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
+    let foundry = Foundry::new(config);
 
-    let first = forger
+    let first = foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await;
     assert!(first.is_err(), "first build should fail in staging");
 
-    let build_root = forger.build_root(&manifest).unwrap();
+    let build_root = foundry.build_root(&manifest).unwrap();
     assert!(
-        build_root.join(".build_key").exists(),
+        build_root.join(".charge_prepared").exists(),
         "build key should be committed after extraction, before later stages"
     );
-    assert!(build_root.join(".extracted").exists());
-    // Check that the prepare stage is recorded as completed in .wright-pipeline.json.
-    let state_raw = std::fs::read_to_string(build_root.join(".wright-pipeline.json")).unwrap();
+    assert!(build_root.join(".charge_prepared").exists());
+    // Check that the prepare stage is recorded as completed in .wright-checkpoint.json.
+    let state_raw = std::fs::read_to_string(build_root.join(".wright-checkpoint.json")).unwrap();
     assert!(
         state_raw.contains("prepare"),
         "prepare stage should be recorded in pipeline state"
@@ -187,28 +155,17 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
     );
 
     std::fs::write(&allow_staging, "ok").unwrap();
-    let second = forger
+    let second = foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
-    assert!(second.output_dir.join("usr/share/stage-resume").exists());
+    assert!(second.staging_dir.join("usr/share/stage-resume").exists());
     assert_eq!(
         std::fs::read_to_string(build_root.join("target/prepare-count")).unwrap(),
         "x",
@@ -248,31 +205,20 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/runtime-link-overlap
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive_path =
-        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.staging_dir, &manifest, output_dir.path(), None).unwrap();
     let partinfo = archive::read_partinfo(&archive_path).unwrap();
 
     assert_eq!(partinfo.runtime_deps, vec!["openssl", "zlib"]);
@@ -321,34 +267,22 @@ include = ["/usr/share/doc/**"]
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
-    forger
+    let foundry = Foundry::new(config);
+    foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
-    let build_root = forger.build_root(&manifest).unwrap();
-    let result = forger.slice_outputs(&manifest, &build_root).await.unwrap();
-
-    assert!(result.output_dir.join("usr/bin/split-vars-1.0.0").exists());
+    let build_root = foundry.build_root(&manifest).unwrap();
+    let result = Mold::slice(&manifest, &build_root).await.unwrap();
+    assert!(result.default_dir.join("usr/bin/split-vars-1.0.0").exists());
     assert!(
-        result.split_part_dirs["split-vars-doc"]
+        result.split_dirs["split-vars-doc"]
             .join("usr/share/doc/split-vars")
             .exists()
     );
@@ -386,35 +320,17 @@ include = ["/usr/bin/**"]
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
-    forger
+    let foundry = Foundry::new(config);
+    let err = foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
-        .unwrap();
+        .expect_err("build should fail due to invalid outputs");
 
-    let build_root = forger.build_root(&manifest).unwrap();
-    let result = forger.slice_outputs(&manifest, &build_root).await;
-
-    let err = match result {
-        Ok(_) => panic!("expected unclaimed staging files to fail slicing"),
-        Err(err) => err,
-    };
     let msg = err.to_string();
     assert!(msg.contains("not claimed"));
     assert!(msg.contains("/usr/share/doc/coverage"));
@@ -456,38 +372,26 @@ reason = "documentation is intentionally not packaged"
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
-    forger
+    let foundry = Foundry::new(config);
+    foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
-    let build_root = forger.build_root(&manifest).unwrap();
-    let result = forger.slice_outputs(&manifest, &build_root).await.unwrap();
-
+    let build_root = foundry.build_root(&manifest).unwrap();
+    let result = Mold::slice(&manifest, &build_root).await.unwrap();
     assert!(
-        result.split_part_dirs["coverage"]
+        result.split_dirs["coverage"]
             .join("usr/bin/coverage")
             .exists()
     );
     assert!(
-        !result.split_part_dirs["coverage"]
+        !result.split_dirs["coverage"]
             .join("usr/share/doc/coverage")
             .exists()
     );
@@ -529,35 +433,17 @@ include = ["/usr/**"]
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
     let plan_dir = tempfile::tempdir().unwrap();
-    let forger = Forger::new(config);
-    forger
+    let foundry = Foundry::new(config);
+    let err = foundry
         .build(
             &manifest,
-            plan_dir.path(),
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
-        .unwrap();
+        .expect_err("build should fail due to invalid outputs");
 
-    let build_root = forger.build_root(&manifest).unwrap();
-    let result = forger.slice_outputs(&manifest, &build_root).await;
-
-    let err = match result {
-        Ok(_) => panic!("expected overlapping outputs to fail slicing"),
-        Err(err) => err,
-    };
     let msg = err.to_string();
     assert!(
         msg.contains("ambiguous"),
@@ -611,56 +497,34 @@ async fn test_build_single_stage() {
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
+    let foundry = Foundry::new(config);
 
     // First do a full build so src/ directory exists
-    forger
+    foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     // Now run a single stage on the existing build tree
-    let result = forger
+    let result = foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &["prepare".to_string()],
-            &[] as &[String],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     // Running only prepare: hello.c should exist but hello binary should not
     // (output_dir is recreated fresh for single-stage runs)
-    assert!(result.work_dir.join("target/hello.c").exists());
-    assert!(!result.output_dir.join("usr/bin/hello").exists());
+    assert!(result.build_root.join("target/hello.c").exists());
+    assert!(!result.staging_dir.join("usr/bin/hello").exists());
 }
 
 #[tokio::test]
@@ -671,31 +535,20 @@ async fn test_build_until_stage_runs_prior_stages_without_prior_workspace() {
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[],
-            &[] as &[String],
-            Some("staging"),
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
-    assert!(result.work_dir.join("target/hello.c").exists());
-    assert!(result.work_dir.join("target/hello").exists());
-    assert!(result.output_dir.join("usr/bin/hello").exists());
+    assert!(result.build_root.join("target/hello.c").exists());
+    assert!(result.build_root.join("target/hello").exists());
+    assert!(result.staging_dir.join("usr/bin/hello").exists());
     assert!(result.logs_dir.join("compile.log").exists());
     assert!(result.logs_dir.join("staging.log").exists());
 }

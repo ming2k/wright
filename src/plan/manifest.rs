@@ -187,7 +187,7 @@ pub struct PlanManifest {
     pub runtime_deps: Vec<String>,
     pub relations: Relations,
     pub sources: Sources,
-    pub options: ForgeOptions,
+    pub options: PlanBuildOptions,
     pub pipeline: HashMap<String, PipelineStage>,
     pub pipeline_order: Option<PipelineOrder>,
     pub mvp: Option<PhaseConfig>,
@@ -229,7 +229,7 @@ impl Sources {}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ForgeOptions {
+pub struct PlanBuildOptions {
     #[serde(default, rename = "static")]
     pub static_: bool,
     #[serde(default)]
@@ -261,7 +261,7 @@ pub struct ForgeOptions {
     pub skip_elf_lint: bool,
 }
 
-impl Default for ForgeOptions {
+impl Default for PlanBuildOptions {
     fn default() -> Self {
         Self {
             static_: false,
@@ -375,7 +375,7 @@ impl PlanManifest {
         let stages: Vec<&str> = if let Some(ref order) = self.pipeline_order {
             order.stages.iter().map(|s| s.as_str()).collect()
         } else {
-            crate::forge::pipeline::DEFAULT_STAGES.to_vec()
+            crate::foundry::forge::STAGES.to_vec()
         };
         let mut valid_names = std::collections::HashSet::new();
         for stage in &stages {

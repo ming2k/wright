@@ -35,7 +35,7 @@ pub async fn execute_doctor(
         crate::cli_action!(
             "Finished",
             "doctor in {}: clean",
-            crate::forge::logging::format_duration(elapsed)
+            crate::foundry::logging::format_duration(elapsed)
         );
         Ok(())
     } else {

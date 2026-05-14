@@ -5,7 +5,7 @@ use wright::cli::install::{self, InstallArgs};
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
 use wright::database::SessionContext;
-use wright::forge::Forger;
+use wright::foundry::{BuildOptions, Foundry};
 use wright::part::archive;
 use wright::part::store::LocalPartStore;
 use wright::plan::manifest::{OutputConfig, PlanManifest};
@@ -29,31 +29,20 @@ async fn build_hello_archive() -> PathBuf {
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[],
-            &[] as &[String],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &std::collections::HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =
-        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.staging_dir, &manifest, output_dir.path(), None).unwrap();
 
     // Copy to persistent temp location
     use std::sync::atomic::{AtomicUsize, Ordering};

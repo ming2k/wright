@@ -1,5 +1,20 @@
 use std::collections::HashMap;
 
+use crate::plan::manifest::PlanManifest;
+
+/// Substitute metadata variables into a URI string (e.g. source URL or local path).
+pub fn process_uri(uri: &str, manifest: &PlanManifest) -> String {
+    let mut vars = HashMap::new();
+    insert_metadata_variables(
+        &mut vars,
+        &manifest.metadata.name,
+        manifest.metadata.version.as_deref().unwrap_or(""),
+        manifest.metadata.release,
+        &manifest.metadata.arch,
+    );
+    substitute(uri, &vars)
+}
+
 /// Substitute `${VAR_NAME}` patterns in a script with values from the vars map.
 pub fn substitute(script: &str, vars: &HashMap<String, String>) -> String {
     let mut result = script.to_string();

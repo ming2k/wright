@@ -69,7 +69,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
    `etc/wright`.
 
 3. **Redirect** — override `build_dir` and `parts_dir` to point inside the
-   target root.  This guarantees that forge outputs and sealed archives never
+   target root.  This guarantees that build outputs and sealed archives never
    land on the host filesystem.
 
 4. **Discover** — resolve folio references (`@core`), expand plan names, and
@@ -89,7 +89,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
    target's fresh `wright.db` so dependency checks pass without Wright
    attempting to deploy the kernel, host toolchain, or other externals.
 
-8. **Forge → Seal → Deploy** — drive the full `resolve → forge → seal →
+8. **Build → Seal → Deploy** — drive the full `resolve → build → seal →
    deploy` pipeline, wave by wave, reusing `wright install`'s engine.
    Each completed wave is installed into the target before the next wave
    begins, so a plan's dependencies are already on disk when it enters its
@@ -105,13 +105,13 @@ not error or duplicate — it converges drift:
 
 - Plans that are already deployed and match their source definition are skipped.
 - Missing plans are built and installed.
-- Changed plans are rebuilt (forge → seal → deploy).
+- Changed plans are rebuilt (build → seal → deploy).
 - Plan and folio files in the target are re-synced if they differ from the host.
 - Assumed parts already registered are not duplicated.
 
 This makes launch **re-runnable**.  An interrupted launch (network failure,
 power loss, disk-full) is recovered by re-running the same command.  The
-forger's stage-level checkpointing means individual plans resume from their last
+foundry's stage-level checkpointing means individual plans resume from their last
 completed stage rather than restarting from scratch.
 
 ## Root Isolation
@@ -142,8 +142,7 @@ ship, maintained through the same `install`, `upgrade`, and `remove` commands.
 The folio manifest (`folio.toml`) is the single declarative file that describes
 everything needed to bootstrap a system.  It replaces the earlier pack format
 (see [ADR-0015](../adr/0015-folio-manifest-replaces-pack.md)) which bundled
-pre-built archives — a folio is a build recipe, not a binary bundle.  This
-means:
+pre-built archives — a folio is a build recipe, not a binary bundle.  This means:
 
 - The folio stays current as plans evolve; no separate archive-rebuild step.
 - The same folio can produce a system for any architecture by rebuilding.

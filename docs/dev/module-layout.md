@@ -9,7 +9,7 @@ src/
 ├── config.rs         # global config
 ├── operations/       # command use cases and batch driving
 ├── resolve/          # target resolution, dependency graphs, batch planning (step 1: resolve)
-├── forge/            # single-plan forge: fetch, pipeline execution, output slicing (step 2: forge)
+├── foundry/          # single-plan build: charge (fetch/verify/extract), forge (prepare/configure/compile/check/staging), mold (slice outputs) (step 2: build)
 ├── seal/             # output validation, archive creation (step 3: seal)
 ├── delivery/         # CAS store + WAL crash recovery for the delivery state machine
 ├── database/         # installed system state and migration layer
@@ -39,8 +39,8 @@ src/bin/wright.rs -> src/cli/mod.rs::dispatch -> src/cli/<cmd>::run -> library m
   `cli::<cmd>::run`.
 - `src/operations/` owns command use cases such as install and launch, and drives batch execution.
 - `src/resolve/` owns graph construction, dependency expansion, and build wave planning.
-- `src/forge/` owns execution of one plan's pipeline stages and source fetching.
-- `src/seal/` owns output validation (FHS, ELF lint) and archive creation.
+- `src/foundry/` owns execution of one plan's build: source fetching (Charge), forge stages (Forge), and output slicing (Mold).
+- `src/seal/` owns output directory validation (FHS, ELF lint) and archive creation. Output slicing is owned by `src/foundry/mold.rs`.
 
 ## `build.rs` and the `with_handlers` cfg
 

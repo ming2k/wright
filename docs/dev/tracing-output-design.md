@@ -155,7 +155,7 @@ The bar template is:
 ### Why Spans, Not Pre-Allocated Bars
 
 The previous implementation passed `Option<ProgressBar>` through the call stack
-(`Forger::build` → `PipelineContext` → `Pipeline`) and pre-allocated one bar
+(`Foundry::build` → `ForgeContext` → `Forge`) and pre-allocated one bar
 per known unit of work. That broke as soon as concurrency stopped matching the
 pre-allocation — for example, per-source parallel fetch within a plan, or
 batch-wide CAS lookups happening between forge and seal.

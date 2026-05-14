@@ -35,7 +35,7 @@ to merge explicit archive paths instead.
 
 ### `wright install <TARGET...>`
 
-Install plans to the local system with full lifecycle (resolve → forge → seal → deploy).
+Install plans to the local system with full lifecycle (resolve → build → seal → deploy).
 Targets may be plan names, plan directories, or folio names prefixed with `@`.
 Automatically pulls in missing or outdated dependencies under the selected
 match policy.

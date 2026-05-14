@@ -53,7 +53,7 @@ pub struct BuildArgs {
 
     /// Reforge from scratch: bypass stage checkpoints and re-run all
     /// pipeline stages. Use this when you have modified a plan's forge
-    /// script or dependencies and need a clean reforge.
+    /// script or dependencies and need a clean rebuild.
     #[arg(long, short = 'f')]
     pub force: bool,
 

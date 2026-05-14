@@ -10,12 +10,12 @@ use tracing::{debug, info, trace, warn};
 use crate::config::GlobalConfig;
 use crate::database::{InstalledDb, SessionContext};
 use crate::delivery::store::CasStore;
-use crate::forge::Forger;
+use crate::foundry::{BuildOptions, Foundry};
 use crate::part::folio;
 use crate::part::store::LocalPartStore;
 use crate::plan::manifest::{OutputConfig, PlanManifest};
 use crate::resolve::{
-    self, DepDomain, ForgeExecutionPlan, ForgeOptions, MatchPolicy, ResolveOptions,
+    self, BuildExecutionPlan, BuildPlanOptions, DepDomain, MatchPolicy, ResolveOptions,
     create_execution_plan, resolve_build_set, resolve_explicit_plan_names,
 };
 
@@ -32,8 +32,8 @@ pub struct InstallRequest<'a> {
     pub quiet: bool,
     pub part_store: &'a LocalPartStore,
     /// Optional forge options. When provided, the install flow uses these
-    /// instead of default ForgeOptions (used by `wright build`).
-    pub forge_opts: Option<ForgeOptions>,
+    /// instead of default BuildPlanOptions (used by `wright build`).
+    pub build_opts: Option<BuildPlanOptions>,
 }
 
 /// Pre-computed fingerprint for each plan name in the build set.
@@ -48,27 +48,27 @@ struct PlanFingerprints {
 
 impl PlanFingerprints {
     /// Compute fingerprints for all plans in the execution plan.
-    fn compute(plan: &ForgeExecutionPlan, forger: &Forger) -> Result<Self> {
+    fn compute(plan: &BuildExecutionPlan, foundry: &Foundry) -> Result<Self> {
         let mut fingerprints: HashMap<String, String> = HashMap::new();
 
         // Process batch by batch so that dependency fingerprints are available
         // when computing closure fingerprints for later batches.
         for batch in plan.batches() {
             for task in batch {
-                let base = ForgeExecutionPlan::task_base_name(task);
+                let base = BuildExecutionPlan::task_base_name(task);
                 let plan_path = plan
                     .plan_path_for_task(task)
                     .ok_or_else(|| WrightError::ForgeError(format!("no path for task {}", task)))?;
                 let manifest = PlanManifest::from_file(plan_path)
                     .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
 
-                let build_key = forger.compute_build_key(&manifest)?;
+                let build_key = foundry.compute_build_key(&manifest)?;
 
                 // Collect fingerprints of build dependencies.
                 let dep_names = plan.deps_for_task(task);
                 let mut dep_fps: HashMap<String, String> = HashMap::new();
                 for dep_name in dep_names {
-                    let dep_base = ForgeExecutionPlan::task_base_name(dep_name);
+                    let dep_base = BuildExecutionPlan::task_base_name(dep_name);
                     if let Some(fp) = fingerprints.get(dep_base) {
                         dep_fps.insert(dep_base.to_string(), fp.clone());
                     }
@@ -120,7 +120,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         verbose,
         quiet,
         part_store,
-        forge_opts,
+        build_opts,
     } = request;
 
     if targets.is_empty() {
@@ -154,7 +154,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         preserve_targets: force,
     };
 
-    let build_opts = forge_opts.unwrap_or_else(|| ForgeOptions {
+    let build_opts = build_opts.unwrap_or_else(|| BuildPlanOptions {
         clean: force,
         force,
         verbose: verbose > 0,
@@ -186,7 +186,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             batch
                 .iter()
                 .map(|t| {
-                    let base = ForgeExecutionPlan::task_base_name(t);
+                    let base = BuildExecutionPlan::task_base_name(t);
                     let label = plan.label_for_task(t, &build_opts);
                     if label == "build" || label == "build:full" {
                         base.to_string()
@@ -239,8 +239,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     }
 
     let plan = Arc::new(plan);
-    let forger = Arc::new(Forger::new(config.clone()));
-    let resources = resolve::summarize_forge_resources(config);
+    let foundry = Arc::new(Foundry::new(config.clone()));
+    let resources = resolve::summarize_build_resources(config);
     // configure_lock = 1 permit (serializes autotools-style configure scripts).
     // compile_lock   = total_cpus permits; each compile stage takes N permits
     //                  matching its declared CPU usage, so the pool stays at
@@ -268,21 +268,41 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     };
 
     // ── Compute plan fingerprints & CAS resolution ──────────────────
-    let plan_fps = PlanFingerprints::compute(&plan, &forger)?;
+    let plan_fps = PlanFingerprints::compute(&plan, &foundry)?;
     let cas_store = CasStore::new(config.general.store_dir.clone());
+
+    // Pre-compute every part name that will be deployed across all batches,
+    // so that per-batch runtime-dependency checks can distinguish "scheduled
+    // in a later batch" from genuinely missing dependencies.
+    let mut all_upcoming_outputs: HashSet<String> = HashSet::new();
+    for batch in plan.batches() {
+        for task in batch {
+            let base = BuildExecutionPlan::task_base_name(task);
+            let plan_path = plan
+                .plan_path_for_task(task)
+                .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)));
+            if let Some(path) = plan_path {
+                if let Ok(manifest) = PlanManifest::from_file(path) {
+                    for pn in manifest_part_names(&manifest) {
+                        all_upcoming_outputs.insert(pn);
+                    }
+                }
+            }
+        }
+    }
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         if !quiet && total_batches > 1 {
             let bases: Vec<&str> = batch
                 .iter()
-                .map(|t| ForgeExecutionPlan::task_base_name(t))
+                .map(|t| BuildExecutionPlan::task_base_name(t))
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();
             // "Forging" is the gerund verb; the message conveys which
             // batch and its members.
             info!(
-                verb = "Forging",
+                verb = "Building",
                 event = "build.batch_started",
                 batch_num = batch_idx + 1,
                 total_batches = total_batches,
@@ -300,7 +320,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         if !force {
             let mut bases_seen = HashSet::new();
             for task in batch {
-                let base = ForgeExecutionPlan::task_base_name(task).to_string();
+                let base = BuildExecutionPlan::task_base_name(task).to_string();
                 if !bases_seen.insert(base.clone()) {
                     continue;
                 }
@@ -332,14 +352,14 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         //    Skip tasks whose base has a CAS hit.
         let mut build_handles = Vec::new();
         for task in batch {
-            let base = ForgeExecutionPlan::task_base_name(task).to_string();
+            let base = BuildExecutionPlan::task_base_name(task).to_string();
             if cas_hit_bases.contains(&base) {
                 // CAS hit — skip forge for this task.
                 continue;
             }
 
             let plan = Arc::clone(&plan);
-            let forger = Arc::clone(&forger);
+            let foundry = Arc::clone(&foundry);
             let build_opts = build_opts.clone();
             let configure_lock = Arc::clone(&configure_lock);
             let compile_lock = Arc::clone(&compile_lock);
@@ -351,7 +371,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 let plan_path = plan.plan_path_for_task(&task_for_handle).ok_or_else(|| {
                     WrightError::ForgeError(format!("no path for task {}", task_for_handle))
                 })?;
-                let base = ForgeExecutionPlan::task_base_name(&task_for_handle);
+                let base = BuildExecutionPlan::task_base_name(&task_for_handle);
                 let is_bootstrap = task_for_handle.ends_with(":bootstrap");
                 let bootstrap_excluded = plan.bootstrap_excluded_for(&task_for_handle).to_vec();
 
@@ -378,7 +398,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     build_opts.force
                 };
 
-                // Bootstrap phase: the forger's hash-chain checkpoint system
+                // Bootstrap phase: the foundry's hash-chain checkpoint system
                 // handles stage invalidation internally.
 
                 let plan_dir = plan_path
@@ -386,23 +406,25 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     .ok_or_else(|| WrightError::ForgeError("plan path has no parent".into()))?
                     .to_path_buf();
 
-                forger
+                foundry
                     .build(
                         &manifest,
                         &plan_dir,
                         std::path::Path::new("/"),
-                        &build_opts.stages,
-                        &build_opts.force_stage,
-                        build_opts.until_stage.as_deref(),
-                        build_opts.fetch_only,
-                        build_opts.skip_check,
-                        force,
-                        build_opts.clean,
-                        &extra_env,
-                        build_opts.verbose,
-                        config.build.nproc_per_isolation,
-                        Some(configure_lock),
-                        Some(compile_lock),
+                        BuildOptions {
+                            stages: build_opts.stages.clone(),
+                            force_stage: build_opts.force_stage.clone(),
+                            until_stage: build_opts.until_stage.clone(),
+                            fetch_only: build_opts.fetch_only,
+                            skip_check: build_opts.skip_check,
+                            force,
+                            clean: build_opts.clean,
+                            extra_env,
+                            verbose: build_opts.verbose,
+                            nproc_per_isolation: config.build.nproc_per_isolation,
+                            configure_lock: Some(configure_lock),
+                            compile_lock: Some(compile_lock),
+                        },
                     )
                     .await
                     .map(|_| ())
@@ -438,7 +460,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         let mut bases_in_batch: Vec<String> = Vec::new();
         let mut bases_seen: HashSet<String> = HashSet::new();
         for task in batch {
-            let base = ForgeExecutionPlan::task_base_name(task).to_string();
+            let base = BuildExecutionPlan::task_base_name(task).to_string();
             if task.ends_with(":bootstrap")
                 || !bases_seen.insert(base.clone())
                 || cas_hit_bases.contains(&base)
@@ -639,6 +661,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     part_store,
                     force,
                     false,
+                    Some(&all_upcoming_outputs),
                     session.clone(),
                 )
                 .await;
@@ -667,7 +690,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             event = "install.completed",
             elapsed_secs = elapsed,
             "install in {}",
-            crate::forge::logging::format_duration(elapsed),
+            crate::foundry::logging::format_duration(elapsed),
         );
     }
 

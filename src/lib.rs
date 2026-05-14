@@ -3,7 +3,7 @@ pub mod config;
 pub mod database;
 pub mod delivery;
 pub mod error;
-pub mod forge;
+pub mod foundry;
 pub mod isolation;
 pub mod operations;
 pub mod part;

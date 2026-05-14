@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.2.1] - 2026-05-15
+
+### Fixed
+- **Spurious "Runtime dependency not deployed" warnings during multi-batch installs** — `warn_about_runtime_dependencies` only checked the current batch and already-installed parts, so dependencies scheduled in later batches triggered false-positive warnings. The deploy path now receives the full set of upcoming outputs across all batches and skips the warning when the dependency is known to be deployed later.
+
 ## [5.2.0] - 2026-05-15
 
 ### Added

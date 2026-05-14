@@ -1,7 +1,7 @@
 # Delivery Recovery Design
 
 Wright's delivery workflow (`wright install`, `wright upgrade`, `wright launch`)
-runs three phases for each DAG wave: **forge** (build), **seal** (package), and
+runs three phases for each DAG wave: **build** (foundry), **seal** (package), and
 **deploy** (install to system).  A crash during delivery must not leave the
 system corrupted or require the user to manually undo half-finished work.
 
@@ -26,13 +26,13 @@ handled by the `history` table.
 
 ### Fingerprint computation
 
-Before forging a plan, a *closure fingerprint* is computed:
+Before building a plan, a *closure fingerprint* is computed:
 
 ```
 sha256( build_key(plan) + dep₁.fingerprint + dep₂.fingerprint + ... )
 ```
 
-`build_key` hashes the plan's metadata, source URLs/SHAs, and pipeline
+`build_key` hashes the plan's metadata, source URLs/SHAs, and forge
 scripts.  Dependency fingerprints are recursively included so that a change
 anywhere in the transitive build tree invalidates all dependents.
 

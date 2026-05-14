@@ -52,7 +52,7 @@ flowchart LR
 Even on a machine with many CPUs, Wright cannot exceed the number of currently
 independent tasks in the graph.
 
-## Pipeline Stage Concurrency
+## Forge Stage Concurrency
 
 Wright uses three independent `tokio::sync::Semaphore` pools to gate
 concurrency on the three resources that need it. The pools are
@@ -64,7 +64,7 @@ process-wide and shared across every active build task.
 | `compile_lock` | `total_cpus` permits | `acquire_many(compile_cpu_count)` | Each compile takes one permit per CPU it intends to use. The total in-flight permit count stays ≤ `total_cpus`. |
 | `network_pool` | `network.max_concurrent_downloads` (default 8) | `acquire()` per source download | Caps concurrent HTTP/git fetches across the whole process. |
 
-Other pipeline stages (`prepare`, `check`, `staging`) take no lock — they
+Other forge stages (`prepare`, `check`, `staging`) take no lock — they
 run in parallel subject only to dependency ordering and the scheduler's
 batch concurrency limit.
 

@@ -10,10 +10,10 @@ use tokio::sync::Semaphore;
 
 use crate::cli::build::BuildArgs;
 use crate::config::GlobalConfig;
-use crate::forge::Forger;
+use crate::foundry::{BuildOptions, Foundry};
 use crate::operations::drive::{DriveOptions, drive_batches};
 use crate::plan::manifest::PlanManifest;
-use crate::resolve::{DepDomain, ForgeExecutionPlan, ForgeOptions, create_execution_plan};
+use crate::resolve::{BuildExecutionPlan, BuildPlanOptions, DepDomain, create_execution_plan};
 
 pub async fn execute_build(
     args: BuildArgs,
@@ -59,35 +59,37 @@ pub async fn execute_build(
         if plan_path.is_dir() {
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
                 .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", target, e)))?;
-            let forger = Forger::new(config.clone());
+            let foundry = Foundry::new(config.clone());
             let mut extra_env = HashMap::new();
             if args.mvp {
                 extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
             }
-            forger
+            foundry
                 .build(
                     &manifest,
                     plan_path,
                     std::path::Path::new("/"),
-                    &args.stage,
-                    &args.force_stage,
-                    args.until_stage.as_deref(),
-                    args.fetch,
-                    args.skip_check,
-                    args.force,
-                    args.clean,
-                    &extra_env,
-                    verbose > 0,
-                    config.build.nproc_per_isolation,
-                    None,
-                    None,
+                    BuildOptions {
+                        stages: args.stage,
+                        force_stage: args.force_stage,
+                        until_stage: args.until_stage,
+                        fetch_only: args.fetch,
+                        skip_check: args.skip_check,
+                        force: args.force,
+                        clean: args.clean,
+                        extra_env,
+                        verbose: verbose > 0,
+                        nproc_per_isolation: config.build.nproc_per_isolation,
+                        configure_lock: None,
+                        compile_lock: None,
+                    },
                 )
                 .await?;
             return Ok(());
         }
     }
 
-    let options = ForgeOptions {
+    let options = BuildPlanOptions {
         stages: args.stage,
         force_stage: args.force_stage,
         until_stage: args.until_stage,
@@ -111,8 +113,8 @@ pub async fn execute_build(
     .map_err(|e| WrightError::ForgeError(format!("create execution plan: {}", e)))?;
 
     let plan = Arc::new(plan);
-    let forger = Arc::new(Forger::new(config.clone()));
-    let resources = crate::resolve::summarize_forge_resources(config);
+    let foundry = Arc::new(Foundry::new(config.clone()));
+    let resources = crate::resolve::summarize_build_resources(config);
     let configure_lock = Arc::new(Semaphore::new(1));
     let compile_lock = Arc::new(Semaphore::new(resources.total_cpus));
 
@@ -132,7 +134,7 @@ pub async fn execute_build(
         resources.concurrent_tasks,
         |task| {
             let plan = Arc::clone(&plan);
-            let forger = Arc::clone(&forger);
+            let foundry = Arc::clone(&foundry);
             let options = options.clone();
             let configure_lock = Arc::clone(&configure_lock);
             let compile_lock = Arc::clone(&compile_lock);
@@ -142,7 +144,7 @@ pub async fn execute_build(
                 let plan_path = plan
                     .plan_path_for_task(&task)
                     .ok_or_else(|| WrightError::ForgeError(format!("no path for task {}", task)))?;
-                let base = ForgeExecutionPlan::task_base_name(&task);
+                let base = BuildExecutionPlan::task_base_name(&task);
                 let is_bootstrap = task.ends_with(":bootstrap");
                 let bootstrap_excluded = plan.bootstrap_excluded_for(&task).to_vec();
 
@@ -170,7 +172,7 @@ pub async fn execute_build(
                     options.force
                 };
 
-                // Bootstrap phase: the forger's hash-chain checkpoint system
+                // Bootstrap phase: the foundry's hash-chain checkpoint system
                 // handles stage invalidation internally.
 
                 let plan_dir = plan_path
@@ -179,7 +181,7 @@ pub async fn execute_build(
                     .to_path_buf();
 
                 // Intra-step idempotence: skip when staging/ is already populated.
-                let build_root = forger.build_root(&manifest)?;
+                let build_root = foundry.build_root(&manifest)?;
                 let can_short_circuit = !force
                     && options.stages.is_empty()
                     && options.until_stage.is_none()
@@ -189,23 +191,25 @@ pub async fn execute_build(
                     return Ok(());
                 }
 
-                forger
+                foundry
                     .build(
                         &manifest,
                         &plan_dir,
                         std::path::Path::new("/"),
-                        &options.stages,
-                        &options.force_stage,
-                        options.until_stage.as_deref(),
-                        options.fetch_only,
-                        options.skip_check,
-                        force,
-                        options.clean,
-                        &extra_env,
-                        options.verbose,
-                        config.build.nproc_per_isolation,
-                        Some(configure_lock),
-                        Some(compile_lock),
+                        BuildOptions {
+                            stages: options.stages.clone(),
+                            force_stage: options.force_stage.clone(),
+                            until_stage: options.until_stage.clone(),
+                            fetch_only: options.fetch_only,
+                            skip_check: options.skip_check,
+                            force,
+                            clean: options.clean,
+                            extra_env,
+                            verbose: options.verbose,
+                            nproc_per_isolation: config.build.nproc_per_isolation,
+                            configure_lock: Some(configure_lock),
+                            compile_lock: Some(compile_lock),
+                        },
                     )
                     .await
                     .map(|_| ())

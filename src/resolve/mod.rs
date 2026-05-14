@@ -2,16 +2,17 @@
 //!
 //! Resolve discovers plan files, builds a name→path index, resolves user
 //! targets to canonical `plan.toml` paths, expands dependency closures, and
-//! constructs a `ForgeExecutionPlan` — the batched DAG that `forge` executes.
+//! constructs a `BuildExecutionPlan` — the batched DAG that the build step
+//! executes inside the Foundry.
 //!
-//! This is step 1 of the four-step Delivery flow: resolve → forge → seal → deploy.
+//! This is step 1 of the four-step Delivery flow: resolve → build → seal → deploy.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WrightError, WrightResultExt};
-use crate::forge::logging;
-use crate::forge::mvp::inject_bootstrap_passes;
+use crate::foundry::logging;
+use crate::foundry::mvp::inject_bootstrap_passes;
 use tracing::info;
 
 use crate::config::GlobalConfig;
@@ -29,7 +30,7 @@ use graph::{
 pub use resolver::{plan_search_dirs, resolve_targets, setup_part_store};
 
 #[derive(Debug, Clone)]
-pub struct ForgeExecutionPlan {
+pub struct BuildExecutionPlan {
     name_to_path: HashMap<String, PathBuf>,
     deps_map: HashMap<String, Vec<String>>,
     build_set: HashSet<String>,
@@ -39,7 +40,7 @@ pub struct ForgeExecutionPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ForgeResourceSummary {
+pub struct BuildResourceSummary {
     pub total_cpus: usize,
     pub concurrent_tasks: usize,
 }
@@ -129,7 +130,7 @@ pub struct ResolveOptions {
 
 /// Options for a build run.
 #[derive(Debug, Clone, Default)]
-pub struct ForgeOptions {
+pub struct BuildPlanOptions {
     pub stages: Vec<String>,
     pub force_stage: Vec<String>,
     pub until_stage: Option<String>,
@@ -144,7 +145,7 @@ pub struct ForgeOptions {
     pub nproc_per_isolation: Option<u32>,
 }
 
-impl ForgeOptions {
+impl BuildPlanOptions {
     fn is_build_op(&self) -> bool {
         !self.checksum && !self.fetch_only
     }
@@ -321,9 +322,9 @@ pub async fn resolve_build_set(
 pub fn create_execution_plan(
     config: &GlobalConfig,
     targets: Vec<String>,
-    opts: &ForgeOptions,
+    opts: &BuildPlanOptions,
     dep_domain: DepDomain,
-) -> Result<ForgeExecutionPlan> {
+) -> Result<BuildExecutionPlan> {
     let plan_dirs = plan_search_dirs(config);
     let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
@@ -361,7 +362,7 @@ pub fn create_execution_plan(
         grouped_batches[batch].push(name);
     }
 
-    Ok(ForgeExecutionPlan {
+    Ok(BuildExecutionPlan {
         name_to_path: graph.name_to_path,
         deps_map: graph.deps_map,
         build_set: graph.build_set,
@@ -371,7 +372,7 @@ pub fn create_execution_plan(
     })
 }
 
-impl ForgeExecutionPlan {
+impl BuildExecutionPlan {
     pub fn batches(&self) -> &[Vec<String>] {
         &self.batches
     }
@@ -380,11 +381,11 @@ impl ForgeExecutionPlan {
         self.name_to_path.get(task_name)
     }
 
-    pub fn label_for_task(&self, task_name: &str, opts: &ForgeOptions) -> &'static str {
+    pub fn label_for_task(&self, task_name: &str, opts: &BuildPlanOptions) -> &'static str {
         construction_plan_label(task_name, &self.build_set, &self.rebuild_reasons, opts)
     }
 
-    pub fn describe_task(&self, task_name: &str, opts: &ForgeOptions) -> String {
+    pub fn describe_task(&self, task_name: &str, opts: &BuildPlanOptions) -> String {
         describe_task_action(task_name, self.label_for_task(task_name, opts))
     }
 
@@ -412,7 +413,7 @@ impl ForgeExecutionPlan {
     }
 }
 
-pub fn summarize_forge_resources(config: &GlobalConfig) -> ForgeResourceSummary {
+pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary {
     let available_cpus = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
@@ -422,32 +423,32 @@ pub fn summarize_forge_resources(config: &GlobalConfig) -> ForgeResourceSummary 
         available_cpus
     };
 
-    ForgeResourceSummary {
+    BuildResourceSummary {
         total_cpus,
         concurrent_tasks: total_cpus,
     }
 }
 
-pub fn describe_forge_resources(resources: ForgeResourceSummary) -> String {
+pub fn describe_build_resources(resources: BuildResourceSummary) -> String {
     logging::describe_build_capacity(resources.concurrent_tasks, resources.total_cpus)
 }
 
 pub fn describe_task_action(task_name: &str, label: &str) -> String {
-    let plan_name = ForgeExecutionPlan::task_base_name(task_name);
+    let plan_name = BuildExecutionPlan::task_base_name(task_name);
     match label {
         "build" => format!("forge {}", plan_name),
-        "rebuild" => format!("reforge {}", plan_name),
+        "rebuild" => format!("rebuild {}", plan_name),
         "relink" => format!("relink {}", plan_name),
         "build:mvp" => format!("bootstrap {}", plan_name),
-        "build:full" => format!("full reforge {}", plan_name),
+        "build:full" => format!("full rebuild {}", plan_name),
         _ => format!("process {}", plan_name),
     }
 }
 
 pub fn describe_batch_actions(
-    plan: &ForgeExecutionPlan,
+    plan: &BuildExecutionPlan,
     tasks: &[String],
-    opts: &ForgeOptions,
+    opts: &BuildPlanOptions,
 ) -> String {
     let mut actions = Vec::with_capacity(tasks.len());
     for task in tasks {
@@ -477,8 +478,8 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
     lint_dependency_graph(&graph)
 }
 
-fn lint_dependency_graph(graph: &crate::forge::mvp::PlanGraph) -> Result<()> {
-    use crate::forge::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
+fn lint_dependency_graph(graph: &crate::foundry::mvp::PlanGraph) -> Result<()> {
+    use crate::foundry::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
     let cycles = find_cycles(&graph.deps_map);
 
     println!("Dependency Analysis Report");

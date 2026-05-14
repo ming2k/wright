@@ -11,8 +11,8 @@ This document explains how batches are constructed, how they execute, and why th
 A **batch** (also called a **wave**) is a set of tasks that share the same topological depth in the dependency graph.  Every task in a batch depends only on tasks from earlier batches, and tasks within the same batch have **no dependencies on each other**.
 
 This means:
-- All tasks in a batch can be forged **in parallel**.
-- When a batch begins, every dependency it needs is already resolved, forged, sealed, and **deployed** on the live system.
+- All tasks in a batch can be built **in parallel**.
+- When a batch begins, every dependency it needs is already resolved, built, sealed, and **deployed** on the live system.
 - The batch itself is the smallest atomic deployment unit.
 
 ---
@@ -28,7 +28,7 @@ Batch construction happens during the resolve phase.
    - Any node that reaches indegree 0 joins the next batch.
 3. If a cycle is detected, Wright injects bootstrap passes (e.g. `gcc:bootstrap`) to break the cycle before full builds proceed.
 
-The result is a `ForgeExecutionPlan` whose `batches` field is a `Vec<Vec<String>>` ordered from roots to leaves.
+The result is a `BuildExecutionPlan` whose `batches` field is a `Vec<Vec<String>>` ordered from roots to leaves.
 
 ---
 
@@ -38,25 +38,27 @@ The result is a `ForgeExecutionPlan` whose `batches` field is a `Vec<Vec<String>
 
 ### 1. CAS Pre-check
 
-Before any work begins, Wright computes a **closure fingerprint** for each plan (a SHA256 of the plan's build key plus the fingerprints of its direct build dependencies).  If every output part of a plan already exists in the Content-Addressed Store (`store_dir/`), the plan is marked as a CAS hit and its forge and seal steps are skipped.
+Before any work begins, Wright computes a **closure fingerprint** for each plan (a SHA256 of the plan's build key plus the fingerprints of its direct build dependencies).  If every output part of a plan already exists in the Content-Addressed Store (`store_dir/`), the plan is marked as a CAS hit and its build and seal steps are skipped.
 
-### 2. Parallel Forge
+### 2. Parallel Build
 
 Every non-CAS task in the batch is spawned as an independent `tokio::task`:
 
 ```rust
 for task in batch {
     let handle = tokio::spawn(async move {
-        forger.build(&manifest, &plan_dir, ..., configure_lock, compile_lock)
+        foundry.build(&manifest, &plan_dir, ..., configure_lock, compile_lock)
             .await
     });
 }
 ```
 
-Each task runs its own complete pipeline:
+Each task runs its own complete foundry workflow:
 
 ```
-fetch → verify → extract → prepare → configure → compile → check → staging
+Charge:  fetch → verify → extract
+Forge:   prepare → configure → compile → check → staging
+Mold:    slice
 ```
 
 There is **no batch-level barrier** at any stage.  Task A does not wait for Task B to finish extracting before it enters `configure`.  The only cross-task synchronization is resource throttling:
@@ -69,9 +71,9 @@ There is **no batch-level barrier** at any stage.  Task A does not wait for Task
 
 ### 3. Unified Seal
 
-After **all** forge handles return successfully, Wright seals the batch.  It iterates over the distinct non-bootstrap bases in the batch and calls `package_manifest` for each one.  Bootstrap tasks are skipped because their outputs are intermediate.
+After **all** build handles return successfully, Wright seals the batch.  It iterates over the distinct non-bootstrap bases in the batch and calls `package_manifest` for each one.  Bootstrap tasks are skipped because their outputs are intermediate.
 
-Freshly sealed archives are also stored in CAS so that future runs can skip the forge entirely.
+Freshly sealed archives are also stored in CAS so that future runs can skip the build entirely.
 
 ### 4. Unified Deploy
 
@@ -98,7 +100,7 @@ By sealing and deploying only after every task in the batch has finished compili
 
 ## Failure Model
 
-### Forge Failure
+### Build Failure
 
 If any task in a batch fails, the entire `wright install` aborts immediately:
 

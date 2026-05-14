@@ -80,6 +80,7 @@ pub async fn deploy_parts(
         part_store,
         force,
         nodeps,
+        None,
         session,
     )
     .await
@@ -93,6 +94,7 @@ pub async fn deploy_parts_with_explicit_targets(
     part_store: &LocalPartStore,
     force: bool,
     nodeps: bool,
+    upcoming_outputs: Option<&HashSet<String>>,
     session: SessionContext,
 ) -> Result<()> {
     let candidates = read_install_candidates(parts)?;
@@ -106,7 +108,7 @@ pub async fn deploy_parts_with_explicit_targets(
     }
 
     if !nodeps {
-        warn_about_runtime_dependencies(db, &resolved_map).await?;
+        warn_about_runtime_dependencies(db, &resolved_map, upcoming_outputs).await?;
     }
 
     let sorted_names = crate::transaction::dag::sort_dependencies(&resolved_map)?;
@@ -281,6 +283,7 @@ async fn validate_plan_output_batches(
 async fn warn_about_runtime_dependencies(
     db: &InstalledDb,
     resolved_map: &HashMap<String, crate::part::store::ResolvedPart>,
+    upcoming_outputs: Option<&HashSet<String>>,
 ) -> Result<()> {
     let in_batch: HashSet<String> = resolved_map.values().map(|p| p.name.clone()).collect();
 
@@ -323,6 +326,12 @@ async fn warn_about_runtime_dependencies(
 
             if in_batch.contains(&output_name) {
                 continue;
+            }
+
+            if let Some(upcoming) = upcoming_outputs {
+                if upcoming.contains(&output_name) {
+                    continue;
+                }
             }
 
             if let Some(installed) = db.get_part(&output_name).await? {

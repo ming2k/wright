@@ -23,7 +23,7 @@ pub struct UpgradeArgs {
     #[arg(required = true, value_name = "TARGET")]
     pub targets: Vec<String>,
 
-    /// Force reforge and redeploy even if the plan version matches
+    /// Force rebuild and redeploy even if the plan version matches
     #[arg(long, short = 'f')]
     pub force: bool,
 

@@ -34,7 +34,7 @@ pub async fn execute_check(
             "Finished",
             "check {} in {}: {} clean",
             mode,
-            crate::forge::logging::format_duration(t0.elapsed().as_secs_f64()),
+            crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
             scope,
         );
         return Ok(());

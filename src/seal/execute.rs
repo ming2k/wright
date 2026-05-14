@@ -10,7 +10,7 @@ use crate::plan::manifest::{OutputConfig, PlanManifest};
 pub async fn package_outputs(
     manifest: &PlanManifest,
     config: &GlobalConfig,
-    result: &crate::forge::ForgeResult,
+    result: &crate::foundry::FoundryResult,
     print_parts: bool,
 ) -> Result<()> {
     tokio::fs::create_dir_all(&config.general.parts_dir)
@@ -22,9 +22,9 @@ pub async fn package_outputs(
         Some(OutputConfig::Multi(ref parts)) => {
             for (sub_name, sub_part) in parts {
                 let part_dir = if sub_part.include.is_none() {
-                    &result.output_dir
+                    &result.staging_dir
                 } else {
-                    result.split_part_dirs.get(sub_name).ok_or_else(|| {
+                    result.output_dirs.get(sub_name).ok_or_else(|| {
                         WrightError::ForgeError(format!("missing output dir for '{}'", sub_name))
                     })?
                 };
@@ -54,9 +54,9 @@ pub async fn package_outputs(
         }
         _ => {
             if !manifest.options.skip_fhs_check {
-                fhs::validate(&result.output_dir, &manifest.metadata.name)?;
+                fhs::validate(&result.staging_dir, &manifest.metadata.name)?;
             }
-            let part_path = archive::create_part(&result.output_dir, manifest, &output_dir, None)?;
+            let part_path = archive::create_part(&result.staging_dir, manifest, &output_dir, None)?;
             let file_name = part_path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -82,19 +82,19 @@ pub async fn package_outputs(
 /// When `force` is true, or when `outputs/` is missing / stale, the staging
 /// directory is re-sliced according to the current plan manifest before
 /// sealing.  This lets users tweak `[[output]]` patterns and re-seal
-/// without running a full reforge.
+/// without running a full rebuild.
 pub async fn package_manifest(
     manifest: &PlanManifest,
     config: &GlobalConfig,
     print_parts: bool,
     force: bool,
 ) -> Result<()> {
-    let forger = crate::forge::Forger::new(config.clone());
-    let build_root = forger.build_root(manifest)?;
-    let output_dir = build_root.join("outputs").join("default");
+    let foundry = crate::foundry::Foundry::new(config.clone());
+    let build_root = foundry.build_root(manifest)?;
+    let default_output_dir = build_root.join("outputs").join("default");
 
     let need_slice = force
-        || !output_dir.exists()
+        || !default_output_dir.exists()
         || manifest.outputs.as_ref().is_some_and(|cfg| match cfg {
             OutputConfig::Multi(parts) => parts.iter().any(|(sub_name, sub_part)| {
                 sub_part.include.is_some() && !build_root.join("outputs").join(sub_name).exists()
@@ -102,22 +102,28 @@ pub async fn package_manifest(
         });
 
     let result = if need_slice {
-        forger.slice_outputs(manifest, &build_root).await?
+        let mold_result = crate::foundry::mold::Mold::slice(manifest, &build_root).await?;
+        crate::foundry::FoundryResult {
+            staging_dir: build_root.join("staging"),
+            build_root: build_root.clone(),
+            logs_dir: build_root.join("logs"),
+            output_dirs: mold_result.split_dirs,
+        }
     } else {
-        let mut split_part_dirs = std::collections::HashMap::new();
+        let mut output_dirs = std::collections::HashMap::new();
         if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
             for (sub_name, sub_part) in parts {
                 if sub_part.include.is_none() {
                     continue;
                 }
-                split_part_dirs.insert(sub_name.clone(), build_root.join("outputs").join(sub_name));
+                output_dirs.insert(sub_name.clone(), build_root.join("outputs").join(sub_name));
             }
         }
-        crate::forge::ForgeResult {
-            output_dir,
-            work_dir: build_root.clone(),
+        crate::foundry::FoundryResult {
+            staging_dir: build_root.join("staging"),
+            build_root: build_root.clone(),
             logs_dir: build_root.join("logs"),
-            split_part_dirs,
+            output_dirs,
         }
     };
 

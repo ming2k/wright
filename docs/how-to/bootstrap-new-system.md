@@ -146,7 +146,7 @@ Regardless of the strategy, `wright launch` runs the same sequence:
 5. Writes `/etc/wright/wright.toml` inside the target, pointing all paths at
    target-local directories.
 6. Pre-registers `[[provide]]` entries from folios in the target database.
-7. Drives the full `resolve → forge → seal → deploy` pipeline wave by wave.
+7. Drives the full `resolve → build → seal → deploy` pipeline wave by wave.
 8. Applies `[config]` (hostname, timezone, locale, runit services).
 
 After launch, the target has a fully populated `wright.db`.  Running
@@ -175,7 +175,7 @@ wright launch --root /mnt/new --folio ./folios/core.toml
 
 - Plans already deployed and matching their source are **skipped**.
 - Missing plans are **built and installed**.
-- Changed plans are **rebuilt** (forge → seal → deploy).
+- Changed plans are **rebuilt** (build → seal → deploy).
 - Plan files in the target are **re-synced** if they differ from the host.
 - Stale files in the target that no longer exist on the host are **removed**.
 
@@ -185,7 +185,7 @@ checkpointing means individual plans resume from their last completed stage.
 
 ## Forcing a Rebuild
 
-To force every plan to reforge and redeploy, even if already present:
+To force every plan to rebuild and redeploy, even if already present:
 
 ```bash
 wright launch --root /mnt/new --folio ./folios/core.toml --force

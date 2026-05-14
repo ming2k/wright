@@ -172,7 +172,7 @@ async fn launch_from_folio(
 
     build_and_apply(
         InstallRequest {
-            forge_opts: None,
+            build_opts: None,
             targets: manifest.folio.plans.clone(),
             dep_domain: DepDomain::empty(),
             match_policies: Vec::new(),
@@ -283,7 +283,7 @@ async fn launch_from_plans(
 
     build_and_apply(
         InstallRequest {
-            forge_opts: None,
+            build_opts: None,
             targets,
             dep_domain: DepDomain::empty(),
             match_policies: Vec::new(),

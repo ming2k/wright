@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
 use wright::database::SessionContext;
-use wright::forge::Forger;
+use wright::foundry::{BuildOptions, Foundry};
 use wright::part::archive;
 use wright::plan::manifest::PlanManifest;
 use wright::transaction;
@@ -40,31 +40,20 @@ script = "mkdir -p ${{STAGING_DIR}}/usr/bin && echo -n '{}' > ${{STAGING_DIR}}/u
     let build_tmp = tempfile::tempdir().unwrap();
     config.build.forge_dir = build_tmp.path().to_path_buf();
 
-    let forger = Forger::new(config);
-    let result = forger
+    let foundry = Foundry::new(config);
+    let result = foundry
         .build(
             &manifest,
-            &plan_dir,
+            plan_dir.as_ref(),
             Path::new("/"),
-            &[] as &[String],
-            &[],
-            None,
-            false,
-            false,
-            false,
-            false,
-            &HashMap::new(),
-            false,
-            None,
-            None,
-            None,
+            BuildOptions::default(),
         )
         .await
         .unwrap();
 
     let output_dir = tempfile::tempdir().unwrap();
     let archive =
-        archive::create_part(&result.output_dir, &manifest, output_dir.path(), None).unwrap();
+        archive::create_part(&result.staging_dir, &manifest, output_dir.path(), None).unwrap();
 
     let persistent = std::env::temp_dir().join(format!(
         "test-diversion-{}-{}.wright.tar.zst",

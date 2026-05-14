@@ -51,7 +51,7 @@ The `origin` field on an installed part records how it entered the system.
 
 Origins follow a promotion hierarchy: `dependency < build < manual`. Wright
 automatically promotes an origin when you explicitly install a part that was
-previously pulled in at a lower tier. `external` is managed exclusively via
+previously pulled in at a lower tier.  `external` is managed exclusively via
 `wright provide` / `wright remove`.
 
 ## Execution Metaphor
@@ -63,14 +63,15 @@ for a full discussion.
 
 | Abstract Tier | Term | Contains | Metaphor |
 |---------------|------|----------|----------|
-| Macro | **Delivery** | resolve → forge → seal → deploy | The grand journey of an artifact from source code to a live, installed part. |
-| Micro | **Pipeline** | fetch → configure → compile | An automated assembly line that transforms source into build output. |
+| Macro | **Delivery** | resolve → build → seal → deploy | The grand journey of an artifact from source code to a live, installed part. |
+| Micro | **Foundry** | charge → forge → mold | The workshop inside the build step where raw materials are transformed into shaped artifacts. |
 | Atomic | **Stage** | e.g. `compile` | A single workstation on that line — one script, one purpose. |
 
 - A **Delivery** is the complete lifecycle of a plan.  A plan is first **resolved**
   (targets discovered from the plan index, converted to canonical `plan.toml` paths),
-  then **forged**
-  (sources fetched, pipeline stages executed, outputs sliced), then **sealed**
+  then **built**
+  (sources fetched by Charge, forged by Forge, and cast into outputs by Mold),
+  then **sealed**
   (FHS-validated, ELF-linted, packed into a `.wright.tar.zst` archive), and
   finally **deployed** (extracted onto the target root, recorded in `wright.db`).
   Deployments use a temporary **WAL** (Write-Ahead Log) for crash recovery and a
@@ -78,16 +79,28 @@ for a full discussion.
   Commands like `wright install` orchestrate many deliveries in dependency-safe
   waves.
 
-- A **Pipeline** is the ordered sequence of stages that constitute the forge
-  step of a delivery.  The default pipeline runs `fetch`, `verify`, `extract`,
-  `prepare`, `configure`, `compile`, `check`, and `staging`.  Plans may declare
-  a custom pipeline order via `pipeline_order` or per-MVP-phase ordering.
+- A **Foundry** is the workshop where the build step of a delivery happens.
+  It orchestrates three subsystems, each with its own stages:
+
+  - **Charge** — source preparation stages: procuring raw materials (`fetch`),
+    assaying purity (`verify`), and breaking them down (`extract`).
+  - **Forge** — build execution stages: the core transformative process where
+    source is heated, hammered, and shaped (`prepare`, `configure`, `compile`,
+    `check`, `staging`).  The forge engine uses OverlayFS layers and hash-chain
+    checkpoints for incremental builds.
+  - **Mold** — output slicing stage: pouring the forged artifact into molds to
+    produce distinct, named **outputs** based on the plan's `[[output]]` rules.
+    Mold is the **sole** owner of output division; Seal only consumes the result.
+
+  Plans may declare a custom stage order via `pipeline_order` or
+  per-MVP-phase ordering.
 
 - A **Stage** is the smallest unit of work — a single script fragment declared
-  in `plan.toml` under `[pipeline.<name>]`.  Each stage runs in an optional
-  sandbox with pre- and post-hooks (`pre_<stage>`, `post_<stage>`).  Stages
-  support checkpoint-based resume: a completed stage is not re-run on retry
-  unless `--force-stage` is used.
+  in `plan.toml` under `[pipeline.<name>]`, or a built-in operation like
+  `fetch`, `verify`, `extract`, or `slice`.  Each forge stage runs in an
+  optional sandbox with pre- and post-hooks (`pre_<stage>`, `post_<stage>`).
+  Stages support checkpoint-based resume: a completed stage is not re-run on
+  retry unless `--force-stage` is used.
 
 ## Build Terms
 
@@ -95,7 +108,7 @@ for a full discussion.
 |------|------------|
 | **MVP build** | A reduced first-pass **pipeline** run that excludes certain dependencies to break a cycle. Defined by `mvp.toml` alongside `plan.toml`. |
 | **Full build** | The second pass after an MVP build; runs with all dependencies restored. |
-| **Isolation** | A sandboxed environment for running pipeline stages. Levels: `none`, `relaxed`, `strict`. |
+| **Isolation** | A sandboxed environment for running forge stages. Levels: `none`, `relaxed`, `strict`. |
 | **Sysroot** | A read-only copy of the host's `/usr`, `/bin`, and `/lib` trees used as the root for `strict`-isolation builds. |
 
 ## Writing Guidance
@@ -104,3 +117,6 @@ for a full discussion.
 - Say **part** for built archives, not "package" or "binary".
 - Say **system** for the live machine being modified, not "host" or "target".
 - Say **output** when referring to a specific named sub-part from a multi-output plan.
+- Say **build** for the delivery step (the macro operation), **foundry** for the
+  workshop that executes it, and **forge** for the build-execution subsystem
+  inside the foundry.
