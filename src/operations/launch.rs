@@ -147,7 +147,7 @@ async fn launch_from_folio(
         })?;
     }
     if let Some(folio_path) = request.folio.as_ref() {
-        sync_folios_to_target(&[folio_path.clone()], &target_folios_dir).map_err(|e| {
+        sync_folios_to_target(std::slice::from_ref(folio_path), &target_folios_dir).map_err(|e| {
             WrightError::ForgeError(format!("sync folio manifest into target root: {}", e))
         })?;
     }
