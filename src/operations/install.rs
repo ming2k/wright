@@ -167,6 +167,16 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         .await
         .map_err(|e| WrightError::ForgeError(format!("resolve_build_set: {}", e)))?;
 
+    if build_set.is_empty() {
+        if !quiet {
+            println!(
+                "{} already installed and up to date (use --force to reinstall)",
+                targets.join(", ")
+            );
+        }
+        return Ok(());
+    }
+
     let plan_dirs = resolve::plan_search_dirs(config);
     let explicit_plan_names = resolve_explicit_plan_names(&plan_dirs, &targets)
         .map_err(|e| WrightError::ForgeError(format!("explicit plan names: {}", e)))?;
