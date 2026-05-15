@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.2.3] - 2026-05-16
+
+### Fixed
+- **OverlayFS lowerdir stacking order** — `source_dir` was pushed first into the `lowerdir` list, which in overlayfs syntax (leftmost = topmost) made it the highest lower layer. Stage-layer whiteouts (e.g. `rm -rf ell` in a prepare script) were therefore masked by the pristine source tree. `source_dir` is now appended last so it sits at the deepest position, matching the documented intent and the hard-link fallback path in `populate_target`.
+
 ## [5.2.2] - 2026-05-16
 
 ### Fixed

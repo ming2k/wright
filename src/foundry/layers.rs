@@ -246,16 +246,17 @@ impl LayerManager {
         let ovl_work = self.work_dir_for_stage(current_stage);
         self.reset_overlay_work_dir(&ovl_work)?;
 
-        // Build lowerdir stack: source_dir is deepest, then completed stages in reverse.
+        // Build lowerdir stack: completed stages are upper lowerdirs (leftmost
+        // = topmost), source_dir is always the deepest (rightmost).
         let mut lower_parts: Vec<String> = Vec::new();
-        if source_dir.exists() {
-            lower_parts.push(source_dir.display().to_string());
-        }
         for prev_stage in completed_stages.iter().rev() {
             let prev_dir = self.layer_dir(prev_stage);
             if prev_dir.exists() {
                 lower_parts.push(prev_dir.display().to_string());
             }
+        }
+        if source_dir.exists() {
+            lower_parts.push(source_dir.display().to_string());
         }
 
         let opts = if lower_parts.is_empty() {
