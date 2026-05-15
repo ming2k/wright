@@ -14,10 +14,6 @@ pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
         dirs.push(extra_dir.clone());
     }
 
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd);
-    }
-
     dirs
 }
 

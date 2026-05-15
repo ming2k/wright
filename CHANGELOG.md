@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.2.2] - 2026-05-16
+
+### Fixed
+- **Removed implicit recursive scan of current working directory** — `plan_search_dirs` previously appended `std::env::current_dir()` to the plan search path, causing `wright install` to recursively traverse the entire CWD (e.g. `$HOME`) and emit spurious warnings for unrelated `plan.toml` files (such as those inside `gemini-cli` bundles). Plans are now discovered only in `plans_dir` and `extra_plans_dirs` as configured. Local plans can still be referenced by explicit path (`./myplan`) or by adding `.` to `extra_plans_dirs`.
+
 ## [5.2.1] - 2026-05-15
 
 ### Fixed

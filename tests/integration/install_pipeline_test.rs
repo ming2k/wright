@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use wright::cli::common::{Context, DomainArg, MatchPolicyArg};
 use wright::cli::install::{self, InstallArgs};
@@ -67,11 +66,7 @@ runtime_deps = ["wayland"]
     let mut config = GlobalConfig::default();
     config.general.parts_dir = parts;
     config.general.db_path = db_path.clone();
-    config.general.plans_dir = PathBuf::from("/nonexistent"); // Don't use default
-
-    // Change CWD to the plans directory
-    let old_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&plans).unwrap();
+    config.general.plans_dir = plans;
 
     let cmd = InstallArgs {
         targets: vec!["wayland-utils".to_string()],
@@ -92,8 +87,6 @@ runtime_deps = ["wayland"]
         quiet: false,
     };
     let result = install::run(cmd, &ctx).await;
-
-    std::env::set_current_dir(old_cwd).unwrap();
 
     assert!(result.is_ok(), "Install failed: {:?}", result.err());
 }
