@@ -480,6 +480,20 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             bases_in_batch.push(base);
         }
 
+        let seal_word = if bases_in_batch.len() == 1 { "package" } else { "packages" };
+        let seal_target = if total_batches == 1 {
+            format!("{} {}", bases_in_batch.len(), seal_word)
+        } else {
+            format!(
+                "batch {}/{} ({} {})",
+                batch_idx + 1,
+                total_batches,
+                bases_in_batch.len(),
+                seal_word,
+            )
+        };
+        let _seal_span = crate::cli_span!("Sealing", "{}", seal_target);
+
         for base in &bases_in_batch {
             let plan_path = plan
                 .plan_path_for_task(base)
@@ -488,7 +502,6 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             let manifest = PlanManifest::from_file(plan_path)
                 .map_err(|e| WrightError::ForgeError(format!("parse plan {}: {}", base, e)))?;
 
-            let _seal_span = crate::cli_span!("Sealing", "{}", base);
             crate::seal::package_manifest(&manifest, config, false, force)
                 .await
                 .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", base, e)))?;
