@@ -10,34 +10,39 @@ pub const LAUNCH_AFTER_HELP: &str = "\
 Examples:
   wright launch --root /mnt/new --folio ./folios/core.toml
   wright launch --root /mnt/new --plans ./plans bash coreutils glibc
-  wright launch --root /mnt/new --plans ./plans @core
+  wright launch --root /mnt/new --plans ./plans --folios ./folios @core
   wright launch --root /mnt/new @base @maintenance @desktop
 
-Launch fills a target root from a folio manifest or from explicit plan names.
-When --folio is given, the manifest names the plans to resolve, forge, and
-deploy.  When positional arguments are given, they are plan names or folio
-names prefixed with '@'.  If --plans is omitted, the default plans directory
-from wright.toml is used.  Re-running launch on the same root converges drift
-rather than erroring.";
+Launch fills a target root from a folio manifest or from explicit plan
+names.  --folio takes a single manifest path.  Positional arguments are
+plan names, or folio names prefixed with '@' (resolved under --folios or
+the configured folios_dir).  --plans and --folios are peer overrides.
+Re-running on the same root converges drift rather than erroring.";
 
 #[derive(Args, Debug)]
 #[command(after_help = LAUNCH_AFTER_HELP)]
 pub struct LaunchArgs {
-    /// Path to a `folio.toml` file. Mutually exclusive with --plans.
-    #[arg(long, value_name = "FILE", conflicts_with = "plans")]
+    /// Path to a single folio manifest. Mutually exclusive with positional targets.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["plans", "folios", "plan_targets"],
+    )]
     pub folio: Option<PathBuf>,
 
-    /// Source path: take plans from this directory and apply them into --root.
-    /// Positional arguments are plan names, or folio names prefixed with '@'.
-    #[arg(long, value_name = "DIR", conflicts_with = "folio")]
+    /// Override the plans search directory for this launch.
+    #[arg(long, value_name = "DIR")]
     pub plans: Option<PathBuf>,
 
-    /// Plan or folio names to launch when using --plans.
-    /// Names starting with '@' are resolved as folios under the plans directory.
+    /// Override the folios search directory for this launch.
+    #[arg(long, value_name = "DIR")]
+    pub folios: Option<PathBuf>,
+
+    /// Plan names, or folio names prefixed with '@'.
     #[arg(value_name = "TARGET")]
     pub plan_targets: Vec<String>,
 
-    /// Print deploy order and config actions without writing anything.
+    /// Print deploy order and config actions without touching the target.
     #[arg(long, short = 'n')]
     pub dry_run: bool,
 
@@ -45,22 +50,30 @@ pub struct LaunchArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
-    /// Alternate root directory for file operations
+    /// Alternate root directory for file operations.
     #[arg(long)]
     pub root: Option<PathBuf>,
 }
 
 #[cfg(with_handlers)]
 pub async fn run(args: LaunchArgs, ctx: &Context<'_>) -> Result<()> {
-    let request = crate::operations::launch::LaunchRequest {
-        folio: args.folio,
-        plans: args.plans,
-        plan_targets: args.plan_targets,
-        dry_run: args.dry_run,
-        force: args.force,
+    use crate::operations::launch::{LaunchRequest, LaunchSource, execute_launch};
+
+    let source = match args.folio {
+        Some(path) => LaunchSource::Folio(path),
+        None => LaunchSource::Targets {
+            plans_dir: args.plans,
+            folios_dir: args.folios,
+            targets: args.plan_targets,
+        },
     };
-    crate::operations::launch::execute_launch(
-        request,
+
+    execute_launch(
+        LaunchRequest {
+            source,
+            dry_run: args.dry_run,
+            force: args.force,
+        },
         ctx.config,
         &ctx.db_path,
         &ctx.root_dir,

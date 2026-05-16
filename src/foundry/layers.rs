@@ -6,6 +6,20 @@ use tracing::{debug, warn};
 
 use crate::error::{Result, WrightError};
 
+/// Best-effort detach of any overlay mounts under the given path.
+///
+/// This is a lighter-weight alternative to `force_clean_dir` for use on
+/// startup: it unmounts stale overlays without deleting any files.
+pub async fn detach_stale_mounts(path: &Path) -> Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        detach_mounts_under(&path);
+    })
+    .await
+    .map_err(|e| WrightError::ForgeError(format!("detach stale mounts join: {e}")))?;
+    Ok(())
+}
+
 /// Best-effort recursive removal that handles stale overlay mounts.
 pub async fn force_clean_dir(path: &Path) -> Result<()> {
     let path = path.to_path_buf();
@@ -43,7 +57,7 @@ fn force_clean_dir_blocking(path: &Path) -> Result<()> {
     )))
 }
 
-fn detach_mounts_under(path: &Path) -> usize {
+pub(crate) fn detach_mounts_under(path: &Path) -> usize {
     let mounts = match std::fs::read_to_string("/proc/self/mounts") {
         Ok(s) => s,
         Err(_) => return 0,

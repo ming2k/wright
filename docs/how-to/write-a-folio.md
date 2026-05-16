@@ -1,209 +1,158 @@
 # How to Write a Folio
 
-A **folio** is a declarative manifest that names the plans forming a coherent
-system.  `wright launch` reads a folio, resolves and builds all named plans,
-and deploys them into a target root.  Unlike the old pack format, a folio does
-not reference pre-built archives — it lists only plan names.
+A **folio** is a declarative manifest naming the plans that form a
+coherent system.  `wright launch` reads a folio, resolves and builds every
+plan it names, and deploys the outputs into a target root.
+
+For the full field list see [the reference](../reference/folio-manifest.md).
 
 ## Where Folios Live
 
-Folios sit inside a plans directory, either as a flat file under a `folios/`
-subdirectory or nested inside a plan directory:
+Folios are bare TOML files that sit in their own directory, a **peer** of
+the plans directory:
 
 ```
-plans/
-├── folios/             ← named manifests
-│   ├── core.toml
-│   ├── desktop.toml
-│   └── container.toml
-├── glibc/
-│   └── plan.toml
-├── bash/
-│   ├── plan.toml
-│   └── folio.toml      ← per-plan folio
-└── nginx/
-    └── plan.toml
+/var/lib/wright/
+├── plans/                    # plan recipes
+│   ├── glibc/plan.toml
+│   ├── bash/plan.toml
+│   └── nginx/plan.toml
+└── folios/                   # system recipes
+    ├── core.toml
+    ├── desktop.toml
+    └── container.toml
 ```
 
-The file is always named after the folio: `core.toml`, `desktop.toml`, etc.
+Plans recipes describe how to build a single part; folios describe how to
+combine many parts into a system.  They are separate concerns and live in
+separate trees.
+
 When you reference a folio with `@core`, Wright searches:
 
-1. `<plans_dir>/folios/core.toml`
-2. `<plans_dir>/core/folio.toml`
+1. `wright launch --folios <DIR>` (if given) — `<DIR>/core.toml`
+2. `general.folios_dir` (defaults to `/var/lib/wright/folios`) — `<dir>/core.toml`
 
-Flat files in `folios/` are the recommended convention.  Per-plan `folio.toml`
-files exist for backwards compatibility with single-plan launches.
+The first match wins.  Folios are never searched under `plans_dir`.
 
-## The Minimal Folio
+## Minimal Folio
 
-A folio manifest requires only two things: a name and a version.  Everything
-else is optional.
+A folio requires only a name and a version.  Everything else is optional.
 
 ```toml
 [folio]
-name = "core"
+name    = "core"
 version = "1"
-
-plans = ["glibc", "bash", "coreutils"]
+plans   = ["glibc", "bash", "coreutils"]
 ```
 
-The `plans` field lists the plan names Wright will resolve and build.  Each
-name must correspond to a plan directory under `plans_dir`.
+Every entry in `plans` must correspond to a plan directory under a plans
+search dir.
 
-## Naming and Metadata
+## External Assumptions
 
-The `[folio]` table defines the folio's identity.  The name is used for
-discovery and reference; the version is a free-form string you control.
-
-```toml
-[folio]
-name = "container-base"
-version = "2026.05"
-description = "Minimal container image"
-arch = "x86_64"
-
-plans = [
-    "glibc",
-    "bash",
-    "coreutils",
-    "sed",
-    "gawk",
-    "grep",
-    "tar",
-    "gzip",
-    "openssl",
-]
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | yes | Folio identifier. Used in `@name` references. |
-| `version` | yes | Free-form version string. |
-| `description` | no | Human-readable summary. |
-| `arch` | no | Target architecture hint (informational). |
-| `plans` | no | Plan names to forge and deploy. May be omitted if an `invokes` folio only adds assumptions or config. |
-
-`version` is not compared or resolved — it is just a label.  Bump it when the
-folio's plan list or configuration changes.
-
-## Declaring External Assumptions
-
-Use `[[provide]]` to mark parts the target system provides externally.  Wright
-records these assumptions in the target database before building any plans, so
-dependency checks pass even though Wright did not deploy those parts.
+Use `[[provide]]` to mark parts the target system already provides.
+Wright records each entry in the target database before building any
+plans, so dependency checks succeed without Wright attempting to deploy
+those parts.
 
 ```toml
 [[provide]]
-name = "linux"
+name    = "linux"
 version = "6.12.0"
 
 [[provide]]
-name = "busybox"
+name    = "busybox"
 version = "1.36"
 ```
 
-Common use cases:
+Typical use cases:
 
-- The **kernel** on a VPS or bare-metal install — Wright cannot deploy it.
+- The **kernel** on a VPS or bare-metal install.
 - A **host-provided toolchain** during LFS-style bootstrapping.
 - A **pre-installed bootloader** (`grub`, `systemd-boot`).
 
-Each `[[provide]]` entry requires both `name` and `version`.
+## Hooks
 
-## System Configuration
-
-The optional `[config]` section applies declarative host settings after all
-plans are deployed.  Wright writes or symlinks the corresponding files inside
-the target root.
+Use `[[hook]]` to run shell commands after every plan has been built and
+deployed.  Hooks run on the host with both `$WRIGHT_ROOT` and `$ROOT`
+set to the target root path.  They are **not** sandboxed.
 
 ```toml
-[config]
-hostname = "wright"
-timezone = "UTC"
-locale = "en_US.UTF-8"
-services = ["sshd", "ntpd"]
+[[hook]]
+stage  = "post-launch"
+script = """
+echo "wright" > $ROOT/etc/hostname
+ln -sf ../usr/share/zoneinfo/UTC $ROOT/etc/localtime
+echo "LANG=en_US.UTF-8" > $ROOT/etc/locale.conf
+for svc in sshd ntpd; do
+    ln -sf /etc/sv/$svc $ROOT/var/service/$svc
+done
+"""
 ```
 
-| Field | Target file | Effect |
-|-------|-------------|--------|
-| `hostname` | `/etc/hostname` | Written directly |
-| `timezone` | `/etc/localtime` | Symlinked to `/usr/share/zoneinfo/<value>` |
-| `locale` | `/etc/locale.conf` | Written as `LANG=<value>` |
-| `services` | `/var/service/<name>` | Symlinked to `/etc/sv/<name>` (runit) |
-
-All fields are optional.  Omit `[config]` entirely if you do not need
-declarative host settings.
+Only `stage = "post-launch"` is recognised; any other value is a parse
+error.  This keeps Wright init-system-agnostic — whether your target uses
+runit, systemd, or OpenRC, the folio author controls the post-launch
+behaviour.
 
 ## Testing a Folio
 
-Test a folio against a disposable target root before applying it to the live
-system:
+Test against a disposable target root before applying to the live system:
 
 ```bash
-wright launch --root /mnt/test --plans ./plans @core
+wright launch --root /mnt/test --folio ./folios/core.toml
+wright launch --root /mnt/test --plans ./plans --folios ./folios @core
+wright launch --root /mnt/test @core vim curl
 ```
 
-`@core` tells Wright to find and resolve the `core` folio.  You can pass
-multiple folio references and mix them with plain plan names:
-
-```bash
-wright launch --root /mnt/test --plans ./plans @base @maintenance @desktop
-wright launch --root /mnt/test --plans ./plans @core vim curl
-```
-
-The `--dry-run` flag prints the deploy order and configuration actions without
-writing any files:
+`--dry-run` prints the deploy plan without touching the target root or
+the database:
 
 ```bash
 wright launch --root /mnt/test --plans ./plans @core --dry-run
 ```
 
-## Multiple Folios for System Profiles
+## Composing Folios
 
-A single plans directory typically holds several folios, each describing a
+A folios directory typically holds several manifests, each describing a
 different system profile:
 
 ```
-plans/folios/
-├── base.toml       # glibc, bash, coreutils — absolute minimum
-├── core.toml       # base + openssl, curl, vim — usable shell
-├── maintenance.toml # make, gcc, binutils — build toolchain
-├── desktop.toml    # wayland, pipewire, firefox — graphical
-└── container.toml  # core minus anything container-inappropriate
+folios/
+├── base.toml         # glibc, bash, coreutils — absolute minimum
+├── core.toml         # base + openssl, curl, vim — usable shell
+├── maintenance.toml  # make, gcc, binutils — build toolchain
+├── desktop.toml      # wayland, pipewire, firefox — graphical
+└── container.toml    # core minus container-inappropriate parts
 ```
 
-Folios can reference one another.  To pull in the `base` folio's plans from
-`core`, include `base`'s plans directly or use a meta-folio that references
-both at launch time:
+Multiple folios can be layered into one target root in a single command:
 
 ```bash
-wright launch --root /mnt/new --plans ./plans @base @core
+wright launch --root /mnt/new --plans ./plans --folios ./folios @base @core @desktop
 ```
 
-This launches both `base` and `core` into the same target root in a single
-pass.
+Their `plans`, `[[provide]]`, and `[[hook]]` blocks are merged in order.
 
 ## Self-Contained Targets
 
-`wright launch` copies the folio manifest and all referenced plan files into
-the target root under `/var/lib/wright/`.  This makes the target
-self-maintaining: you can `wright install`, `wright upgrade`, or re-run
-`wright launch` directly inside the target (or chrooted into it) without the
-host's plans directory.
+`wright launch` mirrors every plan source dir and every referenced folio
+file into the target under `/var/lib/wright/`, and writes a fresh
+`/etc/wright/wright.toml` that points at the target-local paths.  The
+deployed system can therefore run `wright install`, `wright upgrade`, or
+`wright launch` against itself with no reference to the host tree.
 
-When you re-run `launch` against the same root, Wright compares source files
-to the copies in the target (by size and mtime) and only copies the ones that
-changed.  Re-running `launch` on an already-provisioned root converges drift
-rather than erroring.
+Re-running launch against the same root converges drift: unchanged plans
+are skipped, changed plans are rebuilt, missing plans are added, and the
+synced sources are refreshed.
 
-## Example: Full Desktop Folio
+## Full Desktop Example
 
 ```toml
 [folio]
-name = "desktop"
-version = "1"
+name        = "desktop"
+version     = "1"
 description = "Wayland-based desktop system"
-arch = "x86_64"
 
 plans = [
     # Core
@@ -222,12 +171,17 @@ plans = [
 ]
 
 [[provide]]
-name = "linux"
+name    = "linux"
 version = "6.12.0"
 
-[config]
-hostname = "wright-desktop"
-timezone = "Asia/Shanghai"
-locale = "en_US.UTF-8"
-services = ["sshd", "dbus", "elogind"]
+[[hook]]
+stage  = "post-launch"
+script = """
+echo "wright-desktop" > $ROOT/etc/hostname
+ln -sf ../usr/share/zoneinfo/Asia/Shanghai $ROOT/etc/localtime
+echo "LANG=en_US.UTF-8" > $ROOT/etc/locale.conf
+for svc in sshd dbus elogind; do
+    ln -sf /etc/sv/$svc $ROOT/var/service/$svc
+done
+"""
 ```

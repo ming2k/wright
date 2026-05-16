@@ -129,17 +129,17 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         ));
     }
 
-    let folios_dirs: Vec<PathBuf> = vec![config.general.folios_dir.clone()];
-    let (targets, folio_assumes, _folio_config) =
-        folio::expand_folio_references(targets, &folios_dirs)?;
+    let folio_dirs = [config.general.folios_dir.clone()];
+    let expansion = folio::expand(&targets, &folio_dirs)?;
 
-    if targets.is_empty() {
+    if expansion.plans.is_empty() {
         return Err(WrightError::ForgeError(
             "no plans to forge after expanding folios".into(),
         ));
     }
+    let targets = expansion.plans;
 
-    register_folio_assumptions(db_path, &folio_assumes).await?;
+    register_folio_assumptions(db_path, &expansion.provides).await?;
 
     let resolve_opts = ResolveOptions {
         deps: dep_domain,
@@ -265,6 +265,31 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     // ── Crash recovery ──────────────────────────────────────────────
     crate::delivery::recover_if_needed(&db).await?;
 
+    // ── Signal handling ─────────────────────────────────────────────
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                ctrl_c.await.ok();
+                let _ = cancel_tx.send(true);
+                return;
+            }
+        };
+        #[cfg(unix)]
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = sigterm.recv() => {},
+        }
+        #[cfg(not(unix))]
+        {
+            ctrl_c.await.ok();
+        }
+        let _ = cancel_tx.send(true);
+    });
+
     // ── Begin delivery transaction ──────────────────────────────────
     let command_str = format!("install {}", targets.join(" "));
     let tx_id = crate::delivery::begin_delivery(&db, &command_str).await?;
@@ -302,6 +327,12 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     }
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
+        if *cancel_rx.borrow() {
+            let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
+            let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+            return Err(WrightError::ForgeError("cancelled by user".into()));
+        }
+
         if !quiet && total_batches > 1 {
             let bases: Vec<&str> = batch
                 .iter()

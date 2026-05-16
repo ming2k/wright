@@ -334,9 +334,15 @@ though no Wright process holds it. The next build attempt tries to
 `remove_dir_all` the build root, walks into the still-mounted `target/`
 subdirectory, and receives `EBUSY` because you cannot delete a mount point.
 
-**Defence**
+**Defence (proactive + reactive)**
 
-`force_clean_dir` (`src/forge/layers.rs`) wraps every forge-directory cleanup:
+`Foundry::build()` now *proactively* scans the build root on startup and
+lazy-unmounts any stale overlays left by a prior crashed or SIGKILL'd run.
+This prevents `EBUSY` from reaching the user in the common case.
+
+When an explicit clean is requested (or when the proactive scan misses a
+mount), `force_clean_dir` (`src/foundry/layers.rs`) provides reactive
+recovery:
 
 1. Attempt `remove_dir_all`. Return on success or `NotFound`.
 2. On `EBUSY`, parse `/proc/self/mounts` to find any mount whose target is

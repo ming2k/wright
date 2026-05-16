@@ -120,7 +120,25 @@ pub async fn execute_build(
 
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                ctrl_c.await.ok();
+                let _ = cancel_tx.send(true);
+                return;
+            }
+        };
+        #[cfg(unix)]
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = sigterm.recv() => {},
+        }
+        #[cfg(not(unix))]
+        {
+            ctrl_c.await.ok();
+        }
         let _ = cancel_tx.send(true);
     });
 

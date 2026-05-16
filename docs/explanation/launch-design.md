@@ -64,39 +64,57 @@ wright launch --root /mnt/new @core               # uses default plans_dir
 
 1. **Refuse `/`** — if the target root is `/`, abort immediately.
 
-2. **Skeleton** — create the target directory layout:
-   `var/lib/wright/{parts,staging,lock,plans,folios}`, `var/log/wright`,
-   `etc/wright`.
+2. **Resolve** — load the folio (or expand `@folio` references against the
+   plan search dirs), producing the merged plan list, the `[[provide]]`
+   entries, the `[[hook]]` entries, and the set of folio files that need
+   to be mirrored into the target.
 
-3. **Redirect** — override `build_dir` and `parts_dir` to point inside the
-   target root.  This guarantees that build outputs and sealed archives never
-   land on the host filesystem.
+3. **Dry run shortcut** — if `--dry-run` was passed, print the resolved
+   plan list, provides, and hook count, then exit without touching the
+   target root or any database.
 
-4. **Discover** — resolve folio references (`@core`), expand plan names, and
-   collect any `[[provide]]` and `[config]` blocks from the resolved folios.
+4. **Skeleton** — create the target directory layout:
+   `var/lib/wright/{parts,store,staging,lock,plans,folios,sources}`,
+   `var/log/wright`, `var/tmp/wright`, `etc/wright`.
 
-5. **Sync plans and folios** — copy each plan directory and referenced folio
-   manifest into `<root>/var/lib/wright/plans/` and
-   `<root>/var/lib/wright/folios/`.  Only files that differ from the target
-   copy (by size or mtime) are transferred.  Entries in the target that no
-   longer exist on the host are removed — the target stays a faithful mirror.
+5. **Redirect artefact paths** — clone the global config and rewrite
+   `parts_dir`, `store_dir`, `source_dir`, `logs_dir`, and `forge_dir` to
+   point inside the target root.  Plan and folio source dirs stay on the
+   host (their contents are mirrored in the next step).  Build outputs,
+   sealed archives, source downloads, and logs all land in the target.
 
-6. **Write target config** — generate `/etc/wright/wright.toml` inside the
-   target, pointing `plans_dir`, `folios_dir`, `parts_dir`, `source_dir`,
-   `db_path`, and `forge_dir` at target-local paths.
+6. **Mirror plan and folio sources** — copy each plan directory and
+   every referenced folio file into `<root>/var/lib/wright/plans/` and
+   `<root>/var/lib/wright/folios/`.  Files are transferred only when they
+   differ from the target by size or mtime; entries in the target that no
+   longer exist on the host are removed.  The target stays a faithful
+   mirror of the host's plan tree, restricted to the plans the folio
+   asked for.
 
-7. **Pre-register assumptions** — insert each `[[provide]]` entry into the
-   target's fresh `wright.db` so dependency checks pass without Wright
-   attempting to deploy the kernel, host toolchain, or other externals.
+7. **Write target config** — generate `/etc/wright/wright.toml` inside
+   the target, pointing every path at the target-local layout so the
+   deployed system can run `wright install`, `wright upgrade`, or
+   `wright launch` against itself.
 
-8. **Build → Seal → Deploy** — drive the full `resolve → build → seal →
+8. **Pre-register assumptions** — insert each `[[provide]]` entry into
+   the target's fresh `wright.db` so dependency checks pass without
+   Wright attempting to deploy the kernel, host toolchain, or other
+   externals.
+
+9. **Build → Seal → Deploy** — drive the full `resolve → build → seal →
    deploy` pipeline, wave by wave, reusing `wright install`'s engine.
    Each completed wave is installed into the target before the next wave
-   begins, so a plan's dependencies are already on disk when it enters its
-   `configure` stage.
+   begins, so a plan's dependencies are already on disk when it enters
+   its `configure` stage.
 
-9. **Apply folio config** — write hostname, symlink timezone, write locale
-   config, and create runit service symlinks as declared in `[config]`.
+10. **Execute hooks** — run every `[[hook]]` from the folio.  Hooks
+    execute on the host under `sh -c` with both `$WRIGHT_ROOT` and
+    `$ROOT` set to the target root path.  Only `stage = "post-launch"`
+    is recognised; any other stage is a parse error.  Hooks are the
+    extension point for system configuration that cannot be expressed
+    through plan deployment (hostname, locale, service enablement,
+    bootloader installation, …).  Hooks are not sandboxed; they run with
+    the same privileges as `wright`.
 
 ## Convergence
 

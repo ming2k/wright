@@ -2,6 +2,72 @@
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-05-16
+
+### Added
+- **`wright launch` unified pipeline** — folio mode and plans mode now flow
+  through a single `LaunchSource` enum and a single resolve → sync → install →
+  hooks pipeline. Dry-run has zero side effects (no skeleton, no DB writes, no
+  source sync).
+- **All artefact paths redirected into the target root** — `parts_dir`,
+  `store_dir`, `source_dir`, `logs_dir`, and `forge_dir` are all rewritten to
+  target-local paths during launch. The generated `/etc/wright/wright.toml`
+  inside the target matches the paths launch actually used.
+- **`--folios <DIR>` flag** — peer override to `--plans <DIR>` for one-off
+  folio discovery. Folios are now strict peers of plans.
+- **Folio hooks (`[[hook]]`)** — folio manifests support `[[hook]]` tables with
+  `stage` and `script` fields. Hooks run on the host after all plans are
+  deployed, with `$WRIGHT_ROOT` and `$ROOT` set to the target root. Only
+  `stage = "post-launch"` is recognised; other values are parse errors.
+- **Proactive stale overlay mount cleanup** — `Foundry::build()` scans the
+  build root on startup and lazy-unmounts any orphaned overlay mounts left by a
+  prior crash or SIGKILL. Prevents the recurring `Device or resource busy`
+  error when re-running `wright launch` after an interrupted build.
+- **SIGTERM handling** — `wright build` and `wright install` (used by
+  `wright launch`) now catch `SIGTERM` in addition to `Ctrl-C`, roll back the
+  current delivery transaction, and abort at the next batch boundary.
+
+### Changed
+- **Folio schema is strict** — `FolioManifest`, `FolioMeta`, `FolioProvide`,
+  and `Hook` all use `#[serde(deny_unknown_fields)]`. Unknown keys fail at
+  parse time with a precise message.
+- **`Hook.stage` is now a typed enum** (`HookStage::PostLaunch`). Unknown
+  stages are parse errors; the previous warn-and-skip behaviour is gone.
+- **Folio discovery is peer-based** — `folio::expand` and `find` consult
+  only `--folios <DIR>` (if given) and `general.folios_dir`. The
+  `<plans_dir>/folios/` fallback is removed in both `launch` and `install`.
+- **`LaunchRequest` shape** — three parallel optionals (`folio`, `plans`,
+  `plan_targets`) replaced by `source: LaunchSource`.
+- **Folio API** — `folio::expand_folio_references` → `folio::expand`
+  returning an `Expansion` struct. `folio::read_manifest` /
+  `folio::parse_manifest` → `FolioManifest::load` / `FolioManifest::parse`.
+- **`wright.toml.example` rebuilt** to match the real `GlobalConfig`
+  schema. Removed stale `groups_dir`; renamed `build_dir` to `forge_dir`;
+  added `folios_dir`, `store_dir`, `extra_plans_dirs`, network knobs.
+
+### Removed
+- **`[config]` table** — the entire `[config]` table (`hostname`,
+  `timezone`, `locale`, `services`) has been removed from folio manifests.
+  These settings were forcing Wright to act as a configuration-management
+  system, which is outside its core mission as a plan combinator. Folios
+  that used `[config]` must migrate everything to `[[hook]]` declarations:
+  ```toml
+  [[hook]]
+  stage = "post-launch"
+  script = """
+  echo "myhost" > $ROOT/etc/hostname
+  ln -sf ../usr/share/zoneinfo/UTC $ROOT/etc/localtime
+  echo "LANG=en_US.UTF-8" > $ROOT/etc/locale.conf
+  ln -s /etc/sv/sshd $ROOT/var/service/sshd
+  """
+  ```
+- **`FolioMeta.arch`** — informational-only field with no behavioural
+  effect; removed.
+- **`<plans_dir>/folios/` discovery fallback** — folio source no longer
+  lives inside the plans tree. Move folios to `folios_dir` or pass
+  `--folios <DIR>`.
+- **`folio::FOLIO_MANIFEST_NAME` constant** — unused.
+
 ## [5.2.4] - 2026-05-16
 
 ### Added

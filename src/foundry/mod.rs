@@ -214,6 +214,15 @@ impl Foundry {
         }
 
         let build_root = self.build_root(manifest)?;
+
+        // Reap any stale overlay mounts left behind by a prior crash or
+        // forced termination.  This prevents EBUSY when the user later
+        // deletes the build root manually.
+        if tokio::fs::metadata(&build_root).await.is_ok()
+            && let Err(e) = crate::foundry::layers::detach_stale_mounts(&build_root).await
+        {
+            tracing::warn!(event = "build.stale_mount_cleanup_failed", path = %build_root.display(), error = %e, "Failed to detach stale mounts; continuing");
+        }
         let staging_dir = build_root.join("staging");
         let logs_dir = build_root.join("logs");
         let output_dir = staging_dir.clone();

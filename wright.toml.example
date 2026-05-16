@@ -1,21 +1,45 @@
-# wright.toml
+# wright.toml — full schema with default values.
+#
+# Layered loading order (later layers override earlier):
+#   1. /etc/wright/wright.toml          (system-wide)
+#   2. $XDG_CONFIG_HOME/wright/wright.toml (per-user, non-root only)
+#   3. ./wright.toml                     (project-local)
+#   4. WRIGHT_* environment variables
 
 [general]
-arch = "x86_64"
-plans_dir = "/var/lib/wright/plans"
-groups_dir = "/var/lib/wright/groups"
-# extra_plans_dirs = ["/opt/my-plans", "./plans"]
-parts_dir = "/var/lib/wright/parts"
-source_dir = "/var/lib/wright/sources"
-db_path = "/var/lib/wright/wright.db"
-logs_dir = "/var/log/wright"
+arch          = "x86_64"
+plans_dir     = "/var/lib/wright/plans"
+folios_dir    = "/var/lib/wright/folios"
+parts_dir     = "/var/lib/wright/parts"
+store_dir     = "/var/lib/wright/store"
+source_dir    = "/var/lib/wright/sources"
+db_path       = "/var/lib/wright/wright.db"
+logs_dir      = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 
+# Extra plan source dirs consulted after plans_dir.  Each entry's `folios/`
+# subdir is also searched for `@folio` references.
+# extra_plans_dirs = ["/opt/my-plans", "./plans"]
+
 [build]
-build_dir = "/var/tmp/wright/workshop"
+forge_dir         = "/var/tmp/wright/workshop"
 default_isolation = "strict"
-ccache = false
+ccache            = false
+
+# Resource limits (all optional).
+# memory_limit         = 8589934592   # bytes
+# cpu_time_limit       = 3600         # seconds
+# timeout              = 7200         # seconds, wall clock
+# nproc_per_isolation  = 4            # override dynamic share
+# max_cpus             = 16           # hard cap on total CPU usage
+
+# Plans exempted from cascade-rebuild expansion when using `--rdeps`.
+# stable_toolchain = [
+#   "gcc", "glibc", "binutils", "make", "bison", "flex",
+#   "perl", "python", "texinfo", "m4", "sed", "gawk",
+# ]
 
 [network]
-download_timeout = 300
-retry_count = 3
+download_timeout         = 300
+retry_count              = 3
+max_concurrent_downloads = 8

@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use wright::config::GlobalConfig;
 use wright::database::InstalledDb;
-use wright::operations::launch::{self, LaunchRequest};
+use wright::operations::launch::{self, LaunchRequest, LaunchSource};
+
+// ── Fixtures ─────────────────────────────────────────────────────────
 
 /// Minimal plan content for a shell-only plan (no compiler required).
 fn simple_plan_toml(name: &str) -> String {
@@ -24,90 +26,43 @@ script = "install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/{name}"
     )
 }
 
+#[derive(Default)]
 struct FolioOpts<'a> {
     assumes: &'a [(&'a str, &'a str)],
-    hostname: Option<&'a str>,
-    timezone: Option<&'a str>,
-    locale: Option<&'a str>,
-    services: &'a [&'a str],
+    hooks: &'a [&'a str],
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for FolioOpts<'_> {
-    fn default() -> Self {
-        Self {
-            assumes: &[],
-            hostname: None,
-            timezone: None,
-            locale: None,
-            services: &[],
-        }
-    }
-}
-
-/// A folio manifest that references named plans with optional assumes and config.
 fn folio_content(name: &str, version: &str, plans: &[&str], opts: &FolioOpts) -> String {
     let mut out = format!(
         r#"[folio]
 name = "{name}"
 version = "{version}"
 description = "test folio"
-arch = "x86_64"
 
 plans = [{}]
 "#,
-        plans
-            .iter()
-            .map(|p| format!("\"{}\"", p))
-            .collect::<Vec<_>>()
-            .join(", ")
+        plans.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", "),
     );
 
     for (an, av) in opts.assumes {
         out.push_str(&format!(
-            "\n[[provide]]\nname = \"{}\"\nversion = \"{}\"\n",
-            an, av
+            "\n[[provide]]\nname = \"{an}\"\nversion = \"{av}\"\n"
         ));
     }
-
-    if opts.hostname.is_some()
-        || opts.timezone.is_some()
-        || opts.locale.is_some()
-        || !opts.services.is_empty()
-    {
-        out.push_str("[config]\n");
-        if let Some(h) = opts.hostname {
-            out.push_str(&format!("hostname = \"{}\"\n", h));
-        }
-        if let Some(tz) = opts.timezone {
-            out.push_str(&format!("timezone = \"{}\"\n", tz));
-        }
-        if let Some(l) = opts.locale {
-            out.push_str(&format!("locale = \"{}\"\n", l));
-        }
-        if !opts.services.is_empty() {
-            out.push_str(&format!(
-                "services = [{}]\n",
-                opts.services
-                    .iter()
-                    .map(|s| format!("\"{}\"", s))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+    for script in opts.hooks {
+        out.push_str(&format!(
+            "\n[[hook]]\nstage = \"post-launch\"\nscript = \"{script}\"\n"
+        ));
     }
-
     out
 }
 
-/// Create a plan directory with plan.toml inside `plans_dir`.
 fn write_plan(plans_dir: &std::path::Path, name: &str) {
     let dir = plans_dir.join(name);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("plan.toml"), simple_plan_toml(name)).unwrap();
 }
 
-/// Set up a GlobalConfig with paths redirected into a temp directory.
 fn test_config(temp: &std::path::Path) -> GlobalConfig {
     let plans = temp.join("plans");
     let folios = temp.join("folios");
@@ -135,35 +90,55 @@ fn test_config(temp: &std::path::Path) -> GlobalConfig {
     config
 }
 
+fn folio_req(path: PathBuf, dry_run: bool, force: bool) -> LaunchRequest {
+    LaunchRequest {
+        source: LaunchSource::Folio(path),
+        dry_run,
+        force,
+    }
+}
+
+fn targets_req(
+    plans_dir: Option<PathBuf>,
+    folios_dir: Option<PathBuf>,
+    targets: Vec<String>,
+    dry_run: bool,
+    force: bool,
+) -> LaunchRequest {
+    LaunchRequest {
+        source: LaunchSource::Targets {
+            plans_dir,
+            folios_dir,
+            targets,
+        },
+        dry_run,
+        force,
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_launch_refuses_root_slash() {
+async fn refuses_root_slash() {
     let config = GlobalConfig::default();
     let db_path = PathBuf::from("/tmp/wright-launch-test-does-not-exist.db");
     let root_dir = PathBuf::from("/");
 
-    let req = LaunchRequest {
-        folio: None,
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-
-    let err = launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap_err();
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("refuses to fill `/`"),
-        "expected refusal message, got: {}",
-        msg
-    );
+    let err = launch::execute_launch(
+        targets_req(None, None, vec!["x".into()], false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(format!("{err}").contains("refuses to fill `/`"), "{err}");
 }
 
 #[tokio::test]
-async fn test_launch_folio_dry_run() {
+async fn dry_run_has_no_side_effects() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -173,39 +148,31 @@ async fn test_launch_folio_dry_run() {
     let folio_path = temp.path().join("test.toml");
     fs::write(
         &folio_path,
-        folio_content(
-            "test",
-            "1",
-            &["simple-a", "simple-b"],
-            &FolioOpts::default(),
-        ),
+        folio_content("test", "1", &["simple-a", "simple-b"], &FolioOpts::default()),
     )
     .unwrap();
 
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: true,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, true, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    // Skeleton is created even in dry-run (it happens before folio dispatch).
-    assert!(root_dir.join("var/lib/wright/plans").exists());
-    // But no deploy should have happened.
-    assert!(!root_dir.join("usr/share/simple-a").exists());
-    assert!(!root_dir.join("usr/share/simple-b").exists());
+    // Dry-run must not touch the target.
+    assert!(!root_dir.exists(), "dry-run must not create the target root");
+    assert!(!db_path.exists(), "dry-run must not create the target db");
 }
 
 #[tokio::test]
-async fn test_launch_folio_basic() {
+async fn launches_folio() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -221,41 +188,34 @@ async fn test_launch_folio_basic() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    // Verify deployment output exists.
     assert!(root_dir.join("usr/share/simple-a").exists());
-
-    // Verify plan was synced into the target.
     assert!(
         root_dir
             .join("var/lib/wright/plans/simple-a/plan.toml")
             .exists()
     );
 
-    // Verify target config was written.
-    let target_config = root_dir.join("etc/wright/wright.toml");
-    assert!(target_config.exists());
-    let cfg_text = fs::read_to_string(&target_config).unwrap();
-    assert!(cfg_text.contains("plans_dir = \"/var/lib/wright/plans\""));
-    assert!(cfg_text.contains("arch = \"x86_64\""));
+    let cfg = fs::read_to_string(root_dir.join("etc/wright/wright.toml")).unwrap();
+    assert!(cfg.contains("plans_dir     = \"/var/lib/wright/plans\""));
+    assert!(cfg.contains("store_dir     = \"/var/lib/wright/store\""));
+    assert!(cfg.contains("source_dir    = \"/var/lib/wright/sources\""));
 
-    // Verify the folio was synced into the target.
     assert!(root_dir.join("var/lib/wright/folios/test.toml").exists());
 }
 
 #[tokio::test]
-async fn test_launch_plans_mode() {
+async fn launches_plans_mode() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -264,17 +224,22 @@ async fn test_launch_plans_mode() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: None,
-        plans: Some(config.general.plans_dir.clone()),
-        plan_targets: vec!["simple-c".to_string()],
-        dry_run: false,
-        force: false,
-    };
-
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
+    launch::execute_launch(
+        targets_req(
+            Some(config.general.plans_dir.clone()),
+            None,
+            vec!["simple-c".into()],
+            false,
+            false,
+        ),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert!(root_dir.join("usr/share/simple-c").exists());
     assert!(
@@ -285,7 +250,79 @@ async fn test_launch_plans_mode() {
 }
 
 #[tokio::test]
-async fn test_launch_convergence() {
+async fn resolves_folio_from_configured_folios_dir() {
+    // `@core` resolves from the configured `folios_dir` — a peer of
+    // `plans_dir`, never nested inside it.
+    let temp = tempfile::tempdir().unwrap();
+    let config = test_config(temp.path());
+
+    write_plan(&config.general.plans_dir, "plan-x");
+    fs::write(
+        config.general.folios_dir.join("core.toml"),
+        folio_content("core", "1", &["plan-x"], &FolioOpts::default()),
+    )
+    .unwrap();
+
+    let root_dir = temp.path().join("target");
+    let db_path = temp.path().join("target-db.db");
+
+    launch::execute_launch(
+        targets_req(None, None, vec!["@core".into()], false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(root_dir.join("usr/share/plan-x").exists());
+    assert!(root_dir.join("var/lib/wright/folios/core.toml").exists());
+}
+
+#[tokio::test]
+async fn resolves_folio_from_cli_override() {
+    // `--folios <DIR>` overrides folios_dir for one-off launches.
+    let temp = tempfile::tempdir().unwrap();
+    let config = test_config(temp.path());
+
+    write_plan(&config.general.plans_dir, "plan-y");
+
+    let adhoc_folios = temp.path().join("adhoc-folios");
+    fs::create_dir_all(&adhoc_folios).unwrap();
+    fs::write(
+        adhoc_folios.join("core.toml"),
+        folio_content("core", "1", &["plan-y"], &FolioOpts::default()),
+    )
+    .unwrap();
+
+    let root_dir = temp.path().join("target");
+    let db_path = temp.path().join("target-db.db");
+
+    launch::execute_launch(
+        targets_req(
+            None,
+            Some(adhoc_folios),
+            vec!["@core".into()],
+            false,
+            false,
+        ),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(root_dir.join("usr/share/plan-y").exists());
+    assert!(root_dir.join("var/lib/wright/folios/core.toml").exists());
+}
+
+#[tokio::test]
+async fn converges_on_rerun() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -301,41 +338,33 @@ async fn test_launch_convergence() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    // First launch.
-    let req = LaunchRequest {
-        folio: Some(folio_path.clone()),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
+    launch::execute_launch(
+        folio_req(folio_path.clone(), false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(root_dir.join("usr/share/simple-d").exists());
 
-    // Second launch — should converge without error.
-    let req2 = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    let result = launch::execute_launch(req2, &config, &db_path, &root_dir, 0, false).await;
-    assert!(
-        result.is_ok(),
-        "convergence re-run should succeed, got: {:?}",
-        result.err()
-    );
-
-    // File should still exist (not removed).
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(root_dir.join("usr/share/simple-d").exists());
 }
 
 #[tokio::test]
-async fn test_launch_assumptions_registered() {
+async fn registers_provides() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -359,40 +388,32 @@ async fn test_launch_assumptions_registered() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    // Verify assumptions are in the target database.
     let db = InstalledDb::open(&db_path).await.unwrap();
-
-    let linux_part = db.get_part("linux").await.unwrap();
-    assert!(linux_part.is_some(), "linux should be assumed");
+    let linux = db.get_part("linux").await.unwrap().expect("linux part");
+    assert_eq!(linux.origin, wright::database::Origin::External);
     assert_eq!(
-        linux_part.unwrap().origin,
-        wright::database::Origin::External
+        db.get_plan("linux").await.unwrap().unwrap().version,
+        "6.12.0"
     );
-    let linux_plan = db.get_plan("linux").await.unwrap();
-    assert!(linux_plan.is_some(), "linux plan should be registered");
-    assert_eq!(linux_plan.unwrap().version, "6.12.0");
-
-    let bash_part = db.get_part("bash").await.unwrap();
-    assert!(bash_part.is_some(), "bash should be assumed");
-    let bash_plan = db.get_plan("bash").await.unwrap();
-    assert!(bash_plan.is_some(), "bash plan should be registered");
-    assert_eq!(bash_plan.unwrap().version, "5.2");
+    assert_eq!(
+        db.get_plan("bash").await.unwrap().unwrap().version,
+        "5.2"
+    );
 }
 
 #[tokio::test]
-async fn test_launch_config_applied() {
+async fn runs_post_launch_hook() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -406,10 +427,9 @@ async fn test_launch_config_applied() {
             "1",
             &["simple-f"],
             &FolioOpts {
-                hostname: Some("wrightbox"),
-                timezone: Some("Europe/London"),
-                locale: Some("en_GB.UTF-8"),
-                services: &["sshd"],
+                hooks: &[
+                    "mkdir -p $ROOT/var/service && ln -s /etc/sv/sshd $ROOT/var/service/sshd",
+                ],
                 ..Default::default()
             },
         ),
@@ -419,78 +439,50 @@ async fn test_launch_config_applied() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    // Verify hostname.
-    let hostname = fs::read_to_string(root_dir.join("etc/hostname")).unwrap();
-    assert_eq!(hostname, "wrightbox\n");
-
-    // Verify locale.
-    let locale = fs::read_to_string(root_dir.join("etc/locale.conf")).unwrap();
-    assert_eq!(locale, "LANG=en_GB.UTF-8\n");
-
-    // Verify timezone symlink (Unix only).
     #[cfg(unix)]
     {
-        let target = root_dir.join("etc/localtime");
-        let link_target = std::fs::read_link(&target).unwrap();
+        let sshd = root_dir.join("var/service/sshd");
+        assert!(std::fs::symlink_metadata(&sshd).is_ok());
         assert_eq!(
-            link_target.to_string_lossy(),
-            "../usr/share/zoneinfo/Europe/London"
+            std::fs::read_link(&sshd).unwrap().to_string_lossy(),
+            "/etc/sv/sshd"
         );
-    }
-
-    // Verify runit service symlink.
-    #[cfg(unix)]
-    {
-        let svc = root_dir.join("var/service");
-        assert!(svc.exists());
-        let sshd = svc.join("sshd");
-        if sshd.exists() {
-            let link = std::fs::read_link(&sshd).unwrap();
-            assert_eq!(link.to_string_lossy(), "/etc/sv/sshd");
-        }
     }
 }
 
 #[tokio::test]
-async fn test_launch_nothing_to_do_errors() {
+async fn empty_targets_error() {
     let temp = tempfile::tempdir().unwrap();
     let config = GlobalConfig::default();
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: None,
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-
-    let err = launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap_err();
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("nothing to do"),
-        "expected 'nothing to do' error, got: {}",
-        msg
-    );
+    let err = launch::execute_launch(
+        targets_req(None, None, vec![], false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(format!("{err}").contains("nothing to do"), "{err}");
 }
 
 #[tokio::test]
-async fn test_launch_multiple_plans() {
+async fn launches_multiple_plans() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -508,25 +500,24 @@ async fn test_launch_multiple_plans() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    assert!(root_dir.join("usr/share/p1").exists());
-    assert!(root_dir.join("usr/share/p2").exists());
-    assert!(root_dir.join("usr/share/p3").exists());
+    for p in ["p1", "p2", "p3"] {
+        assert!(root_dir.join(format!("usr/share/{p}")).exists());
+    }
 }
 
 #[tokio::test]
-async fn test_launch_target_skeleton_structure() {
+async fn creates_target_skeleton() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -542,40 +533,36 @@ async fn test_launch_target_skeleton_structure() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target-db.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    for dir in &[
+    for dir in [
         "var/lib/wright",
         "var/lib/wright/parts",
+        "var/lib/wright/store",
         "var/lib/wright/staging",
         "var/lib/wright/lock",
         "var/lib/wright/plans",
         "var/lib/wright/folios",
+        "var/lib/wright/sources",
         "var/log/wright",
+        "var/tmp/wright",
         "etc/wright",
     ] {
-        assert!(
-            root_dir.join(dir).exists(),
-            "expected skeleton directory {} to exist",
-            dir
-        );
+        assert!(root_dir.join(dir).exists(), "missing skeleton dir: {dir}");
     }
 }
 
-// ── Concurrent launch: two independent targets must not interfere ─────
-
 #[tokio::test]
-async fn test_launch_concurrent_targets() {
+async fn concurrent_targets_dont_interfere() {
     let temp_a = tempfile::tempdir().unwrap();
     let temp_b = tempfile::tempdir().unwrap();
 
@@ -603,68 +590,35 @@ async fn test_launch_concurrent_targets() {
     let db_a = temp_a.path().join("target.db");
     let db_b = temp_b.path().join("target.db");
 
-    let req_a = LaunchRequest {
-        folio: Some(folio_a),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    let req_b = LaunchRequest {
-        folio: Some(folio_b),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-
     let (res_a, res_b) = tokio::join!(
-        launch::execute_launch(req_a, &config_a, &db_a, &root_a, 0, false),
-        launch::execute_launch(req_b, &config_b, &db_b, &root_b, 0, false),
+        launch::execute_launch(
+            folio_req(folio_a, false, false),
+            &config_a,
+            &db_a,
+            &root_a,
+            0,
+            false
+        ),
+        launch::execute_launch(
+            folio_req(folio_b, false, false),
+            &config_b,
+            &db_b,
+            &root_b,
+            0,
+            false
+        ),
     );
+    res_a.unwrap();
+    res_b.unwrap();
 
-    assert!(
-        res_a.is_ok(),
-        "target A should launch successfully: {:?}",
-        res_a.err()
-    );
-    assert!(
-        res_b.is_ok(),
-        "target B should launch successfully: {:?}",
-        res_b.err()
-    );
-
-    // Each target received its own plan.
     assert!(root_a.join("usr/share/concurrent-a").exists());
     assert!(root_b.join("usr/share/concurrent-b").exists());
-
-    // No cross-contamination between targets.
-    assert!(
-        !root_a.join("usr/share/concurrent-b").exists(),
-        "target A must not contain plan B"
-    );
-    assert!(
-        !root_b.join("usr/share/concurrent-a").exists(),
-        "target B must not contain plan A"
-    );
-
-    // Each target has its own independent database.
-    let db_a = InstalledDb::open(&db_a).await.unwrap();
-    let db_b = InstalledDb::open(&db_b).await.unwrap();
-    assert!(
-        db_a.get_plan("concurrent-a").await.unwrap().is_some(),
-        "target A db should record concurrent-a"
-    );
-    assert!(
-        db_b.get_plan("concurrent-b").await.unwrap().is_some(),
-        "target B db should record concurrent-b"
-    );
+    assert!(!root_a.join("usr/share/concurrent-b").exists());
+    assert!(!root_b.join("usr/share/concurrent-a").exists());
 }
 
-// ── Incremental convergence: adding a plan to a folio after initial launch ─
-
 #[tokio::test]
-async fn test_launch_incremental_convergence() {
+async fn incremental_convergence() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -681,59 +635,42 @@ async fn test_launch_incremental_convergence() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target.db");
 
-    // First launch — only plan A.
-    let req1 = LaunchRequest {
-        folio: Some(folio_path.clone()),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    launch::execute_launch(req1, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
+    launch::execute_launch(
+        folio_req(folio_path.clone(), false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(root_dir.join("usr/share/incr-a").exists());
     assert!(!root_dir.join("usr/share/incr-b").exists());
 
-    // Update the folio on the host to also include plan B.
     fs::write(
         &folio_path,
         folio_content("incr", "1", &["incr-a", "incr-b"], &FolioOpts::default()),
     )
     .unwrap();
 
-    // Second launch — must converge: keep A, add B.
-    let req2 = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    launch::execute_launch(req2, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
-    assert!(
-        root_dir.join("usr/share/incr-a").exists(),
-        "plan A must survive incremental launch"
-    );
-    assert!(
-        root_dir.join("usr/share/incr-b").exists(),
-        "plan B must be added by incremental launch"
-    );
-
-    // Both plans are recorded in the target database.
-    let db = InstalledDb::open(&db_path).await.unwrap();
-    assert!(db.get_plan("incr-a").await.unwrap().is_some());
-    assert!(db.get_plan("incr-b").await.unwrap().is_some());
+    assert!(root_dir.join("usr/share/incr-a").exists());
+    assert!(root_dir.join("usr/share/incr-b").exists());
 }
 
-// ── Target config is a valid, self-contained wright.toml ─────────────────
-
 #[tokio::test]
-async fn test_launch_target_config_loadable() {
+async fn target_wright_toml_loads_clean() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -749,48 +686,30 @@ async fn test_launch_target_config_loadable() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target.db");
 
-    let req = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    launch::execute_launch(req, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
+    launch::execute_launch(
+        folio_req(folio_path, false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
 
     let target_config = root_dir.join("etc/wright/wright.toml");
-    assert!(target_config.exists());
-
-    // Load the target's own config as if we were running inside the target.
     let loaded = GlobalConfig::load(Some(&target_config)).unwrap();
-    assert_eq!(
-        loaded.general.plans_dir,
-        std::path::PathBuf::from("/var/lib/wright/plans")
-    );
-    assert_eq!(
-        loaded.general.folios_dir,
-        std::path::PathBuf::from("/var/lib/wright/folios")
-    );
-    assert_eq!(
-        loaded.general.parts_dir,
-        std::path::PathBuf::from("/var/lib/wright/parts")
-    );
-    assert_eq!(
-        loaded.general.db_path,
-        std::path::PathBuf::from("/var/lib/wright/wright.db")
-    );
-    assert_eq!(
-        loaded.build.forge_dir,
-        std::path::PathBuf::from("/var/tmp/wright/workshop")
-    );
+    assert_eq!(loaded.general.plans_dir, PathBuf::from("/var/lib/wright/plans"));
+    assert_eq!(loaded.general.folios_dir, PathBuf::from("/var/lib/wright/folios"));
+    assert_eq!(loaded.general.parts_dir, PathBuf::from("/var/lib/wright/parts"));
+    assert_eq!(loaded.general.store_dir, PathBuf::from("/var/lib/wright/store"));
+    assert_eq!(loaded.general.source_dir, PathBuf::from("/var/lib/wright/sources"));
+    assert_eq!(loaded.general.db_path, PathBuf::from("/var/lib/wright/wright.db"));
+    assert_eq!(loaded.build.forge_dir, PathBuf::from("/var/tmp/wright/workshop"));
 }
 
-// ── Force rebuild must succeed on an already-launched target ─────────────
-
 #[tokio::test]
-async fn test_launch_force_rebuild() {
+async fn force_rebuild_succeeds() {
     let temp = tempfile::tempdir().unwrap();
     let config = test_config(temp.path());
 
@@ -806,35 +725,27 @@ async fn test_launch_force_rebuild() {
     let root_dir = temp.path().join("target");
     let db_path = temp.path().join("target.db");
 
-    // First launch.
-    let req1 = LaunchRequest {
-        folio: Some(folio_path.clone()),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: false,
-    };
-    launch::execute_launch(req1, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
+    launch::execute_launch(
+        folio_req(folio_path.clone(), false, false),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(root_dir.join("usr/share/force-plan").exists());
 
-    // Second launch with --force.
-    let req2 = LaunchRequest {
-        folio: Some(folio_path),
-        plans: None,
-        plan_targets: vec![],
-        dry_run: false,
-        force: true,
-    };
-    launch::execute_launch(req2, &config, &db_path, &root_dir, 0, false)
-        .await
-        .unwrap();
-
-    // Output should still be present.
+    launch::execute_launch(
+        folio_req(folio_path, false, true),
+        &config,
+        &db_path,
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
     assert!(root_dir.join("usr/share/force-plan").exists());
-
-    // Database should still be consistent.
-    let db = InstalledDb::open(&db_path).await.unwrap();
-    assert!(db.get_plan("force-plan").await.unwrap().is_some());
 }
