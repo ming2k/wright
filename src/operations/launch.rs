@@ -594,23 +594,78 @@ async fn apply_folio_config(root_dir: &Path, cfg: &folio::FolioConfig) -> Result
         std::fs::write(&path, format!("LANG={}\n", locale)).map_err(WrightError::IoError)?;
     }
     if !cfg.services.is_empty() {
-        let svc_root = root_dir.join("var/service");
-        std::fs::create_dir_all(&svc_root).map_err(WrightError::IoError)?;
-        for service in &cfg.services {
-            let target = format!("/etc/sv/{}", service);
-            let link = svc_root.join(service);
-            if link.exists() {
-                continue;
+        // Detect init system by presence of runit service definitions.
+        let runit_sv = root_dir.join("etc/sv");
+        if runit_sv.exists() {
+            let svc_root = root_dir.join("var/service");
+            std::fs::create_dir_all(&svc_root).map_err(WrightError::IoError)?;
+            for service in &cfg.services {
+                let target = format!("/etc/sv/{}", service);
+                let link = svc_root.join(service);
+                if link.exists() {
+                    continue;
+                }
+                if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
+                    warn!(
+                        event = "launch.service_enable_failed",
+                        service,
+                        link = %link.display(),
+                        target = %target,
+                        error = %e,
+                        "Failed to enable runit service"
+                    );
+                }
             }
-            if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
-                warn!(
-                    event = "launch.service_enable_failed",
-                    service,
-                    link = %link.display(),
-                    target = %target,
-                    error = %e,
-                    "Failed to enable runit service"
-                );
+        } else {
+            // Assume systemd: create .wants symlinks in /etc/systemd/system.
+            for service in &cfg.services {
+                let unit = if service.ends_with(".service")
+                    || service.ends_with(".socket")
+                    || service.ends_with(".target")
+                    || service.ends_with(".path")
+                    || service.ends_with(".timer")
+                {
+                    service.to_string()
+                } else {
+                    format!("{}.service", service)
+                };
+
+                // Choose target wants directory based on unit type.
+                let wants_dir_name = if unit.starts_with("getty@") {
+                    "getty.target.wants"
+                } else {
+                    "multi-user.target.wants"
+                };
+
+                let wants_dir = root_dir
+                    .join("etc/systemd/system")
+                    .join(wants_dir_name);
+                if let Err(e) = std::fs::create_dir_all(&wants_dir) {
+                    warn!(
+                        event = "launch.service_enable_failed",
+                        service,
+                        dir = %wants_dir.display(),
+                        error = %e,
+                        "Failed to create systemd wants directory"
+                    );
+                    continue;
+                }
+
+                let target = format!("/usr/lib/systemd/system/{}", unit);
+                let link = wants_dir.join(&unit);
+                if link.exists() {
+                    continue;
+                }
+                if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
+                    warn!(
+                        event = "launch.service_enable_failed",
+                        service,
+                        link = %link.display(),
+                        target = %target,
+                        error = %e,
+                        "Failed to enable systemd service"
+                    );
+                }
             }
         }
     }

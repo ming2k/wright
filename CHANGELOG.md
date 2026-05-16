@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.2.4] - 2026-05-16
+
+### Added
+- **systemd service enablement in `wright launch`** — `apply_folio_config` now detects the target init system by checking for `/etc/sv`. If absent, it falls back to systemd-style enablement: `getty@*` units are linked into `getty.target.wants`, and all other services are linked into `multi-user.target.wants`. This allows `[config].services` in folio manifests to work on systemd-based systems.
+
 ## [5.2.3] - 2026-05-16
 
 ### Fixed
