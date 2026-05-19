@@ -93,6 +93,7 @@ pub async fn execute_merge(
             part_store,
             force,
             nodeps,
+            true,
             session.clone(),
         )
         .await;
@@ -174,6 +175,7 @@ pub async fn execute_merge(
             force,
             nodeps,
             None,
+            true,
             session.clone(),
         )
         .await;

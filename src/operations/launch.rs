@@ -98,6 +98,7 @@ pub async fn execute_launch(
         verbose,
         quiet,
         part_store: &part_store,
+        run_hooks: false,
     })
     .await?;
 

@@ -105,7 +105,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
    deploy` pipeline, wave by wave, reusing `wright install`'s engine.
    Each completed wave is installed into the target before the next wave
    begins, so a plan's dependencies are already on disk when it enters
-   its `configure` stage.
+   its `configure` stage. **Plan-level deploy hooks (`pre_install`, `post_install`, etc.) are disabled during this phase**, as they are designed to run natively on the target system (which may not be bootable or compatible with the host environment during `launch`). System configuration must be handled by folio hooks instead.
 
 10. **Execute hooks** — run every `[[hook]]` from the folio.  Hooks
     execute on the host under `sh -c` with both `$WRIGHT_ROOT` and

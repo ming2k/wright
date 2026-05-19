@@ -34,6 +34,7 @@ pub struct InstallRequest<'a> {
     /// Optional forge options. When provided, the install flow uses these
     /// instead of default BuildPlanOptions (used by `wright build`).
     pub build_opts: Option<BuildPlanOptions>,
+    pub run_hooks: bool,
 }
 
 /// Pre-computed fingerprint for each plan name in the build set.
@@ -121,6 +122,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         quiet,
         part_store,
         build_opts,
+        run_hooks,
     } = request;
 
     if targets.is_empty() {
@@ -716,6 +718,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     force,
                     false,
                     Some(&all_upcoming_outputs),
+                    run_hooks,
                     session.clone(),
                 )
                 .await;

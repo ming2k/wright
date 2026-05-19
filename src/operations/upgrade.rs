@@ -93,6 +93,7 @@ pub async fn execute_upgrade(
         quiet,
         part_store,
         build_opts: None,
+        run_hooks: true,
     })
     .await
 }

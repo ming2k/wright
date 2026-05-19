@@ -152,6 +152,7 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         quiet: ctx.quiet,
         part_store: &part_store,
         build_opts: None,
+        run_hooks: true,
     })
     .await
 }

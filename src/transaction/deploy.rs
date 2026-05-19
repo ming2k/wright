@@ -63,6 +63,7 @@ pub async fn deploy_parts(
     part_store: &LocalPartStore,
     force: bool,
     nodeps: bool,
+    run_hooks: bool,
     session: SessionContext,
 ) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
@@ -81,6 +82,7 @@ pub async fn deploy_parts(
         force,
         nodeps,
         None,
+        run_hooks,
         session,
     )
     .await
@@ -95,6 +97,7 @@ pub async fn deploy_parts_with_explicit_targets(
     force: bool,
     nodeps: bool,
     upcoming_outputs: Option<&HashSet<String>>,
+    run_hooks: bool,
     session: SessionContext,
 ) -> Result<()> {
     let candidates = read_install_candidates(parts)?;
@@ -190,7 +193,7 @@ pub async fn deploy_parts_with_explicit_targets(
             root_dir,
             force,
             origin,
-            true,
+            run_hooks,
             session.clone(),
         )
         .await?;
