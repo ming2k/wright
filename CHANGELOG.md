@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.3.1] - 2026-05-20
+
+### Fixed
+- **Plan-level deploy hooks during launch** — Plan-level `pre_install`, `post_install`, etc. hooks are now correctly disabled during the `wright launch` bootstrap phase, as they are meant to run natively on the fully provisioned target system. Post-launch provisioning should be done via folio `[[hook]]` entries instead.
+
 ## [5.3.0] - 2026-05-16
 
 ### Added
