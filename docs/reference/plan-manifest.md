@@ -169,7 +169,7 @@ Do not duplicate part metadata, sources, outputs, or hooks in `mvp.toml`.
 
 ## Hooks (`[[output]].hooks`)
 
-Transaction-time scripts that run on the live system.
+Transaction-time scripts that run on the live system. Note that these hooks **do not run** during `wright launch`.
 
 | Field | Type | Description |
 |-------|------|-------------|

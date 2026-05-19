@@ -261,6 +261,8 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
 
 Hooks run on the live system, serially, blocking the install. Keep them fast. For operations that are inherently slow and single-threaded (e.g. `fmtutil-sys --all`, `texhash`, font cache generation), prefer running only the subset needed at install time and let the user invoke the full regeneration manually afterward.
 
+> **Note:** Plan-level hooks **do not run** during `wright launch`, as the target root is being provisioned from scratch and may not have a bootable or compatible environment. Handle necessary provisioning steps in a folio-level hook instead.
+
 ## Choose an Output Mode
 
 Wright has implicit and explicit output modes.
