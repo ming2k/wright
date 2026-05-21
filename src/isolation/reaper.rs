@@ -93,6 +93,55 @@ impl Drop for ChildGuard {
     }
 }
 
+/// Spawn the two-tier Ctrl-C / SIGTERM handler for a build pipeline.
+///
+/// **First** signal: kill the running build subprocess tree and flip
+/// `cancel_tx` so the pipeline rolls back and exits at the next boundary —
+/// fast for compiles (reaped instantly) but bounded by the current in-process
+/// blocking step (a download or `zstd` compress can't be aborted mid-call).
+///
+/// **Second** signal: force-quit immediately.  The interrupted delivery
+/// transaction is journalled, so the next run's crash recovery cleans it up.
+/// This is the guaranteed "exit right now" escape hatch.
+pub fn spawn_signal_handler(cancel_tx: tokio::sync::watch::Sender<bool>, quiet: bool) {
+    tokio::spawn(async move {
+        wait_for_signal().await;
+        cancel_all();
+        let _ = cancel_tx.send(true);
+        if !quiet {
+            eprintln!("\nInterrupting — press Ctrl-C again to force-quit.");
+        }
+        wait_for_signal().await;
+        cancel_all();
+        // Skip the cooperative unwind entirely.  130 = 128 + SIGINT.
+        std::process::exit(130);
+    });
+}
+
+/// Resolve on the next SIGINT (Ctrl-C) or SIGTERM.
+async fn wait_for_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let ctrl_c = tokio::signal::ctrl_c();
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = ctrl_c => {},
+                    _ = sigterm.recv() => {},
+                }
+            }
+            Err(_) => {
+                ctrl_c.await.ok();
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.ok();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

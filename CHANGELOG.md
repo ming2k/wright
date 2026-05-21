@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [5.3.3] - 2026-05-22
+
+### Fixed
+- **Ctrl-C now cancels the non-build phases too, and a second Ctrl-C
+  force-quits** — the reaper added in 5.3.2 only killed the compile running
+  inside the sandbox, so a Ctrl-C during source fetch/extract, packaging
+  (compression), or deploy still ran to the end of that phase before stopping.
+  The cooperative cancel flag is now checked at every sequential boundary
+  (between batches, before sealing each package, before deploy, before a fresh
+  fetch), so the first Ctrl-C bails promptly in those phases. A **second
+  Ctrl-C / SIGTERM force-quits immediately** (exit 130); the interrupted
+  delivery transaction is journalled and cleaned up by crash recovery on the
+  next run. The signal handler shared by `build` and `install` was de-duplicated
+  into `isolation::reaper::spawn_signal_handler`.
+
 ## [5.3.2] - 2026-05-22
 
 ### Fixed

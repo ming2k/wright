@@ -71,6 +71,11 @@ impl Charge {
             let _ = force_clean_source_dir(&source_dir).await;
         }
 
+        // Don't start a fresh fetch/extract if the user already cancelled.
+        if crate::isolation::reaper::is_cancelled() {
+            return Err(WrightError::ForgeError("cancelled by user".into()));
+        }
+
         // Ensure source directory exists and is clean.
         if tokio::fs::metadata(&source_dir).await.is_ok() {
             force_clean_source_dir(&source_dir).await?;

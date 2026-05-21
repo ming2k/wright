@@ -118,32 +118,10 @@ pub async fn execute_build(
     let configure_lock = Arc::new(Semaphore::new(1));
     let compile_lock = Arc::new(Semaphore::new(resources.total_cpus));
 
+    // First Ctrl-C / SIGTERM reaps the build subprocess tree and flips the
+    // cancel flag so the batch loop stops; a second one force-quits.
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    tokio::spawn(async move {
-        let ctrl_c = tokio::signal::ctrl_c();
-        #[cfg(unix)]
-        let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(_) => {
-                ctrl_c.await.ok();
-                let _ = cancel_tx.send(true);
-                return;
-            }
-        };
-        #[cfg(unix)]
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = sigterm.recv() => {},
-        }
-        #[cfg(not(unix))]
-        {
-            ctrl_c.await.ok();
-        }
-        // Reap in-flight build subprocess trees so the parked waitpid threads
-        // unblock at once; the watch flag then stops the batch loop.
-        crate::isolation::reaper::cancel_all();
-        let _ = cancel_tx.send(true);
-    });
+    crate::isolation::reaper::spawn_signal_handler(cancel_tx, quiet);
 
     drive_batches(
         &plan,

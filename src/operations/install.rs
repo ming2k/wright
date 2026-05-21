@@ -268,37 +268,28 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     crate::delivery::recover_if_needed(&db).await?;
 
     // ── Signal handling ─────────────────────────────────────────────
+    // First Ctrl-C / SIGTERM reaps the build subprocess tree and flips the
+    // cancel flag so the batch loop rolls back; a second one force-quits.
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    tokio::spawn(async move {
-        let ctrl_c = tokio::signal::ctrl_c();
-        #[cfg(unix)]
-        let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(_) => {
-                ctrl_c.await.ok();
-                let _ = cancel_tx.send(true);
-                return;
-            }
-        };
-        #[cfg(unix)]
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = sigterm.recv() => {},
-        }
-        #[cfg(not(unix))]
-        {
-            ctrl_c.await.ok();
-        }
-        // Kill every in-flight build subprocess tree first, so the threads
-        // parked in waitpid unblock immediately; the watch flag then lets the
-        // batch loop roll back and exit instead of waiting out the batch.
-        crate::isolation::reaper::cancel_all();
-        let _ = cancel_tx.send(true);
-    });
+    crate::isolation::reaper::spawn_signal_handler(cancel_tx, quiet);
 
     // ── Begin delivery transaction ──────────────────────────────────
     let command_str = format!("install {}", targets.join(" "));
     let tx_id = crate::delivery::begin_delivery(&db, &command_str).await?;
+
+    // Roll back the delivery transaction and abort the moment the user
+    // cancels.  Invoked at every sequential boundary (between batches, before
+    // sealing each package, before deploy) so a single Ctrl-C bails promptly
+    // instead of finishing the current phase first.
+    macro_rules! bail_if_cancelled {
+        () => {
+            if *cancel_rx.borrow() {
+                let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
+                let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                return Err(WrightError::ForgeError("cancelled by user".into()));
+            }
+        };
+    }
 
     let session = SessionContext {
         id: format!(
@@ -333,11 +324,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     }
 
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
-        if *cancel_rx.borrow() {
-            let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
-            let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
-            return Err(WrightError::ForgeError("cancelled by user".into()));
-        }
+        bail_if_cancelled!();
 
         if !quiet && total_batches > 1 {
             let bases: Vec<&str> = batch
@@ -539,7 +526,9 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         };
         let _seal_span = crate::cli_span!("Sealing", "{}", seal_target);
 
+        bail_if_cancelled!();
         for base in &bases_in_batch {
+            bail_if_cancelled!();
             let plan_path = plan
                 .plan_path_for_task(base)
                 .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)))
@@ -568,6 +557,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         //    Also restore CAS parts for bases with CAS hits (they weren't
         //    freshly sealed above, so we need to make them available in
         //    parts_dir for the deploy step).
+        bail_if_cancelled!();
         if !bases_in_batch.is_empty() || !cas_hit_bases.is_empty() {
             // Restore CAS parts for bases with CAS hits.
             for base in &cas_hit_bases {
