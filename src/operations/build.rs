@@ -139,6 +139,9 @@ pub async fn execute_build(
         {
             ctrl_c.await.ok();
         }
+        // Reap in-flight build subprocess trees so the parked waitpid threads
+        // unblock at once; the watch flag then stops the batch loop.
+        crate::isolation::reaper::cancel_all();
         let _ = cancel_tx.send(true);
     });
 

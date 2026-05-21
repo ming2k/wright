@@ -441,6 +441,12 @@ async fn register_provides(db_path: &Path, provides: &[FolioProvide]) -> Result<
 
 async fn run_hooks(root_dir: &Path, hooks: &[Hook]) -> Result<()> {
     for hook in hooks {
+        // Stop launching hooks if the user cancelled during the install phase
+        // or between hooks.
+        if crate::isolation::reaper::is_cancelled() {
+            return Err(forge_err("cancelled by user"));
+        }
+
         match hook.stage {
             HookStage::PostLaunch => {}
         }

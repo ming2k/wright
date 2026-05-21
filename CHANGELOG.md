@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [5.3.2] - 2026-05-22
+
+### Fixed
+- **Ctrl-C now stops the whole `wright launch` / `build` / `install` run
+  promptly** — previously the cooperative cancel flag was only polled at batch
+  boundaries while the in-flight compile processes ran in their own process
+  group (direct-exec path) or PID namespace (sandboxed path), so the terminal's
+  SIGINT never reached them and the run appeared to hang until the current batch
+  finished. Build subprocesses now register in a reaper that the SIGINT/SIGTERM
+  handler uses to SIGKILL the entire build tree on cancel, unblocking the
+  waiting threads so the transaction rolls back and the process exits at once.
+
 ## [5.3.1] - 2026-05-20
 
 ### Fixed

@@ -176,6 +176,12 @@ pub fn run_in_isolation(
     command: &str,
     args: &[String],
 ) -> Result<IsolationOutput> {
+    // Bail before spawning anything if the user already cancelled, so no
+    // fresh compile is launched after Ctrl-C while in-flight ones drain.
+    if super::reaper::is_cancelled() {
+        return Err(WrightError::ForgeError("cancelled by user".into()));
+    }
+
     if config.level == IsolationLevel::None {
         if config.base_root != Path::new("/") {
             return Err(WrightError::IsolationError(format!(
@@ -212,6 +218,9 @@ pub fn run_in_isolation(
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::IsolationError(format!("failed to execute command: {e}")))?;
+        // Register for Ctrl-C reaping: the child leads its own process group
+        // (setpgid above), so cancellation must kill the group.
+        let _reap_guard = super::reaper::register(child.id(), true);
         let watchdog = config
             .rlimits
             .timeout_secs
@@ -307,6 +316,8 @@ pub fn run_in_isolation(
         let mut child = cmd
             .spawn()
             .map_err(|e| WrightError::IsolationError(format!("failed to execute command: {e}")))?;
+        // Register for Ctrl-C reaping: own process group (setpgid above).
+        let _reap_guard = super::reaper::register(child.id(), true);
         let watchdog = config
             .rlimits
             .timeout_secs
@@ -838,6 +849,11 @@ pub fn run_in_isolation(
             std::mem::forget(out_read); // Ownership transferred to File
             let err_file = unsafe { std::fs::File::from_raw_fd(eout_read.as_raw_fd()) };
             std::mem::forget(eout_read);
+
+            // Register for Ctrl-C reaping.  kill_pgroup = false: signalling the
+            // intermediate child fires its grandchild's PR_SET_PDEATHSIG, which
+            // tears down every process in the PID namespace it leads.
+            let _reap_guard = super::reaper::register(child.as_raw() as u32, false);
 
             let watchdog = config
                 .rlimits

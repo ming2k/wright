@@ -289,6 +289,10 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         {
             ctrl_c.await.ok();
         }
+        // Kill every in-flight build subprocess tree first, so the threads
+        // parked in waitpid unblock immediately; the watch flag then lets the
+        // batch loop roll back and exit instead of waiting out the batch.
+        crate::isolation::reaper::cancel_all();
         let _ = cancel_tx.send(true);
     });
 
@@ -482,6 +486,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 Ok(Err(e)) => {
                     let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
                     let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                    // A build failing because we reaped it on Ctrl-C is a
+                    // cancellation, not a genuine build error — report it as one.
+                    if *cancel_rx.borrow() {
+                        return Err(WrightError::ForgeError("cancelled by user".into()));
+                    }
                     return Err(WrightError::ForgeError(format!(
                         "task '{}' failed: {}",
                         task, e
@@ -490,6 +499,9 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 Err(e) => {
                     let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
                     let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                    if *cancel_rx.borrow() {
+                        return Err(WrightError::ForgeError("cancelled by user".into()));
+                    }
                     return Err(WrightError::ForgeError(format!(
                         "task '{}' panicked: {}",
                         task, e
