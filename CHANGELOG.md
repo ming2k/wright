@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [5.3.4] - 2026-05-22
+
+### Fixed
+- **Clearer download failures, and no retrying of permanent errors** — a failed
+  download warning previously wrapped an error string that already contained the
+  URL, so the URL and the word "failed" each appeared twice on one line. Worse,
+  every failure was retried up to 3 times — including HTTP 404, which cannot
+  succeed on retry — producing repeated "Retrying…" noise before failing anyway.
+  Download errors are now classified as transient (connection drops, timeouts,
+  5xx, 408, 429) versus fatal (4xx, HTML redirect pages, local-disk errors);
+  only transient ones retry. Messages name the URL exactly once.
+
 ## [5.3.3] - 2026-05-22
 
 ### Fixed
