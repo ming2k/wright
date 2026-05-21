@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [5.3.5] - 2026-05-22
+
+### Changed
+- **Quieter `wright upgrade` output** — the redundant `upgrade set: <targets>`
+  line, which just echoed the names the user had already typed, is gone. When
+  the resolver pulls in link reverse-dependencies the user did not name, those
+  extras are now announced as `also upgrading (rdeps): foo, bar` instead.
+
 ## [5.3.4] - 2026-05-22
 
 ### Fixed

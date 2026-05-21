@@ -76,7 +76,15 @@ pub async fn execute_upgrade(
     }
 
     if !quiet {
-        println!("upgrade set: {}", build_set.join(", "));
+        let target_set: HashSet<&str> = targets.iter().map(String::as_str).collect();
+        let extras: Vec<&str> = build_set
+            .iter()
+            .map(String::as_str)
+            .filter(|n| !target_set.contains(n))
+            .collect();
+        if !extras.is_empty() {
+            println!("also upgrading (rdeps): {}", extras.join(", "));
+        }
     }
 
     // Run the full install workflow (resolve → forge → seal → deploy) for the resolved set.
