@@ -9,6 +9,7 @@ pub mod launch;
 pub mod lint;
 pub mod list;
 pub mod merge;
+pub mod owner;
 pub mod provide;
 pub mod remove;
 pub mod upgrade;
@@ -28,11 +29,7 @@ use self::common::{Context, crash_recover, resolve_db};
 #[command(
     name = "wright",
     about = "Declarative, extensible, sandboxed Linux package manager",
-    long_about = "Declarative, extensible, sandboxed Linux package manager\n\n\
-                  Command groups:\n  \
-                  System Management    install, remove, upgrade, merge, assume\n  \
-                  Query & Inspection   list, files, check, history, doctor\n  \
-                  Build & Packaging    build, lint, launch",
+    long_about = "Declarative, extensible, sandboxed Linux package manager",
     version,
     subcommand_required = true,
     arg_required_else_help = true
@@ -90,16 +87,20 @@ pub enum Commands {
     #[command(display_order = 12)]
     Files(files::FilesArgs),
 
-    /// Perform system health checks
+    /// Show which part owns the given file(s)
     #[command(display_order = 13)]
+    Owner(owner::OwnerArgs),
+
+    /// Perform system health checks
+    #[command(display_order = 14)]
     Check(check::CheckArgs),
 
     /// Show part transaction history (deploy, upgrade, remove)
-    #[command(display_order = 14)]
+    #[command(display_order = 15)]
     History(history::HistoryArgs),
 
     /// Diagnose system and archive health issues
-    #[command(display_order = 15)]
+    #[command(display_order = 16)]
     Doctor(doctor::DoctorArgs),
 
     // ── Build & Packaging ──────────────────────────────────────────
@@ -196,6 +197,10 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
         Commands::Files(args) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             files::run(args, &ctx).await
+        }
+        Commands::Owner(args) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            owner::run(args, &ctx).await
         }
         Commands::Check(mut args) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;

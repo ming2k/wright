@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [5.3.6] - 2026-05-24
+
+### Added
+- **`wright owner <FILE>...`** — reverse lookup that names the deployed part
+  owning a given file, the inverse of `wright files`. Relative paths resolve
+  against the current directory and existing paths are canonicalised so the
+  lookup matches the path recorded in the database; missing paths are looked
+  up as-is so you can still query files that were deleted out-of-band. With
+  multiple arguments each line is prefixed with the resolved path, and any
+  file claimed by more than one part (a conflict surfaced by `wright check`)
+  prints all owners. Exits non-zero if any path is unowned.
+
 ## [5.3.5] - 2026-05-22
 
 ### Changed

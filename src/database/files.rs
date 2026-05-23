@@ -156,6 +156,29 @@ impl InstalledDb {
         .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))
     }
 
+    pub async fn find_all_owners(&self, path: &str) -> Result<Vec<String>> {
+        let rows = query(
+            "SELECT p.name FROM parts p
+             JOIN files f ON p.id = f.part_id
+             WHERE f.path = ?
+             ORDER BY p.name",
+        )
+        .bind(path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to find owners: {}", e)))?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            use sqlx::Row;
+            result.push(
+                row.try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?,
+            );
+        }
+        Ok(result)
+    }
+
     pub async fn find_owners_batch(&self, paths: &[&str]) -> Result<HashMap<String, String>> {
         let mut result = HashMap::new();
         for chunk in paths.chunks(999) {

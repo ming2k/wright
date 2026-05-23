@@ -135,6 +135,23 @@ wright list --provided
 
 List files owned by a deployed part.
 
+### `wright owner <FILE>...`
+
+Show which deployed part owns each given file path. The inverse of
+`wright files`: given a file, return the owning part.
+
+Relative paths are resolved against the current directory; existing paths are
+canonicalised (symlinks followed) so that lookups match the path actually
+recorded in the database. A non-existent path is looked up as-is, which lets
+you query files that were deleted out-of-band but still tracked.
+
+With one argument, the part name is printed on its own line. With multiple
+arguments, each result is prefixed with the resolved path (`<file>: <part>`).
+If a file is claimed by more than one deployed part (a conflict surfaced by
+`wright check`), every owner is printed.
+
+Exits non-zero if any of the given paths is not owned by a deployed part.
+
 ### `wright check [PART]`
 
 Perform system health checks covering database integrity, file conflicts,

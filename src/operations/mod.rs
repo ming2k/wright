@@ -10,6 +10,7 @@ pub mod launch;
 pub mod lint;
 pub mod list;
 pub mod merge;
+pub mod owner;
 pub mod provide;
 pub mod remove;
 pub mod upgrade;
