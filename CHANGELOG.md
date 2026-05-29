@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Builds no longer fail mid-stage with `EBUSY: Device or resource busy`** when
+  mounting a stage overlay (e.g. `04-check`). Each stage's overlay was torn down
+  with a *lazy* unmount (`MNT_DETACH`), which detaches the mount but leaves the
+  overlay superblock alive until its references drop — keeping the just-finished
+  stage's `layers/NN-stage` directory pinned as an in-use `upperdir`. The next
+  stage lists that same directory as a `lowerdir`, and overlayfs refuses to
+  reuse an in-use upperdir, failing with `EBUSY`. Stage overlays are now
+  unmounted synchronously (retrying briefly on `EBUSY`, with a lazy detach only
+  as a last resort), and stage mounts retry on `EBUSY` as a safety net.
+
 ## [5.3.6] - 2026-05-24
 
 ### Added

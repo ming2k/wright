@@ -93,6 +93,50 @@ pub(crate) fn detach_mounts_under(path: &Path) -> usize {
     detached
 }
 
+/// Synchronously unmount a stage overlay so its `upperdir`/`workdir` are
+/// released immediately.
+///
+/// A lazy (`MNT_DETACH`) unmount detaches the mount from the namespace but
+/// leaves the overlay superblock alive until every reference drops. While it
+/// lingers, the stage's `layers/NN-stage` dir stays pinned as an in-use
+/// `upperdir` — and overlayfs then refuses to reuse that dir as a `lowerdir`
+/// for the next stage's overlay, failing the mount with `EBUSY`. We therefore
+/// attempt a real unmount first, retrying briefly on `EBUSY`, and only fall
+/// back to a lazy detach if the mount stubbornly stays busy.
+fn unmount_overlay_point(mount: &Path) {
+    use nix::mount::{MntFlags, umount2};
+
+    for attempt in 0..5 {
+        match umount2(mount, MntFlags::empty()) {
+            Ok(()) => {
+                debug!(event = "layer.unmount", point = %mount.display(), "Unmounted stage overlay");
+                return;
+            }
+            // Already unmounted / not a mount point — nothing to do.
+            Err(nix::errno::Errno::EINVAL) => return,
+            Err(nix::errno::Errno::EBUSY) => {
+                thread::sleep(Duration::from_millis(20 * (1 << attempt)));
+            }
+            Err(e) => {
+                debug!("unmount overlay at {} (non-fatal): {e}", mount.display());
+                break;
+            }
+        }
+    }
+
+    // Last resort: lazy-detach so the build can still make progress. The next
+    // stage's mount may need to retry on EBUSY if the superblock is still alive.
+    match umount2(mount, MntFlags::MNT_DETACH) {
+        Ok(()) => debug!(
+            event = "layer.unmount",
+            point = %mount.display(),
+            "Lazy-unmounted stage overlay (fell back after EBUSY)"
+        ),
+        Err(nix::errno::Errno::EINVAL) => {}
+        Err(e) => debug!("lazy unmount overlay at {} (non-fatal): {e}", mount.display()),
+    }
+}
+
 /// Build stage layer indices. Source stages (fetch/verify/extract) are NOT
 /// included — they are handled by `Charge` and fed into the forge as the
 /// immutable `source_dir` base.
@@ -300,13 +344,23 @@ impl LayerManager {
             "Mounting stage overlay to disposable point"
         );
 
-        let mount_result = mount(
-            Some("overlay"),
-            &stage_point,
-            Some("overlay"),
-            MsFlags::empty(),
-            Some(opts.as_str()),
-        );
+        // Retry on EBUSY: a prior stage's overlay may still be releasing its
+        // upperdir (which we list as a lowerdir here), especially right after a
+        // lazy-detach fallback. A short backoff lets the kernel free it.
+        let mut mount_result = Ok(());
+        for attempt in 0..5 {
+            mount_result = mount(
+                Some("overlay"),
+                &stage_point,
+                Some("overlay"),
+                MsFlags::empty(),
+                Some(opts.as_str()),
+            );
+            if !matches!(mount_result, Err(nix::errno::Errno::EBUSY)) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20 * (1 << attempt)));
+        }
 
         match mount_result {
             Ok(()) => {
@@ -332,16 +386,8 @@ impl LayerManager {
     }
 
     pub fn unmount_overlay(&mut self) {
-        if let Some(ref mount) = self.current_mount.take() {
-            match nix::mount::umount2(mount, nix::mount::MntFlags::MNT_DETACH) {
-                Ok(()) => {
-                    debug!(event = "layer.unmount", point = %mount.display(), "Lazy-unmounted stage overlay");
-                }
-                Err(nix::errno::Errno::EINVAL) => {}
-                Err(e) => {
-                    debug!("unmount overlay at {} (non-fatal): {e}", mount.display());
-                }
-            }
+        if let Some(mount) = self.current_mount.take() {
+            unmount_overlay_point(&mount);
         }
     }
 
