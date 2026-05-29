@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.7] - 2026-05-30
+
 ### Changed
 - **Clearer git fetch failure when upstream history is rewritten.** A force-push
   upstream leaves the cached clone referencing commits the remote no longer has,
