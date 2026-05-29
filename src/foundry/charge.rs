@@ -331,7 +331,7 @@ impl Charge {
             &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
             Some(&mut fetch_opts),
             None,
-        ).map_err(|e| WrightError::ForgeError(format!("git fetch failed: {e}")))?;
+        ).map_err(|e| git_fetch_error(e, git_url, dest))?;
         drop(git_span);
         let obj = repo.revparse_single(actual_ref).map_err(|e| {
             WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
@@ -396,7 +396,8 @@ impl Charge {
                         .map(|r| variables::process_uri(r, manifest))
                         .unwrap_or_else(|| "HEAD".to_string());
                     let final_dest = if let Some(ref sub) = git.extract_to {
-                        let p = dest_dir.join(sub);
+                        let sub = variables::process_uri(sub, manifest);
+                        let p = dest_dir.join(&sub);
                         tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
                         p
                     } else {
@@ -435,7 +436,8 @@ impl Charge {
                     });
                     let cache_path = self.cache_dir.join(&filename);
                     let final_dest = if let Some(ref sub) = http.extract_to {
-                        let p = dest_dir.join(sub);
+                        let sub = variables::process_uri(sub, manifest);
+                        let p = dest_dir.join(&sub);
                         tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
                         p
                     } else {
@@ -461,7 +463,8 @@ impl Charge {
                     let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
                     let cache_path = self.cache_dir.join(&filename);
                     let final_dest = if let Some(ref sub) = local.extract_to {
-                        let p = dest_dir.join(sub);
+                        let sub = variables::process_uri(sub, manifest);
+                        let p = dest_dir.join(&sub);
                         tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
                         p
                     } else {
@@ -588,6 +591,25 @@ impl Charge {
 fn source_cache_filename(part_name: &str, uri: &str) -> String {
     let basename = uri.split('/').next_back().unwrap_or("source");
     sanitize_cache_filename(&format!("{}-{}", part_name, basename))
+}
+
+/// Turn a libgit2 fetch failure into an actionable error.
+///
+/// When upstream history is rewritten (e.g. a force-push), the cached bare repo
+/// still references objects the remote no longer advertises, so libgit2 aborts
+/// the fetch with an ODB "object not found" error. The raw message is opaque, so
+/// we explain the likely cause and point at the cache directory to remove.
+fn git_fetch_error(e: git2::Error, url: &str, cache: &Path) -> WrightError {
+    if e.class() == git2::ErrorClass::Odb {
+        return WrightError::ForgeError(format!(
+            "git fetch failed for {url}: {e}\n\
+             The upstream history appears to have been rewritten (e.g. force-pushed), \
+             so the cached clone references commits the remote no longer has.\n\
+             Remove the stale cache and retry:\n    rm -rf {}",
+            cache.display()
+        ));
+    }
+    WrightError::ForgeError(format!("git fetch failed: {e}"))
 }
 
 fn git_cache_dir_name(url: &str) -> String {

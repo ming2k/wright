@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+- **Clearer git fetch failure when upstream history is rewritten.** A force-push
+  upstream leaves the cached clone referencing commits the remote no longer has,
+  which previously surfaced as an opaque `object not found ... class=Odb` error.
+  The message now explains the likely cause and prints the exact cache directory
+  to remove before retrying.
+
 ### Fixed
+- **Source `extract_to` now expands `${VERSION}` and other variables.** The
+  `extract_to` field on `git`, `http`, and `local` sources was used verbatim,
+  even though the sibling `url`/`ref`/`path` fields already supported
+  `${VAR_NAME}` substitution. It now goes through the same expansion, so paths
+  like `extract_to = "vendor/lib-${VERSION}"` work as expected.
 - **Builds no longer fail mid-stage with `EBUSY: Device or resource busy`** when
   mounting a stage overlay (e.g. `04-check`). Each stage's overlay was torn down
   with a *lazy* unmount (`MNT_DETACH`), which detaches the mount but leaves the

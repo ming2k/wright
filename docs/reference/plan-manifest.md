@@ -275,7 +275,7 @@ Any stage can have `pre_<stage>` or `post_<stage>` tables under `pipeline`. Exec
 
 ## Variable Substitution
 
-Variables use `${VAR_NAME}` syntax and are expanded in scripts and source URIs. Unrecognized variables are left as-is.
+Variables use `${VAR_NAME}` syntax and are expanded in scripts, source URIs, and source `extract_to` paths. Unrecognized variables are left as-is.
 
 | Variable | Description |
 |----------|-------------|
