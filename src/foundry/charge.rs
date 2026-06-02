@@ -281,24 +281,96 @@ impl Charge {
             depth
         };
         let label = progress::source_label(git_url);
-        let is_fresh_clone = tokio::fs::metadata(dest).await.is_err();
+
+        let mut retry_stale = false;
+        loop {
+            let is_fresh_clone = tokio::fs::metadata(dest).await.is_err();
+
+            let attempt = self.git_fetch_attempt(
+                git_url, actual_ref, effective_depth, dest, scope, &label,
+                is_fresh_clone, retry_stale,
+            );
+
+            match attempt {
+                GitFetchAttempt::Done(id) => return Ok(id),
+                GitFetchAttempt::StaleCache if !retry_stale => {
+                    warn!(
+                        "[{}] stale git cache detected (upstream history rewritten); \
+                         removing cache and retrying: {}",
+                        scope, dest.display()
+                    );
+                    tokio::fs::remove_dir_all(dest).await.map_err(|rm_err| {
+                        WrightError::ForgeError(format!(
+                            "failed to remove stale git cache {}: {rm_err}",
+                            dest.display()
+                        ))
+                    })?;
+                    retry_stale = true;
+                    continue;
+                }
+                GitFetchAttempt::StaleCache => {
+                    return Err(WrightError::ForgeError(format!(
+                        "git fetch failed for {git_url}: stale cache recovery did not resolve the issue.\n\
+                         Remove the cache manually and retry:\n    rm -rf {}",
+                        dest.display()
+                    )));
+                }
+                GitFetchAttempt::Failed(err) => return Err(err),
+            }
+        }
+    }
+
+    fn git_fetch_attempt(
+        &self,
+        git_url: &str,
+        actual_ref: &str,
+        effective_depth: Option<u32>,
+        dest: &Path,
+        scope: &str,
+        label: &str,
+        is_fresh_clone: bool,
+        force_fetch: bool,
+    ) -> GitFetchAttempt {
         let repo = if is_fresh_clone {
             info!("[{}] Cloning Git repository: {}", scope, git_url);
-            git2::Repository::init_bare(dest)
-                .map_err(|e| WrightError::ForgeError(format!("git init failed: {e}")))?
+            match git2::Repository::init_bare(dest) {
+                Ok(r) => r,
+                Err(e) => return GitFetchAttempt::Failed(
+                    WrightError::ForgeError(format!("git init failed: {e}"))
+                ),
+            }
         } else {
-            git2::Repository::open_bare(dest)
-                .map_err(|e| WrightError::ForgeError(format!("git open failed: {e}")))?
+            match git2::Repository::open_bare(dest) {
+                Ok(r) => r,
+                Err(e) => return GitFetchAttempt::Failed(
+                    WrightError::ForgeError(format!("git open failed: {e}"))
+                ),
+            }
         };
 
-        if !is_fresh_clone && let Ok(obj) = repo.revparse_single(actual_ref) {
-            tracing::debug!("[{}] git ref '{}' already available locally; skipping fetch", scope, actual_ref);
-            return Ok(obj.id().to_string());
+        if !is_fresh_clone && !force_fetch {
+            if let Ok(obj) = repo.revparse_single(actual_ref) {
+                tracing::debug!(
+                    "[{}] git ref '{}' already available locally; skipping fetch",
+                    scope, actual_ref
+                );
+                return GitFetchAttempt::Done(obj.id().to_string());
+            }
         }
 
-        let mut remote = repo
-            .remote_anonymous(git_url)
-            .map_err(|e| WrightError::ForgeError(format!("git remote setup failed: {e}")))?;
+        // Use a named remote so that libgit2 can persist fetch configuration
+        // (url + refspec) in the repo.  Anonymous remotes lack this state,
+        // which breaks shallow-fetch negotiation on incremental updates
+        // (libgit2/libgit2#1430).
+        let mut remote = match repo.find_remote("origin") {
+            Ok(r) => r,
+            Err(_) => match repo.remote("origin", git_url) {
+                Ok(r) => r,
+                Err(e) => return GitFetchAttempt::Failed(
+                    WrightError::ForgeError(format!("git remote setup failed: {e}"))
+                ),
+            },
+        };
         let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
         let span_for_cb = git_span.clone();
         let mut callbacks = git2::RemoteCallbacks::new();
@@ -327,16 +399,30 @@ impl Charge {
         if let Some(d) = effective_depth && d > 0 {
             fetch_opts.depth(d as i32);
         }
-        remote.fetch(
+        let fetch_result = remote.fetch(
             &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
             Some(&mut fetch_opts),
             None,
-        ).map_err(|e| git_fetch_error(e, git_url, dest))?;
+        );
         drop(git_span);
-        let obj = repo.revparse_single(actual_ref).map_err(|e| {
-            WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
-        })?;
-        Ok(obj.id().to_string())
+
+        match fetch_result {
+            Ok(()) => {}
+            Err(e) if e.class() == git2::ErrorClass::Odb => {
+                return GitFetchAttempt::StaleCache;
+            }
+            Err(e) => {
+                return GitFetchAttempt::Failed(git_fetch_error(e, git_url, dest));
+            }
+        }
+
+        drop(remote);
+        match repo.revparse_single(actual_ref) {
+            Ok(obj) => GitFetchAttempt::Done(obj.id().to_string()),
+            Err(e) => GitFetchAttempt::Failed(
+                WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
+            ),
+        }
     }
 
     // ------------------------------------------------------------------
@@ -593,6 +679,12 @@ fn source_cache_filename(part_name: &str, uri: &str) -> String {
     sanitize_cache_filename(&format!("{}-{}", part_name, basename))
 }
 
+enum GitFetchAttempt {
+    Done(String),
+    StaleCache,
+    Failed(WrightError),
+}
+
 /// Turn a libgit2 fetch failure into an actionable error.
 ///
 /// When upstream history is rewritten (e.g. a force-push), the cached bare repo
@@ -605,7 +697,8 @@ fn git_fetch_error(e: git2::Error, url: &str, cache: &Path) -> WrightError {
             "git fetch failed for {url}: {e}\n\
              The upstream history appears to have been rewritten (e.g. force-pushed), \
              so the cached clone references commits the remote no longer has.\n\
-             Remove the stale cache and retry:\n    rm -rf {}",
+             Automatic cache recovery was attempted but failed.\n\
+             Remove the stale cache manually and retry:\n    rm -rf {}",
             cache.display()
         ));
     }
