@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Fixed
+- **Shallow git sources no longer falsely report "upstream history rewritten" on
+  every update.** Shallow fetches mirrored every upstream branch and tag
+  (`+refs/heads/*` / `+refs/tags/*`) with a depth. Active upstreams routinely
+  rebase or force-push side branches, so libgit2 aborted the shallow negotiation
+  with an ODB error even when the ref being built was untouched — which Wright
+  misdiagnosed as a force-push and recovered from with a full re-clone on every
+  build. Shallow fetches now request only the single ref they need (stored in a
+  private `refs/wright/*` namespace), and the recovery path no longer accuses the
+  upstream of rewriting history. Full (non-shallow) clones still mirror, so
+  arbitrary commit hashes keep resolving.
 - **Incremental builds no longer recompile and relink the whole crate every
   time.** `build.rs` declared `cargo:rerun-if-changed=src/cli/wright.rs`, a file
   that does not exist (the binary lives at `src/bin/wright.rs`). Cargo treats a

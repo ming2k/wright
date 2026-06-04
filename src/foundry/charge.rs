@@ -294,9 +294,13 @@ impl Charge {
             match attempt {
                 GitFetchAttempt::Done(id) => return Ok(id),
                 GitFetchAttempt::StaleCache if !retry_stale => {
-                    warn!(
-                        "[{}] stale git cache detected (upstream history rewritten); \
-                         removing cache and retrying: {}",
+                    // An ODB error here means the shallow cache could not be
+                    // updated incrementally. This is usually NOT an upstream
+                    // problem (a moved side-branch or a shallow-boundary mismatch
+                    // is enough); refreshing the cache resolves it cleanly.
+                    debug!(
+                        "[{}] shallow git cache could not be updated incrementally; \
+                         refreshing cache: {}",
                         scope, dest.display()
                     );
                     tokio::fs::remove_dir_all(dest).await.map_err(|rm_err| {
@@ -310,7 +314,8 @@ impl Charge {
                 }
                 GitFetchAttempt::StaleCache => {
                     return Err(WrightError::ForgeError(format!(
-                        "git fetch failed for {git_url}: stale cache recovery did not resolve the issue.\n\
+                        "git fetch failed for {git_url}: refreshing the shallow cache did not \
+                         resolve the issue.\n\
                          Remove the cache manually and retry:\n    rm -rf {}",
                         dest.display()
                     )));
@@ -348,8 +353,30 @@ impl Charge {
             }
         };
 
+        // Decide what to fetch. For shallow fetches, only request the single ref
+        // we actually need, stored in a private namespace. Mirroring every branch
+        // and tag (`+refs/heads/*` / `+refs/tags/*`) drags unrelated upstream
+        // branches — which active repos routinely rebase or force-push — into the
+        // shallow negotiation. libgit2 then aborts with an ODB error even though
+        // the ref we build is untouched, which we previously misread as upstream
+        // history rewrites. A full (non-shallow) fetch has no shallow boundary, so
+        // mirroring is safe there and keeps arbitrary commit hashes resolvable.
+        let shallow = matches!(effective_depth, Some(d) if d > 0);
+        let local_ref = local_fetch_ref(actual_ref);
+        let (refspecs, resolve_target): (Vec<String>, String) = if shallow {
+            (vec![format!("+{actual_ref}:{local_ref}")], local_ref)
+        } else {
+            (
+                vec![
+                    "+refs/heads/*:refs/heads/*".to_string(),
+                    "+refs/tags/*:refs/tags/*".to_string(),
+                ],
+                actual_ref.to_string(),
+            )
+        };
+
         if !is_fresh_clone && !force_fetch {
-            if let Ok(obj) = repo.revparse_single(actual_ref) {
+            if let Ok(obj) = repo.revparse_single(&resolve_target) {
                 tracing::debug!(
                     "[{}] git ref '{}' already available locally; skipping fetch",
                     scope, actual_ref
@@ -395,15 +422,19 @@ impl Charge {
         });
         let mut fetch_opts = git2::FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
-        fetch_opts.download_tags(git2::AutotagOption::All);
+        // A shallow fetch wants only the requested ref, so don't pull every tag
+        // (which would re-introduce the broad negotiation we are avoiding). A full
+        // fetch mirrors everything and benefits from autotagging.
+        fetch_opts.download_tags(if shallow {
+            git2::AutotagOption::None
+        } else {
+            git2::AutotagOption::All
+        });
         if let Some(d) = effective_depth && d > 0 {
             fetch_opts.depth(d as i32);
         }
-        let fetch_result = remote.fetch(
-            &["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
-            Some(&mut fetch_opts),
-            None,
-        );
+        let refspec_refs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
+        let fetch_result = remote.fetch(&refspec_refs, Some(&mut fetch_opts), None);
         drop(git_span);
 
         match fetch_result {
@@ -417,7 +448,7 @@ impl Charge {
         }
 
         drop(remote);
-        match repo.revparse_single(actual_ref) {
+        match repo.revparse_single(&resolve_target) {
             Ok(obj) => GitFetchAttempt::Done(obj.id().to_string()),
             Err(e) => GitFetchAttempt::Failed(
                 WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
@@ -687,22 +718,38 @@ enum GitFetchAttempt {
 
 /// Turn a libgit2 fetch failure into an actionable error.
 ///
-/// When upstream history is rewritten (e.g. a force-push), the cached bare repo
-/// still references objects the remote no longer advertises, so libgit2 aborts
-/// the fetch with an ODB "object not found" error. The raw message is opaque, so
-/// we explain the likely cause and point at the cache directory to remove.
+/// ODB-class failures are handled upstream as a shallow-cache refresh (see
+/// [`GitFetchAttempt::StaleCache`]); by the time we reach here the error is some
+/// other failure (network, auth, missing ref, …), so report it verbatim.
 fn git_fetch_error(e: git2::Error, url: &str, cache: &Path) -> WrightError {
     if e.class() == git2::ErrorClass::Odb {
         return WrightError::ForgeError(format!(
             "git fetch failed for {url}: {e}\n\
-             The upstream history appears to have been rewritten (e.g. force-pushed), \
-             so the cached clone references commits the remote no longer has.\n\
-             Automatic cache recovery was attempted but failed.\n\
-             Remove the stale cache manually and retry:\n    rm -rf {}",
+             The shallow cache could not be refreshed automatically.\n\
+             Remove the cache manually and retry:\n    rm -rf {}",
             cache.display()
         ));
     }
     WrightError::ForgeError(format!("git fetch failed: {e}"))
+}
+
+/// Map a requested git ref into a private, path-safe ref namespace.
+///
+/// Shallow fetches store the single ref they request here instead of mirroring
+/// upstream's `refs/heads/*` and `refs/tags/*`. Encoding the ref keeps different
+/// refs of the same cached repo from colliding.
+fn local_fetch_ref(git_ref: &str) -> String {
+    let safe: String = git_ref
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("refs/wright/{safe}")
 }
 
 fn git_cache_dir_name(url: &str) -> String {

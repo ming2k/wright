@@ -23,3 +23,4 @@
 | [ADR-0019](0019-cas-delivery-recovery.md) | Two-layer CAS + WAL recovery for delivery | Accepted |
 | [ADR-0020](0020-merge-cli-and-commands-directories.md) | Merge `src/cli/` and `src/commands/` into a single directory | Accepted |
 | [ADR-0021](0021-cargo-style-span-driven-output.md) | Cargo-style span-driven CLI output (+ companion correctness fixes) | Accepted |
+| [ADR-0022](0022-git-fetch-via-libgit2-no-system-git.md) | Git source fetching via libgit2, never the system `git` | Accepted |
