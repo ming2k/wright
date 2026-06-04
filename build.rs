@@ -12,9 +12,11 @@ use cli::Cli;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/cli/mod.rs");
-    println!("cargo:rerun-if-changed=src/cli/build.rs");
-    println!("cargo:rerun-if-changed=src/cli/wright.rs");
+    // build.rs `#[path]`-includes src/cli/mod.rs, which pulls in the whole
+    // src/cli/ module tree. Watch the directory (cargo recurses into it) so the
+    // script reruns only when the CLI definition actually changes — and never
+    // because a listed path is missing, which would force a rebuild every time.
+    println!("cargo:rerun-if-changed=src/cli");
 
     // Tell the main crate that handler functions in src/cli/*.rs may be
     // compiled. The build script itself does NOT see this cfg, so it skips

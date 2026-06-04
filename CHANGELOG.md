@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Incremental builds no longer recompile and relink the whole crate every
+  time.** `build.rs` declared `cargo:rerun-if-changed=src/cli/wright.rs`, a file
+  that does not exist (the binary lives at `src/bin/wright.rs`). Cargo treats a
+  `rerun-if-changed` path that points at a missing file as permanently stale, so
+  the build script reran on every invocation, re-emitted its `rustc-cfg`, and
+  forced a full rebuild and link of the `wright` crate even with no source
+  changes. The script now watches the `src/cli` directory it actually compiles,
+  so unchanged builds finish from cache in well under a second.
+
 ## [5.3.7] - 2026-05-30
 
 ### Changed
