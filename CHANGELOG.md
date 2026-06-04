@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.8] - 2026-06-04
+
 ### Fixed
 - **Shallow git sources no longer falsely report "upstream history rewritten" on
   every update.** Shallow fetches mirrored every upstream branch and tag
