@@ -41,7 +41,11 @@ description = "test folio"
 
 plans = [{}]
 "#,
-        plans.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", "),
+        plans
+            .iter()
+            .map(|p| format!("\"{p}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
     );
 
     for (an, av) in opts.assumes {
@@ -148,7 +152,12 @@ async fn dry_run_has_no_side_effects() {
     let folio_path = temp.path().join("test.toml");
     fs::write(
         &folio_path,
-        folio_content("test", "1", &["simple-a", "simple-b"], &FolioOpts::default()),
+        folio_content(
+            "test",
+            "1",
+            &["simple-a", "simple-b"],
+            &FolioOpts::default(),
+        ),
     )
     .unwrap();
 
@@ -167,7 +176,10 @@ async fn dry_run_has_no_side_effects() {
     .unwrap();
 
     // Dry-run must not touch the target.
-    assert!(!root_dir.exists(), "dry-run must not create the target root");
+    assert!(
+        !root_dir.exists(),
+        "dry-run must not create the target root"
+    );
     assert!(!db_path.exists(), "dry-run must not create the target db");
 }
 
@@ -301,13 +313,7 @@ async fn resolves_folio_from_cli_override() {
     let db_path = temp.path().join("target-db.db");
 
     launch::execute_launch(
-        targets_req(
-            None,
-            Some(adhoc_folios),
-            vec!["@core".into()],
-            false,
-            false,
-        ),
+        targets_req(None, Some(adhoc_folios), vec!["@core".into()], false, false),
         &config,
         &db_path,
         &root_dir,
@@ -406,10 +412,7 @@ async fn registers_provides() {
         db.get_plan("linux").await.unwrap().unwrap().version,
         "6.12.0"
     );
-    assert_eq!(
-        db.get_plan("bash").await.unwrap().unwrap().version,
-        "5.2"
-    );
+    assert_eq!(db.get_plan("bash").await.unwrap().unwrap().version, "5.2");
 }
 
 #[tokio::test]
@@ -427,9 +430,7 @@ async fn runs_post_launch_hook() {
             "1",
             &["simple-f"],
             &FolioOpts {
-                hooks: &[
-                    "mkdir -p $ROOT/var/service && ln -s /etc/sv/sshd $ROOT/var/service/sshd",
-                ],
+                hooks: &["mkdir -p $ROOT/var/service && ln -s /etc/sv/sshd $ROOT/var/service/sshd"],
                 ..Default::default()
             },
         ),
@@ -699,13 +700,34 @@ async fn target_wright_toml_loads_clean() {
 
     let target_config = root_dir.join("etc/wright/wright.toml");
     let loaded = GlobalConfig::load(Some(&target_config)).unwrap();
-    assert_eq!(loaded.general.plans_dir, PathBuf::from("/var/lib/wright/plans"));
-    assert_eq!(loaded.general.folios_dir, PathBuf::from("/var/lib/wright/folios"));
-    assert_eq!(loaded.general.parts_dir, PathBuf::from("/var/lib/wright/parts"));
-    assert_eq!(loaded.general.store_dir, PathBuf::from("/var/lib/wright/store"));
-    assert_eq!(loaded.general.source_dir, PathBuf::from("/var/lib/wright/sources"));
-    assert_eq!(loaded.general.db_path, PathBuf::from("/var/lib/wright/wright.db"));
-    assert_eq!(loaded.build.forge_dir, PathBuf::from("/var/tmp/wright/workshop"));
+    assert_eq!(
+        loaded.general.plans_dir,
+        PathBuf::from("/var/lib/wright/plans")
+    );
+    assert_eq!(
+        loaded.general.folios_dir,
+        PathBuf::from("/var/lib/wright/folios")
+    );
+    assert_eq!(
+        loaded.general.parts_dir,
+        PathBuf::from("/var/lib/wright/parts")
+    );
+    assert_eq!(
+        loaded.general.store_dir,
+        PathBuf::from("/var/lib/wright/store")
+    );
+    assert_eq!(
+        loaded.general.source_dir,
+        PathBuf::from("/var/lib/wright/sources")
+    );
+    assert_eq!(
+        loaded.general.db_path,
+        PathBuf::from("/var/lib/wright/wright.db")
+    );
+    assert_eq!(
+        loaded.build.forge_dir,
+        PathBuf::from("/var/tmp/wright/workshop")
+    );
 }
 
 #[tokio::test]

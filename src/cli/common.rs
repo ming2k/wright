@@ -55,9 +55,9 @@ pub struct Context<'a> {
 #[cfg(with_handlers)]
 impl<'a> Context<'a> {
     pub async fn open_db(&self) -> Result<InstalledDb> {
-        InstalledDb::open(&self.db_path).await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to open database: {}", e))
-        })
+        InstalledDb::open(&self.db_path)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("failed to open database: {}", e)))
     }
 
     pub fn ensure_lock_and_part_store(&self) -> Result<(LocalPartStore, ProcessLock)> {
@@ -66,9 +66,7 @@ impl<'a> Context<'a> {
             crate::util::lock::LockIdentity::Command("wright"),
             crate::util::lock::LockMode::Exclusive,
         )
-        .map_err(|e| {
-            WrightError::LockError(format!("failed to start wright operation: {}", e))
-        })?;
+        .map_err(|e| WrightError::LockError(format!("failed to start wright operation: {}", e)))?;
         let part_store = crate::resolve::setup_part_store(self.config)?;
         Ok((part_store, lock))
     }

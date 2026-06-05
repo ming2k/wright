@@ -57,10 +57,7 @@ pub async fn package_outputs(
                 fhs::validate(&result.staging_dir, &manifest.metadata.name)?;
             }
             let part_path = archive::create_part(&result.staging_dir, manifest, &output_dir, None)?;
-            let file_name = part_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let file_name = part_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             info!(
                 event = "seal.packed",
                 plan_name = %manifest.metadata.name,

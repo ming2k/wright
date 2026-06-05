@@ -7,9 +7,7 @@ use tracing::{debug, info, warn};
 use crate::error::{Result, WrightError};
 
 /// Build stage order for checkpoint rewind. Source stages are NOT included.
-pub const STAGE_ORDER: &[&str] = &[
-    "prepare", "configure", "compile", "check", "staging",
-];
+pub const STAGE_ORDER: &[&str] = &["prepare", "configure", "compile", "check", "staging"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeState {
@@ -329,7 +327,10 @@ mod tests {
 
         let mut config2: HashMap<String, (String, HashMap<String, String>)> = HashMap::new();
         config2.insert("prepare".into(), ("prep_script".into(), HashMap::new()));
-        config2.insert("compile".into(), ("compile_script_changed".into(), HashMap::new()));
+        config2.insert(
+            "compile".into(),
+            ("compile_script_changed".into(), HashMap::new()),
+        );
         let expected2 = Checkpoint::compute_expected_hashes(&order, &config2);
 
         let pt = ck.find_rewind_point(&order, &expected2);
@@ -385,6 +386,9 @@ mod tests {
         ck.invalidate_all();
 
         assert!(!state_path.exists());
-        assert!(prepare_layer.exists(), "layers directory should be preserved");
+        assert!(
+            prepare_layer.exists(),
+            "layers directory should be preserved"
+        );
     }
 }

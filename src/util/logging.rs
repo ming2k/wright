@@ -3,8 +3,8 @@ use owo_colors::{OwoColorize, Style};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::IsTerminal;
-use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
 use tracing::Subscriber;
 use tracing::field::{Field, Visit};
 use tracing::span;
@@ -18,9 +18,8 @@ use uuid::Uuid;
 
 /// Colors are enabled iff stderr is a TTY and `NO_COLOR` is unset
 /// (see <https://no-color.org>).
-pub static USE_COLOR: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("NO_COLOR").is_none() && std::io::stderr().is_terminal()
-});
+pub static USE_COLOR: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("NO_COLOR").is_none() && std::io::stderr().is_terminal());
 
 /// Width of the right-aligned verb column. Matches Cargo (12).
 pub const VERB_WIDTH: usize = 12;
@@ -78,7 +77,10 @@ pub fn format_error(msg: &str) -> String {
 ///
 /// Returns a `Vec<String>` so the caller can print each line through
 /// `MULTI.println` — which serializes against active progress bars.
-pub fn format_failure_report(err: &dyn std::fmt::Display, log_path: &std::path::Path) -> Vec<String> {
+pub fn format_failure_report(
+    err: &dyn std::fmt::Display,
+    log_path: &std::path::Path,
+) -> Vec<String> {
     let chain = split_error_chain(&format!("{}", err));
     let (head, causes) = match chain.split_first() {
         Some((h, rest)) => (h.clone(), rest.to_vec()),
@@ -99,10 +101,7 @@ pub fn format_failure_report(err: &dyn std::fmt::Display, log_path: &std::path::
         }
     }
     lines.push(String::new());
-    lines.push(format!(
-        "See {} for the full trace.",
-        log_path.display()
-    ));
+    lines.push(format!("See {} for the full trace.", log_path.display()));
     lines
 }
 
@@ -172,10 +171,7 @@ mod tests {
 
     #[test]
     fn split_chain_handles_single_message() {
-        assert_eq!(
-            split_error_chain("plain message"),
-            vec!["plain message"]
-        );
+        assert_eq!(split_error_chain("plain message"), vec!["plain message"]);
     }
 
     #[test]
@@ -187,7 +183,11 @@ mod tests {
         // headline / blank / Caused by / cause / blank / see ...
         assert_eq!(lines.len(), 6);
         assert!(lines[0].contains("error:"), "headline: {}", lines[0]);
-        assert!(lines[0].contains("task 'bison' failed"), "headline: {}", lines[0]);
+        assert!(
+            lines[0].contains("task 'bison' failed"),
+            "headline: {}",
+            lines[0]
+        );
         assert!(lines[1].is_empty());
         assert_eq!(lines[2], "Caused by:");
         assert_eq!(lines[3], "    Device or resource busy (os error 16)");

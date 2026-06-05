@@ -193,11 +193,7 @@ impl Foundry {
         Ok(())
     }
 
-    pub async fn update_hashes(
-        &self,
-        manifest: &PlanManifest,
-        manifest_path: &Path,
-    ) -> Result<()> {
+    pub async fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let charge = Charge::new(&self.config, self.network_pool.clone());
         charge.update_hashes(manifest, manifest_path).await
     }
@@ -235,7 +231,10 @@ impl Foundry {
         }
 
         if let Some(ref stage_name) = opts.until_stage {
-            let order = crate::foundry::forge::stage_order_for_manifest(manifest, opts.extra_env.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str()));
+            let order = crate::foundry::forge::stage_order_for_manifest(
+                manifest,
+                opts.extra_env.get("WRIGHT_BUILD_PHASE").map(|s| s.as_str()),
+            );
             if !order.iter().any(|stage| stage == stage_name) {
                 return Err(WrightError::ForgeError(format!(
                     "stage '{stage_name}' not found in forge order"

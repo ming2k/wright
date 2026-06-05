@@ -184,18 +184,27 @@ fn dedup(v: Vec<PathBuf>) -> Vec<PathBuf> {
 
 fn print_dry_run(plan: &LaunchPlan, root_dir: &Path) {
     println!("[dry-run] {} -> {}", plan.label, root_dir.display());
-    println!("[dry-run] would forge and deploy {} plan(s):", plan.targets.len());
+    println!(
+        "[dry-run] would forge and deploy {} plan(s):",
+        plan.targets.len()
+    );
     for t in &plan.targets {
         println!("  {t}");
     }
     if !plan.provides.is_empty() {
-        println!("[dry-run] would assume {} external(s):", plan.provides.len());
+        println!(
+            "[dry-run] would assume {} external(s):",
+            plan.provides.len()
+        );
         for p in &plan.provides {
             println!("  {} {}", p.name, p.version);
         }
     }
     if !plan.hooks.is_empty() {
-        println!("[dry-run] would run {} post-launch hook(s)", plan.hooks.len());
+        println!(
+            "[dry-run] would run {} post-launch hook(s)",
+            plan.hooks.len()
+        );
     }
 }
 
@@ -274,9 +283,8 @@ fn sync_plans_dir(source: &Path, target_plans: &Path) -> Result<()> {
         }
         let name = entry.file_name();
         let dest = target_plans.join(&name);
-        let stats = mirror_dir(&path, &dest).map_err(|e| {
-            forge_err(format!("sync plan {}: {}", name.to_string_lossy(), e))
-        })?;
+        let stats = mirror_dir(&path, &dest)
+            .map_err(|e| forge_err(format!("sync plan {}: {}", name.to_string_lossy(), e)))?;
         debug!(
             event = "launch.plan_synced",
             plan = %name.to_string_lossy(),
@@ -316,7 +324,12 @@ fn sync_folios(sources: &[PathBuf], target: &Path) -> Result<()> {
             copied += 1;
         }
     }
-    info!(event = "launch.folios_synced", total = sources.len(), copied, "folios synced");
+    info!(
+        event = "launch.folios_synced",
+        total = sources.len(),
+        copied,
+        "folios synced"
+    );
     Ok(())
 }
 
@@ -376,8 +389,12 @@ fn needs_copy(src: &Path, dst: &Path) -> bool {
     if !dst.is_file() {
         return true;
     }
-    let Ok(s) = std::fs::metadata(src) else { return true };
-    let Ok(d) = std::fs::metadata(dst) else { return true };
+    let Ok(s) = std::fs::metadata(src) else {
+        return true;
+    };
+    let Ok(d) = std::fs::metadata(dst) else {
+        return true;
+    };
     s.len() != d.len() || mtime(&s) != mtime(&d)
 }
 

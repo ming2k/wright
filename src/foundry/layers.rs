@@ -37,7 +37,9 @@ fn force_clean_dir_blocking(path: &Path) -> Result<()> {
             Err(e) => {
                 let is_busy = e.raw_os_error() == Some(libc::EBUSY);
                 last_err = Some(e);
-                if !is_busy { break; }
+                if !is_busy {
+                    break;
+                }
                 let detached = detach_mounts_under(path);
                 debug!(
                     event = "clean.ebusy",
@@ -133,7 +135,10 @@ fn unmount_overlay_point(mount: &Path) {
             "Lazy-unmounted stage overlay (fell back after EBUSY)"
         ),
         Err(nix::errno::Errno::EINVAL) => {}
-        Err(e) => debug!("lazy unmount overlay at {} (non-fatal): {e}", mount.display()),
+        Err(e) => debug!(
+            "lazy unmount overlay at {} (non-fatal): {e}",
+            mount.display()
+        ),
     }
 }
 
@@ -148,9 +153,7 @@ const LAYER_INDICES: &[(&str, &str)] = &[
     ("staging", "05"),
 ];
 
-pub const LAYER_STAGES: &[&str] = &[
-    "prepare", "configure", "compile", "check", "staging",
-];
+pub const LAYER_STAGES: &[&str] = &["prepare", "configure", "compile", "check", "staging"];
 
 pub fn layer_dir_name(stage: &str) -> String {
     for (s, idx) in LAYER_INDICES {
@@ -195,13 +198,22 @@ impl LayerManager {
         let ovl_work_dir = build_root.join(".ovl_work");
 
         std::fs::create_dir_all(&layers_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create layers dir {}: {e}", layers_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to create layers dir {}: {e}",
+                layers_dir.display()
+            ))
         })?;
         std::fs::create_dir_all(&ovl_work_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create overlay work dir {}: {e}", ovl_work_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to create overlay work dir {}: {e}",
+                ovl_work_dir.display()
+            ))
         })?;
         std::fs::create_dir_all(&stages_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create stages dir {}: {e}", stages_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to create stages dir {}: {e}",
+                stages_dir.display()
+            ))
         })?;
 
         let empty_stage = stages_dir.join(".empty");
@@ -209,7 +221,10 @@ impl LayerManager {
 
         remove_path_if_exists(&target_dir)?;
         std::os::unix::fs::symlink(&empty_stage, &target_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create target symlink {}: {e}", target_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to create target symlink {}: {e}",
+                target_dir.display()
+            ))
         })?;
 
         Ok(Self {
@@ -250,10 +265,12 @@ impl LayerManager {
     }
 
     pub fn populate_target(&self, source_dir: &Path, completed_stages: &[String]) -> Result<()> {
-        let resolved = std::fs::canonicalize(&self.target_dir)
-            .unwrap_or_else(|_| self.target_dir.clone());
+        let resolved =
+            std::fs::canonicalize(&self.target_dir).unwrap_or_else(|_| self.target_dir.clone());
 
-        let Ok(read_dir) = std::fs::read_dir(&resolved) else { return Ok(()); };
+        let Ok(read_dir) = std::fs::read_dir(&resolved) else {
+            return Ok(());
+        };
         for entry in read_dir.flatten() {
             let path = entry.path();
             if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink() {
@@ -292,13 +309,19 @@ impl LayerManager {
         let stage_point = self.stages_dir.join(layer_dir_name(current_stage));
         let _ = force_clean_dir_blocking(&stage_point);
         std::fs::create_dir_all(&stage_point).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create stage mount point {}: {e}", stage_point.display()))
+            WrightError::ForgeError(format!(
+                "failed to create stage mount point {}: {e}",
+                stage_point.display()
+            ))
         })?;
 
         let upper_dir = self.layer_dir(current_stage);
         if !upper_dir.exists() {
             std::fs::create_dir_all(&upper_dir).map_err(|e| {
-                WrightError::ForgeError(format!("failed to create upper layer dir {}: {e}", upper_dir.display()))
+                WrightError::ForgeError(format!(
+                    "failed to create upper layer dir {}: {e}",
+                    upper_dir.display()
+                ))
             })?;
         }
         let ovl_work = self.work_dir_for_stage(current_stage);
@@ -366,16 +389,25 @@ impl LayerManager {
             Ok(()) => {
                 let temp_link = self.target_dir.with_extension("tmp");
                 std::os::unix::fs::symlink(&stage_point, &temp_link).map_err(|e| {
-                    WrightError::ForgeError(format!("failed to create target symlink {}: {e}", temp_link.display()))
+                    WrightError::ForgeError(format!(
+                        "failed to create target symlink {}: {e}",
+                        temp_link.display()
+                    ))
                 })?;
                 std::fs::rename(&temp_link, &self.target_dir).map_err(|e| {
-                    WrightError::ForgeError(format!("failed to rotate target symlink to {}: {e}", stage_point.display()))
+                    WrightError::ForgeError(format!(
+                        "failed to rotate target symlink to {}: {e}",
+                        stage_point.display()
+                    ))
                 })?;
                 self.current_mount = Some(stage_point);
                 Ok(true)
             }
             Err(nix::errno::Errno::EPERM) => {
-                warn!(event = "layer.mount_no_cap", "overlay mount needs root (or CAP_SYS_ADMIN); using slower directory-based layering instead");
+                warn!(
+                    event = "layer.mount_no_cap",
+                    "overlay mount needs root (or CAP_SYS_ADMIN); using slower directory-based layering instead"
+                );
                 Ok(false)
             }
             Err(e) => Err(WrightError::ForgeError(format!(
@@ -391,7 +423,12 @@ impl LayerManager {
         }
     }
 
-    pub fn commit_layer(&self, stage: &str, source_dir: &Path, completed_stages: &[String]) -> Result<()> {
+    pub fn commit_layer(
+        &self,
+        stage: &str,
+        source_dir: &Path,
+        completed_stages: &[String],
+    ) -> Result<()> {
         let layer_dir = self.layer_dir(stage);
         if !self.target_dir.exists() {
             return Ok(());
@@ -408,12 +445,15 @@ impl LayerManager {
             // Check against source_dir and all prior layers.
             let already_present = {
                 let source_path = source_dir.join(rel_path);
-                if source_path.exists() && files_are_identical(&source_path, target_file).unwrap_or(false) {
+                if source_path.exists()
+                    && files_are_identical(&source_path, target_file).unwrap_or(false)
+                {
                     true
                 } else {
                     completed_stages.iter().rev().any(|s| {
                         let prev_path = self.layer_dir(s).join(rel_path);
-                        prev_path.exists() && files_are_identical(&prev_path, target_file).unwrap_or(false)
+                        prev_path.exists()
+                            && files_are_identical(&prev_path, target_file).unwrap_or(false)
                     })
                 }
             };
@@ -459,10 +499,16 @@ impl LayerManager {
 
     fn reset_overlay_work_dir(&self, work_dir: &Path) -> Result<()> {
         remove_path_if_exists(work_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to clear overlay work dir {}: {e}", work_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to clear overlay work dir {}: {e}",
+                work_dir.display()
+            ))
         })?;
         std::fs::create_dir_all(work_dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create overlay work dir {}: {e}", work_dir.display()))
+            WrightError::ForgeError(format!(
+                "failed to create overlay work dir {}: {e}",
+                work_dir.display()
+            ))
         })?;
         Ok(())
     }
@@ -486,7 +532,9 @@ fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(rel_path) = path.strip_prefix(src_dir) else { continue; };
+            let Ok(rel_path) = path.strip_prefix(src_dir) else {
+                continue;
+            };
             let dest_path = dest_dir.join(rel_path);
             let file_type = entry.file_type().ok();
 
@@ -519,7 +567,9 @@ fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
 }
 
 fn collect_files_recursive(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()); };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let ft = entry.file_type().ok();
@@ -557,7 +607,9 @@ fn files_are_identical(a: &Path, b: &Path) -> std::io::Result<bool> {
         if na != nb || buf_a[..na] != buf_b[..nb] {
             return Ok(false);
         }
-        if na == 0 { break; }
+        if na == 0 {
+            break;
+        }
     }
     Ok(true)
 }

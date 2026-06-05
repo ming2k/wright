@@ -54,8 +54,7 @@ where
 {
     for line in lines {
         // 13 spaces lines up with the 12-col verb column + 1 pivot space.
-        let _ = crate::util::progress::MULTI
-            .println(format!("             - {}", line.as_ref()));
+        let _ = crate::util::progress::MULTI.println(format!("             - {}", line.as_ref()));
     }
 }
 
@@ -232,7 +231,12 @@ fn report_elf_findings(report: &DeepReport) {
     let lines: Vec<String> = report
         .missing
         .iter()
-        .map(|m| format!("{} ({}) needs {} — no part provides this SONAME", m.part, m.binary, m.soname))
+        .map(|m| {
+            format!(
+                "{} ({}) needs {} — no part provides this SONAME",
+                m.part, m.binary, m.soname
+            )
+        })
         .collect();
     emit_bullets(&lines);
 }

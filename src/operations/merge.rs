@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, WrightError};
 
 use crate::config::GlobalConfig;
-use crate::util::stdin::collect_stdin_args;
 use crate::database::{InstalledDb, SessionContext};
 use crate::part::store::LocalPartStore;
 use crate::plan::manifest::PlanManifest;
 use crate::resolve::{plan_search_dirs, resolve_targets};
+use crate::util::stdin::collect_stdin_args;
 
 fn looks_like_archive_path(arg: &str) -> bool {
     arg.ends_with(".wright.tar.zst")

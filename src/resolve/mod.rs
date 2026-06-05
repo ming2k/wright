@@ -479,7 +479,9 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
 }
 
 fn lint_dependency_graph(graph: &crate::foundry::mvp::PlanGraph) -> Result<()> {
-    use crate::foundry::mvp::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
+    use crate::foundry::mvp::{
+        cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate,
+    };
     let cycles = find_cycles(&graph.deps_map);
 
     println!("Dependency Analysis Report");

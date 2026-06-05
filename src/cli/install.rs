@@ -1,9 +1,9 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::cli::common::{DomainArg, MatchPolicyArg};
 #[cfg(with_handlers)]
 use crate::cli::common::Context;
+use crate::cli::common::{DomainArg, MatchPolicyArg};
 #[cfg(with_handlers)]
 use crate::error::{Result, WrightError};
 #[cfg(with_handlers)]
@@ -142,7 +142,11 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
     execute_install(InstallRequest {
         targets,
         dep_domain,
-        match_policies: args.match_policies.into_iter().map(map_match_policy).collect(),
+        match_policies: args
+            .match_policies
+            .into_iter()
+            .map(map_match_policy)
+            .collect(),
         depth: args.depth,
         force: args.force,
         config: ctx.config,

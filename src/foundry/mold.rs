@@ -34,12 +34,14 @@ impl Mold {
         }
 
         ensure_clean_dir(&outputs_dir).await?;
-        tokio::fs::create_dir_all(&default_output_dir).await.map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create default output directory {}: {e}",
-                default_output_dir.display()
-            ))
-        })?;
+        tokio::fs::create_dir_all(&default_output_dir)
+            .await
+            .map_err(|e| {
+                WrightError::ForgeError(format!(
+                    "failed to create default output directory {}: {e}",
+                    default_output_dir.display()
+                ))
+            })?;
 
         let mut split_dirs = HashMap::new();
 
@@ -58,17 +60,23 @@ impl Mold {
                     None => continue,
                 };
                 let sub_output_dir = outputs_dir.join(sub_name);
-                tokio::fs::create_dir_all(&sub_output_dir).await.map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to create output directory {}: {e}",
-                        sub_output_dir.display()
-                    ))
-                })?;
+                tokio::fs::create_dir_all(&sub_output_dir)
+                    .await
+                    .map_err(|e| {
+                        WrightError::ForgeError(format!(
+                            "failed to create output directory {}: {e}",
+                            sub_output_dir.display()
+                        ))
+                    })?;
                 let includes = incs
                     .iter()
                     .map(|pat| {
                         globset::Glob::new(pat)
-                            .map_err(|e| WrightError::ForgeError(format!("invalid include glob '{pat}' for {sub_name}: {e}")))
+                            .map_err(|e| {
+                                WrightError::ForgeError(format!(
+                                    "invalid include glob '{pat}' for {sub_name}: {e}"
+                                ))
+                            })
                             .map(|g| g.compile_matcher())
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -79,7 +87,11 @@ impl Mold {
                     .iter()
                     .map(|pat| {
                         globset::Glob::new(pat)
-                            .map_err(|e| WrightError::ForgeError(format!("invalid exclude glob '{pat}' for {sub_name}: {e}")))
+                            .map_err(|e| {
+                                WrightError::ForgeError(format!(
+                                    "invalid exclude glob '{pat}' for {sub_name}: {e}"
+                                ))
+                            })
                             .map(|g| g.compile_matcher())
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -87,14 +99,22 @@ impl Mold {
                 sub_rules.push((sub_name.as_str(), sub_output_dir, includes, excludes));
             }
 
-            let mut discard_rules: Vec<(&str, Vec<globset::GlobMatcher>, Vec<globset::GlobMatcher>)> = Vec::new();
+            let mut discard_rules: Vec<(
+                &str,
+                Vec<globset::GlobMatcher>,
+                Vec<globset::GlobMatcher>,
+            )> = Vec::new();
             for discard in &manifest.discard {
                 let includes = discard
                     .include
                     .iter()
                     .map(|pat| {
                         globset::Glob::new(pat)
-                            .map_err(|e| WrightError::ForgeError(format!("invalid discard include glob '{pat}': {e}")))
+                            .map_err(|e| {
+                                WrightError::ForgeError(format!(
+                                    "invalid discard include glob '{pat}': {e}"
+                                ))
+                            })
                             .map(|g| g.compile_matcher())
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -103,7 +123,11 @@ impl Mold {
                     .iter()
                     .map(|pat| {
                         globset::Glob::new(pat)
-                            .map_err(|e| WrightError::ForgeError(format!("invalid discard exclude glob '{pat}': {e}")))
+                            .map_err(|e| {
+                                WrightError::ForgeError(format!(
+                                    "invalid discard exclude glob '{pat}': {e}"
+                                ))
+                            })
                             .map(|g| g.compile_matcher())
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -148,7 +172,10 @@ impl Mold {
                 let mut matches = Vec::new();
                 for (sub_name, sub_dir, includes, excludes) in &sub_rules {
                     let mut matched = includes.iter().any(|m| m.is_match(rel_str));
-                    if matched && !excludes.is_empty() && excludes.iter().any(|m| m.is_match(rel_str)) {
+                    if matched
+                        && !excludes.is_empty()
+                        && excludes.iter().any(|m| m.is_match(rel_str))
+                    {
                         matched = false;
                     }
                     if matched {
@@ -165,10 +192,13 @@ impl Mold {
                     let matches = find_matches(&rel_str);
                     match matches.len() {
                         0 => {
-                            let discarded = discard_rules.iter().any(|(_reason, includes, excludes)| {
-                                let matched = includes.iter().any(|m| m.is_match(&rel_str));
-                                matched && (excludes.is_empty() || !excludes.iter().any(|m| m.is_match(&rel_str)))
-                            });
+                            let discarded =
+                                discard_rules.iter().any(|(_reason, includes, excludes)| {
+                                    let matched = includes.iter().any(|m| m.is_match(&rel_str));
+                                    matched
+                                        && (excludes.is_empty()
+                                            || !excludes.iter().any(|m| m.is_match(&rel_str)))
+                                });
                             if !discarded {
                                 if has_catchall {
                                     dest_path = Some(default_output_dir.join(rel_path));
@@ -202,10 +232,13 @@ impl Mold {
                     let matches = find_matches(&rel_str);
                     match matches.len() {
                         0 => {
-                            let discarded = discard_rules.iter().any(|(_reason, includes, excludes)| {
-                                let matched = includes.iter().any(|m| m.is_match(&rel_str));
-                                matched && (excludes.is_empty() || !excludes.iter().any(|m| m.is_match(&rel_str)))
-                            });
+                            let discarded =
+                                discard_rules.iter().any(|(_reason, includes, excludes)| {
+                                    let matched = includes.iter().any(|m| m.is_match(&rel_str));
+                                    matched
+                                        && (excludes.is_empty()
+                                            || !excludes.iter().any(|m| m.is_match(&rel_str)))
+                                });
                             if !discarded {
                                 if has_catchall {
                                     dest_path = Some(default_output_dir.join(rel_path));
@@ -228,7 +261,10 @@ impl Mold {
                     }
                     if let Some(dest_path) = dest_path {
                         let target = tokio::fs::read_link(symlink_path).await.map_err(|e| {
-                            WrightError::ForgeError(format!("failed to read symlink {}: {e}", symlink_path.display()))
+                            WrightError::ForgeError(format!(
+                                "failed to read symlink {}: {e}",
+                                symlink_path.display()
+                            ))
                         })?;
                         symlink_actions.push((dest_path, target));
                     }
@@ -236,9 +272,18 @@ impl Mold {
             }
 
             if !unmatched.is_empty() {
-                let shown = unmatched.iter().take(50).map(|p| format!("  - {p}")).collect::<Vec<_>>().join("\n");
+                let shown = unmatched
+                    .iter()
+                    .take(50)
+                    .map(|p| format!("  - {p}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let omitted = unmatched.len().saturating_sub(50);
-                let suffix = if omitted > 0 { format!("\n  ... and {omitted} more") } else { String::new() };
+                let suffix = if omitted > 0 {
+                    format!("\n  ... and {omitted} more")
+                } else {
+                    String::new()
+                };
 
                 let logs_dir = build_root.join("logs");
                 let _ = tokio::fs::create_dir_all(&logs_dir).await;
@@ -327,7 +372,9 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                     Err(_) => None,
                 };
 
-                let Ok(rel_path) = path.strip_prefix(src_dir) else { continue; };
+                let Ok(rel_path) = path.strip_prefix(src_dir) else {
+                    continue;
+                };
                 let dest_path = dest_dir.join(rel_path);
                 if let Some(parent) = dest_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
@@ -336,7 +383,10 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                 match file_type {
                     Some(ft) if ft.is_symlink() => {
                         let target = tokio::fs::read_link(&path).await.map_err(|e| {
-                            WrightError::ForgeError(format!("failed to read symlink {}: {e}", path.display()))
+                            WrightError::ForgeError(format!(
+                                "failed to read symlink {}: {e}",
+                                path.display()
+                            ))
                         })?;
                         tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
                             WrightError::ForgeError(format!(

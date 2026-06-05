@@ -73,7 +73,11 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         return Ok(0);
     }
 
-    crate::cli_action!("Checking", "dependency closure ({} archives)", archive_count);
+    crate::cli_action!(
+        "Checking",
+        "dependency closure ({} archives)",
+        archive_count
+    );
 
     let index = SonameIndex::scan_parts_dir(parts_dir).unwrap_or_else(|e| {
         crate::cli_warn!("failed to build SONAME index: {}", e);
@@ -111,7 +115,10 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
             }
             let targets = resolve_dep_targets(dep, &index);
             if targets.is_empty() {
-                missing.push(format!("{} needs {} (no provider in parts_dir)", meta.partinfo.name, dep));
+                missing.push(format!(
+                    "{} needs {} (no provider in parts_dir)",
+                    meta.partinfo.name, dep
+                ));
             }
         }
     }

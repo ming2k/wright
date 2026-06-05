@@ -146,7 +146,9 @@ impl<'a> Forge<'a> {
         if !self.stages.is_empty() {
             for s in &self.stages {
                 if !order.iter().any(|p| p == s) {
-                    return Err(WrightError::ForgeError(format!("stage '{s}' not found in forge order")));
+                    return Err(WrightError::ForgeError(format!(
+                        "stage '{s}' not found in forge order"
+                    )));
                 }
             }
             for stage_name in &order {
@@ -158,12 +160,9 @@ impl<'a> Forge<'a> {
         }
 
         let stop_after_index = if let Some(ref stage_name) = self.stop_after_stage {
-            Some(
-                order
-                    .iter()
-                    .position(|p| p == stage_name)
-                    .ok_or_else(|| WrightError::ForgeError(format!("stage '{stage_name}' not found in forge order")))?,
-            )
+            Some(order.iter().position(|p| p == stage_name).ok_or_else(|| {
+                WrightError::ForgeError(format!("stage '{stage_name}' not found in forge order"))
+            })?)
         } else {
             None
         };
@@ -185,7 +184,10 @@ impl<'a> Forge<'a> {
                 .collect();
             if checkpoint_stages.is_empty() {
                 0
-            } else if let Some(rewind_idx) = self.checkpoint.find_rewind_point(&checkpoint_stages, &expected) {
+            } else if let Some(rewind_idx) = self
+                .checkpoint
+                .find_rewind_point(&checkpoint_stages, &expected)
+            {
                 let rewind_stage = &checkpoint_stages[rewind_idx];
                 let start_idx = order
                     .iter()
@@ -193,7 +195,8 @@ impl<'a> Forge<'a> {
                     .unwrap_or(0);
                 let plan_name = &self.manifest.metadata.name;
                 info!(event = "resume.smart", plan_name = %plan_name, rewind_stage = %rewind_stage, start_index = start_idx, reason = "config_change_or_prior_failure", "Smart resume triggered");
-                self.checkpoint.rewind_from(&checkpoint_stages, rewind_idx)?;
+                self.checkpoint
+                    .rewind_from(&checkpoint_stages, rewind_idx)?;
                 self.layers.clear_layers_from(rewind_stage);
                 start_idx
             } else {
@@ -272,10 +275,13 @@ impl<'a> Forge<'a> {
 
             self.layers.prepare_upper_layer(stage_name)?;
 
-            let overlay_mounted = self.layers.mount_overlay(stage_name, &self.source_dir, &prev_stages)?;
+            let overlay_mounted =
+                self.layers
+                    .mount_overlay(stage_name, &self.source_dir, &prev_stages)?;
 
             if !overlay_mounted {
-                self.layers.populate_target(&self.source_dir, &prev_stages)?;
+                self.layers
+                    .populate_target(&self.source_dir, &prev_stages)?;
             }
 
             let result = self.run_ordered_stage_in_target(stage_name).await;
@@ -285,7 +291,8 @@ impl<'a> Forge<'a> {
             match result {
                 Ok(()) => {
                     if !overlay_mounted {
-                        self.layers.commit_layer(stage_name, &self.source_dir, &prev_stages)?;
+                        self.layers
+                            .commit_layer(stage_name, &self.source_dir, &prev_stages)?;
                     }
                     if checkpoint_enabled {
                         let expected = compute_expected_hashes(
@@ -330,17 +337,24 @@ impl<'a> Forge<'a> {
             } else {
                 None
             };
-            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count).await
+            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count)
+                .await
         } else if stage_name == "compile" {
             let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
             let _permit = if let Some(ref s) = self.compile_lock {
-                Some(s.acquire_many(effective_cpu).await.expect("compile semaphore closed"))
+                Some(
+                    s.acquire_many(effective_cpu)
+                        .await
+                        .expect("compile semaphore closed"),
+                )
             } else {
                 None
             };
-            self.run_stage_with_hooks_in_target(stage_name, effective_cpu).await
+            self.run_stage_with_hooks_in_target(stage_name, effective_cpu)
+                .await
         } else {
-            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count).await
+            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count)
+                .await
         }
     }
 
@@ -349,12 +363,14 @@ impl<'a> Forge<'a> {
         let pre_hook = format!("pre_{stage_name}");
         if let Some(stage) = self.get_stage(&pre_hook) {
             debug!(event = "hook.running", plan_name = %plan_name, hook = %pre_hook, "Running pre-hook");
-            self.run_stage_in_target(&pre_hook, stage, cpu_count).await?;
+            self.run_stage_in_target(&pre_hook, stage, cpu_count)
+                .await?;
         }
 
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            self.run_stage_in_target(stage_name, stage, cpu_count).await?;
+            self.run_stage_in_target(stage_name, stage, cpu_count)
+                .await?;
             let elapsed = t0.elapsed().as_secs_f64();
             info!(event = "stage.completed", plan_name = %plan_name, stage_name = %stage_name, elapsed_secs = elapsed, "Stage completed");
         } else {
@@ -364,7 +380,8 @@ impl<'a> Forge<'a> {
         let post_hook = format!("post_{stage_name}");
         if let Some(stage) = self.get_stage(&post_hook) {
             debug!(event = "hook.running", plan_name = %plan_name, hook = %post_hook, "Running post-hook");
-            self.run_stage_in_target(&post_hook, stage, cpu_count).await?;
+            self.run_stage_in_target(&post_hook, stage, cpu_count)
+                .await?;
         }
 
         Ok(())
@@ -400,7 +417,11 @@ impl<'a> Forge<'a> {
         } else if stage_name == "compile" {
             let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
             let _permit = if let Some(ref s) = self.compile_lock {
-                Some(s.acquire_many(effective_cpu).await.expect("compile semaphore closed"))
+                Some(
+                    s.acquire_many(effective_cpu)
+                        .await
+                        .expect("compile semaphore closed"),
+                )
             } else {
                 None
             };
@@ -492,7 +513,10 @@ impl<'a> Forge<'a> {
         let mut attempt: u32 = 0;
         let (result, final_attempt) = loop {
             let log_stdout = if attempt > 0 {
-                std::fs::OpenOptions::new().append(true).open(&stdout_log_path_owned).ok()
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&stdout_log_path_owned)
+                    .ok()
             } else {
                 stdout_log_file.take()
             };
@@ -620,7 +644,10 @@ impl<'a> Forge<'a> {
         let mut attempt: u32 = 0;
         let (result, final_attempt) = loop {
             let log_stdout = if attempt > 0 {
-                std::fs::OpenOptions::new().append(true).open(&stdout_log_path_owned).ok()
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&stdout_log_path_owned)
+                    .ok()
             } else {
                 stdout_log_file.take()
             };

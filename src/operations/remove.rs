@@ -84,12 +84,7 @@ pub async fn execute_remove(
                     ))
                 })?;
             if !list.is_empty() {
-                crate::cli_action!(
-                    "Cascading",
-                    "orphans of {}: {}",
-                    name,
-                    list.join(", ")
-                );
+                crate::cli_action!("Cascading", "orphans of {}: {}", name, list.join(", "));
             }
             list
         } else {

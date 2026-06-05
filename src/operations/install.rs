@@ -210,7 +210,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         })
         .collect();
     if !quiet {
-        let pkg_word = if total_packages == 1 { "package" } else { "packages" };
+        let pkg_word = if total_packages == 1 {
+            "package"
+        } else {
+            "packages"
+        };
         if total_batches == 1 {
             // Single batch: one line is enough — list the packages directly.
             info!(
@@ -234,7 +238,9 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 total_packages = total_packages,
                 total_batches = total_batches,
                 "{} {} across {} batches",
-                total_packages, pkg_word, total_batches
+                total_packages,
+                pkg_word,
+                total_batches
             );
             // Structured per-batch entries still go to the file log for
             // post-mortem analysis.
@@ -512,7 +518,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             bases_in_batch.push(base);
         }
 
-        let seal_word = if bases_in_batch.len() == 1 { "package" } else { "packages" };
+        let seal_word = if bases_in_batch.len() == 1 {
+            "package"
+        } else {
+            "packages"
+        };
         let seal_target = if total_batches == 1 {
             format!("{} {}", bases_in_batch.len(), seal_word)
         } else {
@@ -697,7 +707,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 crate::delivery::delivery_ready(&db, tx_id).await?;
                 crate::delivery::begin_applying(&db, tx_id).await?;
 
-                let part_word = if archive_paths.len() == 1 { "part" } else { "parts" };
+                let part_word = if archive_paths.len() == 1 {
+                    "part"
+                } else {
+                    "parts"
+                };
                 let deploy_target = if total_batches == 1 {
                     format!("{} {}", archive_paths.len(), part_word)
                 } else {
@@ -786,4 +800,3 @@ fn manifest_part_names(manifest: &PlanManifest) -> Vec<String> {
         _ => vec![manifest.metadata.name.clone()],
     }
 }
-

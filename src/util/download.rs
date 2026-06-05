@@ -84,7 +84,10 @@ fn try_download_http(
 ) -> std::result::Result<(), Attempt> {
     let mut response = client.get(url).send().map_err(|e| {
         // A failed send is a connection-level problem: usually transient.
-        Attempt::Transient(WrightError::NetworkError(format!("cannot reach {}: {}", url, e)))
+        Attempt::Transient(WrightError::NetworkError(format!(
+            "cannot reach {}: {}",
+            url, e
+        )))
     })?;
 
     let status = response.status();

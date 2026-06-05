@@ -64,7 +64,10 @@ impl Charge {
                         plan_name = %manifest.metadata.name,
                         "Source tree unchanged — reusing source/"
                     );
-                    return Ok(ChargeResult { dir: source_dir, fingerprint });
+                    return Ok(ChargeResult {
+                        dir: source_dir,
+                        fingerprint,
+                    });
                 }
             }
             // Fingerprint mismatch — purge and rebuild.
@@ -92,7 +95,10 @@ impl Charge {
             .await
             .map_err(|e| WrightError::ForgeError(format!("failed to write charge marker: {e}")))?;
 
-        Ok(ChargeResult { dir: source_dir, fingerprint })
+        Ok(ChargeResult {
+            dir: source_dir,
+            fingerprint,
+        })
     }
 
     /// Compute a fingerprint of the manifest's sources section.
@@ -177,7 +183,10 @@ impl Charge {
                     tokio::fs::create_dir_all(&git_cache_dir).await.ok();
                 }
                 let dest = git_cache_dir.join(&git_dir_name);
-                let processed_ref = git.r#ref.as_deref().map(|r| variables::process_uri(r, manifest));
+                let processed_ref = git
+                    .r#ref
+                    .as_deref()
+                    .map(|r| variables::process_uri(r, manifest));
                 let commit_id = self
                     .fetch_git_repo(
                         &processed_url,
@@ -207,7 +216,10 @@ impl Charge {
                             debug!("Source {} already cached and verified", filename);
                             needs_download = false;
                         } else {
-                            warn!("Cached source {} hash mismatch, re-downloading...", filename);
+                            warn!(
+                                "Cached source {} hash mismatch, re-downloading...",
+                                filename
+                            );
                             let _ = tokio::fs::remove_file(&dest).await;
                         }
                     }
@@ -242,8 +254,7 @@ impl Charge {
             Source::Local(local) => {
                 let processed_path = variables::process_uri(&local.path, manifest);
                 let local_path = validate_local_path(plan_dir, &processed_path)?;
-                let filename =
-                    source_cache_filename(&manifest.metadata.name, &processed_path);
+                let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
                 let dest = self.cache_dir.join(&filename);
                 let label = progress::source_label(&processed_path);
                 let _span = crate::cli_span!("Fetching", "{} ({})", label, manifest.metadata.name);
@@ -268,18 +279,14 @@ impl Charge {
         scope: &str,
     ) -> Result<String> {
         let actual_ref = git_ref.unwrap_or("HEAD");
-        let is_commit_hash =
-            actual_ref.len() == 40 && actual_ref.chars().all(|c| c.is_ascii_hexdigit());
-        let effective_depth = if is_commit_hash {
+        let effective_depth = effective_git_depth(actual_ref, depth);
+        if depth.is_some() && effective_depth.is_none() && is_commit_hash(actual_ref) {
             tracing::debug!(
                 "[{}] ref '{}' looks like a commit hash; disabling shallow clone",
                 scope,
                 actual_ref
             );
-            None
-        } else {
-            depth
-        };
+        }
         let label = progress::source_label(git_url);
 
         let mut retry_stale = false;
@@ -287,8 +294,14 @@ impl Charge {
             let is_fresh_clone = tokio::fs::metadata(dest).await.is_err();
 
             let attempt = self.git_fetch_attempt(
-                git_url, actual_ref, effective_depth, dest, scope, &label,
-                is_fresh_clone, retry_stale,
+                git_url,
+                actual_ref,
+                effective_depth,
+                dest,
+                scope,
+                &label,
+                is_fresh_clone,
+                retry_stale,
             );
 
             match attempt {
@@ -301,7 +314,8 @@ impl Charge {
                     debug!(
                         "[{}] shallow git cache could not be updated incrementally; \
                          refreshing cache: {}",
-                        scope, dest.display()
+                        scope,
+                        dest.display()
                     );
                     tokio::fs::remove_dir_all(dest).await.map_err(|rm_err| {
                         WrightError::ForgeError(format!(
@@ -340,16 +354,20 @@ impl Charge {
             info!("[{}] Cloning Git repository: {}", scope, git_url);
             match git2::Repository::init_bare(dest) {
                 Ok(r) => r,
-                Err(e) => return GitFetchAttempt::Failed(
-                    WrightError::ForgeError(format!("git init failed: {e}"))
-                ),
+                Err(e) => {
+                    return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
+                        "git init failed: {e}"
+                    )));
+                }
             }
         } else {
             match git2::Repository::open_bare(dest) {
                 Ok(r) => r,
-                Err(e) => return GitFetchAttempt::Failed(
-                    WrightError::ForgeError(format!("git open failed: {e}"))
-                ),
+                Err(e) => {
+                    return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
+                        "git open failed: {e}"
+                    )));
+                }
             }
         };
 
@@ -379,7 +397,8 @@ impl Charge {
             if let Ok(obj) = repo.revparse_single(&resolve_target) {
                 tracing::debug!(
                     "[{}] git ref '{}' already available locally; skipping fetch",
-                    scope, actual_ref
+                    scope,
+                    actual_ref
                 );
                 return GitFetchAttempt::Done(obj.id().to_string());
             }
@@ -393,9 +412,11 @@ impl Charge {
             Ok(r) => r,
             Err(_) => match repo.remote("origin", git_url) {
                 Ok(r) => r,
-                Err(e) => return GitFetchAttempt::Failed(
-                    WrightError::ForgeError(format!("git remote setup failed: {e}"))
-                ),
+                Err(e) => {
+                    return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
+                        "git remote setup failed: {e}"
+                    )));
+                }
             },
         };
         let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
@@ -403,7 +424,9 @@ impl Charge {
         let mut callbacks = git2::RemoteCallbacks::new();
         callbacks.transfer_progress(move |stats| {
             let total_objects = stats.total_objects() as u64;
-            if total_objects == 0 { return true; }
+            if total_objects == 0 {
+                return true;
+            }
             let received = stats.received_objects() as u64;
             let indexed = stats.indexed_objects() as u64;
             let total_deltas = stats.total_deltas() as u64;
@@ -430,7 +453,9 @@ impl Charge {
         } else {
             git2::AutotagOption::All
         });
-        if let Some(d) = effective_depth && d > 0 {
+        if let Some(d) = effective_depth
+            && d > 0
+        {
             fetch_opts.depth(d as i32);
         }
         let refspec_refs: Vec<&str> = refspecs.iter().map(String::as_str).collect();
@@ -450,9 +475,9 @@ impl Charge {
         drop(remote);
         match repo.revparse_single(&resolve_target) {
             Ok(obj) => GitFetchAttempt::Done(obj.id().to_string()),
-            Err(e) => GitFetchAttempt::Failed(
-                WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
-            ),
+            Err(e) => GitFetchAttempt::Failed(WrightError::ForgeError(format!(
+                "failed to resolve git ref '{actual_ref}': {e}"
+            ))),
         }
     }
 
@@ -515,30 +540,63 @@ impl Charge {
                     let final_dest = if let Some(ref sub) = git.extract_to {
                         let sub = variables::process_uri(sub, manifest);
                         let p = dest_dir.join(&sub);
-                        tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
+                        tokio::fs::create_dir_all(&p)
+                            .await
+                            .map_err(WrightError::IoError)?;
                         p
                     } else {
                         dest_dir.join(&git_dir_name)
                     };
-                    debug!("Extracting Git repo to {} (ref: {})...", final_dest.display(), git_ref);
+                    debug!(
+                        "Extracting Git repo to {} (ref: {})...",
+                        final_dest.display(),
+                        git_ref
+                    );
                     let cache_str = cache_path.to_str().ok_or_else(|| {
                         WrightError::ForgeError(format!(
                             "git cache path contains non-UTF-8 characters: {}",
                             cache_path.display()
                         ))
                     })?;
-                    let repo = git2::Repository::clone(cache_str, &final_dest)
-                        .map_err(|e| WrightError::ForgeError(format!("local git clone failed: {e}")))?;
+                    let uses_private_ref = uses_private_fetch_ref(&git_ref, git.depth);
+                    let checkout_ref = if uses_private_ref {
+                        local_fetch_ref(&git_ref)
+                    } else {
+                        git_ref.clone()
+                    };
+                    let repo = if uses_private_ref {
+                        let repo = git2::Repository::init(&final_dest).map_err(|e| {
+                            WrightError::ForgeError(format!("local git init failed: {e}"))
+                        })?;
+                        let mut remote = repo.remote("origin", cache_str).map_err(|e| {
+                            WrightError::ForgeError(format!("local git remote setup failed: {e}"))
+                        })?;
+                        let refspec = format!("+{checkout_ref}:{checkout_ref}");
+                        remote.fetch(&[refspec.as_str()], None, None).map_err(|e| {
+                            WrightError::ForgeError(format!("local git fetch failed: {e}"))
+                        })?;
+                        drop(remote);
+                        repo
+                    } else {
+                        git2::Repository::clone(cache_str, &final_dest).map_err(|e| {
+                            WrightError::ForgeError(format!("local git clone failed: {e}"))
+                        })?
+                    };
                     let (object, reference) = repo
-                        .revparse_ext(&git_ref)
+                        .revparse_ext(&checkout_ref)
                         .or_else(|_| repo.revparse_ext(&format!("origin/{git_ref}")))
-                        .map_err(|e| WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}")))?;
-                    repo.checkout_tree(&object, None)
-                        .map_err(|e| WrightError::ForgeError(format!("git checkout failed: {e}")))?;
+                        .map_err(|e| {
+                            WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
+                        })?;
+                    repo.checkout_tree(&object, None).map_err(|e| {
+                        WrightError::ForgeError(format!("git checkout failed: {e}"))
+                    })?;
                     match reference {
                         Some(gref) => {
                             let ref_name = gref.name().ok_or_else(|| {
-                                WrightError::ForgeError("git reference name is non-UTF-8".to_string())
+                                WrightError::ForgeError(
+                                    "git reference name is non-UTF-8".to_string(),
+                                )
                             })?;
                             repo.set_head(ref_name)
                         }
@@ -555,16 +613,25 @@ impl Charge {
                     let final_dest = if let Some(ref sub) = http.extract_to {
                         let sub = variables::process_uri(sub, manifest);
                         let p = dest_dir.join(&sub);
-                        tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
+                        tokio::fs::create_dir_all(&p)
+                            .await
+                            .map_err(WrightError::IoError)?;
                         p
                     } else {
                         dest_dir.to_path_buf()
                     };
                     if is_part_file(&filename) {
                         let label = progress::source_label(&processed_url);
-                        let _span = crate::cli_span!("Extracting", "{} ({})", label, manifest.metadata.name);
+                        let _span = crate::cli_span!(
+                            "Extracting",
+                            "{} ({})",
+                            label,
+                            manifest.metadata.name
+                        );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!("failed to extract source {filename}: {e}"))
+                            WrightError::ForgeError(format!(
+                                "failed to extract source {filename}: {e}"
+                            ))
                         })?;
                     } else {
                         let dest = final_dest.join(&filename);
@@ -582,16 +649,25 @@ impl Charge {
                     let final_dest = if let Some(ref sub) = local.extract_to {
                         let sub = variables::process_uri(sub, manifest);
                         let p = dest_dir.join(&sub);
-                        tokio::fs::create_dir_all(&p).await.map_err(WrightError::IoError)?;
+                        tokio::fs::create_dir_all(&p)
+                            .await
+                            .map_err(WrightError::IoError)?;
                         p
                     } else {
                         dest_dir.to_path_buf()
                     };
                     if is_part_file(&filename) {
                         let label = progress::source_label(&processed_path);
-                        let _span = crate::cli_span!("Extracting", "{} ({})", label, manifest.metadata.name);
+                        let _span = crate::cli_span!(
+                            "Extracting",
+                            "{} ({})",
+                            label,
+                            manifest.metadata.name
+                        );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!("failed to extract local source {filename}: {e}"))
+                            WrightError::ForgeError(format!(
+                                "failed to extract local source {filename}: {e}"
+                            ))
                         })?;
                     } else {
                         let dest = final_dest.join(&filename);
@@ -614,7 +690,9 @@ impl Charge {
     pub async fn update_hashes(&self, manifest: &PlanManifest, manifest_path: &Path) -> Result<()> {
         let mut new_hashes = Vec::new();
         if tokio::fs::metadata(&self.cache_dir).await.is_err() {
-            tokio::fs::create_dir_all(&self.cache_dir).await.map_err(WrightError::IoError)?;
+            tokio::fs::create_dir_all(&self.cache_dir)
+                .await
+                .map_err(WrightError::IoError)?;
         }
         for source in manifest.sources.entries.iter() {
             match source {
@@ -663,7 +741,12 @@ impl Charge {
                         &result[m.start()..m.start() + result[m.start()..].find('"').unwrap()],
                         new_hashes[hash_idx]
                     );
-                    result = format!("{}{}{}", &result[..m.start()], replacement, &result[m.end()..]);
+                    result = format!(
+                        "{}{}{}",
+                        &result[..m.start()],
+                        replacement,
+                        &result[m.end()..]
+                    );
                     hash_idx += 1;
                 } else {
                     break;
@@ -733,6 +816,18 @@ fn git_fetch_error(e: git2::Error, url: &str, cache: &Path) -> WrightError {
     WrightError::ForgeError(format!("git fetch failed: {e}"))
 }
 
+fn is_commit_hash(git_ref: &str) -> bool {
+    git_ref.len() == 40 && git_ref.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn effective_git_depth(git_ref: &str, depth: Option<u32>) -> Option<u32> {
+    if is_commit_hash(git_ref) { None } else { depth }
+}
+
+fn uses_private_fetch_ref(git_ref: &str, depth: Option<u32>) -> bool {
+    matches!(effective_git_depth(git_ref, depth), Some(d) if d > 0)
+}
+
 /// Map a requested git ref into a private, path-safe ref namespace.
 ///
 /// Shallow fetches store the single ref they request here instead of mirroring
@@ -777,7 +872,10 @@ fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> 
         WrightError::ValidationError(format!("local path not found: {relative_path} ({e})"))
     })?;
     let plan_abs = plan_dir.canonicalize().map_err(|e| {
-        WrightError::ValidationError(format!("failed to resolve plan directory {}: {e}", plan_dir.display()))
+        WrightError::ValidationError(format!(
+            "failed to resolve plan directory {}: {e}",
+            plan_dir.display()
+        ))
     })?;
     if !resolved.starts_with(&plan_abs) {
         return Err(WrightError::ValidationError(format!(
@@ -790,8 +888,99 @@ fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> 
 async fn force_clean_source_dir(dir: &Path) -> Result<()> {
     if tokio::fs::metadata(dir).await.is_ok() {
         tokio::fs::remove_dir_all(dir).await.map_err(|e| {
-            WrightError::ForgeError(format!("failed to clean source dir {}: {}", dir.display(), e))
+            WrightError::ForgeError(format!(
+                "failed to clean source dir {}: {}",
+                dir.display(),
+                e
+            ))
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Semaphore;
+
+    use super::*;
+    use crate::config::GlobalConfig;
+    use crate::plan::manifest::PlanManifest;
+
+    #[tokio::test]
+    async fn extract_checks_out_private_shallow_git_ref() {
+        let root = tempfile::tempdir().unwrap();
+        let upstream = root.path().join("upstream");
+        let upstream_repo = git2::Repository::init(&upstream).unwrap();
+        let signature = git2::Signature::now("Wright Test", "wright@example.invalid").unwrap();
+
+        std::fs::write(upstream.join("payload.txt"), "from tagged source\n").unwrap();
+        let mut index = upstream_repo.index().unwrap();
+        index.add_path(Path::new("payload.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = upstream_repo.find_tree(tree_id).unwrap();
+        let commit_id = upstream_repo
+            .commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+        let commit = upstream_repo.find_commit(commit_id).unwrap();
+        upstream_repo
+            .tag("v1.0.0", commit.as_object(), &signature, "v1.0.0", false)
+            .unwrap();
+
+        let source_url = "https://example.invalid/upstream.git";
+        let sources_dir = root.path().join("sources");
+        let cache_path = sources_dir.join("git").join(git_cache_dir_name(source_url));
+        std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+        let cache_repo = git2::Repository::init_bare(&cache_path).unwrap();
+        let mut remote = cache_repo
+            .remote("origin", upstream.to_str().unwrap())
+            .unwrap();
+        remote
+            .fetch(&["+refs/tags/*:refs/tags/*"], None, None)
+            .unwrap();
+        drop(remote);
+        let tag_id = cache_repo.revparse_single("refs/tags/v1.0.0").unwrap().id();
+        cache_repo
+            .reference(
+                "refs/wright/v1.0.0",
+                tag_id,
+                true,
+                "test private shallow ref",
+            )
+            .unwrap();
+        drop(cache_repo);
+
+        let manifest = PlanManifest::parse(&format!(
+            r#"
+name = "git-tag-source"
+version = "1.0.0"
+release = 1
+description = "test git tag source"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "git"
+url = "{source_url}"
+ref = "v${{VERSION}}"
+extract_to = "source"
+"#
+        ))
+        .unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = sources_dir;
+        let charge = Charge::new(&config, Arc::new(Semaphore::new(1)));
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        charge.extract(&manifest, &dest_dir).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest_dir.join("source/payload.txt")).unwrap(),
+            "from tagged source\n"
+        );
+    }
 }
