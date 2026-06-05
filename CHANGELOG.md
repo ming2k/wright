@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [5.3.9] - 2026-06-05
+
+### Fixed
+- **Shallow git source extraction now checks out refs from Wright's private
+  cache namespace.** Shallow fetches store requested refs under `refs/wright/*`
+  to avoid broad branch and tag negotiation, but extraction still cloned the
+  cache as if the upstream tag or `origin/<ref>` existed locally. Git sources
+  such as `ref = "v${VERSION}"` now fetch the private cached ref into the build
+  checkout before resolving it, so tagged shallow sources extract reliably.
+
 ## [5.3.8] - 2026-06-04
 
 ### Fixed
