@@ -64,6 +64,7 @@ impl SubFabricateOutput {
             deploy_scripts,
             backup,
             source_plan: Some(parent.metadata.name.clone()),
+            plan_checksum: parent.plan_checksum.clone(),
         }
     }
 }

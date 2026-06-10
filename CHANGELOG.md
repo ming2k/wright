@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **Parts now record build provenance (ADR-0023).** `.PARTINFO` gains a
+  `[provenance]` section sealed into every new part: the SHA-256 of the
+  plan source that produced it, per-source checksums/locators with
+  variables expanded, the sealing `wright` version, and the weakest
+  isolation level the build declared. Install and upgrade mirror these
+  facts onto the registered plan row, and `wright doctor` now reports
+  plans whose source changed since their parts were installed. Drift is
+  advisory — it suggests a rebuild, never fails doctor. Parts sealed by
+  earlier versions simply lack the section and are skipped.
+
 ## [5.3.9] - 2026-06-05
 
 ### Fixed

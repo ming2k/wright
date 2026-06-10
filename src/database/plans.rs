@@ -12,6 +12,9 @@ pub struct PlanRecord {
     pub epoch: i64,
     pub arch: String,
     pub registered_at: Option<String>,
+    /// SHA-256 of the plan source that produced the registered parts, from
+    /// `.PARTINFO` `[provenance]`. NULL for parts sealed before ADR-0023.
+    pub plan_checksum: Option<String>,
 }
 
 impl InstalledDb {
@@ -44,7 +47,7 @@ impl InstalledDb {
 
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, arch, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
              FROM plans WHERE name = ?",
         )
         .bind(name)
@@ -55,7 +58,7 @@ impl InstalledDb {
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, arch, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
              FROM plans WHERE id = ?",
         )
         .bind(id)
@@ -66,7 +69,7 @@ impl InstalledDb {
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
         query_as::<_, PlanRecord>(
-            "SELECT id, name, version, release, epoch, arch, registered_at
+            "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
              FROM plans ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -134,7 +137,7 @@ impl InstalledDb {
         epoch: u32,
         arch: &str,
     ) -> Result<i64> {
-        if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
+        let plan_id = if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
             query("UPDATE plans SET version = ?, release = ?, epoch = ?, arch = ? WHERE id = ?")
                 .bind(version)
                 .bind(release as i64)
@@ -145,7 +148,7 @@ impl InstalledDb {
                 .await
                 .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
 
-            Ok(existing.id)
+            existing.id
         } else {
             self.insert_plan(NewPlan {
                 name: &partinfo.plan.name,
@@ -154,7 +157,37 @@ impl InstalledDb {
                 epoch,
                 arch,
             })
-            .await
+            .await?
+        };
+
+        if let Some(ref provenance) = partinfo.provenance {
+            self.set_plan_provenance(plan_id, provenance).await?;
         }
+        Ok(plan_id)
+    }
+
+    /// Mirror the `[provenance]` section of `.PARTINFO` onto the plan row
+    /// (ADR-0023). Descriptive audit data; parts sealed before ADR-0023 have
+    /// no provenance and leave the columns NULL.
+    pub async fn set_plan_provenance(
+        &self,
+        plan_id: i64,
+        provenance: &crate::part::archive::Provenance,
+    ) -> Result<()> {
+        let source_checksums = serde_json::to_string(&provenance.source_checksums)
+            .map_err(|e| WrightError::DatabaseError(format!("serialize source_checksums: {}", e)))?;
+        query(
+            "UPDATE plans SET plan_checksum = ?, source_checksums = ?,
+                    wright_version = ?, isolation = ? WHERE id = ?",
+        )
+        .bind(&provenance.plan_checksum)
+        .bind(&source_checksums)
+        .bind(&provenance.wright_version)
+        .bind(&provenance.isolation)
+        .bind(plan_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WrightError::DatabaseError(format!("failed to set plan provenance: {}", e)))?;
+        Ok(())
     }
 }

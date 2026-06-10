@@ -30,6 +30,11 @@ pub async fn execute_doctor(
     let closure_issues = check_parts_dir_closure(config).await?;
     total_issues += closure_issues;
 
+    // Advisory only (ADR-0023): drift means "rebuild to converge", not a
+    // health failure, so it is reported without contributing to the issue
+    // count that fails doctor.
+    check_plan_drift(db, config).await?;
+
     let elapsed = t0.elapsed().as_secs_f64();
     if total_issues == 0 {
         crate::cli_action!(
@@ -133,6 +138,59 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
     }
 
     Ok(missing.len())
+}
+
+/// Compare each registered plan's recorded provenance checksum against the
+/// current plan source on disk. A mismatch means the plan changed since its
+/// parts were sealed — the installed state no longer reflects plan source.
+async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usize> {
+    let plans = db.list_plans().await?;
+    if plans.iter().all(|p| p.plan_checksum.is_none()) {
+        return Ok(0);
+    }
+
+    let plan_dirs = crate::resolve::plan_search_dirs(config);
+    let index = match crate::plan::discovery::PlanIndex::discover(&plan_dirs) {
+        Ok(index) => index,
+        Err(e) => {
+            crate::cli_warn!("skipping plan drift check: {}", e);
+            return Ok(0);
+        }
+    };
+
+    let mut drifted: Vec<String> = Vec::new();
+    for plan in &plans {
+        let Some(ref recorded) = plan.plan_checksum else {
+            continue;
+        };
+        let Some(path) = index.path_for(&plan.name) else {
+            continue;
+        };
+        match crate::util::checksum::sha256_file(path) {
+            Ok(current) if &current != recorded => {
+                drifted.push(format!(
+                    "{} (installed from {}…, source now {}…)",
+                    plan.name,
+                    &recorded[..12.min(recorded.len())],
+                    &current[..12]
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => crate::cli_warn!("cannot checksum {}: {}", path.display(), e),
+        }
+    }
+
+    if !drifted.is_empty() {
+        crate::cli_warn!(
+            "{} plan(s) changed since their parts were installed (advisory; rebuild to converge)",
+            drifted.len()
+        );
+        for line in &drifted {
+            let _ = crate::util::progress::MULTI.println(format!("             - {}", line));
+        }
+    }
+
+    Ok(drifted.len())
 }
 
 fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {

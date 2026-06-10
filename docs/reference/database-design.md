@@ -26,7 +26,7 @@
 
 | Table | Contents |
 |-------|----------|
-| `plans` | plan identity metadata (name, version, release, epoch, arch) |
+| `plans` | plan identity metadata (name, version, release, epoch, arch) plus seal-time provenance (plan_checksum, source_checksums, wright_version, isolation; NULL for parts sealed before ADR-0023) |
 | `parts` | installed part metadata: origin, plan association, archive hash |
 | `files` | installed file paths, types, checksums, ownership |
 | `dependencies` | advisory runtime dependency edges per part (soft TEXT pointer; not enforced) |
@@ -61,6 +61,10 @@ erDiagram
         INTEGER epoch
         TEXT arch
         DATETIME registered_at
+        TEXT plan_checksum
+        TEXT source_checksums
+        TEXT wright_version
+        TEXT isolation
     }
 
     parts {

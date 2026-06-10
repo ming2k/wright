@@ -179,6 +179,8 @@ Run comprehensive system health checks: database integrity, file conflicts,
 deployed file existence, registry dependency resolution, ELF `DT_NEEDED`
 verification, and a global `parts_dir` dependency closure scan. Use after
 batch deployments to detect missing files, providers, and stale dependencies.
+Also reports plans whose source changed since their parts were installed
+(provenance drift); drift is advisory and never fails the run.
 
 ## Build & Packaging
 

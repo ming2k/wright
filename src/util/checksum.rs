@@ -5,6 +5,12 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, WrightError};
 
+pub fn sha256_bytes(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
 pub fn sha256_file(path: &Path) -> Result<String> {
     let mut file = std::fs::File::open(path).map_err(WrightError::IoError)?;
 

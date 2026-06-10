@@ -5,7 +5,7 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::error::{Result, WrightError};
-use crate::plan::manifest::PlanManifest;
+use crate::plan::manifest::{PlanManifest, Source};
 
 /// Plan-level metadata extracted from the `[plan]` section of `.PARTINFO`.
 /// All outputs of a plan share these fields; they are stored in the `plans` table.
@@ -22,6 +22,25 @@ pub struct PlanMetadata {
     pub arch: String,
 }
 
+/// Seal-time provenance from the `[provenance]` section of `.PARTINFO`.
+///
+/// Descriptive facts, never enforced (ADR-0023): they let the ledger tie a
+/// part back to the plan content and sources that produced it, and let
+/// `wright doctor` detect drift between an installed part and current plan
+/// source. Parts sealed before ADR-0023 do not carry the section.
+#[derive(Debug, Clone)]
+pub struct Provenance {
+    /// SHA-256 of the raw plan.toml that produced the part.
+    pub plan_checksum: Option<String>,
+    /// One line per `[[sources]]` entry: kind, expanded locator, and the
+    /// verification declared for it (e.g. `http <url> sha256=<hash>`).
+    pub source_checksums: Vec<String>,
+    /// Version of the `wright` binary that sealed the part.
+    pub wright_version: String,
+    /// Weakest isolation level declared across the plan's pipeline stages.
+    pub isolation: String,
+}
+
 /// Metadata extracted from a .PARTINFO file.
 ///
 /// `.PARTINFO` intentionally carries install-time/runtime metadata only.
@@ -36,6 +55,7 @@ pub struct PartInfo {
     pub conflicts: Vec<String>,
     pub backup_files: Vec<String>,
     pub plan: PlanMetadata,
+    pub provenance: Option<Provenance>,
 }
 
 /// Files that should never be included in a part archive.
@@ -302,7 +322,7 @@ fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>
 name = "{name}"
 build_date = "{build_date}"
 packager = "wright {wright_version}"
-{runtime_deps}{relations}{backup}{plan}
+{runtime_deps}{relations}{backup}{plan}{provenance}
 "#,
         name = manifest.metadata.name,
         build_date = build_date,
@@ -311,7 +331,77 @@ packager = "wright {wright_version}"
         relations = relations_toml,
         backup = backup_toml,
         plan = plan_toml,
+        provenance = generate_provenance_toml(plan),
     )
+}
+
+/// Render the `[provenance]` section from the plan-level manifest (ADR-0023).
+fn generate_provenance_toml(plan: &PlanManifest) -> String {
+    let mut toml = String::from("\n[provenance]\n");
+    if let Some(ref sum) = plan.plan_checksum {
+        toml.push_str(&format!("plan_checksum = \"{}\"\n", sum));
+    }
+    if !plan.sources.entries.is_empty() {
+        toml.push_str("source_checksums = [\n");
+        for source in &plan.sources.entries {
+            toml.push_str(&format!("    \"{}\",\n", source_provenance_line(source, plan)));
+        }
+        toml.push_str("]\n");
+    }
+    toml.push_str(&format!(
+        "wright_version = \"{}\"\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+    toml.push_str(&format!(
+        "isolation = \"{}\"\n",
+        weakest_isolation_level(plan)
+    ));
+    toml
+}
+
+/// One provenance line per source: kind, expanded locator, and the
+/// verification the charge step applied to it.
+fn source_provenance_line(source: &Source, plan: &PlanManifest) -> String {
+    use crate::foundry::variables::process_uri;
+    match source {
+        Source::Http(http) => format!(
+            "http {} sha256={}",
+            process_uri(&http.url, plan),
+            http.sha256
+        ),
+        Source::Git(git) => format!(
+            "git {} ref={}",
+            process_uri(&git.url, plan),
+            git.r#ref
+                .as_deref()
+                .map(|r| process_uri(r, plan))
+                .unwrap_or_else(|| "HEAD".to_string())
+        ),
+        Source::Local(local) => format!("local {}", process_uri(&local.path, plan)),
+    }
+}
+
+/// The weakest isolation level any pipeline stage declares — the
+/// security-relevant fact about the build that produced the part.
+fn weakest_isolation_level(plan: &PlanManifest) -> &'static str {
+    use crate::isolation::IsolationLevel;
+    fn rank(level: IsolationLevel) -> u8 {
+        match level {
+            IsolationLevel::None => 0,
+            IsolationLevel::Relaxed => 1,
+            IsolationLevel::Strict => 2,
+        }
+    }
+    plan.pipeline
+        .values()
+        .filter_map(|stage| stage.isolation.parse::<IsolationLevel>().ok())
+        .min_by_key(|level| rank(*level))
+        .map(|level| match level {
+            IsolationLevel::None => "none",
+            IsolationLevel::Relaxed => "relaxed",
+            IsolationLevel::Strict => "strict",
+        })
+        .unwrap_or("strict")
 }
 
 fn generate_filelist(part_dir: &Path) -> Result<String> {
@@ -398,6 +488,20 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         relations: Option<PartInfoRelations>,
         #[serde(default)]
         backup: Option<PartInfoBackup>,
+        #[serde(default)]
+        provenance: Option<PartInfoProvenance>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct PartInfoProvenance {
+        #[serde(default)]
+        plan_checksum: Option<String>,
+        #[serde(default)]
+        source_checksums: Vec<String>,
+        #[serde(default)]
+        wright_version: String,
+        #[serde(default)]
+        isolation: String,
     }
 
     #[derive(serde::Deserialize)]
@@ -460,12 +564,18 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
             epoch: plan_section.epoch,
             arch: plan_section.arch,
         },
+        provenance: parsed.provenance.map(|p| Provenance {
+            plan_checksum: p.plan_checksum,
+            source_checksums: p.source_checksums,
+            wright_version: p.wright_version,
+            isolation: p.isolation,
+        }),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_partinfo_str;
+    use super::{generate_partinfo, parse_partinfo_str};
 
     #[test]
     fn parse_partinfo_accepts_runtime_dependencies() {
@@ -522,6 +632,76 @@ license = "GPL-3.0-or-later"
         assert_eq!(info.plan.version, "14.2.0");
         assert_eq!(info.plan.release, 1);
         assert_eq!(info.runtime_deps, vec!["libgcc"]);
+    }
+
+    #[test]
+    fn parse_partinfo_without_provenance_is_none() {
+        let info = parse_partinfo_str(
+            r#"
+[part]
+name = "demo"
+
+[plan]
+name = "demo"
+version = "1.0.0"
+release = 1
+arch = "x86_64"
+"#,
+            "test",
+        )
+        .unwrap();
+
+        assert!(info.provenance.is_none());
+    }
+
+    #[test]
+    fn provenance_roundtrips_through_generated_partinfo() {
+        let toml_str = r#"
+name = "demo"
+version = "1.2.3"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "http"
+url = "https://example.org/demo-${VERSION}.tar.gz"
+sha256 = "abc123"
+
+[[sources]]
+type = "git"
+url = "https://example.org/demo.git"
+ref = "v${VERSION}"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "strict"
+script = "true"
+"#;
+        let mut manifest = crate::plan::manifest::PlanManifest::parse(toml_str).unwrap();
+        manifest.plan_checksum = Some("deadbeef".to_string());
+
+        let partinfo = generate_partinfo(&manifest, None);
+        let info = parse_partinfo_str(&partinfo, "test").unwrap();
+
+        let provenance = info.provenance.expect("generated .PARTINFO has provenance");
+        assert_eq!(provenance.plan_checksum.as_deref(), Some("deadbeef"));
+        assert_eq!(
+            provenance.source_checksums,
+            vec![
+                "http https://example.org/demo-1.2.3.tar.gz sha256=abc123",
+                "git https://example.org/demo.git ref=v1.2.3",
+            ]
+        );
+        assert_eq!(provenance.wright_version, env!("CARGO_PKG_VERSION"));
+        // Weakest of {none, strict} is none.
+        assert_eq!(provenance.isolation, "none");
     }
 
     #[test]

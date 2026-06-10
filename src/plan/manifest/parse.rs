@@ -321,6 +321,7 @@ impl PlanManifest {
             deploy_scripts,
             backup,
             source_plan: None,
+            plan_checksum: None,
         };
 
         manifest.validate()?;
@@ -343,6 +344,7 @@ impl PlanManifest {
             }
             other => other,
         })?;
+        manifest.plan_checksum = Some(crate::util::checksum::sha256_bytes(content.as_bytes()));
 
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");

@@ -24,6 +24,39 @@ Or use `wright install` for plan-driven maintenance:
 wright install curl
 ```
 
+## Part Archive Metadata
+
+Every `.wright.tar.zst` carries metadata files at the archive root:
+
+| File | Contents |
+|------|----------|
+| `.PARTINFO` | TOML part metadata (sections below) |
+| `.FILELIST` | one absolute installed path per line |
+| `.HOOKS` | deploy hooks in TOML (optional; only when the plan declares hooks) |
+
+### `.PARTINFO` sections
+
+| Section | Fields | Presence |
+|---------|--------|----------|
+| `[part]` | `name`, `build_date`, `packager`, `runtime_deps` | always |
+| `[relations]` | `replaces`, `conflicts` | only when declared |
+| `[backup]` | `files` | only when declared |
+| `[plan]` | `name`, `version`, `release`, `epoch`, `arch` | always |
+| `[provenance]` | see below | absent on parts sealed before ADR-0023 |
+
+### `[provenance]` fields
+
+| Field | Content |
+|-------|---------|
+| `plan_checksum` | SHA-256 hex of the raw `plan.toml` that produced the part (`mvp.toml` overlay excluded) |
+| `source_checksums` | array of `<kind> <locator> <verification>` strings, one per `[[sources]]` entry, `${VAR}` expanded |
+| `wright_version` | version of the `wright` binary that sealed the part |
+| `isolation` | weakest isolation level declared across the plan's pipeline stages (`none` / `relaxed` / `strict`) |
+
+Provenance is descriptive, never enforced; `wright doctor` uses
+`plan_checksum` to report drift between installed parts and current plan
+source. See [ADR-0023](../adr/0023-parts-as-maintenance-ledger.md).
+
 ## Low-Level Pipeline
 
 For explicit control over build and merge phases:
