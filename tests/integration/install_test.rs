@@ -261,6 +261,7 @@ async fn test_install_accepts_same_revision_split_outputs() {
         &part_store,
         false,
         false,
+        true,
         SessionContext {
             id: "test".into(),
             command: "test".into(),
@@ -352,6 +353,7 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
         &part_store,
         false,
         false,
+        true,
         SessionContext {
             id: "test".into(),
             command: "test".into(),
@@ -382,6 +384,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &part_store,
         false,
         false,
+        true,
         SessionContext {
             id: "test".into(),
             command: "test".into(),
@@ -397,6 +400,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
         &part_store,
         false,
         false,
+        true,
         SessionContext {
             id: "test".into(),
             command: "test".into(),

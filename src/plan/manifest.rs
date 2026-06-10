@@ -162,6 +162,10 @@ pub struct GitSource {
 #[derive(Debug, Deserialize, Clone)]
 pub struct LocalSource {
     pub path: String,
+    /// Optional filename to use for this source, in both the source cache and
+    /// the work directory (defaults to the file's own basename in the work
+    /// directory).
+    pub r#as: Option<String>,
     /// Optional subdirectory under WORKDIR to extract/copy this source into.
     pub extract_to: Option<String>,
 }
@@ -201,6 +205,11 @@ pub struct PlanManifest {
     /// For sub-outputs, the original plan name. Used to write plan-level
     /// metadata into the pack archive.
     pub source_plan: Option<String>,
+    /// SHA-256 of the raw plan.toml bytes this manifest was loaded from
+    /// (`mvp.toml` overlays excluded). Sealed into `.PARTINFO` `[provenance]`
+    /// so the ledger can tie a part back to exact plan content (ADR-0023).
+    /// `None` for manifests not loaded from a file.
+    pub plan_checksum: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

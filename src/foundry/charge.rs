@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -254,7 +255,9 @@ impl Charge {
             Source::Local(local) => {
                 let processed_path = variables::process_uri(&local.path, manifest);
                 let local_path = validate_local_path(plan_dir, &processed_path)?;
-                let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
+                let filename = local.r#as.clone().unwrap_or_else(|| {
+                    source_cache_filename(&manifest.metadata.name, &processed_path)
+                });
                 let dest = self.cache_dir.join(&filename);
                 let label = progress::source_label(&processed_path);
                 let _span = crate::cli_span!("Fetching", "{} ({})", label, manifest.metadata.name);
@@ -526,6 +529,7 @@ impl Charge {
     // ------------------------------------------------------------------
 
     async fn extract(&self, manifest: &PlanManifest, dest_dir: &Path) -> Result<PathBuf> {
+        let mut placed: HashSet<PathBuf> = HashSet::new();
         for source in &manifest.sources.entries {
             match source {
                 Source::Git(git) => {
@@ -634,17 +638,24 @@ impl Charge {
                             ))
                         })?;
                     } else {
-                        let dest = final_dest.join(&filename);
+                        let dest_name = http
+                            .r#as
+                            .clone()
+                            .unwrap_or_else(|| source_workdir_filename(&processed_url));
+                        let dest = final_dest.join(&dest_name);
+                        claim_workdir_dest(&mut placed, &dest)?;
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
                             WrightError::ForgeError(format!(
-                                "failed to copy non-archive source {filename} to work directory: {e}"
+                                "failed to copy non-archive source {dest_name} to work directory: {e}"
                             ))
                         })?;
                     }
                 }
                 Source::Local(local) => {
                     let processed_path = variables::process_uri(&local.path, manifest);
-                    let filename = source_cache_filename(&manifest.metadata.name, &processed_path);
+                    let filename = local.r#as.clone().unwrap_or_else(|| {
+                        source_cache_filename(&manifest.metadata.name, &processed_path)
+                    });
                     let cache_path = self.cache_dir.join(&filename);
                     let final_dest = if let Some(ref sub) = local.extract_to {
                         let sub = variables::process_uri(sub, manifest);
@@ -670,10 +681,15 @@ impl Charge {
                             ))
                         })?;
                     } else {
-                        let dest = final_dest.join(&filename);
+                        let dest_name = local
+                            .r#as
+                            .clone()
+                            .unwrap_or_else(|| source_workdir_filename(&processed_path));
+                        let dest = final_dest.join(&dest_name);
+                        claim_workdir_dest(&mut placed, &dest)?;
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
                             WrightError::ForgeError(format!(
-                                "failed to copy local source {filename} to work directory: {e}"
+                                "failed to copy local source {dest_name} to work directory: {e}"
                             ))
                         })?;
                     }
@@ -791,6 +807,26 @@ impl Charge {
 fn source_cache_filename(part_name: &str, uri: &str) -> String {
     let basename = uri.split('/').next_back().unwrap_or("source");
     sanitize_cache_filename(&format!("{}-{}", part_name, basename))
+}
+
+/// Destination filename for a non-archive source placed in the work
+/// directory: the source's own basename. The part-name prefix only exists to
+/// namespace the shared source cache and must not leak into ${WORKDIR}.
+fn source_workdir_filename(uri: &str) -> String {
+    let basename = uri.split('/').next_back().unwrap_or("source");
+    sanitize_cache_filename(basename)
+}
+
+/// Two sources of one plan must not resolve to the same work directory file.
+fn claim_workdir_dest(placed: &mut HashSet<PathBuf>, dest: &Path) -> Result<()> {
+    if placed.insert(dest.to_path_buf()) {
+        Ok(())
+    } else {
+        Err(WrightError::ForgeError(format!(
+            "two sources resolve to the same work directory file '{}'; rename one with `as`",
+            dest.display()
+        )))
+    }
 }
 
 enum GitFetchAttempt {
@@ -981,6 +1017,147 @@ extract_to = "source"
         assert_eq!(
             std::fs::read_to_string(dest_dir.join("source/payload.txt")).unwrap(),
             "from tagged source\n"
+        );
+    }
+
+    fn test_charge(sources_dir: std::path::PathBuf) -> Charge {
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = sources_dir;
+        Charge::new(&config, Arc::new(Semaphore::new(1)))
+    }
+
+    fn test_manifest(sources_toml: &str) -> PlanManifest {
+        PlanManifest::parse(&format!(
+            r#"
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+{sources_toml}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn extract_places_local_source_at_original_basename() {
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        std::fs::write(sources_dir.join("demo-demo.service"), "unit file\n").unwrap();
+
+        let manifest = test_manifest(
+            r#"
+[[sources]]
+type = "local"
+path = "demo.service"
+"#,
+        );
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        test_charge(sources_dir)
+            .extract(&manifest, &dest_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest_dir.join("demo.service")).unwrap(),
+            "unit file\n"
+        );
+        assert!(!dest_dir.join("demo-demo.service").exists());
+    }
+
+    #[tokio::test]
+    async fn extract_places_http_source_at_url_basename() {
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        std::fs::write(sources_dir.join("demo-data.bin"), "payload").unwrap();
+
+        let manifest = test_manifest(
+            r#"
+[[sources]]
+type = "http"
+sha256 = "SKIP"
+url = "https://example.invalid/data.bin"
+"#,
+        );
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        test_charge(sources_dir)
+            .extract(&manifest, &dest_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest_dir.join("data.bin")).unwrap(),
+            "payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_renames_local_source_with_as() {
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        std::fs::write(sources_dir.join("renamed.conf"), "renamed\n").unwrap();
+
+        let manifest = test_manifest(
+            r#"
+[[sources]]
+type = "local"
+path = "configs/app.conf"
+as = "renamed.conf"
+"#,
+        );
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        test_charge(sources_dir)
+            .extract(&manifest, &dest_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest_dir.join("renamed.conf")).unwrap(),
+            "renamed\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_rejects_duplicate_workdir_destinations() {
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        std::fs::write(sources_dir.join("demo-app.json"), "{}").unwrap();
+
+        let manifest = test_manifest(
+            r#"
+[[sources]]
+type = "local"
+path = "a/app.json"
+
+[[sources]]
+type = "local"
+path = "b/app.json"
+"#,
+        );
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let err = test_charge(sources_dir)
+            .extract(&manifest, &dest_dir)
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("same work directory file"),
+            "unexpected error: {err}"
         );
     }
 }
