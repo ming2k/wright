@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.10] - 2026-06-10
+
 ### Added
 - **Parts now record build provenance (ADR-0023).** `.PARTINFO` gains a
   `[provenance]` section sealed into every new part: the SHA-256 of the
@@ -12,6 +14,17 @@
   plans whose source changed since their parts were installed. Drift is
   advisory — it suggests a rebuild, never fails doctor. Parts sealed by
   earlier versions simply lack the section and are skipped.
+- **Local sources support `as` to override the cached and work-directory
+  filename**, matching the existing field on http sources.
+
+### Changed
+- **Non-archive http and local sources land in `${WORKDIR}` under their own
+  basename.** The part-name prefix on cached source files exists to
+  namespace the shared source cache; it previously leaked into the work
+  directory, forcing plans to reference names like
+  `${WORKDIR}/sing-box-sing-box.service`. Two sources that resolve to the
+  same work-directory file are now rejected instead of silently
+  overwriting one another.
 
 ## [5.3.9] - 2026-06-05
 
