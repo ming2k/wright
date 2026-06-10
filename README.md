@@ -7,6 +7,11 @@ one replacement **part**, the finished `.wright.tar.zst` is that installable
 **part**, and the live machine is the ship that keeps sailing while parts are
 replaced.
 
+Wright is deliberately single-machine: there are no remote repositories, and
+built parts are inventory, rollback, and audit artifacts — not distribution
+products. To put software on another machine, share the plan, not the part.
+See [Distribution Model](docs/explanation/distribution-model.md).
+
 ## Features
 
 - Declarative TOML plans

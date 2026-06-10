@@ -3,6 +3,7 @@
 Discussions that explain why things work the way they do.
 
 - [Architecture](architecture.md)
+- [Distribution Model](distribution-model.md) — Why there are no repositories, and what binary parts are actually for
 - [Launch Design](launch-design.md) — Mission, convergence, root isolation, and the provisioning pipeline
 - [Execution Hierarchy](execution-hierarchy.md)
 - [Checkpoint Recovery](checkpoint-recovery.md)
