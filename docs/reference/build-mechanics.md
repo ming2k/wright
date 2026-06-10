@@ -159,7 +159,9 @@ across builds:
 
 The filename is prefixed with the part name to avoid collisions between
 plans that use similarly-named dependency parts (e.g. two parts both
-fetching `v1.0.tar.gz` from different projects).
+fetching `v1.0.tar.gz` from different projects). The prefix is a cache-layer
+detail only: non-archive sources are placed in the work directory under
+their original basename (ADR-0024).
 
 Before extraction, each source is verified against its `sha256` checksum from
 `plan.toml`. If the cached file fails verification, it is deleted and

@@ -90,7 +90,7 @@ Array-of-tables with a mandatory `type` field.
 |-------|------|---------|-------------|
 | `url` | string | required | Remote URL (`http://` or `https://`) |
 | `sha256` | string | required | SHA-256 checksum. Use `"SKIP"` only during development or for untrusted sources |
-| `as` | string | optional | Rename the downloaded file in the cache |
+| `as` | string | optional | Filename for the download in both the source cache and `${WORKDIR}`. Defaults to `<plan>-<basename>` in the cache and the URL basename in `${WORKDIR}` |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to extract/copy the file into |
 
 ### `type = "git"`
@@ -107,12 +107,14 @@ Array-of-tables with a mandatory `type` field.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `path` | string | required | Path relative to the plan directory. Must not escape the plan directory |
+| `as` | string | optional | Filename for this source in both the source cache and `${WORKDIR}`. Defaults to `<plan>-<basename>` in the cache and the file's own basename in `${WORKDIR}` |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to copy the file into |
 
 ### Archive Handling
 
 - Archives with supported extensions (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are automatically extracted during the `extract` stage.
-- Non-archive files are copied directly to `${WORKDIR}` (or the `extract_to` subdirectory).
+- Non-archive files are copied to `${WORKDIR}` (or the `extract_to` subdirectory) under their original basename, or under `as` when set. The `<plan>-` prefix used in the source cache never appears in `${WORKDIR}` (ADR-0024).
+- Two sources resolving to the same `${WORKDIR}` file abort the build; rename one with `as`.
 
 ## Options (`[options]`)
 
