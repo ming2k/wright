@@ -275,6 +275,12 @@ pub fn resume_cli_output() {
 /// WARN and ERROR events always emit, regardless of the `verb` field.
 pub struct CliOutputLayer;
 
+impl Default for CliOutputLayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliOutputLayer {
     pub fn new() -> Self {
         Self
@@ -373,7 +379,7 @@ fn strip_quotes(s: &str) -> String {
 ///   - `target`       (required for display): what the work is on
 ///   - `bytes_done`   (optional): downloaded/processed bytes
 ///   - `bytes_total`  (optional): total bytes — recording this swaps the
-///                                row from a spinner to a download bar
+///     row from a spinner to a download bar
 pub struct SpinnerLayer {
     bars: Mutex<HashMap<span::Id, BarState>>,
 }

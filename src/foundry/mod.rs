@@ -33,6 +33,7 @@ pub struct FoundryResult {
 }
 
 /// Options that control a single build invocation.
+#[derive(Default)]
 pub struct BuildOptions {
     pub stages: Vec<String>,
     pub force_stage: Vec<String>,
@@ -46,25 +47,6 @@ pub struct BuildOptions {
     pub nproc_per_isolation: Option<u32>,
     pub configure_lock: Option<Arc<Semaphore>>,
     pub compile_lock: Option<Arc<Semaphore>>,
-}
-
-impl Default for BuildOptions {
-    fn default() -> Self {
-        Self {
-            stages: Vec::new(),
-            force_stage: Vec::new(),
-            until_stage: None,
-            fetch_only: false,
-            skip_check: false,
-            force: false,
-            clean: false,
-            extra_env: HashMap::new(),
-            verbose: false,
-            nproc_per_isolation: None,
-            configure_lock: None,
-            compile_lock: None,
-        }
-    }
 }
 
 /// The foundry — the workshop where raw materials are transformed into
@@ -270,15 +252,15 @@ impl Foundry {
             });
         }
 
-        if let Some(ref until) = opts.until_stage {
-            if until == "fetch" || until == "verify" || until == "extract" {
-                return Ok(FoundryResult {
-                    staging_dir,
-                    build_root,
-                    logs_dir,
-                    output_dirs: HashMap::new(),
-                });
-            }
+        if let Some(ref until) = opts.until_stage
+            && (until == "fetch" || until == "verify" || until == "extract")
+        {
+            return Ok(FoundryResult {
+                staging_dir,
+                build_root,
+                logs_dir,
+                output_dirs: HashMap::new(),
+            });
         }
 
         // ------------------------------------------------------------------

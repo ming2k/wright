@@ -58,18 +58,18 @@ impl Charge {
         let fingerprint = self.fingerprint(manifest);
 
         if marker.exists() {
-            if let Ok(stored) = tokio::fs::read_to_string(&marker).await {
-                if stored.trim() == fingerprint {
-                    debug!(
-                        event = "charge.cache_hit",
-                        plan_name = %manifest.metadata.name,
-                        "Source tree unchanged — reusing source/"
-                    );
-                    return Ok(ChargeResult {
-                        dir: source_dir,
-                        fingerprint,
-                    });
-                }
+            if let Ok(stored) = tokio::fs::read_to_string(&marker).await
+                && stored.trim() == fingerprint
+            {
+                debug!(
+                    event = "charge.cache_hit",
+                    plan_name = %manifest.metadata.name,
+                    "Source tree unchanged — reusing source/"
+                );
+                return Ok(ChargeResult {
+                    dir: source_dir,
+                    fingerprint,
+                });
             }
             // Fingerprint mismatch — purge and rebuild.
             let _ = force_clean_source_dir(&source_dir).await;
@@ -396,15 +396,16 @@ impl Charge {
             )
         };
 
-        if !is_fresh_clone && !force_fetch {
-            if let Ok(obj) = repo.revparse_single(&resolve_target) {
-                tracing::debug!(
-                    "[{}] git ref '{}' already available locally; skipping fetch",
-                    scope,
-                    actual_ref
-                );
-                return GitFetchAttempt::Done(obj.id().to_string());
-            }
+        if !is_fresh_clone
+            && !force_fetch
+            && let Ok(obj) = repo.revparse_single(&resolve_target)
+        {
+            tracing::debug!(
+                "[{}] git ref '{}' already available locally; skipping fetch",
+                scope,
+                actual_ref
+            );
+            return GitFetchAttempt::Done(obj.id().to_string());
         }
 
         // Use a named remote so that libgit2 can persist fetch configuration

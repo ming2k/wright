@@ -174,8 +174,10 @@ impl InstalledDb {
         plan_id: i64,
         provenance: &crate::part::archive::Provenance,
     ) -> Result<()> {
-        let source_checksums = serde_json::to_string(&provenance.source_checksums)
-            .map_err(|e| WrightError::DatabaseError(format!("serialize source_checksums: {}", e)))?;
+        let source_checksums =
+            serde_json::to_string(&provenance.source_checksums).map_err(|e| {
+                WrightError::DatabaseError(format!("serialize source_checksums: {}", e))
+            })?;
         query(
             "UPDATE plans SET plan_checksum = ?, source_checksums = ?,
                     wright_version = ?, isolation = ? WHERE id = ?",

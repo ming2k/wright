@@ -435,7 +435,7 @@ impl LayerManager {
         }
 
         let mut all_files: Vec<PathBuf> = Vec::new();
-        collect_files_recursive(&self.target_dir, &self.target_dir, &mut all_files)?;
+        collect_files_recursive(&self.target_dir, &mut all_files)?;
 
         for target_file in &all_files {
             let rel_path = target_file
@@ -566,7 +566,7 @@ fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn collect_files_recursive(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
     };
@@ -576,7 +576,7 @@ fn collect_files_recursive(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> R
         match ft {
             Some(ft) if ft.is_symlink() => out.push(path),
             Some(ft) if ft.is_dir() && !path.is_symlink() => {
-                collect_files_recursive(base, &path, out)?;
+                collect_files_recursive(&path, out)?;
             }
             _ => out.push(path),
         }

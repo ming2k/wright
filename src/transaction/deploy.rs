@@ -331,10 +331,10 @@ async fn warn_about_runtime_dependencies(
                 continue;
             }
 
-            if let Some(upcoming) = upcoming_outputs {
-                if upcoming.contains(&output_name) {
-                    continue;
-                }
+            if let Some(upcoming) = upcoming_outputs
+                && upcoming.contains(&output_name)
+            {
+                continue;
             }
 
             if let Some(installed) = db.get_part(&output_name).await? {

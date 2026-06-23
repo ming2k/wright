@@ -319,11 +319,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             let plan_path = plan
                 .plan_path_for_task(task)
                 .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)));
-            if let Some(path) = plan_path {
-                if let Ok(manifest) = PlanManifest::from_file(path) {
-                    for pn in manifest_part_names(&manifest) {
-                        all_upcoming_outputs.insert(pn);
-                    }
+            if let Some(path) = plan_path
+                && let Ok(manifest) = PlanManifest::from_file(path)
+            {
+                for pn in manifest_part_names(&manifest) {
+                    all_upcoming_outputs.insert(pn);
                 }
             }
         }

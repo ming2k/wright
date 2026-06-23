@@ -57,3 +57,10 @@ clap_complete = "4"
 # exist when build.rs `#[path]`-includes src/cli/mod.rs.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(with_handlers)'] }
+
+# Project-wide clippy policy. `too_many_arguments` fires on several core
+# orchestrators (forge, deploy, foundry) whose call sites already pass
+# structured contexts; reshaping those signatures is a dedicated refactor,
+# not a drive-by fix. Flip to "warn" to drive that work.
+[lints.clippy]
+too_many_arguments = "allow"
