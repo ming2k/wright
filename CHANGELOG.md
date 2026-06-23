@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [5.3.11] - 2026-06-23
+
+### Added
+- **`wright build --seal` seals forged staging trees into part archives.**
+  After the forge completes, each base's staging tree is sealed into a
+  `.wright.tar.zst` in `parts_dir` without deploying. Restores the
+  build → seal → merge workflow for preparing archives ahead of
+  `wright merge`. Bootstrap tasks are skipped: their staging trees are
+  MVP intermediates, and the post-bootstrap full forge of the same base
+  seals the real output.
+
+### Changed
+- **Runtime dependency cycles no longer abort deploy.** Runtime
+  dependencies may legitimately form cycles between deployed parts
+  (`systemd` ↔ `dbus` is the canonical case). `sort_dependencies`
+  previously hard-failed on any cycle; the back-edge is now logged at
+  `WARN` with a `deploy.dependency_cycle` tracing event and skipped, so
+  deploy proceeds with a best-effort ordering instead of aborting.
+
 ### Fixed
 - **Deploy hooks now work with a relative `--root`.** The hook runner
   changes the child's working directory to `/` before invoking
@@ -13,6 +32,12 @@
   `.PARTINFO`/`.FILELIST` and zero payload files; merging such a part
   silently deploys nothing. `create_part` now fails with a clear error
   asking for a `--force --clean` reforge.
+- **Diagnostic lines are no longer hidden in non-terminal environments.**
+  `MultiProgress::println` silently discards lines when the draw target
+  is hidden (piped stderr, CI, cron), so errors and action lines routed
+  through it vanished in exactly the environments where they matter
+  most. A new `term_println` helper detects a hidden draw target and
+  falls back to plain stderr, keeping diagnostic output visible.
 
 ## [5.3.10] - 2026-06-10
 
