@@ -54,7 +54,7 @@ where
 {
     for line in lines {
         // 13 spaces lines up with the 12-col verb column + 1 pivot space.
-        let _ = crate::util::progress::MULTI.println(format!("             - {}", line.as_ref()));
+        crate::util::progress::term_println(&format!("             - {}", line.as_ref()));
     }
 }
 

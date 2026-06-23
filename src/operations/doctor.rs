@@ -133,7 +133,7 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         for line in &missing {
             // Indent each finding under the warning line; one bullet per
             // missing dep keeps the output scannable.
-            let _ = crate::util::progress::MULTI.println(format!("             - {}", line));
+            crate::util::progress::term_println(&format!("             - {}", line));
         }
     }
 
@@ -186,7 +186,7 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
             drifted.len()
         );
         for line in &drifted {
-            let _ = crate::util::progress::MULTI.println(format!("             - {}", line));
+            crate::util::progress::term_println(&format!("             - {}", line));
         }
     }
 

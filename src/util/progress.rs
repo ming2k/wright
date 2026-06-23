@@ -7,6 +7,19 @@ use std::sync::atomic::AtomicBool;
 /// flickering.
 pub static MULTI: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
 
+/// Print a terminal line through the progress coordinator so it serializes
+/// against active progress bars.  When the draw target is hidden (stderr is
+/// not a terminal — pipes, CI, cron), `MultiProgress::println` silently
+/// discards lines, so fall back to plain stderr to keep errors and action
+/// lines visible.
+pub fn term_println(line: &str) {
+    if MULTI.is_hidden() {
+        eprintln!("{line}");
+    } else {
+        let _ = MULTI.println(line);
+    }
+}
+
 /// When set, suppress CLI INFO-level output so that fail-fast failures
 /// are not buried under output from tasks already in flight.
 pub static SUPPRESS_INFO_OUTPUT: AtomicBool = AtomicBool::new(false);
@@ -135,6 +148,6 @@ macro_rules! cli_aborted {
 macro_rules! cli_output {
     ($($arg:tt)*) => {{
         let msg = format!($($arg)*);
-        let _ = $crate::util::progress::MULTI.println(msg);
+        $crate::util::progress::term_println(&msg);
     }};
 }

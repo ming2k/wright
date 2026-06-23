@@ -49,7 +49,7 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
 
     crate::cli_warn!("{} part(s) failed verification", failed.len());
     for (name, issues) in &failed {
-        let _ = crate::util::progress::MULTI.println(format!(
+        crate::util::progress::term_println(&format!(
             "             - {}: {}",
             name,
             issues.join("; ")

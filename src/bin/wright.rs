@@ -61,7 +61,7 @@ async fn main() {
         // Multi-line Cargo-style report on the terminal.
         let log_path = today_log_path(&logs_dir);
         for line in format_failure_report(&e, &log_path) {
-            let _ = MULTI.println(&line);
+            wright::util::progress::term_println(&line);
         }
 
         std::process::exit(1);

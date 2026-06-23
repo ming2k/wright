@@ -325,7 +325,7 @@ where
         if let Some(line) = line
             && !line.trim().is_empty()
         {
-            let _ = crate::util::progress::MULTI.println(line);
+            crate::util::progress::term_println(&line);
         }
     }
 }
