@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Deploy hooks now work with a relative `--root`.** The hook runner
+  changes the child's working directory to `/` before invoking
+  `chroot <root>`, so a relative root such as `build/rootfs` resolved
+  against `/` and chroot exited with status 125. The root path is
+  canonicalized before any directory change.
+
 ## [5.3.10] - 2026-06-10
 
 ### Added

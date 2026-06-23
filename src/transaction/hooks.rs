@@ -121,6 +121,17 @@ pub(super) async fn run_deploy_script(
     part_name: &str,
     hook_name: &str,
 ) -> Result<()> {
+    // The chroot child runs with cwd `/`, so a relative `--root` (e.g.
+    // `build/rootfs`) would resolve against `/` and chroot would exit 125.
+    // Canonicalize before any directory change.
+    let root_dir = root_dir.canonicalize().map_err(|e| {
+        WrightError::ScriptError(format!(
+            "cannot resolve deploy root {}: {}",
+            root_dir.display(),
+            e
+        ))
+    })?;
+    let root_dir = root_dir.as_path();
     let use_chroot = root_dir != Path::new("/") && nix::unistd::geteuid().is_root();
     let mut command = if use_chroot {
         let mut command = tokio::process::Command::new("/usr/bin/chroot");
