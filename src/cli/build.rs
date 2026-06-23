@@ -66,6 +66,12 @@ pub struct BuildArgs {
     #[arg(long, conflicts_with = "checksum")]
     pub fetch: bool,
 
+    /// Seal forged staging trees into part archives in parts_dir after the
+    /// forge completes, without deploying. Restores the build → seal →
+    /// merge workflow for preparing archives ahead of `wright merge`.
+    #[arg(long, conflicts_with_all = ["fetch", "checksum", "until_stage"])]
+    pub seal: bool,
+
     /// Compute and update SHA256 checksums in plan.toml
     #[arg(long, conflicts_with = "fetch")]
     pub checksum: bool,

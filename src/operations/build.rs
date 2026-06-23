@@ -85,6 +85,11 @@ pub async fn execute_build(
                     },
                 )
                 .await?;
+            if args.seal {
+                crate::seal::package_manifest(&manifest, config, true, args.force)
+                    .await
+                    .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", target, e)))?;
+            }
             return Ok(());
         }
     }
@@ -217,7 +222,35 @@ pub async fn execute_build(
         },
         cancel_rx,
     )
-    .await
+    .await?;
+
+    // Optionally seal every forged base into a part archive.  Bootstrap
+    // tasks are skipped: their staging trees are MVP intermediates, and the
+    // post-bootstrap full forge of the same base seals the real output.
+    if args.seal {
+        let mut sealed = std::collections::HashSet::new();
+        for batch in plan.batches() {
+            for task in batch {
+                if task.ends_with(":bootstrap") {
+                    continue;
+                }
+                let base = BuildExecutionPlan::task_base_name(task).to_string();
+                if !sealed.insert(base.clone()) {
+                    continue;
+                }
+                let plan_path = plan
+                    .plan_path_for_task(task)
+                    .ok_or_else(|| WrightError::ForgeError(format!("no plan path for {}", base)))?;
+                let manifest = PlanManifest::from_file(plan_path)
+                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
+                crate::seal::package_manifest(&manifest, config, true, options.force)
+                    .await
+                    .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", base, e)))?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn staging_is_populated(build_root: &std::path::Path) -> bool {
