@@ -1,8 +1,13 @@
-use crate::error::{Result, WrightError};
+use crate::error::Result;
 use crate::part::store::ResolvedPart;
 use crate::part::version;
 use std::collections::{HashMap, HashSet};
 
+/// Order parts so dependencies deploy before their dependents.
+///
+/// Runtime dependencies may legitimately form cycles between deployed
+/// parts (systemd ↔ dbus); deploy order cannot honour a cycle, so the
+/// back-edge is logged and skipped rather than treated as an error.
 pub fn sort_dependencies(resolved_map: &HashMap<String, ResolvedPart>) -> Result<Vec<String>> {
     let mut sorted_names = Vec::new();
     let mut visited = HashSet::new();
@@ -32,10 +37,12 @@ fn visit_resolved(
         return Ok(());
     }
     if visiting.contains(name) {
-        return Err(WrightError::DependencyError(format!(
-            "circular dependency: {}",
-            name
-        )));
+        tracing::warn!(
+            event = "deploy.dependency_cycle",
+            part_name = %name,
+            "runtime dependency cycle detected; breaking deploy order at this edge"
+        );
+        return Ok(());
     }
 
     visiting.insert(name.to_string());
