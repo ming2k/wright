@@ -8,6 +8,11 @@
   `chroot <root>`, so a relative root such as `build/rootfs` resolved
   against `/` and chroot exited with status 125. The root path is
   canonicalized before any directory change.
+- **Sealing refuses an empty staging tree.** A stale checkpoint or cleaned
+  workshop could let `wright build --seal` pack a part containing only
+  `.PARTINFO`/`.FILELIST` and zero payload files; merging such a part
+  silently deploys nothing. `create_part` now fails with a clear error
+  asking for a `--force --clean` reforge.
 
 ## [5.3.10] - 2026-06-10
 

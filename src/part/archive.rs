@@ -88,6 +88,18 @@ pub fn create_part(
     // Generate .FILELIST
     let filelist = generate_filelist(part_dir)?;
 
+    // An empty staging tree means the forge produced nothing (stale
+    // checkpoint, cleaned workshop, broken install stage).  Sealing it would
+    // publish a part that deploys zero files — fail loudly instead.
+    if filelist.trim().is_empty() {
+        return Err(WrightError::PartError(format!(
+            "refusing to seal '{}': staging tree {} contains no files \
+             (re-run the forge with --force --clean)",
+            manifest.metadata.name,
+            part_dir.display()
+        )));
+    }
+
     // Write metadata files into part_dir
     std::fs::write(part_dir.join(".PARTINFO"), &partinfo)
         .map_err(|e| WrightError::PartError(format!("failed to write .PARTINFO: {}", e)))?;
@@ -344,7 +356,10 @@ fn generate_provenance_toml(plan: &PlanManifest) -> String {
     if !plan.sources.entries.is_empty() {
         toml.push_str("source_checksums = [\n");
         for source in &plan.sources.entries {
-            toml.push_str(&format!("    \"{}\",\n", source_provenance_line(source, plan)));
+            toml.push_str(&format!(
+                "    \"{}\",\n",
+                source_provenance_line(source, plan)
+            ));
         }
         toml.push_str("]\n");
     }
@@ -576,6 +591,36 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
 #[cfg(test)]
 mod tests {
     use super::{generate_partinfo, parse_partinfo_str};
+
+    #[test]
+    fn create_part_refuses_empty_staging_tree() {
+        let manifest = crate::plan::manifest::PlanManifest::parse(
+            r#"
+name = "empty-demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+
+        let staging = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        // An empty staging tree must not seal (regression: wright 5.0.2
+        // packed metadata-only parts that deployed zero files).
+        let err = super::create_part(staging.path(), &manifest, out.path(), None).unwrap_err();
+        assert!(err.to_string().contains("contains no files"), "{err}");
+        assert!(!out.path().join(manifest.part_filename()).exists());
+
+        // The same tree with payload seals fine.
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let part = super::create_part(staging.path(), &manifest, out.path(), None).unwrap();
+        assert!(part.exists());
+    }
 
     #[test]
     fn parse_partinfo_accepts_runtime_dependencies() {
