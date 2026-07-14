@@ -14,10 +14,45 @@ ADR-0012.  ADR-0013 is the accepted decision record for the current approach.
 | Level | Root view | Intended use |
 |-------|-----------|--------------|
 | `none` | host root | debugging a broken plan or running a deliberately host-integrated stage |
-| `relaxed` | host root with namespaces and bind mounts | basic process and mount isolation while still seeing the live host filesystem |
+| `relaxed` | OverlayFS root with host network and IPC | filesystem and process isolation for stages that require network access |
 | `strict` | OverlayFS root from system lowerdirs plus task-private mounts | normal builds |
 
-Each pipeline stage can override the default through its `isolation` field.
+Wright resolves the effective policy once for execution, checkpointing, and
+part provenance. A stage-level `isolation` override has highest priority,
+followed by the selected executor's non-empty `default_isolation`, then the
+global `build.default_isolation`. The built-in shell executor inherits the
+global default.
+
+## Failure Policy
+
+Isolation fails closed. `relaxed` and `strict` never fall back to direct host
+execution when a required namespace is unavailable. The stage stops before
+its command starts and reports that `none` must be selected explicitly if
+host execution is intended.
+
+Every isolated process enters a user namespace, including when Wright runs as
+root. Capabilities granted inside that namespace do not grant capabilities in
+the parent namespace. The process also cannot gain new privileges when it
+executes set-user-ID programs or files with capabilities.
+
+This boundary reduces the effect of a compromised build process, but it does
+not turn package builds into virtual machines. Kernel vulnerabilities and
+resources deliberately shared by the selected isolation level remain part of
+the threat model.
+
+## Process Boundary
+
+The main application does not perform namespace and mount setup in a child of
+its multithreaded runtime. It starts a fresh copy of the Wright executable,
+which enters an internal helper mode before creating worker threads. The
+single-threaded helper constructs the namespace and supervises its init
+process, while the application retains timeout, cancellation, output capture,
+and logging responsibilities.
+
+Helper startup, request validation, and namespace setup all fail closed. A
+helper or protocol failure cannot turn an isolated stage into direct host
+execution. The helper is an internal process boundary, not a separately
+versioned user-facing command.
 
 ## Strict Root Construction
 
@@ -142,9 +177,11 @@ Contributor implementation details are in
 
 ## Relationship to ADRs
 
-The current design is ADR-0013:
+The current design decisions are:
 
 - [ADR-0013: Multi-lowerdir OverlayFS isolation](../adr/0013-multi-lowerdir-isolation.md)
+- [ADR-0027: Isolation fails closed](../adr/0027-isolation-fails-closed.md)
+- [ADR-0028: Single-threaded isolation helper](../adr/0028-single-threaded-isolation-helper.md)
 
 Historical context:
 

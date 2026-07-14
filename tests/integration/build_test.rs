@@ -17,7 +17,7 @@ fn load_manifest_without_isolation(name: &str) -> (PlanManifest, PathBuf) {
     let manifest_path = fixture_path(name).join("plan.toml");
     let mut manifest = PlanManifest::from_file(&manifest_path).unwrap();
     for stage in manifest.pipeline.values_mut() {
-        stage.isolation = "none".to_string();
+        stage.isolation = Some("none".to_string());
     }
     (manifest, manifest_path.parent().unwrap().to_path_buf())
 }

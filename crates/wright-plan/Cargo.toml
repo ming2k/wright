@@ -1,0 +1,22 @@
+[package]
+name = "wright-plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Plan parsing and discovery for Wright"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+tracing = "0.1"
+walkdir = "2"
+wright-model = { path = "../wright-model" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -6,7 +6,7 @@ use std::path::Path;
 
 const INSTALLED_SCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/src/database/migrations/001_initial_schema.sql"
+    "/crates/wright-state/migrations/001_initial_schema.sql"
 ));
 
 async fn seed_schema_without_sqlx_migrations(path: &Path, schema: &str) {

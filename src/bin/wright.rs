@@ -5,8 +5,18 @@ use wright::config::GlobalConfig;
 use wright::util::logging::{format_error, format_failure_report, today_log_path};
 use wright::util::progress::MULTI;
 
+fn main() {
+    // Isolation setup must begin before Tokio creates worker threads. The
+    // helper then owns every fork/unshare/mount operation in a fresh,
+    // single-threaded process.
+    if wright::isolation::is_helper_process() {
+        wright::isolation::run_helper_process();
+    }
+    run_cli();
+}
+
 #[tokio::main]
-async fn main() {
+async fn run_cli() {
     let cli = Cli::parse();
 
     // 1. Load Configuration First — pre-logging, so emit the error line

@@ -1,0 +1,591 @@
+//! Query and analysis operations — dependency tree rendering, etc.
+
+use crate::error::{Result, WrightError};
+
+use crate::database::InstalledDb;
+
+use owo_colors::OwoColorize;
+
+/// How the tree prefix is rendered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrefixMode {
+    /// Classic tree-drawing characters (├──, └──, │)
+    Indent,
+    /// Flat list with a depth number prefix
+    Depth,
+    /// Bare part names (deduplicated, no tree chrome)
+    None,
+}
+
+/// Options that control tree rendering.
+pub struct TreeOptions<'a> {
+    pub max_depth: usize,
+    pub filter: Option<&'a str>,
+    pub prefix_mode: PrefixMode,
+    pub prune: &'a [String],
+    pub color: bool,
+}
+
+/// Accumulated statistics from a tree walk.
+#[derive(Default)]
+pub struct TreeStats {
+    pub total: usize,
+    pub max_depth_seen: usize,
+    pub not_installed: usize,
+    pub cycles: usize,
+}
+
+impl TreeStats {
+    pub fn write_summary(&self, out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
+        let line = format!(
+            "{} parts, max depth {}, {} not installed, {} cycles",
+            self.total, self.max_depth_seen, self.not_installed, self.cycles,
+        );
+        if color {
+            writeln!(out, "\n{}", line.dimmed())
+        } else {
+            writeln!(out, "\n{}", line)
+        }
+    }
+}
+
+// ─── helpers for colored output ──────────────────────────────────────────────
+
+fn write_connector(out: &mut dyn std::io::Write, s: &str, color: bool) -> std::io::Result<()> {
+    if color {
+        write!(out, "{}", s.dimmed())
+    } else {
+        write!(out, "{}", s)
+    }
+}
+
+fn write_part_name(out: &mut dyn std::io::Write, name: &str, _color: bool) -> std::io::Result<()> {
+    write!(out, "{}", name)
+}
+
+fn write_version_constraint(
+    out: &mut dyn std::io::Write,
+    c: &str,
+    color: bool,
+) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", format!("({})", c).green())
+    } else {
+        write!(out, " ({})", c)
+    }
+}
+
+fn write_not_installed(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", "[not installed]".red())
+    } else {
+        write!(out, " [not installed]")
+    }
+}
+
+fn write_cycle_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", "(cycle)".red().bold())
+    } else {
+        write!(out, " (cycle)")
+    }
+}
+
+fn write_dup_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", "(*)".dimmed())
+    } else {
+        write!(out, " (*)")
+    }
+}
+
+fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Result<()> {
+    if color {
+        write!(out, " {}", "(pruned)".yellow())
+    } else {
+        write!(out, " (pruned)")
+    }
+}
+
+// ─── forward dependency tree ─────────────────────────────────────────────────
+
+/// Render the forward dependency tree for a part into a writer.
+pub async fn write_dep_tree(
+    db: &InstalledDb,
+    name: &str,
+    opts: &TreeOptions<'_>,
+    out: &mut dyn std::io::Write,
+) -> Result<TreeStats> {
+    let mut visited = std::collections::HashSet::new();
+    let mut ancestors = std::collections::HashSet::new();
+    let mut stats = TreeStats {
+        total: 1,
+        ..TreeStats::default()
+    };
+    visited.insert(name.to_string());
+    ancestors.insert(name.to_string());
+    write_dep_tree_inner(
+        db,
+        name,
+        "",
+        1,
+        opts,
+        &mut visited,
+        &mut ancestors,
+        &mut stats,
+        out,
+    )
+    .await?;
+    Ok(stats)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_dep_tree_inner(
+    db: &InstalledDb,
+    name: &str,
+    prefix: &str,
+    current_depth: usize,
+    opts: &TreeOptions<'_>,
+    visited: &mut std::collections::HashSet<String>,
+    ancestors: &mut std::collections::HashSet<String>,
+    stats: &mut TreeStats,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    if current_depth > opts.max_depth {
+        return Ok(());
+    }
+
+    let deps = db.get_dependencies_by_name(name).await.map_err(|e| {
+        WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e))
+    })?;
+
+    let children: Vec<_> = if let Some(f) = opts.filter {
+        deps.iter().filter(|d| d.name.contains(f)).collect()
+    } else {
+        deps.iter().collect()
+    };
+
+    // For PrefixMode::None, we need a set to deduplicate
+    let seen_none: Option<&std::collections::HashSet<String>> =
+        if opts.prefix_mode == PrefixMode::None {
+            Some(visited)
+        } else {
+            Option::None
+        };
+    let _ = seen_none; // used below
+
+    for (i, dep) in children.iter().enumerate() {
+        let is_last_child = i == children.len() - 1;
+
+        // Check prune
+        if opts.prune.contains(&dep.name) {
+            stats.total += 1;
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, &dep.name, opts.color)?;
+            if let Some(c) = &dep.version_constraint {
+                write_version_constraint(out, c, opts.color)?;
+            }
+            write_pruned_tag(out, opts.color)?;
+            writeln!(out)?;
+            continue;
+        }
+
+        if ancestors.contains(&dep.name) {
+            // True cycle
+            stats.total += 1;
+            stats.cycles += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, &dep.name, opts.color)?;
+            if let Some(c) = &dep.version_constraint {
+                write_version_constraint(out, c, opts.color)?;
+            }
+            write_cycle_tag(out, opts.color)?;
+            writeln!(out)?;
+        } else if visited.contains(&dep.name) {
+            // Already fully expanded elsewhere (diamond)
+            if opts.prefix_mode == PrefixMode::None {
+                // skip duplicates in None mode
+                continue;
+            }
+            stats.total += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+            let installed = db.get_part(&dep.name).await.unwrap_or(None).is_some();
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, &dep.name, opts.color)?;
+            if let Some(c) = &dep.version_constraint {
+                write_version_constraint(out, c, opts.color)?;
+            }
+            if !installed {
+                write_not_installed(out, opts.color)?;
+                stats.not_installed += 1;
+            }
+            write_dup_tag(out, opts.color)?;
+            writeln!(out)?;
+        } else {
+            let installed = db.get_part(&dep.name).await.unwrap_or(None).is_some();
+            stats.total += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, &dep.name, opts.color)?;
+            if let Some(c) = &dep.version_constraint {
+                write_version_constraint(out, c, opts.color)?;
+            }
+            if !installed {
+                write_not_installed(out, opts.color)?;
+                stats.not_installed += 1;
+            }
+            writeln!(out)?;
+
+            if installed {
+                visited.insert(dep.name.clone());
+                ancestors.insert(dep.name.clone());
+                let new_prefix = match opts.prefix_mode {
+                    PrefixMode::Indent => {
+                        format!("{}{}", prefix, if is_last_child { "    " } else { "│   " })
+                    }
+                    _ => String::new(),
+                };
+                Box::pin(write_dep_tree_inner(
+                    db,
+                    &dep.name,
+                    &new_prefix,
+                    current_depth + 1,
+                    opts,
+                    visited,
+                    ancestors,
+                    stats,
+                    out,
+                ))
+                .await?;
+                ancestors.remove(&dep.name);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Write the line prefix according to the chosen mode.
+fn write_line_prefix(
+    out: &mut dyn std::io::Write,
+    opts: &TreeOptions,
+    prefix: &str,
+    is_last_child: bool,
+    depth: usize,
+) -> std::io::Result<()> {
+    match opts.prefix_mode {
+        PrefixMode::Indent => {
+            let connector = if is_last_child {
+                "└── "
+            } else {
+                "├── "
+            };
+            write_connector(out, prefix, opts.color)?;
+            write_connector(out, connector, opts.color)?;
+        }
+        PrefixMode::Depth => {
+            let tag = format!("{} ", depth);
+            write_connector(out, &tag, opts.color)?;
+        }
+        PrefixMode::None => { /* no prefix */ }
+    }
+    Ok(())
+}
+
+// ─── reverse dependency tree ─────────────────────────────────────────────────
+
+/// Render the reverse dependency tree for a part into a writer.
+pub async fn write_reverse_dep_tree(
+    db: &InstalledDb,
+    name: &str,
+    opts: &TreeOptions<'_>,
+    out: &mut dyn std::io::Write,
+) -> Result<TreeStats> {
+    let mut visited = std::collections::HashSet::new();
+    let mut ancestors = std::collections::HashSet::new();
+    let mut stats = TreeStats {
+        total: 1,
+        ..TreeStats::default()
+    };
+    visited.insert(name.to_string());
+    ancestors.insert(name.to_string());
+    write_reverse_dep_tree_inner(
+        db,
+        name,
+        "",
+        1,
+        opts,
+        &mut visited,
+        &mut ancestors,
+        &mut stats,
+        out,
+    )
+    .await?;
+    Ok(stats)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_reverse_dep_tree_inner(
+    db: &InstalledDb,
+    name: &str,
+    prefix: &str,
+    current_depth: usize,
+    opts: &TreeOptions<'_>,
+    visited: &mut std::collections::HashSet<String>,
+    ancestors: &mut std::collections::HashSet<String>,
+    stats: &mut TreeStats,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    if current_depth > opts.max_depth {
+        return Ok(());
+    }
+
+    let dependents = db.get_dependents(name).await.map_err(|e| {
+        WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e))
+    })?;
+
+    let children: Vec<_> = if let Some(f) = opts.filter {
+        dependents.iter().filter(|n| n.contains(f)).collect()
+    } else {
+        dependents.iter().collect()
+    };
+
+    for (i, &dep_name) in children.iter().enumerate() {
+        let is_last_child = i == children.len() - 1;
+
+        // Check prune
+        if opts.prune.iter().any(|p| p == dep_name) {
+            stats.total += 1;
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, dep_name, opts.color)?;
+            write_pruned_tag(out, opts.color)?;
+            writeln!(out)?;
+            continue;
+        }
+
+        if ancestors.contains(dep_name.as_str()) {
+            stats.total += 1;
+            stats.cycles += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, dep_name, opts.color)?;
+            write_cycle_tag(out, opts.color)?;
+            writeln!(out)?;
+        } else if visited.contains(dep_name.as_str()) {
+            if opts.prefix_mode == PrefixMode::None {
+                continue;
+            }
+            stats.total += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, dep_name, opts.color)?;
+            write_dup_tag(out, opts.color)?;
+            writeln!(out)?;
+        } else {
+            stats.total += 1;
+            if current_depth > stats.max_depth_seen {
+                stats.max_depth_seen = current_depth;
+            }
+            write_line_prefix(out, opts, prefix, is_last_child, current_depth)?;
+            write_part_name(out, dep_name, opts.color)?;
+            writeln!(out)?;
+
+            visited.insert(dep_name.clone());
+            ancestors.insert(dep_name.clone());
+            let new_prefix = match opts.prefix_mode {
+                PrefixMode::Indent => {
+                    format!("{}{}", prefix, if is_last_child { "    " } else { "│   " })
+                }
+                _ => String::new(),
+            };
+            Box::pin(write_reverse_dep_tree_inner(
+                db,
+                dep_name,
+                &new_prefix,
+                current_depth + 1,
+                opts,
+                visited,
+                ancestors,
+                stats,
+                out,
+            ))
+            .await?;
+            ancestors.remove(dep_name.as_str());
+        }
+    }
+
+    Ok(())
+}
+
+// ─── system tree ─────────────────────────────────────────────────────────────
+
+/// Render the full system dependency tree into a writer.
+pub async fn write_system_tree(
+    db: &InstalledDb,
+    opts: &TreeOptions<'_>,
+    out: &mut dyn std::io::Write,
+) -> Result<TreeStats> {
+    let roots = db.get_root_parts().await?;
+    if roots.is_empty() {
+        let all = db.list_parts().await?;
+        if all.is_empty() {
+            writeln!(out, "No parts installed.")?;
+        } else {
+            writeln!(
+                out,
+                "No root parts found; the system may have circular dependencies."
+            )?;
+        }
+        return Ok(TreeStats::default());
+    }
+
+    let mut visited = std::collections::HashSet::new();
+    let mut combined_stats = TreeStats::default();
+
+    for (i, root) in roots.iter().enumerate() {
+        writeln!(out, "{}", root.name)?;
+        combined_stats.total += 1;
+        let mut ancestors = std::collections::HashSet::new();
+        visited.insert(root.name.clone());
+        ancestors.insert(root.name.clone());
+
+        let sys_opts = TreeOptions {
+            max_depth: opts.max_depth,
+            filter: opts.filter,
+            prefix_mode: opts.prefix_mode,
+            prune: opts.prune,
+            color: opts.color,
+        };
+        write_dep_tree_inner(
+            db,
+            &root.name,
+            "",
+            1,
+            &sys_opts,
+            &mut visited,
+            &mut ancestors,
+            &mut combined_stats,
+            out,
+        )
+        .await?;
+        if i < roots.len() - 1 {
+            writeln!(out)?;
+        }
+    }
+
+    Ok(combined_stats)
+}
+
+// ─── health-check functions (unchanged) ──────────────────────────────────────
+
+/// One unsatisfied runtime dependency edge — a part declared a need
+/// the registry cannot resolve (directly or via replaces).
+#[derive(Debug, Clone)]
+pub struct BrokenDep {
+    pub part: String,
+    pub required_name: String,
+    pub version_constraint: Option<String>,
+}
+
+/// Check all deployed parts for unsatisfied runtime dependencies.
+///
+/// Per ADR-0016 resolution walks `parts.name` first and falls through
+/// to `replaces.name` so renamed targets stay satisfied across plan
+/// migrations. The advisory model is read-only — this function reports;
+/// callers decide how to react.
+pub async fn check_dependencies_structured(db: &InstalledDb) -> Result<Vec<BrokenDep>> {
+    let all_parts = db.list_parts().await?;
+    let mut broken = Vec::new();
+
+    for part in all_parts {
+        let deps = db.get_dependencies(part.id).await?;
+        for dep in deps {
+            if !is_dep_satisfied(db, &dep.name).await? {
+                broken.push(BrokenDep {
+                    part: part.name.clone(),
+                    required_name: dep.name,
+                    version_constraint: dep.version_constraint,
+                });
+            }
+        }
+    }
+    Ok(broken)
+}
+
+/// Legacy formatted variant kept for callers that just want a string list.
+pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+    let broken = check_dependencies_structured(db).await?;
+    Ok(broken
+        .into_iter()
+        .map(|b| {
+            let vc = b
+                .version_constraint
+                .map(|c| format!(" ({})", c))
+                .unwrap_or_default();
+            format!(
+                "Part '{}' has a broken dependency: '{}'{} not found",
+                b.part, b.required_name, vc
+            )
+        })
+        .collect())
+}
+
+async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
+    // The required_name may be "plan:output" or just "output". Names are
+    // globally unique, so the output is what we look up.
+    let target = required.split(':').next_back().unwrap_or(required);
+    if db.get_part(target).await?.is_some() {
+        return Ok(true);
+    }
+    // Replaces fallback: any deployed part declaring `replaces = [target]`
+    // covers the old name. Walk parts → check their replaces list.
+    let parts = db.list_parts().await?;
+    for p in parts {
+        let replaces = db.get_replaces(p.id).await?;
+        if replaces.iter().any(|n| n == target) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Check for circular dependencies in the installed database.
+pub async fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+    let all_parts = db.list_parts().await?;
+    let mut issues = Vec::new();
+
+    for part in all_parts {
+        if let Err(e) = db.get_recursive_dependents(&part.name).await
+            && e.to_string().contains("circular")
+        {
+            issues.push(format!(
+                "Circular dependency detected involving part '{}'",
+                part.name
+            ));
+        }
+    }
+
+    Ok(issues)
+}
+
+/// Check if multiple parts claim ownership of the same file.
+pub async fn check_file_ownership_conflicts(db: &InstalledDb) -> Result<Vec<String>> {
+    Ok(db.get_file_ownership_conflicts().await?)
+}
+
+/// Get recorded shadowed file information.
+pub async fn check_shadowed_files(db: &InstalledDb) -> Result<Vec<String>> {
+    Ok(db.get_shadowed_conflicts().await?)
+}

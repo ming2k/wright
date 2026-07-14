@@ -1,0 +1,32 @@
+[package]
+name = "wright-part"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Part archives, stores, and package validation for Wright"
+
+[dependencies]
+bzip2 = { version = "0.5", features = ["static"] }
+chrono = { version = "0.4", features = ["serde"] }
+flate2 = "1.0"
+goblin = { version = "0.10", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
+lzma-rust = { version = "0.16", package = "lzma-rust2" }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tar = "0.4"
+thiserror = "2"
+tokio = { version = "1.52.1", features = ["rt"] }
+toml = "0.8"
+tracing = "0.1"
+walkdir = "2"
+wright-model = { path = "../wright-model" }
+wright-plan = { path = "../wright-plan" }
+xz2 = "0.1"
+zip = "2"
+zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Changed
+- **Isolated builds now fail closed.** `relaxed` and `strict` builds require
+  their Linux namespaces, including a user namespace even when Wright runs as
+  root. If the environment denies namespace creation, Wright stops before the
+  stage command starts instead of silently running it on the host. Select
+  `isolation = "none"` explicitly to allow host execution. Isolated executors
+  must now use absolute command paths, and the runner sets `no_new_privs`
+  before execution.
+- **Namespace setup now runs in a single-threaded helper process.** The main
+  Tokio application re-enters the same `wright` binary before creating the
+  helper's runtime, so fork, namespace, mount, and root-pivot work no longer
+  runs in a child of the multithreaded application. Output streaming,
+  cancellation, timeout enforcement, and stage exit status remain preserved,
+  and helper/protocol failures fail closed.
+
+### Fixed
+- **Isolation defaults now follow their documented precedence.** Omitting a
+  stage's `isolation` inherits the executor default and then
+  `build.default_isolation`; the manifest parser no longer replaces omission
+  with `strict` before the engine can resolve it. The effective policy is also
+  recorded in part provenance. Stage hooks, environment, executor settings,
+  and isolation policy now participate in checkpoint hashes, so a policy
+  change cannot reuse a layer built under different conditions.
+- **Custom executor `required_paths` are now mounted.** Each declared path is
+  validated and bind-mounted read-only at the same absolute path inside an
+  isolated stage. Missing or relative required paths now fail before the
+  executor starts instead of being silently ignored.
+- **Audited dependency vulnerabilities in the compiled graph were patched.**
+  Git and TLS validation dependencies were upgraded, SQLx is now limited to
+  the SQLite and Tokio/Rustls features Wright uses, and the unmaintained
+  `number_prefix` dependency was removed.
+
 ## [5.3.11] - 2026-06-23
 
 ### Added

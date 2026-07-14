@@ -136,11 +136,19 @@ Per-plan values override global (`wright.toml`) settings.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `executor` | string | `"shell"` | Executor to run the script with |
-| `isolation` | string | `"strict"` | Security isolation level |
+| `isolation` | string | inherited | Stage-specific security isolation override |
 | `env` | map of strings | `{}` | Extra environment variables |
 | `script` | string | `""` | The script to execute |
 
-The `env` field supports variable substitution in values.
+The effective isolation level is resolved in this order:
+
+1. The stage's `isolation` field, when present.
+2. The selected executor's `default_isolation`, when non-empty.
+3. `build.default_isolation` from `wright.toml` (`strict` by default).
+
+The `env` field supports variable substitution in values. Changes to a
+stage's script, environment, hooks, executor configuration, or effective
+isolation invalidate that stage and all downstream forge checkpoints.
 
 ## Stage Order (`[pipeline_order]`)
 
@@ -315,11 +323,20 @@ hard links, so `staging/` remains available for inspection.
 |-------|-------------|
 | `none` | No isolation. Runs directly on the host. |
 | `relaxed` | Mount, PID, and UTS namespaces. Network and IPC shared with host. |
-| `strict` (default) | Everything in `relaxed` plus network and IPC namespaces. |
+| `strict` | Everything in `relaxed` plus network and IPC namespaces. This is the default global policy. |
 
-In `relaxed` and `strict` modes, the isolation pivots to a minimal root filesystem.  In `strict` mode, Wright mounts a pre-copied read-only sysroot as an overlayfs lower layer with per-task writable upper layers.  Both modes bind-mount `/build` and `/output` read-write, provide `/dev` with basic devices, mount fresh `/proc` and `/tmp`, and set hostname to `wright-isolation`.
+In `relaxed` and `strict` modes, the isolation pivots to a minimal root
+filesystem backed by read-only system lower directories and a per-task
+OverlayFS upper directory. Both modes bind-mount `/build` and `/output`
+read-write, provide `/dev` with basic devices, mount fresh `/proc` and `/tmp`,
+and set the hostname to `wright-isolation`.
 
-If the kernel does not support the required namespaces, falls back to direct execution with a warning.
+Both modes require mount, PID, UTS, and user namespaces. `strict` additionally
+requires network and IPC namespaces. If the kernel or execution environment
+denies a required namespace, Wright stops before executing the stage. Set
+`isolation = "none"` explicitly only when host execution is intended.
+
+Isolated executors must use an absolute `command` path.
 
 ## Executors
 
@@ -353,8 +370,8 @@ default_isolation = "strict"
 | `args` | list of strings | `[]` | Arguments before the script path |
 | `delivery` | string | `"tempfile"` | How the script is passed to the command |
 | `tempfile_extension` | string | `".sh"` | File extension for the temp script |
-| `required_paths` | list of strings | `[]` | Extra paths to bind-mount in isolation |
-| `default_isolation` | string | `""` | Default isolation level for this executor |
+| `required_paths` | list of strings | `[]` | Existing absolute paths to bind-mount read-only at the same path in isolation |
+| `default_isolation` | string | `""` | Isolation used when a stage omits `isolation`; empty inherits the global build default |
 
 ## Validation Rules
 

@@ -1,6 +1,10 @@
 # Architecture
 
-Wright is a single CLI binary backed by one core library.
+Wright is a single CLI binary backed by an internal Cargo workspace. The
+workspace separates stable domain semantics from application orchestration
+without exposing additional commands to users. See
+[ADR-0025](../adr/0025-incremental-cargo-workspace.md) and
+[ADR-0026](../adr/0026-workspace-crate-boundaries.md).
 
 ## Roles
 
@@ -27,7 +31,9 @@ seal the resulting outputs, and deploy each completed wave before continuing.
 ## Internal Layers
 
 ```text
-bin -> cli -> operations -> resolve / foundry / seal / deploy
+CLI -> engine -> state -> part -> plan -> model
+         |         |       |       |
+         +---------+-------+-------+------> lower-level libraries only
 ```
 
 - `cli` owns one file per subcommand: each file defines the clap `Args`
@@ -35,11 +41,15 @@ bin -> cli -> operations -> resolve / foundry / seal / deploy
   `operations::*`. The top-level `cli::dispatch` constructs a `Context`
   (config, db_path, root_dir, verbose, quiet) and routes to the matching
   handler. See [ADR-0020](../adr/0020-merge-cli-and-commands-directories.md).
-- `operations` owns command use cases such as install and launch, and drives batch execution.
-- `resolve` discovers plan files, resolves targets, expands dependency closures, constructs `BuildExecutionPlan`.  See `src/resolve/`.
-- `foundry` fetches sources (Charge), runs forge stages in sandboxes (Forge), and slices outputs (Mold).  See `src/foundry/`.
-- `seal` validates output directories (FHS, ELF lint) and creates `.wright.tar.zst` archives.  See `src/seal/`.
-- `deploy` extracts archives, copies files to target root, records in the database, runs hooks.  See `src/transaction/`.  Crash-safe via the `delivery` state machine (`src/delivery/`).
+- The engine owns command use cases, dependency resolution, foundry builds,
+  isolation, sealing, and deployment transactions.
+- State owns the installed registry, delivery recovery, content-addressed
+  storage, and process locks.
+- Part owns archive and folio formats, compression, local stores, FHS
+  validation, and ELF inspection.
+- Plan owns manifest parsing, validation, discovery, and metadata expansion.
+- Model owns shared values and has no filesystem, database, network, CLI, or
+  process-execution responsibilities.
 
 ## Responsibilities
 

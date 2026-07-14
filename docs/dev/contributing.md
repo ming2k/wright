@@ -35,12 +35,18 @@ artifacts are not committed.
 
 ## Run tests
 
-The crate is a single binary; `cargo test` covers the whole project:
+The workspace installs a single binary. Run the full workspace suite for
+changes that cross crate boundaries:
 
 ```bash
-cargo test                           # all unit + integration tests
+cargo test --workspace               # all unit + integration tests
 cargo test --test integration        # only tests/integration/
 cargo test build_test                # filter by test name substring
+cargo test -p wright-engine           # application engine only
+cargo test -p wright-state            # persistence and recovery only
+cargo test -p wright-part             # archives and package validation
+cargo test -p wright-plan             # plan parsing and discovery
+cargo test -p wright-model            # domain values only
 ```
 
 Tests that require namespace isolation call
@@ -55,7 +61,7 @@ Two gates must pass before pushing:
 ```bash
 cargo fmt --all                      # apply
 cargo fmt --all -- --check           # CI mode: fails instead of writing
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 CI fails the build on any `clippy` warning or any `rustfmt` diff. Run
@@ -105,8 +111,8 @@ Hard rules to keep in mind:
   [ADR Workflow](documentation/adr-workflow.md).
 - `CHANGELOG.md` entries are append-only. Do not edit released history;
   add under `Unreleased`.
-- `src/database/migrations/*.sql` are immutable. To change schema, add a
-  new numbered migration.
+- `crates/wright-state/migrations/*.sql` are immutable. To change schema,
+  add a new numbered migration.
 - Do not link from user-facing docs (`docs/tutorials/`,
   `docs/how-to/`, `docs/reference/`, `docs/explanation/`) into
   `docs/dev/`. The reverse direction is fine.

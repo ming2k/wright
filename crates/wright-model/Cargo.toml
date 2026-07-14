@@ -1,0 +1,12 @@
+[package]
+name = "wright-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dependency-free domain primitives for Wright"
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

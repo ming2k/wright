@@ -79,6 +79,25 @@ pub struct BuildArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: BuildArgs, ctx: &Context<'_>) -> Result<()> {
-    crate::operations::build::execute_build(args, ctx.config, &ctx.db_path, ctx.verbose, ctx.quiet)
-        .await
+    let request = crate::operations::build::BuildRequest {
+        targets: args.targets,
+        stages: args.stage,
+        force_stages: args.force_stage,
+        until_stage: args.until_stage,
+        skip_check: args.skip_check,
+        clean: args.clean,
+        force: args.force,
+        mvp: args.mvp,
+        fetch_only: args.fetch,
+        seal: args.seal,
+        checksum: args.checksum,
+    };
+    crate::operations::build::execute_build(
+        request,
+        ctx.config,
+        &ctx.db_path,
+        ctx.verbose,
+        ctx.quiet,
+    )
+    .await
 }
