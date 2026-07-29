@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **`wright install --clean` clears forge state before building.** It performs
+  a from-scratch forge for plans selected by normal install resolution without
+  redeploying plans that are already up to date. `--force` continues to imply
+  a clean forge and also forces redeployment.
+
 ### Changed
 - **Isolated builds now fail closed.** `relaxed` and `strict` builds require
   their Linux namespaces, including a user namespace even when Wright runs as
@@ -18,6 +24,9 @@
   and helper/protocol failures fail closed.
 
 ### Fixed
+- **Explicit upgrades now detect version changes for multi-output plans.**
+  `wright upgrade <plan>` now compares the plan record directly instead of
+  assuming that an installed output has the same name as its plan.
 - **Isolation defaults now follow their documented precedence.** Omitting a
   stage's `isolation` inherits the executor default and then
   `build.default_isolation`; the manifest parser no longer replaces omission

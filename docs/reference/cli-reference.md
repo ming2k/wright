@@ -43,6 +43,7 @@ match policy.
 ```bash
 wright install zlib
 wright install zlib openssl
+wright install zlib --clean
 wright install @core
 wright install gcc --match=all
 ```
@@ -53,7 +54,8 @@ wright install gcc --match=all
 | `-r`, `--rdeps [link\|runtime\|build\|all]` | Reverse dependency domain to expand |
 | `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
 | `--depth <N>` | Maximum expansion depth |
-| `-f`, `--force` | Force reforge and redeploy |
+| `-c`, `--clean` | Clear forge state before building plans that need an update; does not redeploy up-to-date plans |
+| `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
 | `-n`, `--dry-run` | Print the plan without executing it |
 
 ### `wright upgrade <TARGET...>`

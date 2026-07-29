@@ -227,3 +227,20 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn install_accepts_clean() {
+        let cli = Cli::try_parse_from(["wright", "install", "zlib", "--clean"]).unwrap();
+
+        let Commands::Install(args) = cli.command else {
+            panic!("expected install command");
+        };
+        assert!(args.clean);
+        assert!(!args.force);
+    }
+}

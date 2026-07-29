@@ -92,6 +92,7 @@ pub async fn execute_launch(
         match_policies: Vec::new(),
         depth: None,
         force: request.force,
+        clean: request.force,
         config: &launch_config,
         db_path,
         root_dir,

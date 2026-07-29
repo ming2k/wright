@@ -318,6 +318,7 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         match_policies: vec![],
         depth: None,
         force: false,
+        clean: false,
         dry_run: false,
         root: None,
     };

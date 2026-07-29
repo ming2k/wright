@@ -25,6 +25,10 @@ pub struct InstallRequest<'a> {
     pub match_policies: Vec<MatchPolicy>,
     pub depth: Option<usize>,
     pub force: bool,
+    /// Clear the forge workspace, including source/work trees. Distinct from
+    /// `force`: `clean` forces a from-scratch forge without redeploying parts
+    /// that are already converged. `force` implies clean.
+    pub clean: bool,
     pub config: &'a GlobalConfig,
     pub db_path: &'a Path,
     pub root_dir: &'a Path,
@@ -115,6 +119,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         match_policies,
         depth,
         force,
+        clean,
         config,
         db_path,
         root_dir,
@@ -157,7 +162,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     };
 
     let build_opts = build_opts.unwrap_or_else(|| BuildPlanOptions {
-        clean: force,
+        clean: force || clean,
         force,
         verbose: verbose > 0,
         quiet,

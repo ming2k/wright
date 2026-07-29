@@ -94,6 +94,7 @@ pub async fn execute_upgrade(
         match_policies: vec![],
         depth,
         force,
+        clean: force,
         config,
         db_path,
         root_dir,
@@ -136,17 +137,19 @@ async fn filter_outdated_targets(
             Err(_) => continue,
         };
 
-        let installed = match db.get_part(&manifest.metadata.name).await {
-            Ok(Some(p)) => p,
-            _ => {
+        // Look up the registered plan record (not a part). For multi-output
+        // plans the output parts are named after their `[[output]]` entries
+        // (e.g. `gcc-libs`, `gcc-dev`) and need not include the plan name
+        // itself, so a part lookup keyed on the plan name would miss them and
+        // wrongly report the target as not installed. The `plans` table is
+        // keyed by plan name and tracks the deployed version regardless of how
+        // many outputs the plan produces.
+        let plan = match db.get_plan(&manifest.metadata.name).await? {
+            Some(p) => p,
+            None => {
                 // Not installed — nothing to upgrade.
                 continue;
             }
-        };
-
-        let plan = match db.get_plan_by_id(installed.plan_id).await? {
-            Some(p) => p,
-            None => continue,
         };
 
         let plan_epoch = manifest.metadata.epoch as i64;
@@ -214,4 +217,73 @@ async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Ve
         }
     }
     Ok(deduped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_outdated_targets;
+    use crate::config::GlobalConfig;
+    use crate::database::{InstalledDb, NewPart, NewPlan};
+
+    #[tokio::test]
+    async fn explicit_multi_output_plan_is_detected_as_outdated() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("split-plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        std::fs::write(
+            plan_dir.join("plan.toml"),
+            r#"
+name = "split-plan"
+version = "2.0.0"
+release = 1
+description = "split plan"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "split-runtime"
+description = "runtime output"
+include = ["/usr/lib/**"]
+
+[[output]]
+name = "split-devel"
+description = "development output"
+include = ["/usr/include/**"]
+"#,
+        )
+        .unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path).await.unwrap();
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "split-plan",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            })
+            .await
+            .unwrap();
+        for output in ["split-runtime", "split-devel"] {
+            db.insert_part(NewPart {
+                name: output,
+                plan_id,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        }
+        assert!(db.get_part("split-plan").await.unwrap().is_none());
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        let outdated = filter_outdated_targets(&["split-plan".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert_eq!(outdated, ["split-plan"]);
+    }
 }
