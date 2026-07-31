@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.12] - 2026-07-31
+
 ### Added
 - **`wright install --clean` clears forge state before building.** It performs
   a from-scratch forge for plans selected by normal install resolution without
