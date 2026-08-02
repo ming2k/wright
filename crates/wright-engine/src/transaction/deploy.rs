@@ -5,19 +5,19 @@ use std::time::Instant;
 
 use tracing::{debug, info, trace, warn};
 
-use crate::database::{
-    Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
-};
 use crate::error::{Result, WrightError};
-use crate::part::archive;
-use crate::part::archive::PartInfo;
-use crate::part::store::LocalPartStore;
 use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_deploy_script};
 use wright_model::version::{self, Version};
+use wright_part::archive;
+use wright_part::archive::PartInfo;
+use wright_part::store::LocalPartStore;
+use wright_state::database::{
+    Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
+};
 
-use super::{log_debug_timing, remove_part, upgrade_part};
+use super::{ensure_plan_registered, log_debug_timing, remove_part, upgrade_part};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanRevision {
@@ -285,7 +285,7 @@ async fn validate_plan_output_batches(
 
 async fn warn_about_runtime_dependencies(
     db: &InstalledDb,
-    resolved_map: &HashMap<String, crate::part::store::ResolvedPart>,
+    resolved_map: &HashMap<String, wright_part::store::ResolvedPart>,
     upcoming_outputs: Option<&HashSet<String>>,
 ) -> Result<()> {
     let in_batch: HashSet<String> = resolved_map.values().map(|p| p.name.clone()).collect();
@@ -591,15 +591,7 @@ pub async fn deploy_part_with_origin(
     );
 
     phase_start = Instant::now();
-    let plan_id = db
-        .ensure_plan_registered(
-            &partinfo,
-            &partinfo.plan.version,
-            partinfo.plan.release,
-            partinfo.plan.epoch,
-            &partinfo.plan.arch,
-        )
-        .await?;
+    let plan_id = ensure_plan_registered(db, &partinfo).await?;
     let part_id = db
         .insert_part(NewPart {
             name: &partinfo.name,

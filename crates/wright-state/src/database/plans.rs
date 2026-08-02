@@ -1,7 +1,6 @@
-use super::{InstalledDb, NewPlan};
+use super::{InstalledDb, NewPlan, NewPlanProvenance, RegisterPlan};
 use crate::error::{Result, WrightError};
 use sqlx::{query, query_as};
-use wright_part::archive::PartInfo;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PlanRecord {
@@ -129,20 +128,14 @@ impl InstalledDb {
 
     /// Ensure a plan is registered in the database from pack metadata.
     /// If the plan already exists, updates its version metadata to match the pack.
-    pub async fn ensure_plan_registered(
-        &self,
-        partinfo: &PartInfo,
-        version: &str,
-        release: u32,
-        epoch: u32,
-        arch: &str,
-    ) -> Result<i64> {
-        let plan_id = if let Some(existing) = self.get_plan(&partinfo.plan.name).await? {
+    pub async fn ensure_plan_registered(&self, registration: RegisterPlan<'_>) -> Result<i64> {
+        let plan = registration.plan;
+        let plan_id = if let Some(existing) = self.get_plan(plan.name).await? {
             query("UPDATE plans SET version = ?, release = ?, epoch = ?, arch = ? WHERE id = ?")
-                .bind(version)
-                .bind(release as i64)
-                .bind(epoch as i64)
-                .bind(arch)
+                .bind(plan.version)
+                .bind(plan.release as i64)
+                .bind(plan.epoch as i64)
+                .bind(plan.arch)
                 .bind(existing.id)
                 .execute(&self.pool)
                 .await
@@ -150,17 +143,10 @@ impl InstalledDb {
 
             existing.id
         } else {
-            self.insert_plan(NewPlan {
-                name: &partinfo.plan.name,
-                version,
-                release,
-                epoch,
-                arch,
-            })
-            .await?
+            self.insert_plan(plan).await?
         };
 
-        if let Some(ref provenance) = partinfo.provenance {
+        if let Some(provenance) = registration.provenance {
             self.set_plan_provenance(plan_id, provenance).await?;
         }
         Ok(plan_id)
@@ -172,7 +158,7 @@ impl InstalledDb {
     pub async fn set_plan_provenance(
         &self,
         plan_id: i64,
-        provenance: &wright_part::archive::Provenance,
+        provenance: NewPlanProvenance<'_>,
     ) -> Result<()> {
         let source_checksums =
             serde_json::to_string(&provenance.source_checksums).map_err(|e| {
@@ -182,10 +168,10 @@ impl InstalledDb {
             "UPDATE plans SET plan_checksum = ?, source_checksums = ?,
                     wright_version = ?, isolation = ? WHERE id = ?",
         )
-        .bind(&provenance.plan_checksum)
+        .bind(provenance.plan_checksum)
         .bind(&source_checksums)
-        .bind(&provenance.wright_version)
-        .bind(&provenance.isolation)
+        .bind(provenance.wright_version)
+        .bind(provenance.isolation)
         .bind(plan_id)
         .execute(&self.pool)
         .await

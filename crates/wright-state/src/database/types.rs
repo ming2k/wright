@@ -242,6 +242,25 @@ pub struct NewPlan<'a> {
     pub arch: &'a str,
 }
 
+/// Provenance fields persisted alongside a registered plan.
+///
+/// This is a persistence input rather than an archive-format type so the
+/// state crate does not need to depend on the producer of the metadata.
+#[derive(Debug, Clone, Copy)]
+pub struct NewPlanProvenance<'a> {
+    pub plan_checksum: Option<&'a str>,
+    pub source_checksums: &'a [String],
+    pub wright_version: &'a str,
+    pub isolation: &'a str,
+}
+
+/// Complete input for inserting or refreshing a plan registry entry.
+#[derive(Debug, Clone)]
+pub struct RegisterPlan<'a> {
+    pub plan: NewPlan<'a>,
+    pub provenance: Option<NewPlanProvenance<'a>>,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Dependency {
     #[sqlx(rename = "depends_on")]

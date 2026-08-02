@@ -8,16 +8,16 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info, trace, warn};
 
 use crate::config::GlobalConfig;
-use crate::database::{InstalledDb, SessionContext};
-use crate::delivery::store::CasStore;
 use crate::foundry::{BuildOptions, Foundry};
-use crate::part::folio;
-use crate::part::store::LocalPartStore;
-use crate::plan::manifest::{OutputConfig, PlanManifest};
 use crate::resolve::{
     self, BuildExecutionPlan, BuildPlanOptions, DepDomain, MatchPolicy, ResolveOptions,
     create_execution_plan, resolve_build_set, resolve_explicit_plan_names,
 };
+use wright_part::folio;
+use wright_part::store::LocalPartStore;
+use wright_plan::manifest::{OutputConfig, PlanManifest};
+use wright_state::cas::CasStore;
+use wright_state::database::{InstalledDb, SessionContext};
 
 pub struct InstallRequest<'a> {
     pub targets: Vec<String>,
@@ -276,7 +276,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
 
     // ── Crash recovery ──────────────────────────────────────────────
-    crate::delivery::recover_if_needed(&db).await?;
+    wright_state::delivery::recover_if_needed(&db).await?;
 
     // ── Signal handling ─────────────────────────────────────────────
     // First Ctrl-C / SIGTERM reaps the build subprocess tree and flips the
@@ -286,7 +286,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
     // ── Begin delivery transaction ──────────────────────────────────
     let command_str = format!("install {}", targets.join(" "));
-    let tx_id = crate::delivery::begin_delivery(&db, &command_str).await?;
+    let tx_id = wright_state::delivery::begin_delivery(&db, &command_str).await?;
 
     // Roll back the delivery transaction and abort the moment the user
     // cancels.  Invoked at every sequential boundary (between batches, before
@@ -295,8 +295,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     macro_rules! bail_if_cancelled {
         () => {
             if *cancel_rx.borrow() {
-                let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
-                let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
+                let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
                 return Err(WrightError::ForgeError("cancelled by user".into()));
             }
         };
@@ -482,8 +482,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             match handle.await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
-                    let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
-                    let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                    let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
+                    let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
                     // A build failing because we reaped it on Ctrl-C is a
                     // cancellation, not a genuine build error — report it as one.
                     if *cancel_rx.borrow() {
@@ -495,8 +495,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     )));
                 }
                 Err(e) => {
-                    let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
-                    let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                    let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
+                    let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
                     if *cancel_rx.borrow() {
                         return Err(WrightError::ForgeError("cancelled by user".into()));
                     }
@@ -709,8 +709,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
             if !archive_paths.is_empty() {
                 // Mark delivery as READY (all forge+seal done) before applying.
-                crate::delivery::delivery_ready(&db, tx_id).await?;
-                crate::delivery::begin_applying(&db, tx_id).await?;
+                wright_state::delivery::delivery_ready(&db, tx_id).await?;
+                wright_state::delivery::begin_applying(&db, tx_id).await?;
 
                 let part_word = if archive_paths.len() == 1 {
                     "part"
@@ -747,8 +747,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 match result {
                     Ok(()) => {}
                     Err(e) => {
-                        crate::delivery::rollback_delivery(&db, tx_id).await?;
-                        let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+                        wright_state::delivery::rollback_delivery(&db, tx_id).await?;
+                        let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
                         return Err(WrightError::DeployError(format!("deploy batch: {}", e)));
                     }
                 }
@@ -757,8 +757,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     }
 
     // ── Mark delivery as COMPLETED ──────────────────────────────────
-    crate::delivery::complete_delivery(&db, tx_id).await?;
-    let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
+    wright_state::delivery::complete_delivery(&db, tx_id).await?;
+    let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
 
     // Rule C: terminal completion line for the entire install workflow.
     if !quiet {

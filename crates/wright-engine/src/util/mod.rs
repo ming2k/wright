@@ -1,8 +1,6 @@
 pub mod checksum;
-pub mod compress;
 pub mod display;
 pub mod download;
-pub mod lock;
 pub mod logging;
 pub mod progress;
 pub mod stdin;

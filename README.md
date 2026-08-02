@@ -34,7 +34,6 @@ install -Dm644 target/man/*.1 /usr/share/man/man1/
 wright build hello
 wright package hello
 wright install hello
-wright install hello
 wright prune --latest --apply
 wright list
 ```

@@ -1,12 +1,12 @@
 # CLI Reference
 
 Wright provides a single unified `wright` binary. All functionality is accessed
-through subcommands, organised into four groups that match the reader's intent:
+through subcommands, organized into four groups that match the reader's intent:
 
 - **System Management** — mutate live system state
 - **Query & Inspection** — read-only introspection
 - **Build & Packaging** — forge, lint, and bootstrap workflows
-- **Cache & Maintenance** — house-keeping and cleanup
+- **Cache & Maintenance** — housekeeping and cleanup
 
 ## Global Options
 
@@ -14,9 +14,11 @@ through subcommands, organised into four groups that match the reader's intent:
 |------|-------------|
 | `--config <PATH>` | Load configuration from this file instead of the default search path |
 | `--db <PATH>` | Override the system database path |
-| `--root <PATH>` | Override the target root directory |
 | `-v`, `-vv` | Increase log verbosity (info / debug) |
 | `--quiet` | Suppress all output except errors |
+
+Commands that operate on a target filesystem expose their own
+`--root <PATH>` option. Place global options before the subcommand.
 
 ## System Management
 
@@ -57,6 +59,7 @@ wright install gcc --match=all
 | `-c`, `--clean` | Clear forge state before building plans that need an update; does not redeploy up-to-date plans |
 | `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
 | `-n`, `--dry-run` | Print the plan without executing it |
+| `--root <PATH>` | Operate on this target root instead of `/` |
 
 ### `wright upgrade <TARGET...>`
 
@@ -107,10 +110,6 @@ echo "glibc 2.40" | wright provide
 | Flag | Description |
 |------|-------------|
 | `--file <FILE>` | Read `name version` pairs from a file |
-
-### `wright remove <NAME>`
-
-Remove an provided (`external`-origin) part record created with `wright provide`.
 
 ## Query & Inspection
 
@@ -186,6 +185,27 @@ Also reports plans whose source changed since their parts were installed
 
 ## Build & Packaging
 
+### `wright resolve <TARGET...>`
+
+Resolve plan names and optionally expand their dependencies or reverse
+dependents. The default output is one plan name per line for use in pipelines.
+Use `--tree` for a human-readable dependency forest.
+
+```bash
+wright resolve hello
+wright resolve hello --deps --match=outdated
+wright resolve openssl --rdeps=link --depth=0
+wright resolve hello --deps --tree
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d`, `--deps [link\|runtime\|build\|all]` | Expand dependencies; an omitted value means `all` |
+| `-r`, `--rdeps [link\|runtime\|build\|all]` | Expand reverse dependents; an omitted value means `link` |
+| `--match <missing\|outdated\|installed\|all>` | Filter by installed state; may be repeated |
+| `--depth <N>` | Limit traversal depth; `0` means unlimited |
+| `-t`, `--tree` | Render a dependency forest instead of plain plan names |
+
 ### `wright build <TARGET...>`
 
 Build (forge) plans into staging and output directories under `build_dir`.
@@ -206,7 +226,24 @@ wright build freetype --until-stage=staging
 | `--skip-check` | Skip the pipeline `check` stage |
 | `--mvp` | Forge using the MVP dependency set from mvp.toml |
 | `--fetch` | Download sources only; do not forge |
+| `--seal` | Seal completed builds into local part archives |
 | `--checksum` | Compute and update SHA256 checksums in plan.toml |
+
+### `wright package <PLAN...>`
+
+Slice completed staging trees and seal them as `.wright.tar.zst` archives.
+`wright seal` is an alias.
+
+```bash
+wright package hello
+wright package hello --force
+wright package hello --print-parts
+```
+
+| Flag | Description |
+|------|-------------|
+| `-f`, `--force` | Re-slice output directories before packaging |
+| `-p`, `--print-parts` | Print generated archive paths to standard output |
 
 ### `wright lint [TARGET...]`
 
@@ -241,6 +278,28 @@ wright launch --root /mnt/new --plans ./plans @core
 | `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
 | `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
 
+## Cache & Maintenance
+
+### `wright clean [PLAN...]`
+
+Remove build workspaces for selected plans, or all plan workspaces when no
+plan is given. Archive and command-log cleanup are explicit options.
+
+| Flag | Description |
+|------|-------------|
+| `-p`, `--parts` | Also remove matching local part archives |
+| `-l`, `--logs` | Also remove Wright command logs |
+
+### `wright prune --latest`
+
+Find older archive versions while retaining the latest version of each part.
+The command is a dry run unless `--apply` is present.
+
+| Flag | Description |
+|------|-------------|
+| `--latest` | Select older versions of each part for pruning |
+| `--apply` | Remove the selected archives |
+
 ## Common Pipelines
 
 Forge a part and deploy it:
@@ -274,15 +333,8 @@ Wright commands fall into two layers:
   `check`, `launch`.
 - **Plumbing** — low-level primitives intended for scripting, piping, and CI.
   They do one thing, produce machine-parseable output by default, and carry
-  fewer guard-rails. Examples: `merge` (direct archive deployment),
-  `build` (compile without auto-deploy), `list` (plain newline-separated
-  names for `xargs`).
+  fewer guardrails. Examples: `resolve` (plain newline-separated plan names),
+  `package` (archive creation), and `merge` (direct archive deployment).
 
 This distinction is advisory; no command is artificially restricted from
 interactive use or scripting.
-ile without auto-deploy), `list` (plain newline-separated
-  names for `xargs`).
-
-This distinction is advisory; no command is artificially restricted from
-interactive use or scripting.
-or scripting.

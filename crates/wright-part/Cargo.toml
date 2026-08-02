@@ -20,7 +20,6 @@ toml = "0.8"
 tracing = "0.1"
 walkdir = "2"
 wright-model = { path = "../wright-model" }
-wright-plan = { path = "../wright-plan" }
 xz2 = "0.1"
 zip = "2"
 zstd = "0.13"

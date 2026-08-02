@@ -12,7 +12,7 @@ use crate::foundry::layers::LayerManager;
 use crate::foundry::logging;
 use crate::isolation::IsolationLevel;
 use crate::isolation::ResourceLimits;
-use crate::plan::manifest::{PipelineStage, PlanManifest};
+use wright_plan::manifest::{PipelineStage, PlanManifest};
 
 pub use wright_model::pipeline::DEFAULT_PIPELINE_STAGES as STAGES;
 

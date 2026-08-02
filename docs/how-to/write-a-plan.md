@@ -134,6 +134,19 @@ path = "patches/fix-headers.patch"
 
 Local paths are relative to the plan directory and must not escape it.
 
+### Rename Downloaded Files (`as`)
+
+Use `as` to assign a custom filename when downloading archives or files to `${WORKDIR}`. This avoids filename collisions when multiple sources have the same basename:
+
+```toml
+[[sources]]
+type = "http"
+url = "https://example.com/component-a/config.h"
+sha256 = "..."
+as = "component-a-config.h"
+```
+
+
 ## Apply Patches
 
 Patches are **not** auto-applied. Include them as `type = "local"` entries and apply them manually in a pipeline stage. This gives full control over strip level, ordering, and conditions:
@@ -173,10 +186,11 @@ Use `[options]` to set per-plan build behavior:
 static = false
 debug = false
 ccache = true
+skip_fhs_check = false
 env = { CFLAGS = "-O2 -pipe" }
 ```
 
-Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance.
+Per-plan values override global (`wright.toml`) settings. `memory_limit` and `cpu_time_limit` are enforced via `setrlimit()` before `exec` and inherited by child processes. The wall-clock `timeout` is enforced by the parent process — it catches builds stuck on I/O or deadlocks where CPU time does not advance. Set `skip_fhs_check = true` only for parts installed to non-FHS standard locations (such as `/opt/app`).
 
 **Practical guidance:** `timeout` is the most important safety net. `memory_limit` limits virtual address space (`RLIMIT_AS`), not physical RSS — set it generously (2-3x expected usage), as programs like rustc, JVM, and Go reserve large virtual mappings they never touch.
 
@@ -342,16 +356,16 @@ own `reason`.
 
 Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to `${STAGING_DIR}` during the `staging` pipeline phase. On the host, that directory is `build_dir/<name>-<version>/staging`; inside isolation it is mounted at `/output`. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
 
-**Output processing order:**
+**Output processing rules:**
 
-1. Non-catch-all outputs (those with explicit `include` patterns) are processed **in their declared order**.
-2. For each non-catch-all output, files matching its `include` patterns (and not matching its `exclude` patterns) are **hard-linked** from `${STAGING_DIR}` into the respective output directory.
-3. A file is claimed by the **first** output whose `include` matches it. Later outputs never see it.
+1. Every staged file is evaluated against **all** non-catch-all `[[output]]` entries simultaneously.
+2. A file matches an output when it matches an `include` pattern and does **not** match any `exclude` pattern.
+3. **Mutual exclusivity is enforced.** If a file matches more than one output, slicing fails immediately with an `ambiguous` error listing the conflicting output names. `[[output]]` declaration order does not matter. Use `exclude` patterns to carve out overlapping matches.
 4. Remaining files matching `[[discard]]` are ignored.
-5. The optional catch-all output (the one with no `include`) packages whatever remains after earlier outputs and discard rules have handled their files.
+5. The optional catch-all output (the one with no `include`) packages whatever remains after explicit outputs and discard rules have claimed their files.
 6. Any file still unclaimed fails slicing.
 
-**Critical: `include` patterns must be specific.** Using `include = ["/**"]` for a non-catch-all output will greedily capture **all** files, leaving nothing for later outputs and nothing for the catch-all. Each non-catch-all output should only match the files that belong to it.
+**Critical:** Design your `include` and `exclude` patterns so that no file is matched by multiple outputs. For example, if output A captures `/usr/bin/**` and output B needs `/usr/bin/special`, output A must explicitly exclude `/usr/bin/special`.
 
 #### Part Relations
 
@@ -578,7 +592,6 @@ make DESTDIR=${STAGING_DIR} install
 [[output]]
 name = "nginx"
 conflicts = ["apache"]
-provides = ["http-server"]
 runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
@@ -704,3 +717,95 @@ include = ["/usr/share/doc/**"]
 ```
 
 Sub-parts inherit `version`, `release`, `arch`, and `license` from the parent manifest unless overridden.
+
+## Variable Substitution
+
+Variables use `${VAR_NAME}` syntax and are expanded in pipeline scripts, source URIs, and source `extract_to` paths.
+
+| Variable | Scope | Description |
+|----------|-------|-------------|
+| `${NAME}` | All | Current output or part name |
+| `${VERSION}` | All | Version string declared in `version` (absent if omitted) |
+| `${RELEASE}` | All | Release revision number |
+| `${ARCH}` | All | Target architecture string |
+| `${WORKDIR}` | Pipeline | Absolute path to the source extraction directory |
+| `${STAGING_DIR}` | Pipeline | Absolute path to the staging directory (`DESTDIR`) |
+| `${MAIN_PART_NAME}` | Multi-output | Name of the primary output from the top-level `name` field |
+| `${MAIN_STAGING_DIR}` | Multi-output | Primary output staging directory |
+| `${WRIGHT_BUILD_PHASE}` | Pipeline | Current build phase (`full` or `mvp`) |
+| `${WRIGHT_BOOTSTRAP_WITHOUT_<DEP>}` | Pipeline | Set to `1` for each dep excluded in the MVP pass |
+
+See [Plan Manifest Reference](../reference/plan-manifest.md#variable-substitution) for complete details on path variables inside and outside isolation containers.
+
+## Best Practices for Quality Plans
+
+To write reliable, maintainable, and idiomatic plans:
+
+### Defensive Pipeline Scripting
+
+- **Rely on `-e -o pipefail`**: The `shell` executor automatically runs scripts under `bash -e -o pipefail`. Ensure commands fail fast on non-zero exit codes.
+- **Use `install` over `cp` + `chmod`**: Use `install -Dm755 binary ${STAGING_DIR}/usr/bin/binary` or `install -Dm644 file ${STAGING_DIR}/usr/share/file` to create parent directories and set permissions atomically.
+- **Explicit directory navigation**: Always navigate relative to `${WORKDIR}/source` or specific extracted subdirectories. Avoid assumptions about current working directory state.
+- **Pass environment via `env`**: Use `env = { CFLAGS = "..." }` in pipeline stage definitions rather than inline shell exports for improved tracking and cache invalidation.
+
+### Clean Patch Hygiene
+
+- **Name patches clearly**: Use numeric prefixes and descriptive names, e.g. `0001-fix-path-traversal.patch`.
+- **Store patches locally**: Place patches in a `patches/` subdirectory inside the plan folder and include them via `type = "local"`.
+- **Apply with explicit strip levels**: Use `patch -Np1 < ${WORKDIR}/patches/0001-fix-path.patch` inside `[pipeline.prepare]`.
+
+### Explicit Discard Reasons
+
+- **Always specify `reason`**: When using `[[discard]]`, provide a clear human-readable explanation of why files (such as static libraries or duplicate documentation) are excluded.
+
+### Standard Library Split Pattern
+
+- **Separate runtime from development files**: For library plans, split files into a runtime package (`libfoo`), headers/development files (`libfoo-dev`), and documentation (`libfoo-doc`):
+
+```toml
+[[output]]
+name = "libfoo"
+description = "Foo runtime library"
+include = ["/usr/lib/libfoo.so*"]
+
+[[output]]
+name = "libfoo-dev"
+description = "Foo development files"
+include = ["/usr/include/**", "/usr/lib/pkgconfig/**", "/usr/lib/*.a"]
+
+[[output]]
+name = "libfoo-doc"
+description = "Foo documentation"
+arch = "any"
+include = ["/usr/share/doc/**", "/usr/share/man/**"]
+```
+
+## Lint and Test Your Plan
+
+Follow this workflow to validate and test your new plan:
+
+1. **Lint manifest syntax and dependencies**:
+   ```bash
+   wright lint plans/myplan
+   ```
+   This checks TOML syntax, field requirements, local plan existence, and referenced `plan:output` validity.
+
+2. **Execute a test build**:
+   ```bash
+   wright build myplan
+   ```
+   This executes source fetching, stage execution in isolation, and output slicing.
+
+3. **Inspect slicing errors (if any)**:
+   If slicing fails due to unassigned or ambiguous files, inspect
+   `<forge_dir>/<name>-<version>/logs/slice-errors.log`:
+   ```bash
+   cat /var/tmp/wright/workshop/myplan-1.0/logs/slice-errors.log
+   ```
+   Adjust `include`, `exclude`, or `[[discard]]` rules until all staged files are cleanly claimed.
+
+4. **Verify output packages**:
+   ```bash
+   wright package myplan
+   ```
+   Confirm that created `.wright.tar.zst` archives in `parts_dir/` contain the expected paths and metadata.

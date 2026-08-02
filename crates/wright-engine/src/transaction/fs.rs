@@ -1,12 +1,12 @@
-use crate::database::{FileEntry, FileType};
 use crate::error::{Result, WrightError};
-use crate::part::archive::PartInfo;
 use crate::transaction::rollback::RollbackState;
 use crate::util::checksum;
 use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use wright_part::archive::PartInfo;
+use wright_state::database::{FileEntry, FileType};
 
 pub(super) fn collect_file_entries(
     extract_dir: &Path,

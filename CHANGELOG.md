@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Restored the standalone `resolve`, `package`, `clean`, and `prune` commands.
+  `resolve` supports dependency and reverse-dependent filters plus tree output;
+  `package` seals existing builds; and cleanup commands default to scoped or
+  dry-run behavior.
+- `wright lint` now reports static plan-quality diagnostics for unsupported
+  paths, hardcoded versions, and placeholder metadata.
+
 ## [5.3.12] - 2026-07-31
 
 ### Added

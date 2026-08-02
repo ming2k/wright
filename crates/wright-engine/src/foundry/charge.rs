@@ -7,9 +7,10 @@ use tracing::{debug, info, warn};
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use crate::foundry::variables;
-use crate::part::store::sanitize_cache_filename;
-use crate::plan::manifest::{PlanManifest, Source};
-use crate::util::{checksum, compress, download, progress};
+use crate::util::{checksum, download, progress};
+use wright_part::compression as compress;
+use wright_part::store::sanitize_cache_filename;
+use wright_plan::manifest::{PlanManifest, Source};
 
 /// The built-in stages of source preparation, executed in order by
 /// `Charge::prepare`.
@@ -943,7 +944,7 @@ mod tests {
 
     use super::*;
     use crate::config::GlobalConfig;
-    use crate::plan::manifest::PlanManifest;
+    use wright_plan::manifest::PlanManifest;
 
     #[tokio::test]
     async fn extract_checks_out_private_shallow_git_ref() {

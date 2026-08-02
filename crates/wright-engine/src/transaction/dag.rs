@@ -1,7 +1,7 @@
 use crate::error::Result;
-use crate::part::store::ResolvedPart;
 use std::collections::{HashMap, HashSet};
 use wright_model::version;
+use wright_part::store::ResolvedPart;
 
 /// Order parts so dependencies deploy before their dependents.
 ///

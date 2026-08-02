@@ -1,5 +1,6 @@
 pub mod build;
 pub mod check;
+pub mod clean;
 pub mod common;
 pub mod doctor;
 pub mod files;
@@ -10,8 +11,11 @@ pub mod lint;
 pub mod list;
 pub mod merge;
 pub mod owner;
+pub mod package;
 pub mod provide;
+pub mod prune;
 pub mod remove;
+pub mod resolve;
 pub mod upgrade;
 
 use clap::{ArgAction, Parser, Subcommand};
@@ -57,69 +61,103 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    // ── System Management ──────────────────────────────────────────
-    /// Merge plan archives into the target root
-    #[command(display_order = 1)]
-    Merge(merge::MergeArgs),
+    #[command(flatten, next_help_heading = "System Management")]
+    System(SystemCommands),
+    #[command(flatten, next_help_heading = "Query & Inspection")]
+    Query(QueryCommands),
+    #[command(flatten, next_help_heading = "Build & Packaging")]
+    Build(BuildCommands),
+    #[command(flatten, next_help_heading = "Cache & Maintenance")]
+    Maintenance(MaintenanceCommands),
+}
 
-    /// Install plans: resolve, forge, seal, and merge with full lifecycle
-    #[command(display_order = 2)]
+#[derive(Subcommand)]
+pub enum SystemCommands {
+    /// Converge system state from target plans (resolve -> build -> package -> merge)
+    #[command(display_order = 1)]
     Install(install::InstallArgs),
 
-    /// Upgrade plans: resolve, rebuild, seal, and deploy with reverse dependency expansion
-    #[command(display_order = 3)]
+    /// Rebuild and deploy plans with reverse dependency expansion
+    #[command(display_order = 2)]
     Upgrade(upgrade::UpgradeArgs),
 
-    /// Remove deployed parts
-    #[command(display_order = 4)]
+    /// Uninstall deployed packages (supports `plan` or `plan:output`)
+    #[command(display_order = 3)]
     Remove(remove::RemoveArgs),
+
+    /// Deploy pre-built archives directly into a target root
+    #[command(display_order = 4)]
+    Merge(merge::MergeArgs),
 
     /// Mark a part as externally provided to satisfy dependency checks
     #[command(display_order = 5)]
     Provide(provide::ProvideArgs),
+}
 
-    // ── Query & Inspection ─────────────────────────────────────────
-    /// List deployed parts
-    #[command(display_order = 11)]
+#[derive(Subcommand)]
+pub enum QueryCommands {
+    /// List installed parts
+    #[command(display_order = 10)]
     List(list::ListArgs),
 
     /// List files owned by a part
-    #[command(display_order = 12)]
+    #[command(display_order = 11)]
     Files(files::FilesArgs),
 
-    /// Show which part owns the given file(s)
-    #[command(display_order = 13)]
+    /// Find which part owns a given path
+    #[command(display_order = 12)]
     Owner(owner::OwnerArgs),
 
-    /// Perform system health checks
-    #[command(display_order = 14)]
+    /// Run system integrity and dependency checks
+    #[command(display_order = 13)]
     Check(check::CheckArgs),
 
-    /// Show part transaction history (deploy, upgrade, remove)
-    #[command(display_order = 15)]
-    History(history::HistoryArgs),
-
-    /// Diagnose system and archive health issues
-    #[command(display_order = 16)]
+    /// Diagnose system, database, and archive health
+    #[command(display_order = 14)]
     Doctor(doctor::DoctorArgs),
 
-    // ── Build & Packaging ──────────────────────────────────────────
-    /// Forge parts from plans
+    /// Show transaction logs
+    #[command(display_order = 15)]
+    History(history::HistoryArgs),
+}
+
+#[derive(Subcommand)]
+pub enum BuildCommands {
+    /// Compute the dependency execution graph for targets
+    #[command(display_order = 20)]
+    Resolve(resolve::ResolveArgs),
+
+    /// Compile plan sources into sandboxed staging directories
     #[command(display_order = 21)]
     Build(build::BuildArgs),
 
-    /// Verify the syntax and logical integrity of plan files
+    /// Seal built staging directories into `.wright.tar.zst` archives
     #[command(display_order = 22)]
-    Lint(lint::LintArgs),
+    Package(package::PackageArgs),
 
     /// Fill a target root from a folio manifest or from plans
     #[command(display_order = 23)]
     Launch(launch::LaunchArgs),
+
+    /// Verify plan syntax and logical integrity
+    #[command(display_order = 24)]
+    Lint(lint::LintArgs),
+}
+
+#[derive(Subcommand)]
+pub enum MaintenanceCommands {
+    /// Clean plan build workspaces, staging trees, and logs
+    #[command(display_order = 30)]
+    Clean(clean::CleanArgs),
+
+    /// Remove obsolete local part archives
+    #[command(display_order = 31)]
+    Prune(prune::PruneArgs),
 }
 
 /// Build a Context for a command that has a `--root` option.
 /// The `root` argument is consumed from the command's args; `top_db` overrides
-/// the default db path. crash_recover is run on the resulting db path.
+/// the default db path. Crash recovery runs against the resulting db path.
 #[cfg(with_handlers)]
 async fn ctx_with_root<'a>(
     root: Option<PathBuf>,
@@ -159,7 +197,6 @@ async fn ctx_default<'a>(
     }
 }
 
-/// Dispatch the parsed CLI command to the appropriate handler.
 #[cfg(with_handlers)]
 pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
     let top_db = cli.db.clone();
@@ -167,77 +204,106 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
     let quiet = cli.quiet;
 
     match cli.command {
-        // ── System Management ──────────────────────────────────────
-        Commands::Merge(mut args) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
-            merge::run(args, &ctx).await
-        }
-        Commands::Install(mut args) => {
+        // ── System Management ───────────────────────────────────────
+        Commands::System(SystemCommands::Install(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             install::run(args, &ctx).await
         }
-        Commands::Upgrade(mut args) => {
+        Commands::System(SystemCommands::Upgrade(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             upgrade::run(args, &ctx).await
         }
-        Commands::Remove(mut args) => {
+        Commands::System(SystemCommands::Remove(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             remove::run(args, &ctx).await
         }
-        Commands::Provide(args) => {
+        Commands::System(SystemCommands::Merge(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            merge::run(args, &ctx).await
+        }
+        Commands::System(SystemCommands::Provide(args)) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             provide::run(args, &ctx).await
         }
 
         // ── Query & Inspection ─────────────────────────────────────
-        Commands::List(args) => {
+        Commands::Query(QueryCommands::List(args)) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             list::run(args, &ctx).await
         }
-        Commands::Files(args) => {
+        Commands::Query(QueryCommands::Files(args)) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             files::run(args, &ctx).await
         }
-        Commands::Owner(args) => {
+        Commands::Query(QueryCommands::Owner(args)) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             owner::run(args, &ctx).await
         }
-        Commands::Check(mut args) => {
+        Commands::Query(QueryCommands::Check(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             check::run(args, &ctx).await
         }
-        Commands::History(args) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
-            history::run(args, &ctx).await
-        }
-        Commands::Doctor(mut args) => {
+        Commands::Query(QueryCommands::Doctor(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             doctor::run(args, &ctx).await
         }
+        Commands::Query(QueryCommands::History(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            history::run(args, &ctx).await
+        }
 
-        // ── Build & Packaging ──────────────────────────────────────
-        Commands::Build(args) => {
+        // ── Build & Packaging ───────────────────────────────────────
+        Commands::Build(BuildCommands::Resolve(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            resolve::run(args, &ctx).await
+        }
+        Commands::Build(BuildCommands::Build(args)) => {
             let ctx = ctx_default(top_db, config, verbose, quiet).await;
             build::run(args, &ctx).await
         }
-        Commands::Lint(args) => lint::run(args, config).await,
-        Commands::Launch(mut args) => {
+        Commands::Build(BuildCommands::Package(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            package::run(args, &ctx).await
+        }
+        Commands::Build(BuildCommands::Launch(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             launch::run(args, &ctx).await
+        }
+        Commands::Build(BuildCommands::Lint(args)) => lint::run(args, config).await,
+
+        // ── Cache & Maintenance ─────────────────────────────────────
+        Commands::Maintenance(MaintenanceCommands::Clean(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            clean::run(args, &ctx).await
+        }
+        Commands::Maintenance(MaintenanceCommands::Prune(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            prune::run(args, &ctx).await
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands};
+    use super::{Cli, Commands, MaintenanceCommands, SystemCommands};
     use clap::Parser;
+
+    #[test]
+    fn clean_command_parses_arguments() {
+        let cli = Cli::try_parse_from(["wright", "clean", "hello", "--parts", "--logs"]).unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
+            panic!("expected clean command");
+        };
+        assert_eq!(args.plans, vec!["hello"]);
+        assert!(args.parts);
+        assert!(args.logs);
+    }
 
     #[test]
     fn install_accepts_clean() {
         let cli = Cli::try_parse_from(["wright", "install", "zlib", "--clean"]).unwrap();
 
-        let Commands::Install(args) = cli.command else {
+        let Commands::System(SystemCommands::Install(args)) = cli.command else {
             panic!("expected install command");
         };
         assert!(args.clean);

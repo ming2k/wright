@@ -12,4 +12,4 @@
 
 mod execute;
 
-pub use execute::package_manifest;
+pub use execute::{create_part, create_part_with_isolation, package_manifest};

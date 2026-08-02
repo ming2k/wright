@@ -13,11 +13,11 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use crate::operations::install::{InstallRequest, execute_install};
-use crate::part::folio::{self, Expansion, FolioManifest, FolioProvide, Hook, HookStage};
 use crate::resolve::DepDomain;
+use wright_part::folio::{self, Expansion, FolioManifest, FolioProvide, Hook, HookStage};
+use wright_state::database::InstalledDb;
 
 /// A single user request to launch a folio or set of plans into `root`.
 pub struct LaunchRequest {

@@ -2,7 +2,7 @@
 
 use crate::error::{Result, WrightError};
 
-use crate::database::InstalledDb;
+use wright_state::database::InstalledDb;
 
 use owo_colors::OwoColorize;
 

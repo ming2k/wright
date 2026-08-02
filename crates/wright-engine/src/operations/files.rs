@@ -1,5 +1,5 @@
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
+use wright_state::database::InstalledDb;
 
 pub async fn execute_files(db: &InstalledDb, part: &str) -> Result<()> {
     let installed_part = db

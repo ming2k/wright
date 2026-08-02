@@ -11,8 +11,8 @@ use tokio::sync::Semaphore;
 use crate::config::GlobalConfig;
 use crate::foundry::{BuildOptions, Foundry};
 use crate::operations::drive::{DriveOptions, drive_batches};
-use crate::plan::manifest::PlanManifest;
 use crate::resolve::{BuildExecutionPlan, BuildPlanOptions, DepDomain, create_execution_plan};
+use wright_plan::manifest::PlanManifest;
 
 #[derive(Debug, Clone)]
 pub struct BuildRequest {
@@ -36,10 +36,10 @@ pub async fn execute_build(
     verbose: u8,
     quiet: bool,
 ) -> Result<()> {
-    let _command_lock = crate::util::lock::acquire_lock(
-        &crate::util::lock::lock_dir_from_db(db_path),
-        crate::util::lock::LockIdentity::Command("build"),
-        crate::util::lock::LockMode::Exclusive,
+    let _command_lock = wright_state::lock::acquire_lock(
+        &wright_state::lock::lock_dir_from_db(db_path),
+        wright_state::lock::LockIdentity::Command("build"),
+        wright_state::lock::LockMode::Exclusive,
     )
     .map_err(|e| WrightError::LockError(format!("failed to acquire build command lock: {}", e)))?;
 

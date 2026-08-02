@@ -19,9 +19,30 @@ pub enum DomainArg {
     /// Follow only runtime relationships.
     Runtime,
     /// Follow only build-time relationships.
-    Forge,
+    #[value(name = "build", alias = "forge")]
+    Build,
     /// Follow all relationships (link + runtime + build).
     All,
+}
+
+#[cfg(with_handlers)]
+pub(crate) fn map_domain(domain: DomainArg) -> crate::resolve::DepDomain {
+    match domain {
+        DomainArg::Link => crate::resolve::DepDomain::LINK,
+        DomainArg::Runtime => crate::resolve::DepDomain::RUNTIME,
+        DomainArg::Build => crate::resolve::DepDomain::BUILD,
+        DomainArg::All => crate::resolve::DepDomain::ALL,
+    }
+}
+
+#[cfg(with_handlers)]
+pub(crate) fn map_match_policy(policy: MatchPolicyArg) -> crate::resolve::MatchPolicy {
+    match policy {
+        MatchPolicyArg::Missing => crate::resolve::MatchPolicy::Missing,
+        MatchPolicyArg::Outdated => crate::resolve::MatchPolicy::Outdated,
+        MatchPolicyArg::Installed => crate::resolve::MatchPolicy::Installed,
+        MatchPolicyArg::All => crate::resolve::MatchPolicy::All,
+    }
 }
 
 // The items below reference crate::operations / util / resolve / delivery and

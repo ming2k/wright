@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::error::{Result, WrightError};
-use crate::util::compress;
 use crate::util::progress;
+use wright_part::compression as compress;
 
 const MAX_RETRIES: u32 = 3;
 

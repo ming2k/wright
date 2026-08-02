@@ -18,7 +18,7 @@ use crate::foundry::charge::Charge;
 use crate::foundry::executor::ExecutorRegistry;
 use crate::foundry::mold::Mold;
 use crate::isolation::IsolationLevel;
-use crate::plan::manifest::PlanManifest;
+use wright_plan::manifest::PlanManifest;
 
 pub use crate::foundry::charge::ChargeResult;
 pub use crate::foundry::forge::{Forge, ForgeContext};
@@ -133,7 +133,7 @@ impl Foundry {
         hasher.update(manifest.metadata.release.to_string().as_bytes());
         for source in &manifest.sources.entries {
             match source {
-                crate::plan::manifest::Source::Http(http) => {
+                wright_plan::manifest::Source::Http(http) => {
                     hasher.update(b"http");
                     hasher.update(http.url.as_bytes());
                     hasher.update(http.sha256.as_bytes());
@@ -144,7 +144,7 @@ impl Foundry {
                         hasher.update(ext.as_bytes());
                     }
                 }
-                crate::plan::manifest::Source::Git(git) => {
+                wright_plan::manifest::Source::Git(git) => {
                     hasher.update(b"git");
                     hasher.update(git.url.as_bytes());
                     if let Some(ref r#ref) = git.r#ref {
@@ -157,7 +157,7 @@ impl Foundry {
                         hasher.update(ext.as_bytes());
                     }
                 }
-                crate::plan::manifest::Source::Local(local) => {
+                wright_plan::manifest::Source::Local(local) => {
                     hasher.update(b"local");
                     hasher.update(local.path.as_bytes());
                     if let Some(ref ext) = local.extract_to {

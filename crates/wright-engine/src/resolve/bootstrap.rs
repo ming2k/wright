@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 use crate::error::{Result, WrightError};
-use crate::plan::discovery::PlanIndex;
-use crate::plan::manifest::PlanManifest;
 use wright_model::version;
+use wright_plan::discovery::PlanIndex;
+use wright_plan::manifest::PlanManifest;
 
 #[derive(Debug)]
 pub(crate) struct PlanGraph {

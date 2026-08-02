@@ -1,6 +1,6 @@
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use std::io::IsTerminal;
+use wright_state::database::InstalledDb;
 
 pub async fn execute_provide(
     db: &InstalledDb,

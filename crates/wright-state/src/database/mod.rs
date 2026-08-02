@@ -16,8 +16,8 @@ use core::PART_COLUMNS;
 pub use plans::PlanRecord;
 pub use types::{
     DeliveryStatus, DeliveryTransaction, Dependency, FileEntry, FileType, HistoryAction,
-    HistoryRecord, HistoryStatus, InstalledPart, NewPart, NewPlan, OpStatus, Origin, PartWithPlan,
-    SessionContext, TransactionOp,
+    HistoryRecord, HistoryStatus, InstalledPart, NewPart, NewPlan, NewPlanProvenance, OpStatus,
+    Origin, PartWithPlan, RegisterPlan, SessionContext, TransactionOp,
 };
 
 #[cfg(test)]
@@ -515,5 +515,34 @@ mod tests {
         // Parts are inserted for internal testing; plan-level queries are
         // not exposed at the CLI layer to keep the user-facing interface
         // part-centric.
+    }
+
+    #[tokio::test]
+    async fn test_register_plan_persists_archive_independent_provenance() {
+        let db = test_db().await;
+        let source_checksums = vec!["http https://example.org/src sha256=abc".to_string()];
+        let plan_id = db
+            .ensure_plan_registered(RegisterPlan {
+                plan: NewPlan {
+                    name: "provenance-plan",
+                    version: "1.2.3",
+                    release: 2,
+                    epoch: 1,
+                    arch: "x86_64",
+                },
+                provenance: Some(NewPlanProvenance {
+                    plan_checksum: Some("deadbeef"),
+                    source_checksums: &source_checksums,
+                    wright_version: "5.3.12",
+                    isolation: "strict",
+                }),
+            })
+            .await
+            .unwrap();
+
+        let stored = db.get_plan_by_id(plan_id).await.unwrap().unwrap();
+        assert_eq!(stored.name, "provenance-plan");
+        assert_eq!(stored.version, "1.2.3");
+        assert_eq!(stored.plan_checksum.as_deref(), Some("deadbeef"));
     }
 }

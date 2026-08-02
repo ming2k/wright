@@ -27,6 +27,7 @@
 | [ADR-0023](0023-parts-as-maintenance-ledger.md) | Parts are maintenance-ledger artifacts, not distribution products | Accepted |
 | [ADR-0024](0024-workdir-source-names-are-original-basenames.md) | Work-directory source names are original basenames | Accepted |
 | [ADR-0025](0025-incremental-cargo-workspace.md) | Incremental Cargo workspace with stable internal crate boundaries | Accepted |
-| [ADR-0026](0026-workspace-crate-boundaries.md) | Workspace boundaries for CLI, engine, state, part, plan, and model | Accepted |
+| [ADR-0026](0026-workspace-crate-boundaries.md) | Workspace boundaries for CLI, engine, state, part, plan, and model | Superseded by ADR-0029 |
 | [ADR-0027](0027-isolation-fails-closed.md) | Isolation fails closed | Accepted |
 | [ADR-0028](0028-single-threaded-isolation-helper.md) | Namespace setup runs in a single-threaded helper process | Accepted |
+| [ADR-0029](0029-engine-owned-boundary-mapping.md) | Engine-owned mapping between sibling workspace crates | Accepted |

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
+use wright_state::database::InstalledDb;
 
 pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf]) -> Result<()> {
     let multi = paths.len() > 1;

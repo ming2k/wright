@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
-use crate::database::{InstalledDb, SessionContext};
 use crate::error::{Result, WrightError};
 use crate::transaction;
+use wright_state::database::{InstalledDb, SessionContext};
 
 pub async fn execute_remove(
     db: &InstalledDb,
@@ -12,10 +12,24 @@ pub async fn execute_remove(
     cascade: bool,
     root_dir: &std::path::Path,
 ) -> Result<()> {
-    let parts_owned: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+    let mut parts_owned: Vec<String> = Vec::new();
+    for target in parts {
+        if let Some((_plan, output)) = target.split_once(':') {
+            parts_owned.push(output.trim().to_string());
+        } else {
+            let plan_parts = db.get_parts_by_plan(target).await.unwrap_or_default();
+            if !plan_parts.is_empty() {
+                for p in plan_parts {
+                    parts_owned.push(p.name);
+                }
+            } else {
+                parts_owned.push(target.to_string());
+            }
+        }
+    }
 
     let command_str = format!("remove {}", parts_owned.join(" "));
-    let tx_id = crate::delivery::begin_delivery(db, &command_str).await?;
+    let tx_id = wright_state::delivery::begin_delivery(db, &command_str).await?;
     let session = SessionContext {
         id: format!(
             "{:x}",
@@ -65,8 +79,8 @@ pub async fn execute_remove(
                 if let Err(e) =
                     transaction::remove_part(db, dep, root_dir, true, session.clone()).await
                 {
-                    let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-                    let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+                    let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
+                    let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                     tracing::error!(event = "remove.failed", part_name = %dep, error = %e, "Removal failed");
                     std::process::exit(1);
                 }
@@ -112,8 +126,8 @@ pub async fn execute_remove(
         };
 
         if let Err(e) = result {
-            let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-            let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+            let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
+            let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
             tracing::error!(event = "remove.failed", part_name = %name, error = %e, "Removal failed");
             std::process::exit(1);
         }
@@ -124,8 +138,8 @@ pub async fn execute_remove(
             if let Err(e) =
                 transaction::remove_part(db, orphan, root_dir, true, session.clone()).await
             {
-                let _ = crate::delivery::rollback_delivery(db, tx_id).await;
-                let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+                let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
+                let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                 tracing::error!(event = "remove.failed", part_name = %orphan, error = %e, "Removal failed");
                 std::process::exit(1);
             }
@@ -133,8 +147,8 @@ pub async fn execute_remove(
         }
     }
 
-    crate::delivery::complete_delivery(db, tx_id).await?;
-    let _ = crate::delivery::cleanup_delivery(db, tx_id).await;
+    wright_state::delivery::complete_delivery(db, tx_id).await?;
+    let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
 
     let elapsed = workflow_t0.elapsed().as_secs_f64();
     crate::cli_action!(

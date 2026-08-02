@@ -1,7 +1,7 @@
-use crate::database::{FileType, InstalledDb};
 use crate::error::{Result, WrightError};
 use crate::util::checksum;
 use std::path::Path;
+use wright_state::database::{FileType, InstalledDb};
 
 pub async fn verify_part(db: &InstalledDb, name: &str, root_dir: &Path) -> Result<Vec<String>> {
     let part = db

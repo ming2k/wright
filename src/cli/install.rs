@@ -5,11 +5,13 @@ use std::path::PathBuf;
 use crate::cli::common::Context;
 use crate::cli::common::{DomainArg, MatchPolicyArg};
 #[cfg(with_handlers)]
+use crate::cli::common::{map_domain, map_match_policy};
+#[cfg(with_handlers)]
 use crate::error::{Result, WrightError};
 #[cfg(with_handlers)]
 use crate::operations::install::{InstallRequest, execute_install};
 #[cfg(with_handlers)]
-use crate::resolve::{DepDomain, DependentsMode, MatchPolicy};
+use crate::resolve::DepDomain;
 #[cfg(with_handlers)]
 use crate::util::stdin::collect_stdin_args;
 
@@ -93,26 +95,6 @@ pub struct InstallArgs {
 }
 
 #[cfg(with_handlers)]
-fn map_resolve_domain(d: DomainArg) -> DependentsMode {
-    match d {
-        DomainArg::Link => DependentsMode::Link,
-        DomainArg::Runtime => DependentsMode::Runtime,
-        DomainArg::Forge => DependentsMode::Forge,
-        DomainArg::All => DependentsMode::All,
-    }
-}
-
-#[cfg(with_handlers)]
-fn map_match_policy(m: MatchPolicyArg) -> MatchPolicy {
-    match m {
-        MatchPolicyArg::All => MatchPolicy::All,
-        MatchPolicyArg::Missing => MatchPolicy::Missing,
-        MatchPolicyArg::Outdated => MatchPolicy::Outdated,
-        MatchPolicyArg::Installed => MatchPolicy::Installed,
-    }
-}
-
-#[cfg(with_handlers)]
 pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
     let (part_store, _lock) = ctx.ensure_lock_and_part_store()?;
 
@@ -140,10 +122,10 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
     } else {
         let mut domain = DepDomain::empty();
         if let Some(d) = args.deps {
-            domain.insert(DepDomain::from_dependents_mode(map_resolve_domain(d)));
+            domain.insert(map_domain(d));
         }
         if let Some(d) = args.rdeps {
-            domain.insert(DepDomain::from_dependents_mode(map_resolve_domain(d)));
+            domain.insert(map_domain(d));
         }
         domain
     };

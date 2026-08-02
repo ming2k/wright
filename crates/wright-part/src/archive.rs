@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use walkdir::WalkDir;
-use wright_model::isolation::IsolationLevel;
 
 use crate::error::{Result, WrightError};
-use wright_plan::manifest::{PlanManifest, Source};
 
 /// Plan-level metadata extracted from the `[plan]` section of `.PARTINFO`.
 /// All outputs of a plan share these fields; they are stored in the `plans` table.
@@ -42,6 +40,34 @@ pub struct Provenance {
     pub isolation: String,
 }
 
+/// Deployment hooks serialized into an archive's `.HOOKS` file.
+#[derive(Debug, Clone, Default)]
+pub struct PartHooks {
+    pub pre_install: Option<String>,
+    pub post_install: Option<String>,
+    pub post_upgrade: Option<String>,
+    pub pre_remove: Option<String>,
+    pub post_remove: Option<String>,
+}
+
+/// Archive-format input used when sealing a part.
+///
+/// Callers project their source manifest into this type before crossing the
+/// archive boundary. That keeps archive encoding independent of any specific
+/// manifest representation.
+#[derive(Debug, Clone)]
+pub struct PartSpec {
+    pub archive_name: String,
+    pub name: String,
+    pub runtime_deps: Vec<String>,
+    pub replaces: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub backup_files: Vec<String>,
+    pub plan: PlanMetadata,
+    pub provenance: Provenance,
+    pub hooks: PartHooks,
+}
+
 /// Metadata extracted from a .PARTINFO file.
 ///
 /// `.PARTINFO` intentionally carries install-time/runtime metadata only.
@@ -74,40 +100,31 @@ fn purge_excluded_files(part_dir: &Path) {
     }
 }
 
-/// Create a .wright.tar.zst binary part archive.
-pub fn create_part(
-    part_dir: &Path,
-    manifest: &PlanManifest,
-    output_path: &Path,
-    source_plan: Option<&PlanManifest>,
-) -> Result<PathBuf> {
-    let plan = source_plan.unwrap_or(manifest);
-    create_part_with_isolation(
-        part_dir,
-        manifest,
-        output_path,
-        source_plan,
-        weakest_declared_isolation(plan),
-    )
-}
+/// Write a `.wright.tar.zst` binary part archive from archive-owned metadata.
+pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Result<PathBuf> {
+    let mut components = Path::new(&spec.archive_name).components();
+    let valid_archive_name = matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if !valid_archive_name {
+        return Err(WrightError::ValidationError(format!(
+            "invalid part archive filename: {}",
+            spec.archive_name
+        )));
+    }
 
-/// Create a part while recording the isolation policy resolved by the engine.
-///
-/// The compatibility [`create_part`] entry point derives provenance from
-/// explicit stage declarations and assumes `strict` for inherited values.
-/// Engine callers should use this function so executor and global defaults are
-/// represented accurately.
-pub fn create_part_with_isolation(
-    part_dir: &Path,
-    manifest: &PlanManifest,
-    output_path: &Path,
-    source_plan: Option<&PlanManifest>,
-    isolation: IsolationLevel,
-) -> Result<PathBuf> {
     purge_excluded_files(part_dir);
 
+    let partinfo_path = part_dir.join(".PARTINFO");
+    let filelist_path = part_dir.join(".FILELIST");
+    let hooks_path = part_dir.join(".HOOKS");
+    // A previously interrupted seal must not leak stale metadata into the
+    // next archive.
+    let _ = std::fs::remove_file(&partinfo_path);
+    let _ = std::fs::remove_file(&filelist_path);
+    let _ = std::fs::remove_file(&hooks_path);
+
     // Generate .PARTINFO
-    let partinfo = generate_partinfo_with_isolation(manifest, source_plan, isolation);
+    let partinfo = generate_partinfo(spec);
 
     // Generate .FILELIST
     let filelist = generate_filelist(part_dir)?;
@@ -119,39 +136,36 @@ pub fn create_part_with_isolation(
         return Err(WrightError::PartError(format!(
             "refusing to seal '{}': staging tree {} contains no files \
              (re-run the forge with --force --clean)",
-            manifest.metadata.name,
+            spec.name,
             part_dir.display()
         )));
     }
 
-    // Write metadata files into part_dir
-    std::fs::write(part_dir.join(".PARTINFO"), &partinfo)
-        .map_err(|e| WrightError::PartError(format!("failed to write .PARTINFO: {}", e)))?;
+    let result = (|| {
+        std::fs::write(&partinfo_path, &partinfo)
+            .map_err(|e| WrightError::PartError(format!("failed to write .PARTINFO: {}", e)))?;
 
-    std::fs::write(part_dir.join(".FILELIST"), &filelist)
-        .map_err(|e| WrightError::PartError(format!("failed to write .FILELIST: {}", e)))?;
+        std::fs::write(&filelist_path, &filelist)
+            .map_err(|e| WrightError::PartError(format!("failed to write .FILELIST: {}", e)))?;
 
-    // Write .HOOKS (TOML) if install scripts exist
-    if let Some(ref scripts) = manifest.deploy_scripts {
-        let hooks_content = generate_hooks_toml(scripts);
+        let hooks_content = generate_hooks_toml(&spec.hooks);
         if !hooks_content.is_empty() {
-            std::fs::write(part_dir.join(".HOOKS"), &hooks_content)
+            std::fs::write(&hooks_path, &hooks_content)
                 .map_err(|e| WrightError::PartError(format!("failed to write .HOOKS: {}", e)))?;
         }
-    }
 
-    // Create the archive
-    let archive_name = manifest.part_filename();
-    let part_path = output_path.join(&archive_name);
+        let part_path = output_path.join(&spec.archive_name);
+        crate::compression::create_tar_zst(part_dir, &part_path)?;
+        Ok(part_path)
+    })();
 
-    crate::compression::create_tar_zst(part_dir, &part_path)?;
+    // Metadata belongs to the archive, never to the staging tree. Clean it up
+    // after both successful and failed archive writes.
+    let _ = std::fs::remove_file(partinfo_path);
+    let _ = std::fs::remove_file(filelist_path);
+    let _ = std::fs::remove_file(hooks_path);
 
-    // Clean up metadata files from part_dir
-    let _ = std::fs::remove_file(part_dir.join(".PARTINFO"));
-    let _ = std::fs::remove_file(part_dir.join(".FILELIST"));
-    let _ = std::fs::remove_file(part_dir.join(".HOOKS"));
-
-    Ok(part_path)
+    result
 }
 
 /// Extract a .wright.tar.zst archive and return the parsed PARTINFO along with
@@ -281,27 +295,13 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
     )))
 }
 
-#[cfg(test)]
-fn generate_partinfo(manifest: &PlanManifest, source_plan: Option<&PlanManifest>) -> String {
-    let plan = source_plan.unwrap_or(manifest);
-    generate_partinfo_with_isolation(manifest, source_plan, weakest_declared_isolation(plan))
-}
-
-fn generate_partinfo_with_isolation(
-    manifest: &PlanManifest,
-    source_plan: Option<&PlanManifest>,
-    isolation: IsolationLevel,
-) -> String {
+fn generate_partinfo(spec: &PartSpec) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    // Determine plan-level metadata: either from the original plan manifest
-    // or from the current manifest itself (single-output plans).
-    let plan = source_plan.unwrap_or(manifest);
-
     let mut runtime_deps_toml = String::new();
-    if !manifest.runtime_deps.is_empty() {
+    if !spec.runtime_deps.is_empty() {
         runtime_deps_toml.push_str("runtime_deps = [");
-        for (i, dep) in manifest.runtime_deps.iter().enumerate() {
+        for (i, dep) in spec.runtime_deps.iter().enumerate() {
             if i > 0 {
                 runtime_deps_toml.push_str(", ");
             }
@@ -311,11 +311,11 @@ fn generate_partinfo_with_isolation(
     }
 
     let mut relations_toml = String::new();
-    if !manifest.relations.replaces.is_empty() || !manifest.relations.conflicts.is_empty() {
+    if !spec.replaces.is_empty() || !spec.conflicts.is_empty() {
         relations_toml.push_str("\n[relations]\n");
-        if !manifest.relations.replaces.is_empty() {
+        if !spec.replaces.is_empty() {
             relations_toml.push_str("replaces = [");
-            for (i, dep) in manifest.relations.replaces.iter().enumerate() {
+            for (i, dep) in spec.replaces.iter().enumerate() {
                 if i > 0 {
                     relations_toml.push_str(", ");
                 }
@@ -323,9 +323,9 @@ fn generate_partinfo_with_isolation(
             }
             relations_toml.push_str("]\n");
         }
-        if !manifest.relations.conflicts.is_empty() {
+        if !spec.conflicts.is_empty() {
             relations_toml.push_str("conflicts = [");
-            for (i, dep) in manifest.relations.conflicts.iter().enumerate() {
+            for (i, dep) in spec.conflicts.iter().enumerate() {
                 if i > 0 {
                     relations_toml.push_str(", ");
                 }
@@ -336,11 +336,9 @@ fn generate_partinfo_with_isolation(
     }
 
     let mut backup_toml = String::new();
-    if let Some(ref backup) = manifest.backup
-        && !backup.files.is_empty()
-    {
+    if !spec.backup_files.is_empty() {
         backup_toml.push_str("\n[backup]\nfiles = [");
-        for (i, f) in backup.files.iter().enumerate() {
+        for (i, f) in spec.backup_files.iter().enumerate() {
             if i > 0 {
                 backup_toml.push_str(", ");
             }
@@ -351,17 +349,15 @@ fn generate_partinfo_with_isolation(
 
     let mut plan_toml = String::new();
     plan_toml.push_str("\n[plan]\n");
-    plan_toml.push_str(&format!("name = \"{}\"\n", plan.metadata.name));
-    if let Some(ref v) = plan.metadata.version
-        && !v.is_empty()
-    {
-        plan_toml.push_str(&format!("version = \"{}\"\n", v));
+    plan_toml.push_str(&format!("name = \"{}\"\n", spec.plan.name));
+    if !spec.plan.version.is_empty() {
+        plan_toml.push_str(&format!("version = \"{}\"\n", spec.plan.version));
     }
-    plan_toml.push_str(&format!("release = {}\n", plan.metadata.release));
-    if plan.metadata.epoch > 0 {
-        plan_toml.push_str(&format!("epoch = {}\n", plan.metadata.epoch));
+    plan_toml.push_str(&format!("release = {}\n", spec.plan.release));
+    if spec.plan.epoch > 0 {
+        plan_toml.push_str(&format!("epoch = {}\n", spec.plan.epoch));
     }
-    plan_toml.push_str(&format!("arch = \"{}\"\n", plan.metadata.arch));
+    plan_toml.push_str(&format!("arch = \"{}\"\n", spec.plan.arch));
 
     format!(
         r#"[part]
@@ -370,71 +366,36 @@ build_date = "{build_date}"
 packager = "wright {wright_version}"
 {runtime_deps}{relations}{backup}{plan}{provenance}
 "#,
-        name = manifest.metadata.name,
+        name = spec.name,
         build_date = build_date,
         wright_version = env!("CARGO_PKG_VERSION"),
         runtime_deps = runtime_deps_toml,
         relations = relations_toml,
         backup = backup_toml,
         plan = plan_toml,
-        provenance = generate_provenance_toml(plan, isolation),
+        provenance = generate_provenance_toml(&spec.provenance),
     )
 }
 
 /// Render the `[provenance]` section from the plan-level manifest (ADR-0023).
-fn generate_provenance_toml(plan: &PlanManifest, isolation: IsolationLevel) -> String {
+fn generate_provenance_toml(provenance: &Provenance) -> String {
     let mut toml = String::from("\n[provenance]\n");
-    if let Some(ref sum) = plan.plan_checksum {
+    if let Some(ref sum) = provenance.plan_checksum {
         toml.push_str(&format!("plan_checksum = \"{}\"\n", sum));
     }
-    if !plan.sources.entries.is_empty() {
+    if !provenance.source_checksums.is_empty() {
         toml.push_str("source_checksums = [\n");
-        for source in &plan.sources.entries {
-            toml.push_str(&format!(
-                "    \"{}\",\n",
-                source_provenance_line(source, plan)
-            ));
+        for source in &provenance.source_checksums {
+            toml.push_str(&format!("    \"{}\",\n", source));
         }
         toml.push_str("]\n");
     }
     toml.push_str(&format!(
         "wright_version = \"{}\"\n",
-        env!("CARGO_PKG_VERSION")
+        provenance.wright_version
     ));
-    toml.push_str(&format!("isolation = \"{isolation}\"\n"));
+    toml.push_str(&format!("isolation = \"{}\"\n", provenance.isolation));
     toml
-}
-
-/// One provenance line per source: kind, expanded locator, and the
-/// verification the charge step applied to it.
-fn source_provenance_line(source: &Source, plan: &PlanManifest) -> String {
-    use wright_plan::variables::expand_metadata as process_uri;
-    match source {
-        Source::Http(http) => format!(
-            "http {} sha256={}",
-            process_uri(&http.url, plan),
-            http.sha256
-        ),
-        Source::Git(git) => format!(
-            "git {} ref={}",
-            process_uri(&git.url, plan),
-            git.r#ref
-                .as_deref()
-                .map(|r| process_uri(r, plan))
-                .unwrap_or_else(|| "HEAD".to_string())
-        ),
-        Source::Local(local) => format!("local {}", process_uri(&local.path, plan)),
-    }
-}
-
-/// The weakest isolation level any pipeline stage declares — the
-/// security-relevant fact about the build that produced the part.
-fn weakest_declared_isolation(plan: &PlanManifest) -> IsolationLevel {
-    plan.pipeline
-        .values()
-        .filter_map(|stage| stage.isolation.as_deref()?.parse::<IsolationLevel>().ok())
-        .min()
-        .unwrap_or(IsolationLevel::Strict)
 }
 
 fn generate_filelist(part_dir: &Path) -> Result<String> {
@@ -466,7 +427,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
 /// pre_remove = "systemctl stop nginx"
 /// post_remove = "userdel nginx"
 /// ```
-fn generate_hooks_toml(scripts: &wright_plan::manifest::DeployScripts) -> String {
+fn generate_hooks_toml(scripts: &PartHooks) -> String {
     let has_any = scripts.pre_install.is_some()
         || scripts.post_install.is_some()
         || scripts.post_upgrade.is_some()
@@ -608,37 +569,81 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_partinfo, generate_partinfo_with_isolation, parse_partinfo_str};
-    use wright_model::isolation::IsolationLevel;
+    use super::{
+        PartHooks, PartSpec, PlanMetadata, Provenance, generate_partinfo, parse_partinfo_str,
+    };
+
+    fn part_spec(isolation: &str) -> PartSpec {
+        PartSpec {
+            archive_name: "demo-1.2.3-1-x86_64.wright.tar.zst".to_string(),
+            name: "demo".to_string(),
+            runtime_deps: Vec::new(),
+            replaces: Vec::new(),
+            conflicts: Vec::new(),
+            backup_files: Vec::new(),
+            plan: PlanMetadata {
+                name: "demo".to_string(),
+                version: "1.2.3".to_string(),
+                release: 1,
+                epoch: 0,
+                arch: "x86_64".to_string(),
+            },
+            provenance: Provenance {
+                plan_checksum: Some("deadbeef".to_string()),
+                source_checksums: vec![
+                    "http https://example.org/demo-1.2.3.tar.gz sha256=abc123".to_string(),
+                    "git https://example.org/demo.git ref=v1.2.3".to_string(),
+                ],
+                wright_version: env!("CARGO_PKG_VERSION").to_string(),
+                isolation: isolation.to_string(),
+            },
+            hooks: PartHooks::default(),
+        }
+    }
 
     #[test]
     fn create_part_refuses_empty_staging_tree() {
-        let manifest = wright_plan::manifest::PlanManifest::parse(
-            r#"
-name = "empty-demo"
-version = "1.0.0"
-release = 1
-description = "demo"
-license = "MIT"
-arch = "x86_64"
-"#,
-        )
-        .unwrap();
-
+        let spec = part_spec("strict");
         let staging = tempfile::tempdir().unwrap();
         let out = tempfile::tempdir().unwrap();
 
         // An empty staging tree must not seal (regression: wright 5.0.2
         // packed metadata-only parts that deployed zero files).
-        let err = super::create_part(staging.path(), &manifest, out.path(), None).unwrap_err();
+        let err = super::write_part(staging.path(), &spec, out.path()).unwrap_err();
         assert!(err.to_string().contains("contains no files"), "{err}");
-        assert!(!out.path().join(manifest.part_filename()).exists());
+        assert!(!out.path().join(&spec.archive_name).exists());
 
         // The same tree with payload seals fine.
         std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
         std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
-        let part = super::create_part(staging.path(), &manifest, out.path(), None).unwrap();
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
         assert!(part.exists());
+    }
+
+    #[test]
+    fn write_part_rejects_archive_path_components() {
+        let mut spec = part_spec("strict");
+        spec.archive_name = "../demo.wright.tar.zst".to_string();
+        let staging = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let err = super::write_part(staging.path(), &spec, out.path()).unwrap_err();
+        assert!(err.to_string().contains("invalid part archive filename"));
+    }
+
+    #[test]
+    fn write_part_cleans_metadata_after_archive_failure() {
+        let spec = part_spec("strict");
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let missing_output = staging.path().join("missing/output");
+
+        super::write_part(staging.path(), &spec, &missing_output).unwrap_err();
+
+        assert!(!staging.path().join(".PARTINFO").exists());
+        assert!(!staging.path().join(".FILELIST").exists());
+        assert!(!staging.path().join(".HOOKS").exists());
     }
 
     #[test]
@@ -720,38 +725,7 @@ arch = "x86_64"
 
     #[test]
     fn provenance_roundtrips_through_generated_partinfo() {
-        let toml_str = r#"
-name = "demo"
-version = "1.2.3"
-release = 1
-description = "demo"
-license = "MIT"
-arch = "x86_64"
-
-[[sources]]
-type = "http"
-url = "https://example.org/demo-${VERSION}.tar.gz"
-sha256 = "abc123"
-
-[[sources]]
-type = "git"
-url = "https://example.org/demo.git"
-ref = "v${VERSION}"
-
-[pipeline.compile]
-executor = "shell"
-isolation = "none"
-script = "true"
-
-[pipeline.staging]
-executor = "shell"
-isolation = "strict"
-script = "true"
-"#;
-        let mut manifest = wright_plan::manifest::PlanManifest::parse(toml_str).unwrap();
-        manifest.plan_checksum = Some("deadbeef".to_string());
-
-        let partinfo = generate_partinfo(&manifest, None);
+        let partinfo = generate_partinfo(&part_spec("none"));
         let info = parse_partinfo_str(&partinfo, "test").unwrap();
 
         let provenance = info.provenance.expect("generated .PARTINFO has provenance");
@@ -764,28 +738,12 @@ script = "true"
             ]
         );
         assert_eq!(provenance.wright_version, env!("CARGO_PKG_VERSION"));
-        // Weakest of {none, strict} is none.
         assert_eq!(provenance.isolation, "none");
     }
 
     #[test]
     fn provenance_uses_engine_resolved_isolation() {
-        let manifest = wright_plan::manifest::PlanManifest::parse(
-            r#"
-name = "inherited-provenance"
-version = "1.0.0"
-release = 1
-description = "demo"
-license = "MIT"
-arch = "x86_64"
-
-[pipeline.compile]
-script = "true"
-"#,
-        )
-        .unwrap();
-
-        let partinfo = generate_partinfo_with_isolation(&manifest, None, IsolationLevel::Relaxed);
+        let partinfo = generate_partinfo(&part_spec("relaxed"));
         let info = parse_partinfo_str(&partinfo, "test").unwrap();
         assert_eq!(info.provenance.unwrap().isolation, "relaxed");
     }

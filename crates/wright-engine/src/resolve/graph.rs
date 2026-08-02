@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use tracing::{debug, trace};
 
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::plan::discovery::PlanIndex;
-use crate::plan::manifest::{OutputConfig, PlanManifest};
 use crate::resolve::bootstrap::{PlanGraph, collect_phase_deps};
 use wright_model::version;
+use wright_plan::discovery::PlanIndex;
+use wright_plan::manifest::{OutputConfig, PlanManifest};
+use wright_state::database::InstalledDb;
 
 use crate::resolve::{BuildPlanOptions, DepDomain, MatchPolicy, RebuildReason};
 
@@ -251,7 +251,7 @@ async fn dependency_plan_differs(
     // Assumed parts are explicitly declared as externally provided.
     // They have no local build plan to compare against, so treat them as
     // up-to-date — wright should never auto-schedule rebuilds for them.
-    if installed.origin == crate::database::Origin::External {
+    if installed.origin == wright_state::database::Origin::External {
         return Ok(false);
     }
 

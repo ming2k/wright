@@ -3,8 +3,8 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::database::{FileType, HistoryAction, InstalledDb, SessionContext};
 use crate::error::{Result, WrightError};
+use wright_state::database::{FileType, HistoryAction, InstalledDb, SessionContext};
 
 use super::get_hook;
 use crate::transaction::context::TransactionContext;

@@ -3522,6 +3522,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wright-engine",
+ "wright-part",
+ "wright-plan",
+ "wright-state",
 ]
 
 [[package]]
@@ -3542,7 +3545,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sqlx",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3581,7 +3583,6 @@ dependencies = [
  "tracing",
  "walkdir",
  "wright-model",
- "wright-plan",
  "xz2",
  "zip",
  "zstd",
@@ -3616,7 +3617,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "wright-part",
 ]
 
 [[package]]

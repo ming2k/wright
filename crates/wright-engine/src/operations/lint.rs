@@ -18,7 +18,7 @@ pub async fn execute_lint(
 async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
     let t0 = std::time::Instant::now();
     let db_path = config.general.db_path.clone();
-    let db = crate::database::InstalledDb::open(&db_path)
+    let db = wright_state::database::InstalledDb::open(&db_path)
         .await
         .map_err(|e| {
             crate::error::WrightError::DatabaseError(format!("failed to open database: {}", e))

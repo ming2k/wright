@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError, WrightResultExt};
-use crate::part::store::LocalPartStore;
-use crate::plan::discovery::PlanIndex;
-use crate::plan::manifest::PlanManifest;
+use wright_part::store::LocalPartStore;
+use wright_plan::discovery::PlanIndex;
+use wright_plan::manifest::PlanManifest;
 
 pub fn plan_search_dirs(config: &GlobalConfig) -> Vec<PathBuf> {
     let mut dirs = Vec::new();

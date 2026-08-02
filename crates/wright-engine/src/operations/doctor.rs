@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
-use crate::part::archive::read_archive_meta;
-use crate::part::soname::SonameIndex;
 use wright_model::version;
+use wright_part::archive::read_archive_meta;
+use wright_part::soname::SonameIndex;
+use wright_state::database::InstalledDb;
 
 /// Run comprehensive system health checks.
 ///
@@ -150,7 +150,7 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
     }
 
     let plan_dirs = crate::resolve::plan_search_dirs(config);
-    let index = match crate::plan::discovery::PlanIndex::discover(&plan_dirs) {
+    let index = match wright_plan::discovery::PlanIndex::discover(&plan_dirs) {
         Ok(index) => index,
         Err(e) => {
             crate::cli_warn!("skipping plan drift check: {}", e);

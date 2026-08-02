@@ -14,8 +14,8 @@ use crate::error::{Result, WrightError, WrightResultExt};
 use tracing::info;
 
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
-use crate::plan::manifest::PlanManifest;
+use wright_plan::manifest::PlanManifest;
+use wright_state::database::InstalledDb;
 
 mod bootstrap;
 mod graph;
@@ -188,7 +188,7 @@ pub fn resolve_explicit_plan_names(
     plan_dirs: &[PathBuf],
     targets: &[String],
 ) -> Result<HashSet<String>> {
-    let index = crate::plan::discovery::PlanIndex::discover(plan_dirs)?;
+    let index = wright_plan::discovery::PlanIndex::discover(plan_dirs)?;
     let paths = resolve_targets(targets, &index, plan_dirs)?;
     Ok(paths
         .iter()
@@ -203,7 +203,7 @@ pub async fn resolve_build_set(
     opts: ResolveOptions,
 ) -> Result<Vec<String>> {
     let plan_dirs = plan_search_dirs(config);
-    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let index = wright_plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
@@ -327,7 +327,7 @@ pub fn create_execution_plan(
     dep_domain: DepDomain,
 ) -> Result<BuildExecutionPlan> {
     let plan_dirs = plan_search_dirs(config);
-    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let index = wright_plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
@@ -460,12 +460,14 @@ pub fn describe_batch_actions(
 
 pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[String]) -> Result<()> {
     let plan_dirs = plan_search_dirs(config);
-    let index = crate::plan::discovery::PlanIndex::discover(&plan_dirs)?;
+    let index = wright_plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let plans_to_build = resolve_targets(targets, &index, &plan_dirs)?;
 
     if plans_to_build.is_empty() {
         return Ok(());
     }
+
+    lint_static_plan_diagnostics(&plans_to_build);
 
     let graph = graph::build_dep_map(
         &plans_to_build,
@@ -477,6 +479,31 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
     )?;
 
     lint_dependency_graph(&graph)
+}
+
+fn lint_static_plan_diagnostics(plans: &std::collections::HashSet<std::path::PathBuf>) {
+    let mut total_warnings = 0;
+    for path in plans {
+        if let Ok(manifest) = wright_plan::PlanManifest::from_file(path) {
+            let diagnostics = wright_plan::lint_manifest(&manifest);
+            if !diagnostics.is_empty() {
+                println!("\nPlan Style & Best Practice Report: {}", path.display());
+                for diag in &diagnostics {
+                    total_warnings += 1;
+                    println!("  [{}] {}: {}", diag.code, diag.level, diag.message);
+                    if let Some(ref help) = diag.help {
+                        println!("     └─ help: {}", help);
+                    }
+                }
+            }
+        }
+    }
+    if total_warnings > 0 {
+        println!(
+            "\nTotal style diagnostics: {} warning(s) found.",
+            total_warnings
+        );
+    }
 }
 
 fn lint_dependency_graph(graph: &bootstrap::PlanGraph) -> Result<()> {

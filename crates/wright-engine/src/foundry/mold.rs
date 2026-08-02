@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
 use crate::error::{Result, WrightError};
-use crate::plan::manifest::{OutputConfig, PlanManifest};
+use wright_plan::manifest::{OutputConfig, PlanManifest};
 
 /// Result of slicing the staging directory into outputs.
 pub struct MoldResult {

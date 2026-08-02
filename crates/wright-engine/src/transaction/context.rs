@@ -1,6 +1,6 @@
-use crate::database::{HistoryAction, HistoryStatus, InstalledDb, SessionContext};
 use crate::error::Result;
 use crate::transaction::rollback::RollbackState;
+use wright_state::database::{HistoryAction, HistoryStatus, InstalledDb, SessionContext};
 
 /// Unified transaction context coordinating filesystem rollback and audit logging.
 ///

@@ -4,7 +4,7 @@ Wright is a single CLI binary backed by an internal Cargo workspace. The
 workspace separates stable domain semantics from application orchestration
 without exposing additional commands to users. See
 [ADR-0025](../adr/0025-incremental-cargo-workspace.md) and
-[ADR-0026](../adr/0026-workspace-crate-boundaries.md).
+[ADR-0029](../adr/0029-engine-owned-boundary-mapping.md).
 
 ## Roles
 
@@ -31,9 +31,9 @@ seal the resulting outputs, and deploy each completed wave before continuing.
 ## Internal Layers
 
 ```text
-CLI -> engine -> state -> part -> plan -> model
-         |         |       |       |
-         +---------+-------+-------+------> lower-level libraries only
+CLI -> engine -> plan  -> model
+              -> part  -> model
+              -> state
 ```
 
 - `cli` owns one file per subcommand: each file defines the clap `Args`
@@ -42,7 +42,8 @@ CLI -> engine -> state -> part -> plan -> model
   (config, db_path, root_dir, verbose, quiet) and routes to the matching
   handler. See [ADR-0020](../adr/0020-merge-cli-and-commands-directories.md).
 - The engine owns command use cases, dependency resolution, foundry builds,
-  isolation, sealing, and deployment transactions.
+  isolation, sealing, deployment transactions, and mapping between sibling
+  component inputs.
 - State owns the installed registry, delivery recovery, content-addressed
   storage, and process locks.
 - Part owns archive and folio formats, compression, local stores, FHS
@@ -50,6 +51,10 @@ CLI -> engine -> state -> part -> plan -> model
 - Plan owns manifest parsing, validation, discovery, and metadata expansion.
 - Model owns shared values and has no filesystem, database, network, CLI, or
   process-execution responsibilities.
+
+Plan, part, and state do not consume one another's representations. The engine
+projects a parsed plan into archive metadata when sealing and projects parsed
+archive metadata into persistence inputs when registering an installed part.
 
 ## Responsibilities
 

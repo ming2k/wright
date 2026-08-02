@@ -1,5 +1,6 @@
 pub mod build;
 pub mod check;
+pub mod clean;
 pub mod doctor;
 pub mod drive;
 pub mod files;
@@ -11,6 +12,11 @@ pub mod lint;
 pub mod list;
 pub mod merge;
 pub mod owner;
+pub mod package;
 pub mod provide;
+pub mod prune;
 pub mod remove;
+pub mod resolve;
 pub mod upgrade;
+
+mod targets;

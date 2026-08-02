@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::database::{FileType, InstalledDb, InstalledPart, Origin};
 use crate::error::{Result, WrightError};
-use crate::part::elf;
 use crate::query;
+use wright_part::elf;
+use wright_state::database::{FileType, InstalledDb, InstalledPart, Origin};
 
 /// Run the standard suite of system health checks and return the total issue
 /// count. Callers format their own final messages (e.g. `check` vs `doctor`

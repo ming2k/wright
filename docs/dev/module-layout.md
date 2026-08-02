@@ -38,6 +38,47 @@ Do not introduce reverse edges. `wright-model` must remain free of I/O and
 external dependencies. The root package re-exports established library paths
 for compatibility, but internal code imports the crate that owns a type.
 
+## Placement Rules
+
+Choose an owner by responsibility, not by which caller needs the code first.
+
+| Responsibility | Owner | Examples |
+|----------------|-------|----------|
+| Command syntax and argument translation | root `src/cli/` | clap `Args`, command dispatch, CLI-only enums |
+| Application use cases and orchestration | `wright-engine` | install, resolve, build, package, deploy |
+| Persistent installed state | `wright-state` | SQLite queries, migrations, CAS, process locks |
+| Part formats and filesystem validation | `wright-part` | archives, compression, FHS, ELF, SONAME |
+| Plan source interpretation | `wright-plan` | parsing, discovery, variables, static linting |
+| Dependency-free domain values | `wright-model` | versions, dependency syntax, isolation policy |
+
+Apply these rules when adding or moving code:
+
+1. Keep clap types in the root package. Translate them into engine request
+   types before entering `wright-engine`.
+2. Put a command use case in `wright-engine/src/operations/<command>.rs`.
+   Keep dependency algorithms, build execution, and persistence mechanics in
+   their owning subsystem instead of growing the operation adapter.
+3. Move a value into `wright-model` only when it is independent of files,
+   processes, databases, networks, and serialization frameworks.
+4. Add persistence behavior to `wright-state`; do not expose its SQL pool to
+   higher layers.
+5. Keep helpers beside their only caller. Add a helper to `util/` only when it
+   is application-wide, has a precise name, and has no clearer domain owner.
+
+## Naming and Visibility
+
+- Name domain modules with nouns such as `plan`, `part`, and `state`. Name
+  use-case files after the command verb, such as `install.rs` or `prune.rs`.
+- Use `lib.rs` only as a crate facade. Use `mod.rs` to define a multi-file
+  subsystem, not as a home for unrelated behavior.
+- Keep modules and symbols private by default. Re-export only the stable entry
+  points that a higher layer needs.
+- Avoid new `common`, `helpers`, or `misc` modules. A name that broad usually
+  means the code has not been assigned to its owner yet.
+- Preserve one direction across boundaries. A lower crate must not depend on
+  `wright-engine` or on the root `wright` package to reuse a convenience
+  helper.
+
 The execution path is intentionally thin at the top:
 
 ```text

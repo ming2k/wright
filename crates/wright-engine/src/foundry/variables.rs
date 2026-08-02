@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::plan::manifest::PlanManifest;
+use wright_plan::manifest::PlanManifest;
 
 /// Substitute metadata variables into a URI string (e.g. source URL or local path).
 pub fn process_uri(uri: &str, manifest: &PlanManifest) -> String {

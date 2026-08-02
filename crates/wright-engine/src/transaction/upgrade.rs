@@ -3,15 +3,17 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::database::{Dependency, FileType, HistoryAction, InstalledDb, NewPart, SessionContext};
 use crate::error::{Result, WrightError};
-use crate::part::archive;
 use crate::transaction::context::TransactionContext;
 use crate::transaction::fs::{collect_config_paths, collect_file_entries, copy_entries_to_root};
 use crate::transaction::hooks::{log_running_hook, read_hooks, run_deploy_script};
 use wright_model::version::{self, Version};
+use wright_part::archive;
+use wright_state::database::{
+    Dependency, FileType, HistoryAction, InstalledDb, NewPart, SessionContext,
+};
 
-use super::{log_debug_timing, self_replace_relations};
+use super::{ensure_plan_registered, log_debug_timing, self_replace_relations};
 
 pub async fn upgrade_part(
     db: &InstalledDb,
@@ -332,15 +334,7 @@ pub async fn upgrade_part(
     }
 
     phase_start = Instant::now();
-    let plan_id = db
-        .ensure_plan_registered(
-            &partinfo,
-            &partinfo.plan.version,
-            partinfo.plan.release,
-            partinfo.plan.epoch,
-            &partinfo.plan.arch,
-        )
-        .await?;
+    let plan_id = ensure_plan_registered(db, &partinfo).await?;
     db.update_part(NewPart {
         name: &partinfo.name,
         plan_id,

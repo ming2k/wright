@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::time::Instant;
 
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
+use wright_state::database::InstalledDb;
 
 /// Implementation of `wright check`.
 ///

@@ -60,18 +60,17 @@ pub enum WrightError {
     #[error("TOML deserialization error: {0}")]
     TomlError(#[from] toml::de::Error),
 
-    #[error("SQLite error: {0}")]
-    SqliteError(#[from] sqlx::Error),
-}
+    #[error(transparent)]
+    Model(#[from] wright_model::ModelError),
 
-impl From<wright_model::ModelError> for WrightError {
-    fn from(error: wright_model::ModelError) -> Self {
-        match error {
-            wright_model::ModelError::VersionError(message) => Self::VersionError(message),
-            wright_model::ModelError::ValidationError(message) => Self::ValidationError(message),
-            wright_model::ModelError::IsolationError(message) => Self::IsolationError(message),
-        }
-    }
+    #[error(transparent)]
+    Plan(#[from] wright_plan::PlanError),
+
+    #[error(transparent)]
+    Part(#[from] wright_part::PartError),
+
+    #[error(transparent)]
+    State(#[from] wright_state::StateError),
 }
 
 impl From<crate::isolation::IsolationError> for WrightError {
@@ -81,47 +80,6 @@ impl From<crate::isolation::IsolationError> for WrightError {
                 Self::ForgeError("cancelled by user".into())
             }
             error => Self::IsolationError(error.to_string()),
-        }
-    }
-}
-
-impl From<wright_plan::PlanError> for WrightError {
-    fn from(error: wright_plan::PlanError) -> Self {
-        match error {
-            wright_plan::PlanError::ParseError(message) => Self::ParseError(message),
-            wright_plan::PlanError::IoError(error) => Self::IoError(error),
-            wright_plan::PlanError::ValidationError(message) => Self::ValidationError(message),
-            wright_plan::PlanError::TomlError(error) => Self::TomlError(error),
-            wright_plan::PlanError::Model(error) => error.into(),
-        }
-    }
-}
-
-impl From<wright_part::PartError> for WrightError {
-    fn from(error: wright_part::PartError) -> Self {
-        match error {
-            wright_part::PartError::IoError(error) => Self::IoError(error),
-            wright_part::PartError::ForgeError(message) => Self::ForgeError(message),
-            wright_part::PartError::PartError(message) => Self::PartError(message),
-            wright_part::PartError::ValidationError(message) => Self::ValidationError(message),
-        }
-    }
-}
-
-impl From<wright_state::StateError> for WrightError {
-    fn from(error: wright_state::StateError) -> Self {
-        match error {
-            wright_state::StateError::IoError(error) => Self::IoError(error),
-            wright_state::StateError::DatabaseError(message) => Self::DatabaseError(message),
-            wright_state::StateError::ForgeError(message) => Self::ForgeError(message),
-            wright_state::StateError::DeployError(message) => Self::DeployError(message),
-            wright_state::StateError::AccessDenied(message) => Self::AccessDenied(message),
-            wright_state::StateError::LockError(message) => Self::LockError(message),
-            wright_state::StateError::PartNotFound(message) => Self::PartNotFound(message),
-            wright_state::StateError::PartAlreadyInstalled(message) => {
-                Self::PartAlreadyInstalled(message)
-            }
-            wright_state::StateError::SqliteError(error) => Self::SqliteError(error),
         }
     }
 }

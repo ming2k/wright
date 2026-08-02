@@ -1,5 +1,5 @@
-use crate::database::InstalledDb;
 use crate::error::Result;
+use wright_state::database::InstalledDb;
 
 pub async fn execute_list(
     db: &InstalledDb,
@@ -30,7 +30,7 @@ pub async fn execute_list(
                 } else {
                     &part.version
                 };
-                if part.origin == crate::database::Origin::External {
+                if part.origin == wright_state::database::Origin::External {
                     println!("{:<12} {:<24} {}", "external", part.name, ver);
                 } else {
                     let ver_rel_arch = if part.version.is_empty() {

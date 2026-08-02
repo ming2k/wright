@@ -1,5 +1,5 @@
-use crate::database::InstalledDb;
 use crate::error::Result;
+use wright_state::database::InstalledDb;
 
 pub async fn execute_history(db: &InstalledDb, part: Option<&str>) -> Result<()> {
     let records = db.get_history(part).await?;
@@ -13,7 +13,7 @@ pub async fn execute_history(db: &InstalledDb, part: Option<&str>) -> Result<()>
                 (Some(old), Some(new)) => format!("{} -> {}", old, new),
                 (None, None) => String::new(),
             };
-            let status = if r.status != crate::database::HistoryStatus::Completed {
+            let status = if r.status != wright_state::database::HistoryStatus::Completed {
                 format!(" ({})", r.status)
             } else {
                 String::new()

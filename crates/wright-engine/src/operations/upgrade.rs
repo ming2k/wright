@@ -2,13 +2,13 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::GlobalConfig;
-use crate::database::InstalledDb;
 use crate::error::{Result, WrightError};
 use crate::operations::install::{InstallRequest, execute_install};
-use crate::part::store::LocalPartStore;
-use crate::plan::discovery::PlanIndex;
-use crate::plan::manifest::PlanManifest;
 use crate::resolve::{DepDomain, MatchPolicy, ResolveOptions, plan_search_dirs, resolve_build_set};
+use wright_part::store::LocalPartStore;
+use wright_plan::discovery::PlanIndex;
+use wright_plan::manifest::PlanManifest;
+use wright_state::database::InstalledDb;
 
 pub async fn execute_upgrade(
     targets: Vec<String>,
@@ -223,7 +223,7 @@ async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Ve
 mod tests {
     use super::filter_outdated_targets;
     use crate::config::GlobalConfig;
-    use crate::database::{InstalledDb, NewPart, NewPlan};
+    use wright_state::database::{InstalledDb, NewPart, NewPlan};
 
     #[tokio::test]
     async fn explicit_multi_output_plan_is_detected_as_outdated() {
