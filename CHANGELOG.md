@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.13] - 2026-08-04
+
 ### Added
 
 - Restored the standalone `resolve`, `package`, `clean`, and `prune` commands.
