@@ -354,7 +354,11 @@ own `reason`.
 
 #### Implicit Slicing
 
-Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture. All files should be installed to `${STAGING_DIR}` during the `staging` pipeline phase. On the host, that directory is `build_dir/<name>-<version>/staging`; inside isolation it is mounted at `/output`. After `staging` is complete, an implicit slicing engine processes the files based on the `[[output]]` definitions.
+Wright uses a **Single-Source Staging, Multi-Target Slicing** architecture.
+Install all files to `${STAGING_DIR}` during the `staging` pipeline phase. On
+the host, that directory is `<forge_dir>/<name>-<version>/staging`; inside
+isolation it is mounted at `/output`. After `staging` is complete, an implicit
+slicing engine processes the files based on the `[[output]]` definitions.
 
 **Output processing rules:**
 

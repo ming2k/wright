@@ -1,4 +1,4 @@
-# wright.toml — full schema with default values.
+# wright.toml — typical configuration with default values.
 #
 # Layered loading order (later layers override earlier):
 #   1. /etc/wright/wright.toml          (system-wide)
@@ -8,7 +8,6 @@
 
 [general]
 arch          = "x86_64"
-plans_dir     = "/var/lib/wright/plans"
 folios_dir    = "/var/lib/wright/folios"
 parts_dir     = "/var/lib/wright/parts"
 store_dir     = "/var/lib/wright/store"
@@ -17,12 +16,10 @@ db_path       = "/var/lib/wright/wright.db"
 logs_dir      = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 
-# Extra plan source dirs consulted after plans_dir.  Each entry's `folios/`
-# subdir is also searched for `@folio` references.
+# Extra plan source dirs consulted after plans_dir.
 # extra_plans_dirs = ["/opt/my-plans", "./plans"]
 
 [build]
-forge_dir         = "/var/tmp/wright/workshop"
 default_isolation = "strict"
 ccache            = false
 

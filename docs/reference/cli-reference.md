@@ -208,7 +208,7 @@ wright resolve hello --deps --tree
 
 ### `wright build <TARGET...>`
 
-Build (forge) plans into staging and output directories under `build_dir`.
+Build (forge) plans into staging and output directories under `forge_dir`.
 
 ```bash
 wright build zlib

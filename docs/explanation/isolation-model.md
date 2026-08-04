@@ -82,7 +82,7 @@ mount -t overlay overlay \
 Every build task gets a distinct scratch directory:
 
 ```text
-<build_dir>/.wright-isolation/<task_id>/
+<forge_dir>/.wright-isolation/<task_id>/
 |-- root/
 |-- upper/
 `-- work/
@@ -153,7 +153,7 @@ and the pipeline stage layer.  Contributor details are in
 
 If a Wright process is killed unexpectedly (SIGKILL, panic, OOM, power loss)
 mid-build, an overlayfs mount can remain active in the kernel mount table
-at `<build_dir>/<plan>-<version>/target` even though no Wright process holds
+at `<forge_dir>/<plan>-<version>/target` even though no Wright process holds
 it. A subsequent `wright install` would then fail when trying to wipe the
 build directory because the kernel returns `EBUSY` against a path that is
 itself a mount point.

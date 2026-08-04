@@ -25,7 +25,7 @@ matching host first.
 | Strategy | Command | When to use |
 |----------|---------|-------------|
 | **Folio file** | `wright launch --root <root> --folio <file>` | The folio fully describes the system. One command, one artifact. |
-| **Folio reference** | `wright launch --root <root> --plans <dir> @<name>` | The folio lives alongside plans. Composable: `@base @desktop`. |
+| **Folio reference** | `wright launch --root <root> --plans <plans> --folios <folios> @<name>` | Plans and folios use peer search directories. Composable: `@base @desktop`. |
 | **Plan names** | `wright launch --root <root> --plans <dir> <names...>` | Ad-hoc or experimental target. No folio needed. |
 
 ## Strategy 1: Launch from a Folio File
@@ -87,24 +87,25 @@ services = ["sshd", "dbus"]
 
 See [How to write a folio](write-a-folio.md) for the complete folio format.
 
-## Strategy 2: Launch from a Plans Directory
+## Strategy 2: Launch from Folio References
 
-When folios live alongside plan directories, use `--plans` with `@folio`
-references.  This works well when a single plans tree holds multiple system
-profiles.
+Keep folios in a dedicated directory that is a peer of the plans directory.
+Use `--plans` to override plan discovery and `--folios` to override folio
+discovery.
 
 ```bash
-# Launch the @core folio from a plans directory
-wright launch --root /mnt/new --plans ./plans @core
+# Launch the @core folio with peer source directories
+wright launch --root /mnt/new --plans ./plans --folios ./folios @core
 
 # Compose multiple folios
-wright launch --root /mnt/new --plans ./plans @base @desktop
+wright launch --root /mnt/new --plans ./plans --folios ./folios @base @desktop
 
 # Mix folios with explicit plan names
-wright launch --root /mnt/new --plans ./plans @core vim curl
+wright launch --root /mnt/new --plans ./plans --folios ./folios @core vim curl
 ```
 
-If `--plans` is omitted, Wright uses the configured `plans_dir`:
+If the overrides are omitted, Wright uses the configured `plans_dir` and
+`folios_dir`:
 
 ```bash
 wright launch --root /mnt/new @core
@@ -114,10 +115,10 @@ wright launch --root /mnt/new @core
 
 When you write `@core`, Wright searches:
 
-1. `<plans_dir>/folios/core.toml`
-2. `<plans_dir>/core/folio.toml`
+1. `<DIR>/core.toml` under the directory passed to `--folios`, when set
+2. `<folios_dir>/core.toml`
 
-Flat files under `folios/` are the recommended convention.
+Wright never searches for folios under `plans_dir`.
 
 ## Strategy 3: Launch with Explicit Plan Names
 
@@ -138,7 +139,7 @@ Regardless of the strategy, `wright launch` runs the same sequence:
 1. Refuses `/` as the target root.
 2. Creates the target directory skeleton (`var/lib/wright/`, `etc/wright/`,
    `var/log/wright/`).
-3. Redirects `build_dir` and `parts_dir` under the target root — no host
+3. Redirects `forge_dir` and `parts_dir` under the target root — no host
    pollution.
 4. Copies plan directories and referenced folio manifests into the target by
    comparing mtime and size; removes entries in the target that no longer
@@ -295,5 +296,5 @@ Free space on the target mount, then re-run the same command.  Completed waves
 are not rebuilt; launch resumes where it stopped.
 
 **Host `parts_dir` is polluted after launch:**
-This should not happen — `build_dir` and `parts_dir` are redirected under the
+This should not happen — `forge_dir` and `parts_dir` are redirected under the
 target root.  If it does, check that `--root` was passed and is not `/`.

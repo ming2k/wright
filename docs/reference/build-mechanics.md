@@ -11,26 +11,30 @@ when work is skipped or repeated.
 
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
-| `build_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `staging/`, `outputs/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
+| `forge_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `staging/`, `outputs/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
 | `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
 
 ### How the two layers relate
 
-- `build_dir/<name>-<version>/work/` (or `build_dir/<name>-noversion/work/` when `version` is omitted) decides whether Wright can reuse the previous unpacked source tree.
+- `<forge_dir>/<name>-<version>/work/` (or
+  `<forge_dir>/<name>-noversion/work/` when `version` is omitted) decides
+  whether Wright can reuse the previous unpacked source tree.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check whether `build_dir/<name>-<version>/work/` (or `build_dir/<name>-noversion/work/` when version is omitted) is reusable (build key match)
+1. Check whether `<forge_dir>/<name>-<version>/work/` (or
+   `<forge_dir>/<name>-noversion/work/` when version is omitted) is reusable
+   (build key match)
 2. If not reusable, fetch/extract from `source cache`
 
 ## Build Directory Layout
 
-Each part gets its own working directory under `build_dir`
+Each part gets its own working directory under `forge_dir`
 (default `/var/tmp/wright/workshop`):
 
 ```
-<build_dir>/<name>-<version>/¹
+<forge_dir>/<name>-<version>/¹
 ├── .wright-pipeline.json  # Stage state machine (hash-chain checkpoint records)
 ├── target/                # OverlayFS merge mount point (virtual root for the container)
 ├── .ovl_work/             # OverlayFS internal working directory
@@ -68,7 +72,7 @@ If multiple outputs are defined in `plan.toml` (split-parts), additional
 output directories are created:
 
 ```
-<build_dir>/<name>-<version>/¹
+<forge_dir>/<name>-<version>/¹
 ├── staging/         # Build script output (preserved for inspection)
 ├── outputs/
 │   ├── default/     # Catch-all output (hard-linked from staging/)
@@ -89,7 +93,7 @@ set to that subdirectory (the common case for tarballs that unpack into
 Every pipeline stage writes a log file under `logs/`:
 
 ```
-<build_dir>/<name>-<version>/logs/
+<forge_dir>/<name>-<version>/logs/
 ├── configure.log
 ├── compile.log
 ├── staging.log

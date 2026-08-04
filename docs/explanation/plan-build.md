@@ -76,7 +76,10 @@ Resolution is the first step of a delivery. It encompasses plan discovery, targe
 
 ### Plan Discovery
 
-A plan begins as a `plan.toml` file somewhere in the plan search path (by default under `/var/lib/wright/plans`). When a command such as `wright install`, `wright build`, or `wright package` runs, the first step is discovery.
+A plan begins as a `plan.toml` file somewhere in the plan search path. The
+primary `plans_dir` defaults to `/var/lib/wright/plans`. When a command such as
+`wright install`, `wright build`, or `wright package` runs, the first step is
+discovery.
 
 `PlanIndex::discover` (`src/plan/discovery.rs`) walks every directory in the search path and collects every `plan.toml` it finds. It does **not** fully parse these files at this stage. Instead, it performs a lightweight extraction of only the `name` field from each TOML file to build a `name → path` map. Full parsing is deferred until the plan is actually needed.
 

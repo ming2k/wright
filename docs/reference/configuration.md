@@ -19,7 +19,6 @@ layers. `WRIGHT_*` environment variables still override it.
 ```toml
 [general]
 arch = "x86_64"
-plans_dir = "/var/lib/wright/plans"
 parts_dir = "/var/lib/wright/parts"
 source_dir = "/var/lib/wright/sources"
 db_path = "/var/lib/wright/wright.db"
@@ -27,7 +26,6 @@ logs_dir = "/var/log/wright"
 executors_dir = "/etc/wright/executors"
 
 [build]
-build_dir = "/var/tmp/wright/workshop"
 default_isolation = "strict"
 ccache = false
 memory_limit = 8192
@@ -55,7 +53,7 @@ max_concurrent_downloads = 8
 | `db_path` | `/var/lib/wright/wright.db` | system state database |
 | `logs_dir` | `/var/log/wright` | reserved operation log directory |
 | `executors_dir` | `/etc/wright/executors` | custom executor directory |
-| `build_dir` | `/var/tmp/wright/workshop` | build work directory |
+| `forge_dir` | `/var/tmp/wright/workshop` | build workspace root |
 | `default_isolation` | `strict` | fallback isolation after stage and executor defaults |
 | `ccache` | `false` | global ccache default |
 | `memory_limit` | unset | virtual memory limit in MB |
@@ -72,9 +70,14 @@ max_concurrent_downloads = 8
 
 - `stable_toolchain` lists part names that are never treated as "outdated" when computing dependency rebuild cascades. The default list covers the core LFS bootstrap toolchain (`gcc`, `glibc`, `binutils`, `make`, etc.). Add or replace entries when your distribution uses different package names (e.g. `gcc-14` or `musl`).
 
-- `plans_dir` does not automatically move to a user path; override it explicitly for non-root setups.
+- `plans_dir` defaults to `/var/lib/wright/plans` and normally does not need to
+  be declared. Override it for non-root setups or a custom primary plan tree;
+  it does not automatically move to a user path.
 - `extra_plans_dirs` are searched after `plans_dir`.
 - `parts_dir` is the local stock of built archives.
 - `db_path` tracks the authoritative state of installed parts, files, dependencies, and build sessions.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
 - `source_dir` caches downloaded sources and git repositories.
+- `forge_dir` has a default and normally does not need to be declared.
+  Override it only when build workspaces must live on another filesystem or
+  volume.

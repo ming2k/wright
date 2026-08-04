@@ -11,7 +11,7 @@ see [tracing-output-design](../dev/tracing-output-design.md) and
 | Scrolling CLI lines | Cargo-style 12-col verb-aligned actions and `warning:` / `error:` messages | stderr |
 | Persistent CLI rows | Live spinners for in-flight work; one row per open span | bottom of terminal (stderr) |
 | Diagnostic file log | Structured JSON, full event/field context | `<logs_dir>/wright.log.YYYY-MM-DD` |
-| Build tool log | Per-stage stdout/stderr from build commands (`make`, etc.) | `<build_dir>/<plan>-<version>/logs/<stage>.log` |
+| Build tool log | Per-stage stdout/stderr from build commands (`make`, etc.) | `<forge_dir>/<plan>-<version>/logs/<stage>.log` |
 
 ## Verbosity
 
@@ -41,7 +41,7 @@ A failed CLI command points at today's file in the `Failed` line's
 
 ## Build Tool Logs
 
-Per-stage logs land at `<build_dir>/<plan>-<version>/logs/<stage>.log`:
+Per-stage logs land at `<forge_dir>/<plan>-<version>/logs/<stage>.log`:
 
 | Stage | File |
 |-------|------|

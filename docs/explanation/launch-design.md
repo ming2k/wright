@@ -49,15 +49,16 @@ target system.
 wright launch --root /mnt/new --folio ./folios/core.toml
 ```
 
-### Plans mode (`--plans` or positional targets)
+### Target mode (`--plans`, `--folios`, or positional targets)
 
-Plan names and `@folio` references are resolved from a plans directory.  This is
-the path for experimentation and ad-hoc target roots.
+Plan names are resolved from plan search directories. `@folio` references are
+resolved independently from folio search directories. This is the path for
+experimentation and ad-hoc target roots.
 
 ```bash
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc
-wright launch --root /mnt/new --plans ./plans @core @desktop
-wright launch --root /mnt/new @core               # uses default plans_dir
+wright launch --root /mnt/new --plans ./plans --folios ./folios @core @desktop
+wright launch --root /mnt/new @core # uses default plans_dir and folios_dir
 ```
 
 ### What happens step by step
@@ -65,7 +66,7 @@ wright launch --root /mnt/new @core               # uses default plans_dir
 1. **Refuse `/`** — if the target root is `/`, abort immediately.
 
 2. **Resolve** — load the folio (or expand `@folio` references against the
-   plan search dirs), producing the merged plan list, the `[[provide]]`
+   folio search dirs), producing the merged plan list, the `[[provide]]`
    entries, the `[[hook]]` entries, and the set of folio files that need
    to be mirrored into the target.
 

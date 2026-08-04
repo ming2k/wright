@@ -561,13 +561,13 @@ async fn test_package_print_parts_keeps_verbose_build_output_off_stdout() {
     let cache_dir = root.path().join("cache");
     let db_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
-    let build_dir = root.path().join("build");
+    let forge_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
     std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::create_dir_all(&db_dir).unwrap();
     std::fs::create_dir_all(&logs_dir).unwrap();
-    std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::create_dir_all(&forge_dir).unwrap();
 
     let plan_dir = plans_dir.join("verbose-pipe-test");
     std::fs::create_dir_all(&plan_dir).unwrap();
@@ -623,7 +623,7 @@ retry_count = 3
             db_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
-            build_dir.display(),
+            forge_dir.display(),
         ),
     )
     .unwrap();
@@ -666,13 +666,13 @@ fn test_install_creates_archive_in_parts_dir() {
     let source_dir = root.path().join("sources");
     let state_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
-    let build_dir = root.path().join("build");
+    let forge_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
     std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&source_dir).unwrap();
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::create_dir_all(&logs_dir).unwrap();
-    std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::create_dir_all(&forge_dir).unwrap();
 
     let plan_dir = plans_dir.join("custom-out-dir");
     std::fs::create_dir_all(&plan_dir).unwrap();
@@ -725,7 +725,7 @@ retry_count = 3
             source_dir.display(),
             state_dir.join("wright.db").display(),
             logs_dir.display(),
-            build_dir.display(),
+            forge_dir.display(),
         ),
     )
     .unwrap();
@@ -758,13 +758,13 @@ fn test_until_stage_stops_before_packing_parts() {
     let cache_dir = root.path().join("cache");
     let db_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
-    let build_dir = root.path().join("build");
+    let forge_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
     std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&cache_dir).unwrap();
     std::fs::create_dir_all(&db_dir).unwrap();
     std::fs::create_dir_all(&logs_dir).unwrap();
-    std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::create_dir_all(&forge_dir).unwrap();
 
     let plan_dir = plans_dir.join("stop-at-staging");
     std::fs::create_dir_all(&plan_dir).unwrap();
@@ -830,7 +830,7 @@ retry_count = 3
             db_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
-            build_dir.display(),
+            forge_dir.display(),
         ),
     )
     .unwrap();
@@ -862,7 +862,7 @@ retry_count = 3
         "parts dir should stay empty when build stops after staging"
     );
     assert!(
-        build_dir
+        forge_dir
             .join("stop-at-staging-1.0.0/staging/usr/bin/stop-at-staging")
             .exists(),
         "staged output should remain available for inspection"
@@ -877,13 +877,13 @@ fn test_build_resume_skips_already_completed_dependency_tasks() {
     let source_dir = root.path().join("sources");
     let state_dir = root.path().join("wright");
     let logs_dir = root.path().join("logs");
-    let build_dir = root.path().join("build");
+    let forge_dir = root.path().join("build");
     std::fs::create_dir_all(&plans_dir).unwrap();
     std::fs::create_dir_all(&parts_dir).unwrap();
     std::fs::create_dir_all(&source_dir).unwrap();
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::create_dir_all(&logs_dir).unwrap();
-    std::fs::create_dir_all(&build_dir).unwrap();
+    std::fs::create_dir_all(&forge_dir).unwrap();
 
     let counter_path = root.path().join("dep-counter");
     let signal_path = root.path().join("allow-main");
@@ -972,7 +972,7 @@ retry_count = 3
             state_dir.join("wright.db").display(),
             logs_dir.display(),
             root.path().join("assemblies").display(),
-            build_dir.display(),
+            forge_dir.display(),
         ),
     )
     .unwrap();
