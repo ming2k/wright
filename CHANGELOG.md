@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.16] - 2026-08-08
+
 ### Fixed
 - **Upstream-only `=` constraints now match any release of that version.**
   Deploy-time constraint checks compared `foo = 1.2` against the full
