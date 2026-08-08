@@ -110,9 +110,12 @@ pub async fn deploy_parts_with_explicit_targets(
         let resolved = part_store.read_part(&candidate.path)?;
         batch_versions.insert(
             resolved.name.clone(),
-            full_version(
-                &candidate.partinfo.plan.version,
-                candidate.partinfo.plan.release,
+            (
+                candidate.partinfo.plan.version.clone(),
+                full_version(
+                    &candidate.partinfo.plan.version,
+                    candidate.partinfo.plan.release,
+                ),
             ),
         );
         resolved_map.insert(resolved.name.clone(), resolved);
@@ -295,7 +298,7 @@ async fn validate_plan_output_batches(
 async fn warn_about_runtime_dependencies(
     db: &InstalledDb,
     resolved_map: &HashMap<String, wright_part::store::ResolvedPart>,
-    batch_versions: &HashMap<String, String>,
+    batch_versions: &HashMap<String, (String, String)>,
     upcoming_outputs: Option<&HashSet<String>>,
 ) -> Result<()> {
     let in_batch: HashSet<String> = resolved_map.values().map(|p| p.name.clone()).collect();
@@ -328,14 +331,15 @@ async fn warn_about_runtime_dependencies(
             let (_, output_name) = version::parse_dep_ref(&dep_ref).to_plan_output();
 
             if let Some(candidate) = resolved_map.get(&output_name) {
-                let candidate_version = batch_versions
+                let (upstream, full) = batch_versions
                     .get(&output_name)
-                    .map(String::as_str)
-                    .unwrap_or(&candidate.version);
+                    .map(|(u, f)| (u.as_str(), f.as_str()))
+                    .unwrap_or((candidate.version.as_str(), candidate.version.as_str()));
                 warn_if_constraint_not_satisfied(
                     name,
                     &output_name,
-                    candidate_version,
+                    upstream,
+                    full,
                     constraint.as_ref(),
                 );
                 continue;
@@ -352,16 +356,20 @@ async fn warn_about_runtime_dependencies(
             }
 
             if let Some(installed) = db.get_part(&output_name).await? {
-                let installed_version =
+                let (upstream, full) =
                     if let Some(plan) = db.get_plan_by_id(installed.plan_id).await? {
-                        full_version(&plan.version, plan.release as u32)
+                        (
+                            plan.version.clone(),
+                            full_version(&plan.version, plan.release as u32),
+                        )
                     } else {
-                        String::new()
+                        (String::new(), String::new())
                     };
                 warn_if_constraint_not_satisfied(
                     name,
                     &output_name,
-                    &installed_version,
+                    &upstream,
+                    &full,
                     constraint.as_ref(),
                 );
                 continue;
@@ -391,36 +399,54 @@ fn full_version(version: &str, release: u32) -> String {
     }
 }
 
+/// Check a constraint against the version that matches its precision: a
+/// constraint that pins a release (`foo = 1.2-3`) is compared against the
+/// full `version-release`; one that names only the upstream version
+/// (`foo = 1.2`) is compared against the bare upstream version, so any
+/// release of the requested upstream satisfies it.
+fn constraint_satisfied(
+    constraint: &wright_model::version::VersionConstraint,
+    upstream_version: &str,
+    full_version: &str,
+) -> bool {
+    let candidate = if constraint.version.to_string().contains('-') {
+        full_version
+    } else {
+        upstream_version
+    };
+    Version::parse(candidate)
+        .map(|v| constraint.satisfies(&v))
+        .unwrap_or(false)
+}
+
 fn warn_if_constraint_not_satisfied(
     dependent: &str,
     dependency: &str,
-    version: &str,
+    upstream_version: &str,
+    full_version: &str,
     constraint: Option<&wright_model::version::VersionConstraint>,
 ) {
     let Some(constraint) = constraint else {
         return;
     };
 
-    if version.is_empty() {
+    if full_version.is_empty() {
         return;
     }
 
-    match Version::parse(version) {
-        Ok(installed_ver) if constraint.satisfies(&installed_ver) => {}
-        _ => {
-            warn!(
-                event = "deploy.version_constraint_unsatisfied",
-                dependency,
-                dependent,
-                version,
-                constraint = %constraint,
-                "'{}' requires '{}' {}, but the available version is {}; continuing deploy",
-                dependent,
-                dependency,
-                constraint,
-                version,
-            );
-        }
+    if !constraint_satisfied(constraint, upstream_version, full_version) {
+        warn!(
+            event = "deploy.version_constraint_unsatisfied",
+            dependency,
+            dependent,
+            version = full_version,
+            constraint = %constraint,
+            "'{}' requires '{}' {}, but the available version is {}; continuing deploy",
+            dependent,
+            dependency,
+            constraint,
+            full_version,
+        );
     }
 }
 
@@ -736,5 +762,31 @@ mod tests {
         let constraint = VersionConstraint::parse(">= 0.0.11").unwrap();
         let candidate = Version::parse(&full_version("0.0.11", 2)).unwrap();
         assert!(constraint.satisfies(&candidate));
+    }
+
+    #[test]
+    fn upstream_only_eq_constraint_matches_release_bearing_candidate() {
+        // Regression: a sibling pin `= 0.0.11` (no release) must match a
+        // candidate deployed as 0.0.11-1; comparing the raw strings made
+        // the Eq check fail and produced a spurious deploy warning.
+        let constraint = VersionConstraint::parse("= 0.0.11").unwrap();
+        assert!(constraint_satisfied(&constraint, "0.0.11", "0.0.11-1"));
+    }
+
+    #[test]
+    fn stale_upstream_eq_constraint_still_warns() {
+        let constraint = VersionConstraint::parse("= 0.0.10").unwrap();
+        assert!(!constraint_satisfied(&constraint, "0.0.11", "0.0.11-1"));
+    }
+
+    #[test]
+    fn release_pinned_constraint_compares_full_version() {
+        let constraint = VersionConstraint::parse("= 0.0.11-1").unwrap();
+        assert!(constraint_satisfied(&constraint, "0.0.11", "0.0.11-1"));
+
+        // `< 0.0.11-1` must not be satisfied by 0.0.11-1 itself, which a
+        // naive "check both spellings" comparison would get wrong.
+        let older = VersionConstraint::parse("< 0.0.11-1").unwrap();
+        assert!(!constraint_satisfied(&older, "0.0.11", "0.0.11-1"));
     }
 }

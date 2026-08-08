@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Upstream-only `=` constraints now match any release of that version.**
+  Deploy-time constraint checks compared `foo = 1.2` against the full
+  `1.2-1` string, so the Eq never held and every sibling pin emitted a
+  spurious warning. Constraints naming a release (`foo = 1.2-3`) are still
+  compared against the full `version-release`.
+
 ## [5.3.15] - 2026-08-08
 
 ### Fixed
