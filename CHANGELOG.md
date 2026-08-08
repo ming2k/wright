@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`${VERSION}` in `[[output]] runtime_deps` is now expanded at seal time.**
+  Split outputs pinning a sibling (e.g. `optics:flux = ${VERSION}`) seal with
+  the source plan's current version instead of the literal placeholder, which
+  never satisfied deploy-time constraint checks and produced spurious
+  "requires ... but the available version is ..." warnings.
+
 ## [5.3.14] - 2026-08-08
 
 ### Added

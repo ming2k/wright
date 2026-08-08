@@ -49,7 +49,14 @@ pub fn create_part_with_isolation(
     let spec = archive::PartSpec {
         archive_name: manifest.part_filename(),
         name: manifest.metadata.name.clone(),
-        runtime_deps: manifest.runtime_deps.clone(),
+        // Expand `${VERSION}` etc. against the source plan so split outputs
+        // can pin siblings (e.g. `optics:flux = ${VERSION}`) without
+        // hardcoding a version that goes stale on the next bump.
+        runtime_deps: manifest
+            .runtime_deps
+            .iter()
+            .map(|dep| wright_plan::variables::expand_metadata(dep, plan))
+            .collect(),
         replaces: manifest.relations.replaces.clone(),
         conflicts: manifest.relations.conflicts.clone(),
         backup_files: manifest
@@ -292,5 +299,61 @@ script = "true"
         assert_eq!(provenance.isolation, "none");
         assert!(!staging.path().join(".PARTINFO").exists());
         assert!(!staging.path().join(".FILELIST").exists());
+    }
+
+    #[test]
+    fn sealing_expands_metadata_variables_in_output_runtime_deps() {
+        // Regression: a split output pinning a sibling with
+        // `optics:flux = ${VERSION}` must seal with the plan's current
+        // version, not the literal `${VERSION}` string (which never
+        // satisfies a constraint check at deploy time).
+        let manifest = PlanManifest::parse(
+            r#"
+name = "optics"
+version = "0.0.11"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "true"
+
+[[output]]
+name = "flux"
+
+[[output]]
+name = "flux-text"
+description = "text shaping sibling"
+include = ["/usr/lib/libflux_text.so"]
+runtime_deps = ['optics:flux = ${VERSION}', 'glibc']
+"#,
+        )
+        .unwrap();
+
+        let Some(OutputConfig::Multi(ref parts)) = manifest.outputs else {
+            panic!("expected multi-output manifest");
+        };
+        let (sub_name, sub_part) = parts.iter().find(|(n, _)| n == "flux-text").unwrap();
+        let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
+
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/lib")).unwrap();
+        std::fs::write(staging.path().join("usr/lib/libflux_text.so"), "payload").unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let path = create_part_with_isolation(
+            staging.path(),
+            &sub_manifest,
+            output.path(),
+            Some(&manifest),
+            IsolationLevel::None,
+        )
+        .unwrap();
+        let info = archive::read_partinfo(&path).unwrap();
+
+        assert_eq!(info.runtime_deps, vec!["optics:flux = 0.0.11", "glibc"]);
     }
 }
