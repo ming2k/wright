@@ -3,7 +3,7 @@
 Wright uses OverlayFS in two separate but related places: the **host-side build
 pipeline** (`LayerManager`) stacks completed build stages so that each new stage
 sees the accumulated output of all previous stages; and the **strict isolation
-sandbox** (`src/isolation/native.rs`) mounts a per-task writable root
+sandbox** (`src/isolation/native/run.rs`) mounts a per-task writable root
 filesystem on top of read-only host system directories. Both paths share the
 same kernel mechanism, and both are exposed to the same class of concurrency
 races that OverlayFS inherits from the VFS layer.
@@ -65,7 +65,7 @@ flowchart LR
 
 ### Host-side stage layering (`LayerManager`)
 
-`src/forge/layers.rs` maintains an OverlayFS stack for every plan build.
+`src/foundry/layers.rs` maintains an OverlayFS stack for every plan build.
 Directories under `<build_root>/layers/` hold the frozen output of each stage:
 
 ```text
@@ -157,7 +157,7 @@ flowchart LR
     mount --> M3
 ```
 
-### Isolation sandbox root (`src/isolation/native.rs`)
+### Isolation sandbox root (`src/isolation/native/run.rs`)
 
 Strict isolation runs each build command inside a mount namespace. Instead of
 copying a full sysroot, the sandbox mounts an OverlayFS whose lower layers are
@@ -423,17 +423,17 @@ flowchart LR
 
 Wright uses three independent layers of defence:
 
-1. **OverlayFS with per-task upper layers** (`src/isolation/native.rs`): any
+1. **OverlayFS with per-task upper layers** (`src/isolation/native/run.rs`): any
    write through the overlay path is copy-up'd into a private upper inode,
    permanently eliminating contention for that path. See
    [ADR-0013](../adr/0013-multi-lowerdir-isolation.md).
 
-2. **Top-level execvp retry** (`src/isolation/native.rs`): the grandchild
+2. **Top-level execvp retry** (`src/isolation/native/run.rs`): the grandchild
    process retries `execvp()` up to 8 times with exponential backoff
    (`50 ms · 2^attempt`). This catches collisions on the top-level command
    itself.
 
-3. **Stage-level retry with jitter** (`src/forge/pipeline.rs`): when a stage
+3. **Stage-level retry with jitter** (`src/foundry/forge/execute.rs`): when a stage
    exits with code 126 and its output contains "Text file busy", the pipeline
    retries the *entire stage* up to 10 times with capped exponential backoff
    (200 ms – 1000 ms base) and **randomised jitter** on each delay.
@@ -503,9 +503,9 @@ flowchart LR
 
 ## References
 
-- `src/forge/layers.rs` — `LayerManager`, mount/unmount, cleanup, and commit
-- `src/isolation/native.rs` — isolation sandbox mount namespace and overlay setup
-- `src/forge/pipeline.rs` — stage execution and ETXTBSY retry logic
+- `src/foundry/layers.rs` — `LayerManager`, mount/unmount, cleanup, and commit
+- `src/isolation/native/run.rs` — isolation sandbox mount namespace and overlay setup
+- `src/foundry/forge/execute.rs` — stage execution and ETXTBSY retry logic
 - [ADR-0012](../adr/0012-overlayfs-per-task-upper.md) — original per-task upper layer design (superseded)
 - [ADR-0013](../adr/0013-multi-lowerdir-isolation.md) — current multi-lowerdir isolation design
 - [Isolation Race Handling](../dev/isolation-pitfalls.md) — contributor-oriented deep dive on all races

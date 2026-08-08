@@ -9,11 +9,13 @@ Wright uses the Ship of Theseus metaphor: the ship keeps sailing while its parts
 | **Plan** | A `plan.toml` build definition. Describes how to fetch, build, and produce one or more parts. |
 | **Part** | A built `.wright.tar.zst` archive. The installable unit. |
 | **System** | The live machine under management, tracked in `wright.db`. |
+| **Inventory** | The local stock of built part archives in `parts_dir`, scanned on demand — there is no separate catalogue database. Used for reuse, rollback, and audit. See [Local Part Inventory](local-inventory.md). |
 | **Output** | A named sub-part produced by a single plan. A plan can declare multiple outputs (e.g. `gcc` and `libstdc++` from one build). |
+| **Folio** | A `<name>.toml` manifest in `folios_dir` naming the plans that form a coherent system, plus `[[provide]]` external assumptions and `[[hook]]` post-launch scripts. Referenced as `@name` by `wright launch` and `wright install`. See [Folio Manifest](folio-manifest.md). |
 | **Assembly** | An informal grouping of plans (a directory of plan directories) processed together by `wright install` or `wright build`. |
-| **Pack** | A `.wright.pack.tar` artifact bundling a `pack.toml` manifest, the part archives it references, and an optional `overlay/` configuration tree. Superseded by the **folio** manifest; retained for backward compatibility only. |
+| **Pack** | A removed `.wright.pack.tar` artifact that bundled a `pack.toml` manifest, the part archives it referenced, and an optional `overlay/` configuration tree. The format and the `wright pack` command were removed; the **folio** manifest takes its place. See [ADR-0015](../adr/0015-folio-manifest-replaces-pack.md). |
 | **Launch** | The act of converging a target root from a folio manifest or from plan names, performed by `wright launch`. The target gets its own `wright.db`, plan tree, and `wright.toml`, and is fully self-contained. |
-| **Overlay** | An optional `/-rooted` tree that used to ship inside a pack for base config like `/etc/hostname` and `/etc/fstab`. In the folio era, post-install config is handled by the folio's `[config]` block instead. |
+| **Overlay** | An optional `/-rooted` tree that used to ship inside a pack for base config like `/etc/hostname` and `/etc/fstab`. In the folio era, post-install config is handled by folio `[[hook]]` post-launch scripts instead. |
 
 ## Dependency Terms
 
@@ -30,7 +32,7 @@ Wright uses the Ship of Theseus metaphor: the ship keeps sailing while its parts
 Each registered part is independently characterized by these three states.
 A part can be `registered` without being `satisfied`, and `satisfied`
 without being `runnable`. See
-[Dependency Philosophy](../explanation/dependency-philosophy.md).
+[Dependency DAG](../explanation/dependency-dag.md).
 
 | State | Meaning |
 |-------|---------|

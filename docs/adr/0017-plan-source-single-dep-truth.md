@@ -192,5 +192,5 @@ the earlier-feedback option.
 
 - [ADR-0016](0016-advisory-runtime-dependencies.md) — the registry-level
   advisory model this ADR sits on top of.
-- [Dependency Philosophy](../explanation/dependency-philosophy.md) —
+- [Dependency DAG](../explanation/dependency-dag.md) —
   user-facing exposition; will be updated to mention the ELF lint.

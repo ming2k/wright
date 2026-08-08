@@ -19,15 +19,15 @@ Examples:
 )]
 pub struct CleanArgs {
     /// Plan names to clean (defaults to all plans if omitted)
-    #[arg(value_name = "PLAN")]
+    #[arg(value_name = "TARGET")]
     pub plans: Vec<String>,
 
     /// Clean built package archives (.wright.tar.zst) as well
-    #[arg(long, short)]
+    #[arg(long)]
     pub parts: bool,
 
     /// Clean Wright command log files
-    #[arg(long, short)]
+    #[arg(long)]
     pub logs: bool,
 }
 

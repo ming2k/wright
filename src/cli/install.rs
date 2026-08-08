@@ -34,11 +34,9 @@ pub struct InstallArgs {
     #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
 
-    /// Expand dependencies.
-    /// `link` follows ABI-sensitive link dependencies.
-    /// `runtime` follows runtime dependencies.
-    /// `build` follows build dependencies.
-    /// `all` follows all dependencies.
+    /// Expand dependencies: `link` follows ABI-sensitive link dependencies,
+    /// `runtime` runtime dependencies, `build` build dependencies, `all` all of
+    /// them. Bare `--deps` means `all`; when omitted, all domains are followed.
     #[arg(
         short = 'd',
         long = "deps",
@@ -48,11 +46,10 @@ pub struct InstallArgs {
     )]
     pub deps: Option<DomainArg>,
 
-    /// Expand reverse dependents (rdeps) for deployed parts.
-    /// `link` follows ABI-sensitive link dependents.
-    /// `runtime` follows runtime dependents.
-    /// `build` follows build dependents.
-    /// `all` follows all dependents.
+    /// Additionally rebuild deployed parts that depend on the targets:
+    /// `link` follows ABI-sensitive link dependents, `runtime` runtime
+    /// dependents, `build` build dependents, `all` all of them. Bare `--rdeps`
+    /// means `link`; when omitted, no reverse expansion happens.
     #[arg(
         short = 'r',
         long = "rdeps",
@@ -107,32 +104,21 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
             ));
         }
         return Err(WrightError::ForgeError(
-            "no targets specified (pass plan names, group names prefixed with '@', or paths as arguments or via stdin)".into(),
+            "no targets specified (pass plan names, folio names prefixed with '@', or paths as arguments or via stdin)".into(),
         ));
     }
 
-    if args.dry_run {
-        println!("Apply plan (dry-run):");
-        println!("  targets: {}", targets.join(", "));
-        return Ok(());
-    }
-
-    let dep_domain = if args.deps.is_none() && args.rdeps.is_none() {
-        DepDomain::ALL
-    } else {
-        let mut domain = DepDomain::empty();
-        if let Some(d) = args.deps {
-            domain.insert(map_domain(d));
-        }
-        if let Some(d) = args.rdeps {
-            domain.insert(map_domain(d));
-        }
-        domain
-    };
+    // Forward deps and reverse dependents are independent axes: `--deps`
+    // restricts which forward relationships are followed (default `all`),
+    // while `--rdeps` additionally rebuilds deployed parts that depend on
+    // the targets (bare `--rdeps` means `link`; omitted means none).
+    let deps = args.deps.map(map_domain).unwrap_or(DepDomain::ALL);
+    let rdeps = args.rdeps.map(map_domain).unwrap_or_else(DepDomain::empty);
 
     execute_install(InstallRequest {
         targets,
-        dep_domain,
+        deps,
+        rdeps,
         match_policies: args
             .match_policies
             .into_iter()
@@ -149,6 +135,7 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         part_store: &part_store,
         build_opts: None,
         run_hooks: true,
+        dry_run: args.dry_run,
     })
     .await
 }

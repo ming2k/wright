@@ -48,7 +48,7 @@ pub struct ResolveArgs {
     pub rdeps: Option<DomainArg>,
 
     /// Filter plans by installed state; may be repeated
-    #[arg(long = "match", value_enum)]
+    #[arg(long = "match", alias = "match-policies", value_enum)]
     pub match_policies: Vec<MatchPolicyArg>,
 
     /// Maximum traversal depth; `0` means unlimited

@@ -8,6 +8,7 @@ use wright_state::database::InstalledDb;
 ///
 /// Exit semantics: returns `WrightError::DependencyError` when any
 /// problem is found, so the CLI dispatch layer maps to a non-zero exit.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_check(
     db: &InstalledDb,
     root_dir: &Path,
@@ -15,9 +16,10 @@ pub async fn execute_check(
     deep: bool,
     integrity_only: bool,
     check_files: bool,
+    json: bool,
 ) -> Result<()> {
     let t0 = Instant::now();
-    let issues = super::health::run_standard_checks(
+    let outcome = super::health::run_standard_checks(
         db,
         root_dir,
         only_part,
@@ -27,7 +29,17 @@ pub async fn execute_check(
     )
     .await?;
 
-    if issues == 0 {
+    if json {
+        let report = serde_json::json!({
+            "scope": scope_label(only_part),
+            "mode": json_mode_label(deep, check_files, integrity_only),
+            "issue_count": outcome.total_issues,
+            "issues": outcome.issues,
+        });
+        super::print_json(&report)?;
+    }
+
+    if outcome.total_issues == 0 {
         let scope = scope_label(only_part);
         let mode = check_mode_label(deep, check_files, integrity_only);
         crate::cli_action!(
@@ -43,7 +55,7 @@ pub async fn execute_check(
     let flag = error_flag_label(deep, check_files);
     Err(WrightError::DependencyError(format!(
         "check{} found {} issue(s)",
-        flag, issues,
+        flag, outcome.total_issues,
     )))
 }
 
@@ -63,6 +75,18 @@ fn check_mode_label(deep: bool, check_files: bool, integrity_only: bool) -> &'st
         "(integrity + files + deps)"
     } else {
         "(integrity + deps)"
+    }
+}
+
+fn json_mode_label(deep: bool, check_files: bool, integrity_only: bool) -> &'static str {
+    if integrity_only {
+        "integrity"
+    } else if deep {
+        "integrity+deps+elf"
+    } else if check_files {
+        "integrity+files+deps"
+    } else {
+        "integrity+deps"
     }
 }
 

@@ -61,7 +61,7 @@ Some valid toolchains contain cycles (e.g. `gcc` needs `binutils`, which needs `
 
 - `collect_phase_deps` computes the full dependency set and, optionally, the MVP (Minimum Viable Product) dependency set.
 - Plans that differ between the two sets are flagged as bootstrap candidates.
-- `inject_bootstrap_passes` (`src/forge/mvp.rs`) adds tasks like `gcc:bootstrap` to the graph.  The bootstrap pass builds with fewer dependencies, breaking the cycle.  A second full `gcc` build then uses the bootstrapped compiler.
+- `inject_bootstrap_passes` (`src/resolve/bootstrap.rs`) adds tasks like `gcc:bootstrap` to the graph.  The bootstrap pass builds with fewer dependencies, breaking the cycle.  A second full `gcc` build then uses the bootstrapped compiler.
 
 ### Rebuild Propagation
 

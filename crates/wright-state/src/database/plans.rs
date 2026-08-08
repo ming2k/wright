@@ -126,8 +126,8 @@ impl InstalledDb {
         }
     }
 
-    /// Ensure a plan is registered in the database from pack metadata.
-    /// If the plan already exists, updates its version metadata to match the pack.
+    /// Ensure a plan is registered in the database from part metadata.
+    /// If the plan already exists, updates its version metadata to match the part.
     pub async fn ensure_plan_registered(&self, registration: RegisterPlan<'_>) -> Result<i64> {
         let plan = registration.plan;
         let plan_id = if let Some(existing) = self.get_plan(plan.name).await? {

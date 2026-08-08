@@ -95,7 +95,7 @@ This consolidates the previous separate flags into a single control for situatio
 ## Execution Model
 
 The implementation in `src/cli/install.rs` (handler) and
-`src/operations/install.rs` (`execute_install`) follows this pipeline.
+`crates/wright-engine/src/operations/install/execute.rs` (`execute_install`) follows this pipeline.
 
 ### 1. Determine Explicit Targets
 

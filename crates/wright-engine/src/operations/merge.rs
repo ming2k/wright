@@ -16,18 +16,19 @@ fn looks_like_archive_path(arg: &str) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_merge(
-    parts: Vec<String>,
+    targets: Vec<String>,
     force: bool,
     nodeps: bool,
     path: bool,
+    dry_run: bool,
     _config: &GlobalConfig,
     db_path: &Path,
     root_dir: &Path,
     part_store: &LocalPartStore,
 ) -> Result<()> {
-    let parts = collect_stdin_args(parts)?;
+    let targets = collect_stdin_args(targets)?;
     use std::io::IsTerminal;
-    if parts.is_empty() {
+    if targets.is_empty() {
         if !std::io::stdin().is_terminal() {
             if path {
                 return Err(WrightError::ForgeError(
@@ -35,7 +36,7 @@ pub async fn execute_merge(
                 ));
             }
             return Err(WrightError::ForgeError(
-                "no install targets received from stdin; did the resolve succeed?".into(),
+                "no merge targets received from stdin; did the resolve succeed?".into(),
             ));
         }
         if path {
@@ -44,15 +45,15 @@ pub async fn execute_merge(
             ));
         }
         return Err(WrightError::ForgeError(
-        "no install targets specified (pass plan names/directories, or use --path for archive paths)".into()
+        "no merge targets specified (pass plan names/directories, or use --path for archive paths)".into()
     ));
     }
 
     if !path {
-        for arg in &parts {
+        for arg in &targets {
             if looks_like_archive_path(arg) {
                 return Err(WrightError::ForgeError(format!(
-                    "'{}' looks like an archive path; use `wright install --path {}`",
+                    "'{}' looks like an archive path; use `wright merge --path {}`",
                     arg, arg
                 )));
             }
@@ -63,19 +64,14 @@ pub async fn execute_merge(
         .await
         .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
 
-    let command_str = format!("merge {}", parts.join(" "));
-    let tx_id = wright_state::delivery::begin_delivery(&db, &command_str).await?;
-    let session = SessionContext {
-        id: format!(
-            "{:x}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        ),
-        command: command_str,
-    };
+    // ── Resolution phase (read-only) ────────────────────────────────
+    // Turn every argument into a concrete archive path. `explicit` records
+    // which part names the user asked for directly.
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut explicit: HashSet<String> = HashSet::new();
 
     if path {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        for arg in &parts {
+        for arg in &targets {
             let p = PathBuf::from(arg);
             if !p.is_file() {
                 return Err(WrightError::ForgeError(format!(
@@ -85,31 +81,8 @@ pub async fn execute_merge(
             }
             paths.push(p);
         }
-
-        let result = crate::transaction::deploy_parts(
-            &db,
-            &paths,
-            root_dir,
-            part_store,
-            force,
-            nodeps,
-            true,
-            session.clone(),
-        )
-        .await;
-
-        match result {
-            Ok(()) => {}
-            Err(e) => {
-                let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
-                return Err(WrightError::DeployError(format!("install archives: {}", e)));
-            }
-        }
     } else {
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut explicit: HashSet<String> = HashSet::new();
-
-        for arg in &parts {
+        for arg in &targets {
             // Try resolving as a part name first.
             if let Some(resolved) = part_store
                 .resolve(arg)
@@ -165,8 +138,42 @@ pub async fn execute_merge(
                 explicit.insert(pn);
             }
         }
+    }
 
-        let result = crate::transaction::deploy_parts_with_explicit_targets(
+    if dry_run {
+        println!("[dry-run] merge -> {}", root_dir.display());
+        println!("[dry-run] would deploy {} archive(s):", paths.len());
+        for p in &paths {
+            println!("  {}", p.display());
+        }
+        return Ok(());
+    }
+
+    // ── Deploy phase ────────────────────────────────────────────────
+    let command_str = format!("merge {}", targets.join(" "));
+    let tx_id = wright_state::delivery::begin_delivery(&db, &command_str).await?;
+    let session = SessionContext {
+        id: format!(
+            "{:x}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ),
+        command: command_str,
+    };
+
+    let result = if path {
+        crate::transaction::deploy_parts(
+            &db,
+            &paths,
+            root_dir,
+            part_store,
+            force,
+            nodeps,
+            true,
+            session.clone(),
+        )
+        .await
+    } else {
+        crate::transaction::deploy_parts_with_explicit_targets(
             &db,
             &paths,
             &explicit,
@@ -178,15 +185,12 @@ pub async fn execute_merge(
             true,
             session.clone(),
         )
-        .await;
+        .await
+    };
 
-        match result {
-            Ok(()) => {}
-            Err(e) => {
-                let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
-                return Err(WrightError::DeployError(format!("install targets: {}", e)));
-            }
-        }
+    if let Err(e) = result {
+        let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
+        return Err(WrightError::DeployError(format!("merge: {}", e)));
     }
 
     wright_state::delivery::complete_delivery(&db, tx_id).await?;

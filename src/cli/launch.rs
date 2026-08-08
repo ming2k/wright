@@ -50,8 +50,8 @@ pub struct LaunchArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
-    /// Alternate root directory for file operations.
-    #[arg(long)]
+    /// Target root directory to fill (required, e.g. /mnt/new; pass '/' explicitly for the live system).
+    #[arg(long, required = true, value_name = "DIR")]
     pub root: Option<PathBuf>,
 }
 

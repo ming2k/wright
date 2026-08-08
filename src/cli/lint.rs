@@ -8,9 +8,10 @@ use crate::error::Result;
 #[derive(Args)]
 pub struct LintArgs {
     /// Plan names or paths to validate (all plans if omitted)
+    #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
     /// Recurse into subdirectories
-    #[arg(long, short = 'r')]
+    #[arg(long)]
     pub recursive: bool,
     /// Verify deployed part file integrity (SHA-256 checksums)
     #[arg(long)]

@@ -28,7 +28,7 @@ skeleton, no configuration, and a target root that may not even be bootable yet.
 | Build outputs | Land on host | Redirected into target |
 | Plan sources | Read from host | Copied into target for self-maintenance |
 | External assumptions | Already registered | Registered from folio before build |
-| Post-install config | Not applied | Applied from folio `[config]` |
+| Post-install config | Not applied | Applied by folio `[[hook]]` post-launch scripts |
 
 The refusal to target `/` is deliberate.  Overwriting a running system's root
 with a fresh bootstrap would corrupt the live system.  `launch` always operates
@@ -40,9 +40,9 @@ on a separate mount point.
 
 ### Folio mode (`--folio`)
 
-A single `folio.toml` drives the entire bootstrap.  The folio names the plans,
-declares external assumptions, and optionally specifies post-install
-configuration.  This is the recommended path: one file fully describes the
+A single folio manifest (`<name>.toml`) drives the entire bootstrap.  The
+folio names the plans, declares external assumptions, and optionally specifies
+post-launch hooks.  This is the recommended path: one file fully describes the
 target system.
 
 ```bash
@@ -102,8 +102,9 @@ wright launch --root /mnt/new @core # uses default plans_dir and folios_dir
    Wright attempting to deploy the kernel, host toolchain, or other
    externals.
 
-9. **Build → Seal → Deploy** — drive the full `resolve → build → seal →
-   deploy` pipeline, wave by wave, reusing `wright install`'s engine.
+9. **Build → Package → Merge** — drive the full `resolve → build → package →
+   merge` pipeline (`seal` is an alias of `package`), wave by wave, reusing
+   `wright install`'s engine.
    Each completed wave is installed into the target before the next wave
    begins, so a plan's dependencies are already on disk when it enters
    its `configure` stage. **Plan-level deploy hooks (`pre_install`, `post_install`, etc.) are disabled during this phase**, as they are designed to run natively on the target system (which may not be bootable or compatible with the host environment during `launch`). System configuration must be handled by folio hooks instead.
@@ -124,7 +125,7 @@ not error or duplicate — it converges drift:
 
 - Plans that are already deployed and match their source definition are skipped.
 - Missing plans are built and installed.
-- Changed plans are rebuilt (build → seal → deploy).
+- Changed plans are rebuilt (build → package → merge).
 - Plan and folio files in the target are re-synced if they differ from the host.
 - Assumed parts already registered are not duplicated.
 
@@ -158,7 +159,8 @@ ship, maintained through the same `install`, `upgrade`, and `remove` commands.
 
 ## Folio Manifest as the Source of Truth
 
-The folio manifest (`folio.toml`) is the single declarative file that describes
+The folio manifest (`<name>.toml`) is the single declarative file that
+describes
 everything needed to bootstrap a system.  It replaces the earlier pack format
 (see [ADR-0015](../adr/0015-folio-manifest-replaces-pack.md)) which bundled
 pre-built archives — a folio is a build recipe, not a binary bundle.  This means:

@@ -3,119 +3,28 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::{Result, WrightError};
-use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, trace, warn};
 
-use crate::config::GlobalConfig;
 use crate::foundry::{BuildOptions, Foundry};
 use crate::resolve::{
-    self, BuildExecutionPlan, BuildPlanOptions, DepDomain, MatchPolicy, ResolveOptions,
-    create_execution_plan, resolve_build_set, resolve_explicit_plan_names,
+    self, BuildExecutionPlan, BuildPlanOptions, MatchPolicy, ResolveOptions, create_execution_plan,
+    resolve_build_set, resolve_explicit_plan_names,
 };
 use wright_part::folio;
-use wright_part::store::LocalPartStore;
 use wright_plan::manifest::{OutputConfig, PlanManifest};
 use wright_state::cas::CasStore;
 use wright_state::database::{InstalledDb, SessionContext};
 
-pub struct InstallRequest<'a> {
-    pub targets: Vec<String>,
-    pub dep_domain: DepDomain,
-    pub match_policies: Vec<MatchPolicy>,
-    pub depth: Option<usize>,
-    pub force: bool,
-    /// Clear the forge workspace, including source/work trees. Distinct from
-    /// `force`: `clean` forces a from-scratch forge without redeploying parts
-    /// that are already converged. `force` implies clean.
-    pub clean: bool,
-    pub config: &'a GlobalConfig,
-    pub db_path: &'a Path,
-    pub root_dir: &'a Path,
-    pub verbose: u8,
-    pub quiet: bool,
-    pub part_store: &'a LocalPartStore,
-    /// Optional forge options. When provided, the install flow uses these
-    /// instead of default BuildPlanOptions (used by `wright build`).
-    pub build_opts: Option<BuildPlanOptions>,
-    pub run_hooks: bool,
-}
-
-/// Pre-computed fingerprint for each plan name in the build set.
-///
-/// The fingerprint captures the plan's own build key and the fingerprints of
-/// its direct build dependencies, forming a content-addressed identity that
-/// covers the full transitive build closure.
-struct PlanFingerprints {
-    /// plan_name -> closure fingerprint
-    fingerprints: HashMap<String, String>,
-}
-
-impl PlanFingerprints {
-    /// Compute fingerprints for all plans in the execution plan.
-    fn compute(plan: &BuildExecutionPlan, foundry: &Foundry) -> Result<Self> {
-        let mut fingerprints: HashMap<String, String> = HashMap::new();
-
-        // Process batch by batch so that dependency fingerprints are available
-        // when computing closure fingerprints for later batches.
-        for batch in plan.batches() {
-            for task in batch {
-                let base = BuildExecutionPlan::task_base_name(task);
-                let plan_path = plan
-                    .plan_path_for_task(task)
-                    .ok_or_else(|| WrightError::ForgeError(format!("no path for task {}", task)))?;
-                let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
-
-                let build_key = foundry.compute_build_key(&manifest)?;
-
-                // Collect fingerprints of build dependencies.
-                let dep_names = plan.deps_for_task(task);
-                let mut dep_fps: HashMap<String, String> = HashMap::new();
-                for dep_name in dep_names {
-                    let dep_base = BuildExecutionPlan::task_base_name(dep_name);
-                    if let Some(fp) = fingerprints.get(dep_base) {
-                        dep_fps.insert(dep_base.to_string(), fp.clone());
-                    }
-                }
-
-                let closure_fp = CasStore::compute_closure_fingerprint(&build_key, &dep_fps);
-                trace!(event = "fingerprint.closure", plan_name = %base, closure_fp = %&closure_fp[..8], "Computed closure fingerprint");
-
-                // Insert for both the full task and its bootstrap variant.
-                // Bootstrap tasks get a different fingerprint to distinguish
-                // from full builds (different compilation results).
-                fingerprints.insert(base.to_string(), closure_fp.clone());
-                if task.ends_with(":bootstrap") {
-                    fingerprints.insert(task.clone(), closure_fp);
-                } else {
-                    // Also insert the :bootstrap variant if it exists.
-                    let bootstrap_task = format!("{}:bootstrap", base);
-                    if plan.build_set().contains(&bootstrap_task) {
-                        let mut bp = Sha256::new();
-                        bp.update(closure_fp.as_bytes());
-                        bp.update(b":bootstrap");
-                        let bootstrap_fp = format!("{:x}", bp.finalize());
-                        trace!(event = "fingerprint.bootstrap", plan_name = %base, bootstrap_fp = %&bootstrap_fp[..8], "Computed bootstrap fingerprint");
-                        fingerprints.insert(bootstrap_task, bootstrap_fp);
-                    }
-                }
-            }
-        }
-
-        Ok(Self { fingerprints })
-    }
-
-    fn get(&self, name: &str) -> Option<&String> {
-        self.fingerprints.get(name)
-    }
-}
+use super::fingerprints::PlanFingerprints;
+use super::request::InstallRequest;
 
 pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let workflow_t0 = std::time::Instant::now();
     let InstallRequest {
         targets,
-        dep_domain,
+        deps,
+        rdeps,
         match_policies,
         depth,
         force,
@@ -128,6 +37,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         part_store,
         build_opts,
         run_hooks,
+        dry_run,
     } = request;
 
     if targets.is_empty() {
@@ -149,8 +59,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     register_folio_assumptions(db_path, &expansion.provides).await?;
 
     let resolve_opts = ResolveOptions {
-        deps: dep_domain,
-        rdeps: DepDomain::empty(),
+        deps,
+        rdeps,
         match_policies: if match_policies.is_empty() {
             vec![MatchPolicy::Outdated]
         } else {
@@ -188,7 +98,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let explicit_plan_names = resolve_explicit_plan_names(&plan_dirs, &targets)
         .map_err(|e| WrightError::ForgeError(format!("explicit plan names: {}", e)))?;
 
-    let plan = create_execution_plan(config, build_set, &build_opts, dep_domain)
+    let plan = create_execution_plan(config, build_set, &build_opts, deps | rdeps)
         .map_err(|e| WrightError::ForgeError(format!("create_execution_plan: {}", e)))?;
 
     let total_packages = plan.build_set().len();
@@ -259,6 +169,20 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 );
             }
         }
+    }
+
+    if dry_run {
+        // Preview only: the plan above is fully resolved, so report the exact
+        // batches and stop before any forge/seal/deploy side effects.
+        println!("[dry-run] install -> {}", root_dir.display());
+        println!(
+            "[dry-run] would forge and deploy {} package(s) across {} batch(es):",
+            total_packages, total_batches
+        );
+        for (idx, entries) in batch_entries.iter().enumerate() {
+            println!("  batch {}: {}", idx + 1, entries.join(", "));
+        }
+        return Ok(());
     }
 
     let plan = Arc::new(plan);

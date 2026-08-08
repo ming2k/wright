@@ -13,6 +13,7 @@ use wright_state::database::InstalledDb;
 pub async fn execute_upgrade(
     targets: Vec<String>,
     force: bool,
+    dry_run: bool,
     depth: Option<usize>,
     config: &GlobalConfig,
     db_path: &Path,
@@ -87,10 +88,23 @@ pub async fn execute_upgrade(
         }
     }
 
+    if dry_run {
+        println!("[dry-run] upgrade -> {}", root_dir.display());
+        println!(
+            "[dry-run] would rebuild and deploy {} plan(s):",
+            build_set.len()
+        );
+        for name in &build_set {
+            println!("  {}", name);
+        }
+        return Ok(());
+    }
+
     // Run the full install workflow (resolve → forge → seal → deploy) for the resolved set.
     execute_install(InstallRequest {
         targets: build_set,
-        dep_domain: DepDomain::ALL,
+        deps: DepDomain::ALL,
+        rdeps: DepDomain::empty(),
         match_policies: vec![],
         depth,
         force,
@@ -103,6 +117,7 @@ pub async fn execute_upgrade(
         part_store,
         build_opts: None,
         run_hooks: true,
+        dry_run: false,
     })
     .await
 }

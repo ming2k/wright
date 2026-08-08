@@ -284,7 +284,7 @@ pub async fn resolve_build_set(
             plans_to_build = retained;
         }
 
-        if opts.rdeps.contains(DepDomain::ALL) {
+        if !opts.rdeps.is_empty() {
             let installed_names: HashSet<String> = db
                 .list_parts()
                 .await

@@ -66,7 +66,7 @@ wright install hello --dry-run
 ```bash
 wright merge hello
 wright upgrade hello
-wright sysupgrade
+wright upgrade all
 ```
 
 ## Remove and Inspect
@@ -76,15 +76,20 @@ wright remove nginx
 wright remove --cascade nginx
 wright list --orphans
 wright resolve nginx --tree --rdeps
-wright query nginx
+wright list --long
 wright files nginx
-wright verify
+wright check nginx
 wright doctor
 ```
 
 ## Clean Up Old Archives
 
+`wright prune` keeps only the latest archive of each part. It is a dry run by
+default; pass `--apply` to actually delete:
+
 ```bash
+wright prune
+wright prune --apply
 ```
 
 ## Typical Workflows
@@ -101,7 +106,7 @@ wright merge hello
 
 ```bash
 wright install hello openssl
-wright sysupgrade
+wright upgrade all
 ```
 
 ### Explicit Rebuild Scope

@@ -279,7 +279,7 @@ impl GlobalConfig {
             figment = figment.merge(Toml::file("./wright.toml"));
         }
 
-        // Allow env var overrides, e.g., WRIGHT_WORKDIR
+        // Allow env var overrides, e.g., WRIGHT_BUILD_FORGE_DIR
         figment = figment.merge(Env::prefixed("WRIGHT_").split("_"));
 
         let config: Self = figment

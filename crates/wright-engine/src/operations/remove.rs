@@ -10,6 +10,7 @@ pub async fn execute_remove(
     force: bool,
     recursive: bool,
     cascade: bool,
+    dry_run: bool,
     root_dir: &std::path::Path,
 ) -> Result<()> {
     let mut parts_owned: Vec<String> = Vec::new();
@@ -28,16 +29,6 @@ pub async fn execute_remove(
         }
     }
 
-    let command_str = format!("remove {}", parts_owned.join(" "));
-    let tx_id = wright_state::delivery::begin_delivery(db, &command_str).await?;
-    let session = SessionContext {
-        id: format!(
-            "{:x}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        ),
-        command: command_str,
-    };
-
     let batch_targets: HashSet<String> = if recursive {
         HashSet::new()
     } else {
@@ -50,6 +41,52 @@ pub async fn execute_remove(
         transaction::order_removal_batch(db, &parts_owned)
             .await
             .map_err(|e| WrightError::RemoveError(format!("failed to plan removal order: {}", e)))?
+    };
+
+    if dry_run {
+        // Read-only preview: expand the same dependents/cascade lists the
+        // removal loop would walk, in the same order, without starting a
+        // delivery transaction.
+        let mut planned: Vec<String> = Vec::new();
+        for name in &removal_order {
+            if recursive {
+                let dependents = db.get_recursive_dependents(name).await.map_err(|e| {
+                    WrightError::DatabaseError(format!(
+                        "failed to resolve dependents of {}: {}",
+                        name, e
+                    ))
+                })?;
+                planned.extend(dependents);
+            }
+            planned.push(name.clone());
+            if cascade {
+                let orphans = transaction::cascade_remove_list(db, name)
+                    .await
+                    .map_err(|e| {
+                        WrightError::RemoveError(format!(
+                            "failed to compute cascade list for {}: {}",
+                            name, e
+                        ))
+                    })?;
+                planned.extend(orphans);
+            }
+        }
+        println!("[dry-run] remove -> {}", root_dir.display());
+        println!("[dry-run] would remove {} part(s):", planned.len());
+        for name in &planned {
+            println!("  {}", name);
+        }
+        return Ok(());
+    }
+
+    let command_str = format!("remove {}", parts_owned.join(" "));
+    let tx_id = wright_state::delivery::begin_delivery(db, &command_str).await?;
+    let session = SessionContext {
+        id: format!(
+            "{:x}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ),
+        command: command_str,
     };
 
     let workflow_t0 = std::time::Instant::now();
@@ -82,7 +119,7 @@ pub async fn execute_remove(
                     let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
                     let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                     tracing::error!(event = "remove.failed", part_name = %dep, error = %e, "Removal failed");
-                    std::process::exit(1);
+                    return Err(WrightError::RemoveError(format!("remove {}: {}", dep, e)));
                 }
                 total_removed += 1;
             }
@@ -129,7 +166,7 @@ pub async fn execute_remove(
             let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
             let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
             tracing::error!(event = "remove.failed", part_name = %name, error = %e, "Removal failed");
-            std::process::exit(1);
+            return Err(WrightError::RemoveError(format!("remove {}: {}", name, e)));
         }
         total_removed += 1;
 
@@ -141,7 +178,10 @@ pub async fn execute_remove(
                 let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
                 let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                 tracing::error!(event = "remove.failed", part_name = %orphan, error = %e, "Removal failed");
-                std::process::exit(1);
+                return Err(WrightError::RemoveError(format!(
+                    "remove {}: {}",
+                    orphan, e
+                )));
             }
             total_removed += 1;
         }

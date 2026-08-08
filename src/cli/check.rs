@@ -11,7 +11,8 @@ Examples:
   wright check
   wright check zlib
   wright check --deep
-  wright check --integrity-only";
+  wright check --integrity-only
+  wright check --json";
 
 #[derive(Args)]
 #[command(
@@ -25,6 +26,10 @@ Examples:
                   the database still exists on disk.  Use this to detect \
                   partially-uninstalled parts or files deleted by external \
                   tools.\n\n\
+                  With --json, print a machine-readable report to stdout: \
+                  {\"scope\", \"mode\", \"issue_count\", \"issues\": [...]} \
+                  where each issue carries a `check` tag identifying the \
+                  check that produced it.\n\n\
                   Per ADR-0016 the registry is advisory: this command \
                   reports state, it does not change it. Exit code is 0 \
                   when everything resolves and 1 when any unsatisfied \
@@ -51,6 +56,10 @@ pub struct CheckArgs {
     #[arg(long = "files")]
     pub check_files: bool,
 
+    /// Emit a machine-readable JSON report instead of text
+    #[arg(long)]
+    pub json: bool,
+
     /// Alternate root directory for file operations
     #[arg(long)]
     pub root: Option<PathBuf>,
@@ -66,6 +75,7 @@ pub async fn run(args: CheckArgs, ctx: &Context<'_>) -> Result<()> {
         args.deep,
         args.integrity_only,
         args.check_files,
+        args.json,
     )
     .await
 }

@@ -21,7 +21,7 @@ install -m755 target/release/wright /usr/local/bin/
 
 - `wright build` turns plans into staging directories.
 - `wright package` turns build staging directories into local part archives.
-- `wright` installs and upgrades the live system from packaged plan outputs in `parts_dir`.
+- `wright merge` deploys packaged plan outputs from `parts_dir` onto the live system.
 - `wright install` is the high-level source-first combo workflow: resolve the
  build graph, add missing or outdated dependency plans, build each
  wave, and install or upgrade each wave before continuing.
@@ -59,26 +59,26 @@ script = "install -Dm755 hello ${STAGING_DIR}/usr/bin/hello"
 You now have one plan directory, and the pipeline scripts can use `${NAME}` /
 `${VERSION}` for plan metadata.
 
-Build and install it:
-
-```bash
-wright build plans/hello
-wright package plans/hello
-wright install hello
-```
-
-Or let Wright drive the whole source-first install/upgrade flow:
+Build and install it with the source-first combo command:
 
 ```bash
 wright install plans/hello
 ```
 
+Or run the pipeline steps individually:
+
+```bash
+wright build plans/hello
+wright package plans/hello
+wright merge plans/hello
+```
+
 ## Verify and Remove
 
 ```bash
-wright query hello
+wright list --long
 wright files hello
-wright verify hello
+wright check hello
 wright remove hello
 ```
 

@@ -47,11 +47,11 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     /// Path to database file
-    #[arg(long, help_heading = "Global Options")]
+    #[arg(long, global = true, help_heading = "Global Options")]
     pub db: Option<PathBuf>,
 
     /// Increase log verbosity (-v, -vv)
-    #[arg(long, short = 'v', global = true, action = ArgAction::Count, help_heading = "Global Options")]
+    #[arg(long, short = 'v', global = true, action = ArgAction::Count, conflicts_with = "quiet", help_heading = "Global Options")]
     pub verbose: u8,
 
     /// Reduce log output (show warnings/errors only)
@@ -81,7 +81,7 @@ pub enum SystemCommands {
     #[command(display_order = 2)]
     Upgrade(upgrade::UpgradeArgs),
 
-    /// Uninstall deployed packages (supports `plan` or `plan:output`)
+    /// Uninstall deployed parts (supports `plan` or `plan:output`)
     #[command(display_order = 3)]
     Remove(remove::RemoveArgs),
 
@@ -221,22 +221,22 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             merge::run(args, &ctx).await
         }
-        Commands::System(SystemCommands::Provide(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+        Commands::System(SystemCommands::Provide(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             provide::run(args, &ctx).await
         }
 
         // ── Query & Inspection ─────────────────────────────────────
-        Commands::Query(QueryCommands::List(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+        Commands::Query(QueryCommands::List(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             list::run(args, &ctx).await
         }
-        Commands::Query(QueryCommands::Files(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+        Commands::Query(QueryCommands::Files(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             files::run(args, &ctx).await
         }
-        Commands::Query(QueryCommands::Owner(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+        Commands::Query(QueryCommands::Owner(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             owner::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Check(mut args)) => {
@@ -247,8 +247,8 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             doctor::run(args, &ctx).await
         }
-        Commands::Query(QueryCommands::History(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+        Commands::Query(QueryCommands::History(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             history::run(args, &ctx).await
         }
 

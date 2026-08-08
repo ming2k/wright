@@ -14,11 +14,30 @@ through subcommands, organized into four groups that match the reader's intent:
 |------|-------------|
 | `--config <PATH>` | Load configuration from this file instead of the default search path |
 | `--db <PATH>` | Override the system database path |
-| `-v`, `-vv` | Increase log verbosity (info / debug) |
-| `--quiet` | Suppress all output except errors |
+| `-v`, `-vv` | Increase log verbosity (`-v` = debug, `-vv` = trace; default is info) |
+| `--quiet` | Reduce log output to warnings and errors only |
 
-Commands that operate on a target filesystem expose their own
-`--root <PATH>` option. Place global options before the subcommand.
+All four global options may appear before or after the subcommand. `-v` and
+`--quiet` conflict. Commands that operate on a target filesystem expose their
+own `--root <PATH>` option.
+
+Short flags are allocated globally, so the same letter means the same thing on
+every command: `-f` = `--force`, `-n` = `--dry-run`, `-c` = `--clean`,
+`-d` = `--deps`, `-r` = `--rdeps`, `-t` = `--tree`, `-l` = `--long`,
+`-o` = `--orphans`, `-p` = `--print-parts`.
+
+## Errors and Exit Status
+
+A failed command prints a multi-line failure report on stderr and exits with
+status 1; no command exits mid-operation. Two commands keep their own machine
+contracts:
+
+- `wright check` exits 0 when everything resolves and 1 when any check fails,
+  so it is suitable for CI gates.
+- `wright owner` exits 1 when any given path is unowned; with `--json` the
+  JSON array is printed first and the error report goes to stderr.
+
+Interrupting a command with SIGINT exits with status 130.
 
 ## System Management
 
@@ -31,13 +50,16 @@ to merge explicit archive paths instead.
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Force redeploy even if already deployed |
+| `-f`, `--force` | Force redeploy even if already deployed |
+| `-n`, `--dry-run` | Print `[dry-run] merge -> <root>` and the resolved archive list without changing anything |
 | `--nodeps` | Skip runtime dependency warnings |
 | `--path` | Treat arguments and stdin as explicit archive paths |
+| `--root <PATH>` | Operate on this target root instead of `/` |
 
 ### `wright install <TARGET...>`
 
-Install plans to the local system with full lifecycle (resolve → build → seal → deploy).
+Install plans to the local system with the full lifecycle
+(`resolve → build → package → merge`; `seal` is an alias of `package`).
 Targets may be plan names, plan directories, or folio names prefixed with `@`.
 Automatically pulls in missing or outdated dependencies under the selected
 match policy.
@@ -52,13 +74,13 @@ wright install gcc --match=all
 
 | Flag | Description |
 |------|-------------|
-| `-d`, `--deps [link\|runtime\|build\|all]` | Dependency domain to expand |
-| `-r`, `--rdeps [link\|runtime\|build\|all]` | Reverse dependency domain to expand |
-| `--match [missing\|outdated\|installed\|all]` | Which dependency state triggers inclusion |
+| `-d`, `--deps [link\|runtime\|build\|all]` | Forward dependency domain to expand; a bare `--deps` means `all`, and omitting the flag follows all domains |
+| `-r`, `--rdeps [link\|runtime\|build\|all]` | Additionally rebuild deployed reverse dependents; a bare `--rdeps` means `link`, and omitting the flag skips reverse expansion |
+| `--match <missing\|outdated\|installed\|all>` | Which dependency state triggers inclusion; requires a value, may be repeated, and defaults to `outdated` |
 | `--depth <N>` | Maximum expansion depth |
 | `-c`, `--clean` | Clear forge state before building plans that need an update; does not redeploy up-to-date plans |
 | `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
-| `-n`, `--dry-run` | Print the plan without executing it |
+| `-n`, `--dry-run` | Fully resolve the wave plan and print it (`[dry-run] install -> <root>`, then one `batch N:` line per batch) without forging or deploying |
 | `--root <PATH>` | Operate on this target root instead of `/` |
 
 ### `wright upgrade <TARGET...>`
@@ -77,7 +99,9 @@ wright upgrade zlib --force
 | Flag | Description |
 |------|-------------|
 | `-f`, `--force` | Force reforge and redeploy even if the plan version matches |
+| `-n`, `--dry-run` | Resolve the upgrade set (including reverse-dependency expansion) and print it without building anything |
 | `--depth <N>` | Maximum depth for reverse dependency expansion |
+| `--root <PATH>` | Operate on this target root instead of `/` |
 
 ### `wright remove <PART...>`
 
@@ -92,11 +116,13 @@ wright remove zlib --cascade
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Force removal even if other parts depend on this one |
-| `-r`, `--recursive` | Recursively remove all parts that depend on the target |
-| `-c`, `--cascade` | Also remove orphan dependencies (auto-deployed deps) |
+| `-f`, `--force` | Force removal even if other parts depend on this one |
+| `-n`, `--dry-run` | Print the ordered removal plan (recursive dependents first, cascade orphans included) without starting any transaction |
+| `--recursive` | Recursively remove all parts that depend on the target |
+| `--cascade` | Also remove orphan dependencies (auto-deployed deps) |
+| `--root <PATH>` | Operate on this target root instead of `/` |
 
-### `wright provide <NAME> <VERSION>`
+### `wright provide [PART] [VERSION]`
 
 Mark a part as externally provided so dependency checks consider it satisfied.
 Provided parts have no filesystem footprint; they only satisfy dependency checks.
@@ -110,6 +136,7 @@ echo "glibc 2.40" | wright provide
 | Flag | Description |
 |------|-------------|
 | `--file <FILE>` | Read `name version` pairs from a file |
+| `--root <PATH>` | Record the provided part in this target root's database instead of `/` |
 
 ## Query & Inspection
 
@@ -123,18 +150,26 @@ wright list -l
 wright list --roots
 wright list --orphans
 wright list --provided
+wright list --json
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-l`, `--long` | Show origin, version, release, and architecture |
 | `--roots` | Show only top-level (root) parts with no deployed dependents |
-| `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
+| `-o`, `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
 | `--provided` | Show provided (externally provided) parts |
+| `--json` | Emit a machine-readable JSON array of part records |
+| `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright files <PART>`
 
 List files owned by a deployed part.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON instead of text |
+| `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright owner <FILE>...`
 
@@ -151,7 +186,13 @@ arguments, each result is prefixed with the resolved path (`<file>: <part>`).
 If a file is claimed by more than one deployed part (a conflict surfaced by
 `wright check`), every owner is printed.
 
-Exits non-zero if any of the given paths is not owned by a deployed part.
+Exits 1 if any of the given paths is not owned by a deployed part; with
+`--json` the JSON array is printed first and the error report goes to stderr.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON instead of text |
+| `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright check [PART]`
 
@@ -168,11 +209,18 @@ files deleted by external tools or partially-uninstalled parts.
 | `--deep` | Walk ELF binaries and verify `DT_NEEDED` entries |
 | `--files` | Verify every deployed file exists on disk |
 | `--integrity-only` | Only run integrity checks (database, file conflicts, shadows) |
+| `--json` | Emit a machine-readable JSON report instead of text |
+| `--root <PATH>` | Check this target root instead of `/` |
 
 ### `wright history [PART]`
 
 Show part transaction history (deploy, upgrade, remove). Filters to the named
 part when specified.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON instead of text |
+| `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright doctor`
 
@@ -182,6 +230,27 @@ verification, and a global `parts_dir` dependency closure scan. Use after
 batch deployments to detect missing files, providers, and stale dependencies.
 Also reports plans whose source changed since their parts were installed
 (provenance drift); drift is advisory and never fails the run.
+
+| Flag | Description |
+|------|-------------|
+| `--root <PATH>` | Diagnose this target root instead of `/` |
+
+### JSON Output
+
+`list`, `files`, `owner`, `history`, and `check` accept `--json`. Empty
+results print `[]` (`check` prints a report object with an empty `issues`
+array). Output shapes:
+
+| Command | Shape |
+|---------|-------|
+| `list --json` | Array of `{"name","version","release","epoch","arch","origin","plan_name"}` |
+| `files --json` | `{"part","files":[...]}` |
+| `owner --json` | Array of `{"path","owners":[...]}` |
+| `history --json` | Array of `{"timestamp","session_id","command","part","action","old_version","new_version","status"}` |
+| `check --json` | `{"scope","mode","issue_count","issues":[...]}`; each issue carries a `check` tag (e.g. `missing-file`, `broken-dependency`, `unresolved-soname`) |
+
+`check --json` prints the report first and still exits 1 when issues are
+found — the exit code remains the primary machine interface.
 
 ## Build & Packaging
 
@@ -229,7 +298,7 @@ wright build freetype --until-stage=staging
 | `--seal` | Seal completed builds into local part archives |
 | `--checksum` | Compute and update SHA256 checksums in plan.toml |
 
-### `wright package <PLAN...>`
+### `wright package <TARGET...>`
 
 Slice completed staging trees and seal them as `.wright.tar.zst` archives.
 `wright seal` is an alias.
@@ -253,7 +322,7 @@ lints all plans found under `plans_dir`.
 
 | Flag | Description |
 |------|-------------|
-| `-r`, `--recursive` | Recurse into subdirectories when scanning for plans |
+| `--recursive` | Recurse into subdirectories when scanning for plans |
 | `--verify` | Verify deployed part file integrity (SHA-256 checksums) |
 
 ### `wright launch`
@@ -272,33 +341,34 @@ wright launch --root /mnt/new --plans ./plans @core
 
 | Flag | Description |
 |------|-------------|
-| `--root <PATH>` | Required. The target root to fill. |
-| `--folio <FILE>` | Path to a `folio.toml` manifest naming the plans to forge and deploy. |
+| `--root <DIR>` | Required. The target root to fill. |
+| `--folio <FILE>` | Path to a single folio manifest naming the plans to forge and deploy. Mutually exclusive with positional targets. |
 | `--plans <DIR>` | Source path: take plans from this directory. Positional arguments are plan names or `@folio` references. |
+| `--folios <DIR>` | Source path: resolve `@folio` references from this directory. |
 | `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
 | `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
 
 ## Cache & Maintenance
 
-### `wright clean [PLAN...]`
+### `wright clean [TARGET...]`
 
 Remove build workspaces for selected plans, or all plan workspaces when no
 plan is given. Archive and command-log cleanup are explicit options.
 
 | Flag | Description |
 |------|-------------|
-| `-p`, `--parts` | Also remove matching local part archives |
-| `-l`, `--logs` | Also remove Wright command logs |
+| `--parts` | Also remove matching local part archives |
+| `--logs` | Also remove Wright command logs |
 
-### `wright prune --latest`
+### `wright prune`
 
-Find older archive versions while retaining the latest version of each part.
-The command is a dry run unless `--apply` is present.
+Remove older archive versions while retaining the latest version of each part.
+Bare `wright prune` is a dry run; pass `--apply` to actually delete.
 
 | Flag | Description |
 |------|-------------|
-| `--latest` | Select older versions of each part for pruning |
-| `--apply` | Remove the selected archives |
+| `--latest` | Keep only the latest archive version of each part (currently the only mode; accepted for forward compatibility) |
+| `--apply` | Actually delete the selected archives |
 
 ## Common Pipelines
 
@@ -306,7 +376,8 @@ Forge a part and deploy it:
 
 ```bash
 wright build zlib
-wright install zlib
+wright package zlib
+wright merge zlib
 ```
 
 Install with automatic dependency resolution:

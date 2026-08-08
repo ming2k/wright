@@ -7,6 +7,7 @@ pub async fn execute_list(
     roots: bool,
     provided: bool,
     orphans: bool,
+    json: bool,
 ) -> Result<()> {
     let parts = if provided {
         db.get_provided_parts().await?
@@ -17,6 +18,24 @@ pub async fn execute_list(
     } else {
         db.list_parts().await?
     };
+
+    if json {
+        let out: Vec<serde_json::Value> = parts
+            .iter()
+            .map(|part| {
+                serde_json::json!({
+                    "name": part.name.as_str(),
+                    "version": part.version.as_str(),
+                    "release": part.release,
+                    "epoch": part.epoch,
+                    "arch": part.arch.as_str(),
+                    "origin": part.origin.to_string(),
+                    "plan_name": part.plan_name.as_str(),
+                })
+            })
+            .collect();
+        return super::print_json(&out);
+    }
 
     if parts.is_empty() {
         if !provided && !roots && !orphans {

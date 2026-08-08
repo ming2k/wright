@@ -34,7 +34,7 @@ The result is a `BuildExecutionPlan` whose `batches` field is a `Vec<Vec<String>
 
 ## Execution Flow Inside a Batch
 
-`execute_install` (`src/operations/install.rs`) processes batches sequentially.  Inside each batch the flow is rigid:
+`execute_install` (`src/operations/install/execute.rs`) processes batches sequentially.  Inside each batch the flow is rigid:
 
 ### 1. CAS Pre-check
 

@@ -140,7 +140,7 @@ These three charge stages are **not** a batch-level preprocessing step. Each tas
 
 ### 2.2 Forge — Build Execution
 
-With sources ready, the **Forge** runs. `Forge::run` (`src/foundry/forge.rs`) executes the plan's forge stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
+With sources ready, the **Forge** runs. `Forge::run` (`src/foundry/forge/mod.rs`) executes the plan's forge stages in order: `prepare`, `configure`, `compile`, `check`, `staging`.
 
 `Forge::run` begins at `prepare` because `Charge::prepare` has already handled the source stages (`fetch`, `verify`, `extract`). The forge therefore proceeds through the user-defined stages only.
 

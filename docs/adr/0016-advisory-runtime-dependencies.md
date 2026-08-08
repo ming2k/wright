@@ -184,5 +184,5 @@ from the registry; the plan-source field will be removed in a follow-up.
 - [ADR-0009: Separate plan-level and output-level dependencies](0009-separate-plan-output-dependencies.md)
   — established that runtime deps are output-level. This ADR refines
   what the registry does with them.
-- `docs/explanation/dependency-philosophy.md` — user-facing exposition of
+- `docs/explanation/dependency-dag.md` — user-facing exposition of
   the model.

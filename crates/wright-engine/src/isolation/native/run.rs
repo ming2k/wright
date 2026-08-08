@@ -1,12 +1,7 @@
-use std::collections::BTreeMap;
-use std::ffi::CString;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use nix::fcntl::OFlag;
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
@@ -15,221 +10,13 @@ use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::{ForkResult, Pid, chdir, execve, fork, getpid, getppid, pivot_root, sethostname};
 use tracing::debug;
 
-use super::error::{IsolationError, Result};
-use super::resources::{apply_cpu_affinity, apply_rlimits};
-use super::{IsolationConfig, IsolationLevel};
+use crate::isolation::error::{IsolationError, Result};
+use crate::isolation::resources::{apply_cpu_affinity, apply_rlimits};
+use crate::isolation::{IsolationConfig, IsolationLevel};
 
-static NEXT_SCRATCH_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Derive the scratch directory for isolation setup from the active build root.
-///
-/// `src_dir` is `<build_root>/src` for normal builds, so placing scratch
-/// directories under its parent keeps temporary overlay state on the same
-/// filesystem as the rest of the build instead of hardcoding `/tmp`.
-fn isolation_scratch_base(config: &IsolationConfig) -> PathBuf {
-    let build_root = config.src_dir.parent().unwrap_or(config.src_dir.as_path());
-    let run_id = NEXT_SCRATCH_ID.fetch_add(1, Ordering::Relaxed);
-    build_root.join(".wright-isolation").join(format!(
-        "{}-{}-{run_id}",
-        config.task_id,
-        std::process::id()
-    ))
-}
-
-/// Remove the temporary overlay and isolation-root directories for a given task.
-///
-/// These directories are created inside the forked child's mount namespace.
-/// The mounts are automatically cleaned up when the namespace is destroyed,
-/// but the empty directory trees can persist on the host filesystem after
-/// crashes or forced termination.
-fn cleanup_isolation_dirs(scratch: &Path) {
-    for attempt in 0..6 {
-        match std::fs::remove_dir_all(scratch) {
-            Ok(()) => return,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error)
-                if attempt < 5
-                    && matches!(
-                        error.raw_os_error(),
-                        Some(libc::EBUSY) | Some(libc::ENOTEMPTY)
-                    ) =>
-            {
-                std::thread::sleep(Duration::from_millis(10 * (1_u64 << attempt)));
-            }
-            Err(error) => {
-                debug!(
-                    event = "isolation.cleanup_failed",
-                    path = %scratch.display(),
-                    error = %error,
-                    "Failed to clean up isolation scratch directory"
-                );
-                return;
-            }
-        }
-    }
-}
-
-fn prepare_isolation_dirs(scratch: &Path) -> Result<()> {
-    let scratch_parent = scratch.parent().ok_or_else(|| {
-        IsolationError::InvalidConfig(format!(
-            "scratch directory has no parent: {}",
-            scratch.display()
-        ))
-    })?;
-
-    if let Ok(metadata) = std::fs::symlink_metadata(scratch_parent)
-        && !metadata.file_type().is_dir()
-    {
-        return Err(IsolationError::InvalidConfig(format!(
-            "isolation scratch parent is not a directory: {}",
-            scratch_parent.display()
-        )));
-    }
-    std::fs::create_dir_all(scratch_parent)
-        .map_err(|error| IsolationError::io("create isolation scratch parent", error))?;
-    std::fs::set_permissions(scratch_parent, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| IsolationError::io("secure isolation scratch parent", error))?;
-
-    let result = (|| {
-        std::fs::create_dir(scratch).map_err(|error| {
-            IsolationError::io("create unique isolation scratch directory", error)
-        })?;
-        std::fs::set_permissions(scratch, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| IsolationError::io("secure isolation scratch directory", error))?;
-
-        for name in ["root", "upper", "work"] {
-            std::fs::create_dir(scratch.join(name))
-                .map_err(|error| IsolationError::io("create isolation mount directory", error))?;
-        }
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(scratch);
-    }
-    result
-}
-
-fn prepare_exec(
-    config: &IsolationConfig,
-    command: &str,
-    args: &[String],
-) -> Result<(CString, Vec<CString>, Vec<CString>)> {
-    if !Path::new(command).is_absolute() {
-        return Err(IsolationError::InvalidConfig(format!(
-            "isolated command must be an absolute path: {command:?}"
-        )));
-    }
-
-    let c_command = CString::new(command).map_err(|error| {
-        IsolationError::InvalidConfig(format!("command contains a NUL byte: {error}"))
-    })?;
-    let mut c_args = Vec::with_capacity(args.len() + 1);
-    c_args.push(c_command.clone());
-    for arg in args {
-        c_args.push(CString::new(arg.as_str()).map_err(|error| {
-            IsolationError::InvalidConfig(format!("argument contains a NUL byte: {error}"))
-        })?);
-    }
-
-    let mut environment = BTreeMap::from([
-        ("HOME".to_string(), "/build".to_string()),
-        (
-            "PATH".to_string(),
-            "/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
-        ),
-        ("TERM".to_string(), "xterm".to_string()),
-    ]);
-    for (key, value) in &config.env {
-        environment.insert(key.clone(), value.clone());
-    }
-    let c_env = environment
-        .into_iter()
-        .map(|(key, value)| {
-            CString::new(format!("{key}={value}")).map_err(|error| {
-                IsolationError::InvalidConfig(format!(
-                    "environment variable {key:?} contains a NUL byte: {error}"
-                ))
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok((c_command, c_args, c_env))
-}
-
-fn prepare_mount_destination(
-    newroot: &Path,
-    source: &Path,
-    target: &Path,
-) -> std::result::Result<PathBuf, String> {
-    let relative = target
-        .strip_prefix("/")
-        .map_err(|_| format!("mount target must be absolute: {}", target.display()))?;
-    let parent = relative
-        .parent()
-        .ok_or_else(|| format!("mount target has no parent: {}", target.display()))?;
-
-    let mut current = newroot.to_path_buf();
-    for component in parent.components() {
-        let std::path::Component::Normal(name) = component else {
-            return Err(format!(
-                "mount target contains an unsafe component: {}",
-                target.display()
-            ));
-        };
-        current.push(name);
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(format!(
-                    "mount target parent is a symlink: {}",
-                    current.display()
-                ));
-            }
-            Ok(metadata) if !metadata.is_dir() => {
-                return Err(format!(
-                    "mount target parent is not a directory: {}",
-                    current.display()
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current)
-                    .map_err(|error| format!("mkdir {}: {error}", current.display()))?;
-            }
-            Err(error) => {
-                return Err(format!("inspect {}: {error}", current.display()));
-            }
-        }
-    }
-
-    let destination = newroot.join(relative);
-    if let Ok(metadata) = std::fs::symlink_metadata(&destination) {
-        if metadata.file_type().is_symlink() {
-            std::fs::remove_file(&destination)
-                .map_err(|error| format!("unlink {}: {error}", destination.display()))?;
-        } else if source.is_dir() != metadata.is_dir() {
-            return Err(format!(
-                "mount source and target types differ: {} -> {}",
-                source.display(),
-                destination.display()
-            ));
-        } else {
-            return Ok(destination);
-        }
-    }
-
-    if source.is_dir() {
-        std::fs::create_dir(&destination)
-            .map_err(|error| format!("mkdir {}: {error}", destination.display()))?;
-    } else {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&destination)
-            .map_err(|error| format!("touch {}: {error}", destination.display()))?;
-    }
-    Ok(destination)
-}
+use super::exec::prepare_exec;
+use super::mounts::prepare_mount_destination;
+use super::scratch::{cleanup_isolation_dirs, isolation_scratch_base, prepare_isolation_dirs};
 
 /// Run a command inside native Linux namespace isolation.
 ///
@@ -256,7 +43,7 @@ fn prepare_mount_destination(
 /// Enter namespaces from the dedicated helper process. The helper binary
 /// calls this before starting any threads, so all post-fork setup runs from a
 /// single-threaded process.
-pub(super) fn run_in_helper(
+pub(in crate::isolation) fn run_in_helper(
     config: &IsolationConfig,
     command: &str,
     args: &[String],
@@ -764,16 +551,6 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
     }
 }
 
-/// Compatibility entry point. New code should call
-/// [`super::run_in_isolation`], which keeps the native backend private.
-pub fn run_in_isolation(
-    config: &mut IsolationConfig,
-    command: &str,
-    args: &[String],
-) -> crate::error::Result<super::IsolationOutput> {
-    super::run_in_isolation(config, command, args)
-}
-
 #[derive(Clone, Copy)]
 enum ForwardStream {
     Stdout,
@@ -877,18 +654,7 @@ fn require_namespace_support(level: IsolationLevel, available: bool) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::symlink;
-
     use super::*;
-
-    fn config(src: &Path, output: &Path) -> IsolationConfig {
-        IsolationConfig::new(
-            IsolationLevel::Strict,
-            src.to_path_buf(),
-            output.to_path_buf(),
-            "native-test".to_string(),
-        )
-    }
 
     #[test]
     fn namespace_modes_fail_closed() {
@@ -896,41 +662,5 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("refusing to execute directly on the host"));
-    }
-
-    #[test]
-    fn scratch_paths_are_unique_per_run() {
-        let src = tempfile::tempdir().unwrap();
-        let output = tempfile::tempdir().unwrap();
-        let config = config(src.path(), output.path());
-
-        assert_ne!(
-            isolation_scratch_base(&config),
-            isolation_scratch_base(&config)
-        );
-    }
-
-    #[test]
-    fn mount_destination_rejects_symlinked_parent() {
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let source = tempfile::tempdir().unwrap();
-        symlink(outside.path(), root.path().join("escape")).unwrap();
-
-        let error =
-            prepare_mount_destination(root.path(), source.path(), Path::new("/escape/target"))
-                .unwrap_err();
-        assert!(error.contains("parent is a symlink"));
-        assert!(!outside.path().join("target").exists());
-    }
-
-    #[test]
-    fn isolated_exec_requires_absolute_command() {
-        let src = tempfile::tempdir().unwrap();
-        let output = tempfile::tempdir().unwrap();
-        let config = config(src.path(), output.path());
-
-        let error = prepare_exec(&config, "bash", &[]).unwrap_err().to_string();
-        assert!(error.contains("absolute path"));
     }
 }

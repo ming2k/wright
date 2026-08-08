@@ -41,7 +41,8 @@ pub mod part {
 /// lower-level crates.
 pub mod util {
     pub use wright_engine::util::{
-        checksum, compact_path, display, download, logging, progress, sanitize_filename, stdin,
+        checksum, compact_path, display, download, logging, progress, reset_sigpipe,
+        sanitize_filename, stdin,
     };
 
     pub mod compress {

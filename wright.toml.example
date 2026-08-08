@@ -8,6 +8,7 @@
 
 [general]
 arch          = "x86_64"
+plans_dir     = "/var/lib/wright/plans"
 folios_dir    = "/var/lib/wright/folios"
 parts_dir     = "/var/lib/wright/parts"
 store_dir     = "/var/lib/wright/store"
@@ -20,11 +21,12 @@ executors_dir = "/etc/wright/executors"
 # extra_plans_dirs = ["/opt/my-plans", "./plans"]
 
 [build]
+forge_dir         = "/var/tmp/wright/workshop"
 default_isolation = "strict"
 ccache            = false
 
 # Resource limits (all optional).
-# memory_limit         = 8589934592   # bytes
+# memory_limit         = 8192          # MB of virtual address space
 # cpu_time_limit       = 3600         # seconds
 # timeout              = 7200         # seconds, wall clock
 # nproc_per_isolation  = 4            # override dynamic share

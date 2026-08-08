@@ -55,7 +55,7 @@ wright install libfoo --rdeps=link --depth=3
 ```
 
 Prefer `wright install --rdeps` over a manual `resolve → build → package →
-install` pipeline. When a rebuild fails mid-cascade, the manual pipeline leaves
+merge` pipeline. When a rebuild fails mid-cascade, the manual pipeline leaves
 uninstalled parts behind; `install` tracks which waves completed and resumes
 from the failure point.
 

@@ -5,6 +5,7 @@ Discussions that explain why things work the way they do.
 - [Architecture](architecture.md)
 - [Distribution Model](distribution-model.md) — Why there are no repositories, and what binary parts are actually for
 - [Launch Design](launch-design.md) — Mission, convergence, root isolation, and the provisioning pipeline
+- [Install Design](install-design.md) — How `wright install` converges the live system from plans, wave by wave
 - [Execution Hierarchy](execution-hierarchy.md)
 - [Checkpoint Recovery](checkpoint-recovery.md)
 - [Plan Build](plan-build.md) — How plans are discovered, built, sealed, and deployed

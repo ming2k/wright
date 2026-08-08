@@ -10,7 +10,8 @@ const WRIGHT_REMOVE_AFTER_HELP: &str = "\
 Examples:
   wright remove zlib
   wright remove zlib --recursive
-  wright remove zlib --cascade";
+  wright remove zlib --cascade
+  wright remove zlib --dry-run";
 
 #[derive(Args)]
 #[command(
@@ -23,16 +24,20 @@ pub struct RemoveArgs {
     pub parts: Vec<String>,
 
     /// Force removal even if other parts depend on this one
-    #[arg(long)]
+    #[arg(long, short = 'f')]
     pub force: bool,
 
     /// Recursively remove all parts that depend on the target
-    #[arg(long, short)]
+    #[arg(long)]
     pub recursive: bool,
 
     /// Also remove orphan dependencies (auto-deployed deps no longer needed)
-    #[arg(long, short = 'c')]
+    #[arg(long)]
     pub cascade: bool,
+
+    /// Preview which parts would be removed without making any changes
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
 
     /// Alternate root directory for file operations
     #[arg(long)]
@@ -50,6 +55,7 @@ pub async fn run(args: RemoveArgs, ctx: &Context<'_>) -> Result<()> {
         args.force,
         args.recursive,
         args.cascade,
+        args.dry_run,
         &ctx.root_dir,
     )
     .await

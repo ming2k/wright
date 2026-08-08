@@ -29,9 +29,12 @@
 The enforced dependency direction is:
 
 ```text
-wright -> wright-engine -> wright-state -> wright-part -> wright-plan -> wright-model
-                         -> wright-part  -> wright-plan -> wright-model
-                         -> wright-plan  -> wright-model
+wright        -> wright-engine, wright-part, wright-plan, wright-state
+wright-engine -> wright-part, wright-plan, wright-state, wright-model
+wright-part   -> wright-model
+wright-plan   -> wright-model
+wright-state  -> (no workspace dependencies)
+wright-model  -> (no dependencies)
 ```
 
 Do not introduce reverse edges. `wright-model` must remain free of I/O and
@@ -68,7 +71,7 @@ Apply these rules when adding or moving code:
 ## Naming and Visibility
 
 - Name domain modules with nouns such as `plan`, `part`, and `state`. Name
-  use-case files after the command verb, such as `install.rs` or `prune.rs`.
+  use-case modules after the command verb, such as `install/` or `prune.rs`.
 - Use `lib.rs` only as a crate facade. Use `mod.rs` to define a multi-file
   subsystem, not as a home for unrelated behavior.
 - Keep modules and symbols private by default. Re-export only the stable entry

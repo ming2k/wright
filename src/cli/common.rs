@@ -19,7 +19,7 @@ pub enum DomainArg {
     /// Follow only runtime relationships.
     Runtime,
     /// Follow only build-time relationships.
-    #[value(name = "build", alias = "forge")]
+    #[value(name = "build")]
     Build,
     /// Follow all relationships (link + runtime + build).
     All,

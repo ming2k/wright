@@ -30,13 +30,17 @@ install -Dm644 target/man/*.1 /usr/share/man/man1/
 
 ## Quick Start
 
+`wright install` drives the full source-first pipeline — resolve, build,
+package, merge — in one command:
+
 ```bash
-wright build hello
-wright package hello
 wright install hello
-wright prune --latest --apply
+wright prune --apply
 wright list
 ```
+
+For granular control, run the steps individually instead: `wright build hello`,
+`wright package hello`, then `wright merge hello`.
 
 ## Documentation
 
@@ -55,8 +59,9 @@ Wright's documentation follows the [Diátaxis](https://diataxis.fr/) framework.
 
 - **Plan**: the `plan.toml` blueprint for building one part
 - **Part**: the built `.wright.tar.zst` part
-- **Assembly**: a build-time grouping of plans
-- **Inventory**: the local database of built parts on this machine
+- **Folio**: a `<name>.toml` manifest naming a coherent set of plans
+- **Assembly**: an informal grouping of plans (a directory of plan directories) processed together
+- **Inventory**: the local stock of built part archives on this machine
 - **System**: the live machine being maintained
 
 ## License

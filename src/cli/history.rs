@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::PathBuf;
 
 #[cfg(with_handlers)]
 use crate::cli::common::Context;
@@ -8,7 +9,8 @@ use crate::error::Result;
 const WRIGHT_HISTORY_AFTER_HELP: &str = "\
 Examples:
   wright history
-  wright history zlib";
+  wright history zlib
+  wright history --json";
 
 #[derive(Args)]
 #[command(
@@ -19,10 +21,18 @@ pub struct HistoryArgs {
     /// Part name; omit to show all history
     #[arg(value_name = "PART")]
     pub part: Option<String>,
+
+    /// Emit machine-readable JSON instead of text
+    #[arg(long)]
+    pub json: bool,
+
+    /// Alternate root directory to query
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[cfg(with_handlers)]
 pub async fn run(args: HistoryArgs, ctx: &Context<'_>) -> Result<()> {
     let db = ctx.open_db().await?;
-    crate::operations::history::execute_history(&db, args.part.as_deref()).await
+    crate::operations::history::execute_history(&db, args.part.as_deref(), args.json).await
 }

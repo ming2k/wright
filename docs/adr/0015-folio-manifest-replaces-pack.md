@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. The folio file-format details — the `[config]` table, the `arch`
+field, and the fixed `folio.toml` filename — and the `apply` command name
+are **superseded by [ADR-0031](0031-folio-manifest-amendments.md)**. The
+core ruling — a pure plan-list manifest replaces the binary pack format —
+remains in force.
 
 ## Context
 

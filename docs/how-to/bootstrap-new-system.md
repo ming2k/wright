@@ -30,8 +30,8 @@ matching host first.
 
 ## Strategy 1: Launch from a Folio File
 
-A folio file (`folio.toml`) names every plan in the system, declares external
-assumptions, and optionally sets hostname, timezone, locale, and services.
+A folio file (`<name>.toml`) names every plan in the system, declares external
+assumptions, and optionally runs post-launch hooks for system configuration.
 Point `--folio` at it directly:
 
 ```bash
@@ -46,16 +46,15 @@ This is the simplest path: one file fully describes the target.
 [folio]
 name    = "container-base"
 version = "2026.05"
-arch    = "x86_64"
 plans   = ["glibc", "bash", "coreutils", "sed", "gawk", "grep", "tar", "gzip", "openssl"]
 
 [[provide]]
 name    = "linux"
 version = "6.12.0"
 
-[config]
-hostname = "container"
-timezone = "UTC"
+[[hook]]
+stage  = "post-launch"
+script = "echo container > $ROOT/etc/hostname"
 ```
 
 ### Example folio for a bare-metal workstation
@@ -64,7 +63,6 @@ timezone = "UTC"
 [folio]
 name    = "desktop"
 version = "1"
-arch    = "x86_64"
 plans   = [
     "glibc", "bash", "coreutils", "util-linux",
     "e2fsprogs", "eudev", "kmod", "procps-ng",
@@ -78,11 +76,16 @@ plans   = [
 name    = "linux"
 version = "6.12.0"
 
-[config]
-hostname = "wright-desktop"
-timezone = "Asia/Shanghai"
-locale   = "en_US.UTF-8"
-services = ["sshd", "dbus"]
+[[hook]]
+stage  = "post-launch"
+script = """
+echo "wright-desktop" > $ROOT/etc/hostname
+ln -sf ../usr/share/zoneinfo/Asia/Shanghai $ROOT/etc/localtime
+echo "LANG=en_US.UTF-8" > $ROOT/etc/locale.conf
+for svc in sshd dbus; do
+    ln -sf /etc/sv/$svc $ROOT/var/service/$svc
+done
+"""
 ```
 
 See [How to write a folio](write-a-folio.md) for the complete folio format.
@@ -147,8 +150,9 @@ Regardless of the strategy, `wright launch` runs the same sequence:
 5. Writes `/etc/wright/wright.toml` inside the target, pointing all paths at
    target-local directories.
 6. Pre-registers `[[provide]]` entries from folios in the target database.
-7. Drives the full `resolve → build → seal → deploy` pipeline wave by wave.
-8. Applies `[config]` (hostname, timezone, locale, runit services).
+7. Drives the full `resolve → build → package → merge` pipeline wave by wave.
+8. Runs `[[hook]]` post-launch scripts (hostname, timezone, locale, service
+   enablement).
 
 After launch, the target has a fully populated `wright.db`.  Running
 `wright list --root /mnt/new` shows every installed part with its origin.
@@ -163,7 +167,7 @@ wright launch --root /mnt/new --plans ./plans @core --dry-run
 ```
 
 The dry-run prints the deploy order, the plans that would be forged, and the
-assumptions and config that would be applied — without writing any files.
+externals and hooks that would be applied — without writing any files.
 
 ## Re-Running Launch (Convergence)
 
@@ -176,7 +180,7 @@ wright launch --root /mnt/new --folio ./folios/core.toml
 
 - Plans already deployed and matching their source are **skipped**.
 - Missing plans are **built and installed**.
-- Changed plans are **rebuilt** (build → seal → deploy).
+- Changed plans are **rebuilt** (build → package → merge).
 - Plan files in the target are **re-synced** if they differ from the host.
 - Stale files in the target that no longer exist on the host are **removed**.
 
@@ -263,7 +267,7 @@ register what is already on disk, use `wright provide` directly:
 wright provide --file /etc/wright/bootstrap.txt
 ```
 
-See the [CLI reference](../reference/cli-reference.md#wright-provide-name-version).
+See the [CLI reference](../reference/cli-reference.md#wright-provide-part-version).
 
 ## Replacing Provided Parts
 

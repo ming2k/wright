@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0030](0030-single-database.md)
 
 ## Context
 

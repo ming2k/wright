@@ -84,7 +84,7 @@ Stages support hooks: `pre_<stage>` runs before the stage script, and
 namespace.
 
 Stage execution in code is handled by `Forge::run`
-(`src/foundry/forge.rs`).  The forge runner determines the effective CPU
+(`src/foundry/forge/mod.rs`).  The forge runner determines the effective CPU
 count (when locks are held), applies variable substitution, logs to
 `logs/<stage>.log`, and retries on ETXTBSY races.
 
@@ -94,7 +94,7 @@ count (when locks are held), applies variable substitution, logs to
 |------|------|-----------|--------|
 | Macro | Delivery | orchestration across `cli/` → `operations/` → `resolve/` → `foundry/` → `transaction/` | — (cross-cutting) |
 | Micro | Foundry | `Foundry`, `Charge`, `Forge`, `Mold` | `src/foundry/` |
-| Atomic | Stage | `ForgeContext`, stage runner | `src/foundry/forge.rs`, `src/foundry/executor.rs` |
+| Atomic | Stage | `ForgeContext`, stage runner | `src/foundry/forge/mod.rs`, `src/foundry/forge/execute.rs`, `src/foundry/executor.rs` |
 
 ## Relationship to CLI Commands
 

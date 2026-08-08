@@ -17,6 +17,9 @@ fn main() {
 
 #[tokio::main]
 async fn run_cli() {
+    // Die quietly on SIGPIPE (`wright list | head`) instead of panicking.
+    wright::util::reset_sigpipe();
+
     let cli = Cli::parse();
 
     // 1. Load Configuration First — pre-logging, so emit the error line

@@ -19,7 +19,7 @@ Examples:
 )]
 pub struct PackageArgs {
     /// Plan names or plan directory paths to package
-    #[arg(required = true, value_name = "PLAN")]
+    #[arg(required = true, value_name = "TARGET")]
     pub plans: Vec<String>,
 
     /// Force re-slicing of output directories before packaging

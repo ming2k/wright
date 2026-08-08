@@ -6,9 +6,49 @@ use crate::query;
 use wright_part::elf;
 use wright_state::database::{FileType, InstalledDb, InstalledPart, Origin};
 
-/// Run the standard suite of system health checks and return the total issue
-/// count. Callers format their own final messages (e.g. `check` vs `doctor`
-/// branding).
+/// A single structured finding from the standard checks. Serialized as an
+/// element of the `issues` array in `wright check --json` output; the `check`
+/// tag names the check that produced the finding.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "check", rename_all = "kebab-case")]
+pub(super) enum CheckIssue {
+    /// Database referential-integrity problem reported by SQLite.
+    DatabaseIntegrity { message: String },
+    /// A file owned by more than one part (shadowing conflict).
+    ShadowedFileConflict { message: String },
+    /// A check itself failed to run; counts as one issue.
+    CheckError { message: String },
+    /// A deployed file is missing from disk or has the wrong type.
+    MissingFile {
+        part: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    /// A part's recorded dependency edge is not satisfied.
+    BrokenDependency {
+        part: String,
+        requires: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        constraint: Option<String>,
+    },
+    /// An ELF binary needs a SONAME that no deployed part provides.
+    UnresolvedSoname {
+        part: String,
+        binary: String,
+        soname: String,
+    },
+}
+
+/// Outcome of the standard checks: the issue count that drives the exit
+/// code, plus the structured findings behind `--json` output.
+pub(super) struct CheckOutcome {
+    pub total_issues: usize,
+    pub issues: Vec<CheckIssue>,
+}
+
+/// Run the standard suite of system health checks. Callers format their own
+/// final messages (e.g. `check` vs `doctor` branding).
 pub(super) async fn run_standard_checks(
     db: &InstalledDb,
     root_dir: &Path,
@@ -16,16 +56,24 @@ pub(super) async fn run_standard_checks(
     deep: bool,
     integrity_only: bool,
     check_files: bool,
-) -> Result<usize> {
+) -> Result<CheckOutcome> {
     let mut total_issues = 0usize;
+    let mut issues: Vec<CheckIssue> = Vec::new();
 
-    total_issues += integrity_check(db).await?;
+    let (integrity_issues, mut found) = integrity_check(db).await?;
+    total_issues += integrity_issues;
+    issues.append(&mut found);
     if integrity_only {
-        return Ok(total_issues);
+        return Ok(CheckOutcome {
+            total_issues,
+            issues,
+        });
     }
 
     if check_files {
-        total_issues += files_check(db, root_dir, only_part).await?;
+        let (file_issues, mut found) = files_check(db, root_dir, only_part).await?;
+        total_issues += file_issues;
+        issues.append(&mut found);
     }
 
     let registry_findings = registry_check(db, only_part).await?;
@@ -40,10 +88,33 @@ pub(super) async fn run_standard_checks(
         report_elf_findings(&elf_findings);
     }
 
+    issues.extend(
+        registry_findings
+            .iter()
+            .map(|b| CheckIssue::BrokenDependency {
+                part: b.part.clone(),
+                requires: b.required_name.clone(),
+                constraint: b.version_constraint.clone(),
+            }),
+    );
+    issues.extend(
+        elf_findings
+            .missing
+            .iter()
+            .map(|m| CheckIssue::UnresolvedSoname {
+                part: m.part.clone(),
+                binary: m.binary.clone(),
+                soname: m.soname.clone(),
+            }),
+    );
+
     total_issues +=
         registry_findings.len() + elf_findings.missing.len() + elf_findings.unmapped.len();
 
-    Ok(total_issues)
+    Ok(CheckOutcome {
+        total_issues,
+        issues,
+    })
 }
 
 /// Emit a list of bullet findings indented under a verb line.
@@ -60,8 +131,9 @@ where
 
 // ── integrity ───────────────────────────────────────────────────────────
 
-async fn integrity_check(db: &InstalledDb) -> Result<usize> {
+async fn integrity_check(db: &InstalledDb) -> Result<(usize, Vec<CheckIssue>)> {
     let mut issues = 0usize;
+    let mut found = Vec::new();
 
     crate::cli_action!("Checking", "database integrity");
     match db.integrity_check().await {
@@ -70,10 +142,17 @@ async fn integrity_check(db: &InstalledDb) -> Result<usize> {
             crate::cli_warn!("{} database integrity issue(s)", list.len());
             issues += list.len();
             emit_bullets(&list);
+            found.extend(
+                list.into_iter()
+                    .map(|message| CheckIssue::DatabaseIntegrity { message }),
+            );
         }
         Err(e) => {
             crate::cli_error!("integrity check failed: {}", e);
             issues += 1;
+            found.push(CheckIssue::CheckError {
+                message: format!("integrity check failed: {}", e),
+            });
         }
     }
 
@@ -84,14 +163,21 @@ async fn integrity_check(db: &InstalledDb) -> Result<usize> {
             crate::cli_warn!("{} shadowed file conflict(s)", list.len());
             issues += list.len();
             emit_bullets(&list);
+            found.extend(
+                list.into_iter()
+                    .map(|message| CheckIssue::ShadowedFileConflict { message }),
+            );
         }
         Err(e) => {
             crate::cli_error!("shadow check failed: {}", e);
             issues += 1;
+            found.push(CheckIssue::CheckError {
+                message: format!("shadow check failed: {}", e),
+            });
         }
     }
 
-    Ok(issues)
+    Ok((issues, found))
 }
 
 // ── registry deps ───────────────────────────────────────────────────────
@@ -249,10 +335,19 @@ struct FilesReport {
 
 struct PartMissing {
     part_name: String,
-    paths: Vec<String>,
+    paths: Vec<MissingPath>,
 }
 
-async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>) -> Result<usize> {
+struct MissingPath {
+    path: String,
+    detail: Option<&'static str>,
+}
+
+async fn files_check(
+    db: &InstalledDb,
+    root_dir: &Path,
+    only_part: Option<&str>,
+) -> Result<(usize, Vec<CheckIssue>)> {
     crate::cli_action!("Checking", "deployed file existence");
 
     let parts: Vec<InstalledPart> = match only_part {
@@ -287,39 +382,48 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
         }
 
         let files = db.get_files(part.id).await?;
-        let mut missing_paths: Vec<String> = Vec::new();
+        let mut missing_paths: Vec<MissingPath> = Vec::new();
 
         for f in &files {
             let abs = root_dir.join(f.path.trim_start_matches('/'));
             match f.file_type {
                 FileType::File => {
                     if !abs.is_file() {
-                        let extra = if abs.exists() {
-                            " (wrong type)".to_string()
+                        let detail = if abs.exists() {
+                            Some("wrong type")
                         } else {
-                            String::new()
+                            None
                         };
-                        missing_paths.push(format!("{}{}", abs.display(), extra));
+                        missing_paths.push(MissingPath {
+                            path: abs.display().to_string(),
+                            detail,
+                        });
                     }
                 }
                 FileType::Symlink => {
                     if !abs.is_symlink() {
-                        let extra = if abs.exists() {
-                            " (expected symlink)".to_string()
+                        let detail = if abs.exists() {
+                            Some("expected symlink")
                         } else {
-                            String::new()
+                            None
                         };
-                        missing_paths.push(format!("{}{}", abs.display(), extra));
+                        missing_paths.push(MissingPath {
+                            path: abs.display().to_string(),
+                            detail,
+                        });
                     }
                 }
                 FileType::Directory => {
                     if !abs.is_dir() {
-                        let extra = if abs.exists() {
-                            " (expected directory)".to_string()
+                        let detail = if abs.exists() {
+                            Some("expected directory")
                         } else {
-                            String::new()
+                            None
                         };
-                        missing_paths.push(format!("{}{}", abs.display(), extra));
+                        missing_paths.push(MissingPath {
+                            path: abs.display().to_string(),
+                            detail,
+                        });
                     }
                 }
             }
@@ -335,7 +439,7 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
     }
 
     if total_missing == 0 {
-        return Ok(0);
+        return Ok((0, Vec::new()));
     }
 
     let part_count = report.missing.len();
@@ -347,18 +451,34 @@ async fn files_check(db: &InstalledDb, root_dir: &Path, only_part: Option<&str>)
     let mut lines: Vec<String> = Vec::new();
     for pm in &report.missing {
         let count = pm.paths.len();
+        let render = |mp: &MissingPath| {
+            let suffix = mp.detail.map(|d| format!(" ({})", d)).unwrap_or_default();
+            format!("{}: {}{}", pm.part_name, mp.path, suffix)
+        };
         if count <= 5 {
-            for path in &pm.paths {
-                lines.push(format!("{}: {}", pm.part_name, path));
+            for mp in &pm.paths {
+                lines.push(render(mp));
             }
         } else {
-            for path in pm.paths.iter().take(3) {
-                lines.push(format!("{}: {}", pm.part_name, path));
+            for mp in pm.paths.iter().take(3) {
+                lines.push(render(mp));
             }
             lines.push(format!("{}: ... and {} more", pm.part_name, count - 3));
         }
     }
     emit_bullets(&lines);
 
-    Ok(total_missing)
+    let found = report
+        .missing
+        .into_iter()
+        .flat_map(|pm| {
+            pm.paths.into_iter().map(move |mp| CheckIssue::MissingFile {
+                part: pm.part_name.clone(),
+                path: mp.path,
+                detail: mp.detail.map(str::to_string),
+            })
+        })
+        .collect();
+
+    Ok((total_missing, found))
 }

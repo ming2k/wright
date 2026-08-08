@@ -46,17 +46,17 @@ pub async fn execute_provide(
             entries.push((n.to_string(), v.to_string()));
         }
     } else {
-        tracing::error!("provide name and version as arguments, use --file, or pipe input");
-        std::process::exit(1);
+        return Err(WrightError::ForgeError(
+            "provide name and version as arguments, use --file, or pipe input".into(),
+        ));
     }
 
     let count = entries.len();
     for (n, v) in entries {
         crate::cli_action!("Providing", "{} {}", n, v);
-        if let Err(e) = db.provide_part(&n, &v).await {
-            tracing::error!("providing {}: {:#}", n, e);
-            std::process::exit(1);
-        }
+        db.provide_part(&n, &v)
+            .await
+            .map_err(|e| WrightError::DatabaseError(format!("providing {}: {:#}", n, e)))?;
     }
 
     crate::cli_action!("Finished", "provide: {} entry(s)", count);

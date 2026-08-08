@@ -70,3 +70,184 @@ impl SubFabricateOutput {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::OutputConfig;
+
+    #[test]
+    fn test_parse_multi_packages() {
+        let toml_str = r#"
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+
+[pipeline.compile]
+script = "make -j4"
+
+[pipeline.staging]
+script = "make DESTDIR=${STAGING_DIR} install"
+
+[[output]]
+name = "gcc"
+
+[[output]]
+name = "libstdc++"
+description = "GNU C++ standard library"
+include = ["/usr/lib/libstdc*"]
+runtime_deps = ["libgcc"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                assert_eq!(parts.len(), 2);
+                let (_, libstdcpp) = parts.iter().find(|(n, _)| n == "libstdc++").unwrap();
+                assert_eq!(
+                    libstdcpp.description.as_deref(),
+                    Some("GNU C++ standard library")
+                );
+                assert_eq!(libstdcpp.runtime_deps, vec!["libgcc"]);
+
+                let sub_manifest = libstdcpp.to_manifest("libstdc++", &manifest);
+                assert_eq!(sub_manifest.metadata.name, "libstdc++");
+                assert_eq!(sub_manifest.metadata.version.as_deref(), Some("14.2.0"));
+                assert_eq!(sub_manifest.metadata.release, 1);
+                assert_eq!(sub_manifest.metadata.arch, "x86_64");
+                assert_eq!(sub_manifest.metadata.license, "GPL-3.0-or-later");
+                assert_eq!(
+                    sub_manifest.metadata.description,
+                    "GNU C++ standard library"
+                );
+                assert_eq!(sub_manifest.runtime_deps, vec!["libgcc"]);
+                assert_eq!(
+                    sub_manifest.part_filename(),
+                    "libstdc++-14.2.0-1-x86_64.wright.tar.zst"
+                );
+            }
+            _ => panic!("expected Multi output config"),
+        }
+    }
+
+    #[test]
+    fn test_multi_package_sub_part_relations() {
+        let toml_str = r#"
+name = "nginx"
+version = "1.25.3"
+release = 1
+description = "High performance HTTP server"
+license = "BSD-2-Clause"
+arch = "x86_64"
+
+
+[pipeline.staging]
+script = "make DESTDIR=${STAGING_DIR} install"
+
+[[output]]
+name = "nginx"
+conflicts = ["apache"]
+provides = ["http-server"]
+
+[[output]]
+name = "nginx-doc"
+description = "Nginx documentation files"
+provides = ["nginx-documentation"]
+include = ["/usr/share/doc/**"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.relations.conflicts, vec!["apache"]);
+        assert_eq!(manifest.relations.provides, vec!["http-server"]);
+
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                let (_, main) = parts.iter().find(|(n, _)| n == "nginx").unwrap();
+                let main_manifest = main.to_manifest("nginx", &manifest);
+                assert_eq!(main_manifest.relations.conflicts, vec!["apache"]);
+                assert_eq!(main_manifest.relations.provides, vec!["http-server"]);
+
+                let (_, doc) = parts.iter().find(|(n, _)| n == "nginx-doc").unwrap();
+                let doc_manifest = doc.to_manifest("nginx-doc", &manifest);
+                assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
+                assert!(doc_manifest.relations.conflicts.is_empty());
+            }
+            _ => panic!("expected Multi output config"),
+        }
+    }
+
+    #[test]
+    fn test_multi_package_inherits_overrides() {
+        let toml_str = r#"
+name = "test"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+
+
+[pipeline.staging]
+script = "true"
+
+[[output]]
+name = "test"
+
+[[output]]
+name = "test-doc"
+description = "Documentation for test"
+version = "1.0.0-doc"
+arch = "any"
+include = ["/usr/share/doc/**"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                let (_, doc) = parts.iter().find(|(n, _)| n == "test-doc").unwrap();
+                let doc_manifest = doc.to_manifest("test-doc", &manifest);
+                assert_eq!(doc_manifest.metadata.version.as_deref(), Some("1.0.0-doc"));
+                assert_eq!(doc_manifest.metadata.arch, "any");
+                assert_eq!(doc_manifest.metadata.license, "MIT"); // inherited
+            }
+            _ => panic!("expected Multi output config"),
+        }
+    }
+
+    #[test]
+    fn test_main_package_in_multi_inherits_description() {
+        let toml_str = r#"
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+
+[pipeline.staging]
+script = "make DESTDIR=${STAGING_DIR} install"
+
+[[output]]
+name = "gcc"
+
+[[output]]
+name = "gcc-doc"
+description = "GCC documentation"
+include = ["/usr/share/doc/**"]
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        match manifest.outputs {
+            Some(OutputConfig::Multi(ref parts)) => {
+                let (_, main) = parts.iter().find(|(n, _)| n == "gcc").unwrap();
+                let main_manifest = main.to_manifest("gcc", &manifest);
+                assert_eq!(
+                    main_manifest.metadata.description,
+                    "The GNU Compiler Collection"
+                );
+            }
+            _ => panic!("expected Multi"),
+        }
+    }
+}

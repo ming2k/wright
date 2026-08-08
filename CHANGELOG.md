@@ -2,6 +2,98 @@
 
 ## [Unreleased]
 
+### Added
+- **`-n`/`--dry-run` on `wright merge`, `wright remove`, and `wright
+  upgrade`.** `merge --dry-run` prints `[dry-run] merge -> <root>` plus the
+  resolved archive list with zero side effects. `remove --dry-run` prints the
+  ordered removal plan (recursive dependents first, cascade orphans included)
+  without starting any transaction. `upgrade --dry-run` resolves the upgrade
+  set, including reverse-dependency expansion, and prints it before any build.
+- **`--json` on `wright list`, `wright files`, `wright owner`, and `wright
+  history`.** `list --json` emits an array of
+  `{"name","version","release","epoch","arch","origin","plan_name"}`,
+  `files --json` emits `{"part","files":[...]}`, `owner --json` emits an
+  array of `{"path","owners":[...]}`, and `history --json` emits an array of
+  `{"timestamp","session_id","command","part","action","old_version","new_version","status"}`.
+  Empty results print `[]`. `owner` still exits 1 when any path is unowned
+  (the JSON is printed first, the error report on stderr).
+- **`--json` on `wright check`.** Emits
+  `{"scope","mode","issue_count","issues":[...]}` where each issue carries a
+  `check` tag (`missing-file`, `broken-dependency`, `unresolved-soname`,
+  `database-integrity`, `shadowed-file-conflict`, `check-error`). The exit
+  code contract (0 = clean, 1 = issues found) is unchanged and remains the
+  primary machine interface.
+- **`--root` on `wright provide`, `list`, `files`, `owner`, and `history`** —
+  every command that reads or writes a target root's database now accepts it,
+  joining `install`, `upgrade`, `remove`, `merge`, `check`, `doctor`, and
+  `launch`.
+- **`-f` short for `--force` on `wright merge` and `wright remove`.**
+  Short-flag allocation is now globally unique: `-f` force, `-n` dry-run,
+  `-c` clean, `-d` deps, `-r` rdeps, `-t` tree, `-l` long, `-o` orphans,
+  `-p` print-parts.
+- **Hidden alias `--match-policies` for `wright resolve --match`**, matching
+  `wright install`.
+
+### Changed
+- **`wright install --rdeps` now works as documented.** Forward dependencies
+  and reverse dependents are independent axes: `--deps` picks the forward
+  domain (default `all`), a bare `--rdeps` means `link`, and omitting
+  `--rdeps` skips reverse expansion. Previously `--rdeps` was wrongly folded
+  into the forward domain.
+- **`wright install --dry-run` performs full resolution** and prints the wave
+  plan — `[dry-run] install -> <root>`, `would forge and deploy N package(s)
+  across M batch(es):`, then one `batch N:` line per batch — instead of
+  echoing the raw targets.
+- **`wright prune` no longer requires `--latest`.** Latest-retention is the
+  only mode; bare `wright prune` dry-runs and `wright prune --apply` deletes.
+- **`--db` is now truly global.** Like `--config`, `-v`, and `--quiet`, it
+  may appear after the subcommand.
+- **`-v` and `--quiet` now conflict** (clap error) instead of silently
+  applying a precedence. Verbosity mapping: default `info`, `-v` = debug,
+  `-vv` = trace, `--quiet` = warnings and errors only.
+- **Unified error and exit conventions.** No operation calls `process::exit`
+  mid-command; every failure produces the cargo-style multi-line failure
+  report on stderr and exits 1. SIGINT exits 130.
+- **Positional value names unified.** Plan-ish positionals render as `TARGET`
+  everywhere, part-ish positionals as `PART`, and `provide`'s version
+  positional as `VERSION`.
+- **`wright remove`'s summary now says "Uninstall deployed parts"**, matching
+  the project terminology.
+- **Documentation brought in line with the CLI.** `memory_limit` is
+  documented in MB; `plans_dir`, `forge_dir`, `folios_dir`, and `store_dir`
+  are documented consistently; removed commands (`sysupgrade`, `query`,
+  `verify`, `pack`, `apply`) and removed flags were dropped from guides; the
+  lifecycle is named with real command names (`resolve → build → package →
+  merge`); the README quick start teaches the one-command `wright install`
+  flow; broken internal links were fixed. ADR-0030 (single database),
+  ADR-0031 (folio manifest amendments), and ADR-0032 (CLI surface
+  consistency) record the durable decisions.
+- **Internal: oversized modules split into submodule directories** —
+  `foundry/charge`, `foundry/forge`, `operations/install`,
+  `isolation/native`, and `wright-plan/manifest`. Pure code motion; no
+  behavior or public-API change.
+
+### Fixed
+- **Reverse-dependency expansion fired only for `--rdeps=all`.** A bitflags
+  `contains(ALL)` bug gated the expansion; any non-empty rdeps domain now
+  expands, so `upgrade` (link rdeps) and `resolve --rdeps` work as
+  documented.
+- **`wright merge` help examples** previously showed `wright install`
+  examples, including the removed `--invalidate` flag.
+- **`wright list | head` no longer panics.** The binary restores the default
+  SIGPIPE disposition, so piped output dies quietly instead of aborting with
+  exit 101.
+
+### Removed
+- **`wright launch` without `--root` (breaking).** `--root` is now required;
+  pass `/` explicitly for the live system. It previously defaulted to `/`
+  silently.
+- **Short flags `remove -r`, `remove -c`, `lint -r`, `list -r`, `clean -p`,
+  and `clean -l` (breaking).** The affected options (`--recursive`,
+  `--cascade`, `--parts`, `--logs`, …) remain available in long form, keeping
+  short-flag allocation globally unique.
+- **`--deps=forge` hidden value alias (breaking).** Only `build` is accepted.
+
 ## [5.3.13] - 2026-08-04
 
 ### Added

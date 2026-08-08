@@ -11,6 +11,7 @@ Examples:
   wright upgrade zlib
   wright upgrade zlib openssl
   wright upgrade all
+  wright upgrade all --dry-run
   wright upgrade all --force";
 
 #[derive(Args)]
@@ -27,6 +28,10 @@ pub struct UpgradeArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
+    /// Preview what would be rebuilt and deployed without making any changes
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
     /// Maximum depth for reverse dependency expansion. `0` means unlimited.
     #[arg(long)]
     pub depth: Option<usize>,
@@ -42,6 +47,7 @@ pub async fn run(args: UpgradeArgs, ctx: &Context<'_>) -> Result<()> {
     crate::operations::upgrade::execute_upgrade(
         args.targets,
         args.force,
+        args.dry_run,
         args.depth,
         ctx.config,
         &ctx.db_path,

@@ -25,7 +25,8 @@ pub async fn execute_doctor(
         false, // integrity_only
         true,  // check_files
     )
-    .await?;
+    .await?
+    .total_issues;
 
     let closure_issues = check_parts_dir_closure(config).await?;
     total_issues += closure_issues;

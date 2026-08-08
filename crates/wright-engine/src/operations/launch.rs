@@ -88,7 +88,8 @@ pub async fn execute_launch(
     execute_install(InstallRequest {
         build_opts: None,
         targets: plan.targets.clone(),
-        dep_domain: DepDomain::empty(),
+        deps: DepDomain::empty(),
+        rdeps: DepDomain::empty(),
         match_policies: Vec::new(),
         depth: None,
         force: request.force,
@@ -100,6 +101,7 @@ pub async fn execute_launch(
         quiet,
         part_store: &part_store,
         run_hooks: false,
+        dry_run: false,
     })
     .await?;
 

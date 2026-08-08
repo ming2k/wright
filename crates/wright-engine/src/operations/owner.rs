@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, WrightError};
 use wright_state::database::InstalledDb;
 
-pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf]) -> Result<()> {
+pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf], json: bool) -> Result<()> {
     let multi = paths.len() > 1;
     let mut any_missing = false;
+    let mut results: Vec<serde_json::Value> = Vec::new();
 
     for input in paths {
         let resolved = normalize_path(input);
@@ -17,21 +18,32 @@ pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf]) -> Result<()> {
 
         if owners.is_empty() {
             any_missing = true;
-            tracing::error!("'{}' is not owned by any deployed part", lookup);
-            continue;
+            if !json {
+                tracing::error!("'{}' is not owned by any deployed part", lookup);
+            }
         }
 
-        for owner in &owners {
-            if multi {
-                println!("{}: {}", lookup, owner);
-            } else {
-                println!("{}", owner);
+        if json {
+            results.push(serde_json::json!({ "path": lookup, "owners": owners }));
+        } else {
+            for owner in &owners {
+                if multi {
+                    println!("{}: {}", lookup, owner);
+                } else {
+                    println!("{}", owner);
+                }
             }
         }
     }
 
+    if json {
+        super::print_json(&results)?;
+    }
+
     if any_missing {
-        std::process::exit(1);
+        return Err(WrightError::ForgeError(
+            "one or more paths are not owned by any deployed part".into(),
+        ));
     }
     Ok(())
 }

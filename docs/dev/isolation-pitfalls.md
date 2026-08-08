@@ -42,7 +42,7 @@ This is triggered when:
 
 ### Fix
 
-The `link_or_copy()` helper in `src/forge/mod.rs` catches `EXDEV` from
+The `link_or_copy()` helper in `src/foundry/mold.rs` catches `EXDEV` from
 `hard_link()` and transparently falls back to `fs::copy`.  This is
 functionally equivalent — the only cost is extra disk space for the
 duplicated data of the affected files.
@@ -83,15 +83,15 @@ during tight parallel exec windows.
 
 ### Fix layered defence
 
-1. **Multi-lowerdir OverlayFS with per-task upper** (`src/isolation/native.rs`):
+1. **Multi-lowerdir OverlayFS with per-task upper** (`src/isolation/native/run.rs`):
    host system directories are mounted as lower layers and each task gets a
    private upper/work pair.  If a file is opened for writing through the
    overlay path, copy-up moves it to the task-private upper layer.
 
-2. **execvp retry loop** (`src/isolation/native.rs`): 8 retries with
+2. **execvp retry loop** (`src/isolation/native/run.rs`): 8 retries with
    exponential backoff for the top-level `execvp(command)` call.
 
-3. **Stage-level retry** (`src/forge/pipeline.rs`): when a pipeline stage
+3. **Stage-level retry** (`src/foundry/forge/execute.rs`): when a pipeline stage
    exits with code 126 and its output contains "Text file busy", the stage
    is retried up to 10 times with capped exponential backoff (200ms-1000ms
    base) and randomized jitter on each delay.  This catches ETXTBSY from
@@ -141,7 +141,7 @@ point.
 
 ### Fix in place
 
-`force_clean_dir` (`src/forge/layers.rs`) wraps every `Forger::clean` removal:
+`force_clean_dir` (`src/foundry/layers.rs`) wraps every `Foundry::clean` removal:
 
 1. Attempt `remove_dir_all`. Return on success or `NotFound`.
 2. On `EBUSY`, call `detach_mounts_under(path)`:

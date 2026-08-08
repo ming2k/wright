@@ -19,7 +19,9 @@ layers. `WRIGHT_*` environment variables still override it.
 ```toml
 [general]
 arch = "x86_64"
+folios_dir = "/var/lib/wright/folios"
 parts_dir = "/var/lib/wright/parts"
+store_dir = "/var/lib/wright/store"
 source_dir = "/var/lib/wright/sources"
 db_path = "/var/lib/wright/wright.db"
 logs_dir = "/var/log/wright"
@@ -48,7 +50,9 @@ max_concurrent_downloads = 8
 |------|---------|---------|
 | `plans_dir` | `/var/lib/wright/plans` | plan tree root |
 | `extra_plans_dirs` | `[]` | additional plan tree roots |
+| `folios_dir` | `/var/lib/wright/folios` | folio manifest directory (peer of `plans_dir`) |
 | `parts_dir` | `/var/lib/wright/parts` | local archive store |
+| `store_dir` | `/var/lib/wright/store` | content-addressed storage for delivery recovery |
 | `source_dir` | `/var/lib/wright/sources` | source and git cache |
 | `db_path` | `/var/lib/wright/wright.db` | system state database |
 | `logs_dir` | `/var/log/wright` | reserved operation log directory |

@@ -6,7 +6,7 @@
 | [ADR-0002](0002-wave-by-wave-install.md) | Wave-by-wave install instead of one big install | Accepted |
 | [ADR-0003](0003-default-resolution-policy.md) | Default resolution policy for install | Accepted |
 | [ADR-0004](0004-no-magic-behavior.md) | No implicit magic behavior | Accepted |
-| [ADR-0005](0005-two-database-design.md) | Two-database design (installed + archive) | Accepted |
+| [ADR-0005](0005-two-database-design.md) | Two-database design (installed + archive) | Superseded by ADR-0030 |
 | [ADR-0006](0006-mvp-two-pass-build.md) | MVP two-pass build for dependency cycles | Accepted |
 | [ADR-0007](0007-usrmerge-and-sbin-merge.md) | usrmerge and sbin merged into bin | Accepted |
 | [ADR-0008](0008-no-dev-splitting.md) | No -dev splitting for personal distributions | Accepted |
@@ -16,7 +16,7 @@
 | [ADR-0012](0012-overlayfs-per-task-upper.md) | OverlayFS with per-task writable upper layers | Superseded by ADR-0013 |
 | [ADR-0013](0013-multi-lowerdir-isolation.md) | Multi-lowerdir OverlayFS isolation | Accepted |
 | [ADR-0014](0014-launch-and-pack-format.md) | `wright launch` and the pack format | Superseded by ADR-0015 |
-| [ADR-0015](0015-folio-manifest-replaces-pack.md) | Folio manifest replaces pack format | Accepted |
+| [ADR-0015](0015-folio-manifest-replaces-pack.md) | Folio manifest replaces pack format | Accepted (format details superseded by ADR-0031) |
 | [ADR-0016](0016-advisory-runtime-dependencies.md) | Runtime dependencies are advisory, not enforced | Accepted |
 | [ADR-0017](0017-plan-source-single-dep-truth.md) | Plan source as single dep truth + ELF lint | Accepted |
 | [ADR-0018](0018-unified-cli-porcelain-plumbing.md) | Unified CLI with porcelain–plumbing separation and convergent file layout | Accepted (file layout superseded by ADR-0020) |
@@ -31,3 +31,6 @@
 | [ADR-0027](0027-isolation-fails-closed.md) | Isolation fails closed | Accepted |
 | [ADR-0028](0028-single-threaded-isolation-helper.md) | Namespace setup runs in a single-threaded helper process | Accepted |
 | [ADR-0029](0029-engine-owned-boundary-mapping.md) | Engine-owned mapping between sibling workspace crates | Accepted |
+| [ADR-0030](0030-single-database.md) | Single database for system state | Accepted |
+| [ADR-0031](0031-folio-manifest-amendments.md) | Folio manifest amendments (hooks, `<name>.toml`, no `[config]`/`arch`) | Accepted |
+| [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted |

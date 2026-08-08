@@ -1,4 +1,5 @@
 use clap::Args;
+use std::path::PathBuf;
 
 #[cfg(with_handlers)]
 use crate::cli::common::Context;
@@ -20,10 +21,14 @@ pub struct ProvideArgs {
     #[arg(value_name = "PART")]
     pub name: Option<String>,
     /// Part version (omit if piping or using --file)
+    #[arg(value_name = "VERSION")]
     pub version: Option<String>,
     /// Read 'name version' pairs from a file (one per line)
     #[arg(long, value_name = "FILE")]
-    pub file: Option<std::path::PathBuf>,
+    pub file: Option<PathBuf>,
+    /// Alternate root directory whose database receives the record
+    #[arg(long)]
+    pub root: Option<PathBuf>,
 }
 
 #[cfg(with_handlers)]

@@ -10,17 +10,17 @@
 
 | Artifact | Default path | Lookup method | Role |
 |----------|--------------|---------------|------|
-| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, sysupgrade,  |
+| Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, merge |
 
 ## Migration System
 
 | Item | Value |
 |------|-------|
-| Migration files | `src/database/migrations/*.sql` |
+| Migration files | `crates/wright-state/migrations/*.sql` |
 | Migration tracker | SQLx `_sqlx_migrations` table |
 | Initialization | automatic on database open |
 | Upgrade | pending migrations run automatically |
-| Immutable history | never edit files under `src/database/migrations/` |
+| Immutable history | never edit files under `crates/wright-state/migrations/` |
 
 ## Tables
 
@@ -38,7 +38,7 @@
 | `transaction_ops` | **Temporary WAL**: per-DAG-node deploy actions (cleaned after commit/rollback) |
 
 Build deps, link deps, and `provides` are deliberately not persisted. See
-[Dependency Philosophy](../explanation/dependency-philosophy.md) and
+[Dependency DAG](../explanation/dependency-dag.md) and
 [ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 
 ## Entity Relationship Diagram
