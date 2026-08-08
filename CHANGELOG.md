@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.14] - 2026-08-08
+
 ### Added
 - **`-n`/`--dry-run` on `wright merge`, `wright remove`, and `wright
   upgrade`.** `merge --dry-run` prints `[dry-run] merge -> <root>` plus the
