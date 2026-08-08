@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.15] - 2026-08-08
+
 ### Fixed
 - **`${VERSION}` in `[[output]] runtime_deps` is now expanded at seal time.**
   Split outputs pinning a sibling (e.g. `optics:flux = ${VERSION}`) seal with
