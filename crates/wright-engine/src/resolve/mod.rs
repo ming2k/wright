@@ -197,11 +197,21 @@ pub fn resolve_explicit_plan_names(
         .collect())
 }
 
+/// Outcome of [`resolve_build_set`]: the plan names to build plus, when
+/// reverse-dependency expansion ran, why each pulled-in plan is rebuilt and
+/// which rebuilt dependency triggered its inclusion.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedBuildSet {
+    pub names: Vec<String>,
+    pub rebuild_reasons: HashMap<String, RebuildReason>,
+    pub rebuild_triggers: HashMap<String, String>,
+}
+
 pub async fn resolve_build_set(
     config: &GlobalConfig,
     targets: Vec<String>,
     opts: ResolveOptions,
-) -> Result<Vec<String>> {
+) -> Result<ResolvedBuildSet> {
     let plan_dirs = plan_search_dirs(config);
     let index = wright_plan::discovery::PlanIndex::discover(&plan_dirs)?;
     let plans_to_build = resolve_targets(&targets, &index, &plan_dirs)?;
@@ -218,6 +228,8 @@ pub async fn resolve_build_set(
         .collect();
     let original_plans = plans_to_build.clone();
     let mut plans_to_build = original_plans.clone();
+    let mut rebuild_reasons = HashMap::new();
+    let mut rebuild_triggers = HashMap::new();
     let actual_max = {
         let max_depth = opts.depth.unwrap_or(1);
         if max_depth == 0 {
@@ -292,7 +304,7 @@ pub async fn resolve_build_set(
                 .into_iter()
                 .map(|p| p.name)
                 .collect();
-            expand_rebuild_deps(
+            let expansion = expand_rebuild_deps(
                 &mut plans_to_build,
                 &index,
                 opts.rdeps,
@@ -301,6 +313,8 @@ pub async fn resolve_build_set(
                 &config.build.stable_toolchain,
             )
             .await?;
+            rebuild_reasons = expansion.reasons;
+            rebuild_triggers = expansion.triggers;
         }
     }
 
@@ -317,7 +331,11 @@ pub async fn resolve_build_set(
         })
         .collect::<Result<Vec<String>>>()?;
 
-    Ok(names)
+    Ok(ResolvedBuildSet {
+        names,
+        rebuild_reasons,
+        rebuild_triggers,
+    })
 }
 
 pub fn create_execution_plan(

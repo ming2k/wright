@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **`wright upgrade` now explains why reverse dependencies are rebuilt.**
+  The "also upgrading" notice lists each pulled-in plan with the rebuilt
+  dependency that triggered it (e.g. `aegis (link-depends on optics)`),
+  sorted deterministically. `--dry-run` annotates pulled-in plans with the
+  same reason.
+
 ## [5.3.16] - 2026-08-08
 
 ### Fixed

@@ -82,7 +82,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
     let build_set: Vec<String> = resolve_build_set(config, targets.clone(), resolve_opts.clone())
         .await
-        .map_err(|e| WrightError::ForgeError(format!("resolve_build_set: {}", e)))?;
+        .map_err(|e| WrightError::ForgeError(format!("resolve_build_set: {}", e)))?
+        .names;
 
     if build_set.is_empty() {
         if !quiet {

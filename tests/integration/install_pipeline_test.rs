@@ -317,7 +317,8 @@ runtime_deps = ["wayland"]
     let build_set =
         wright::resolve::resolve_build_set(&config, vec!["wayland-utils".to_string()], opts)
             .await
-            .unwrap();
+            .unwrap()
+            .names;
 
     println!("Build set: {:?}", build_set);
     assert!(

@@ -38,7 +38,8 @@ pub async fn execute_resolve(request: ResolveRequest, config: &GlobalConfig) -> 
             preserve_targets: true,
         },
     )
-    .await?;
+    .await?
+    .names;
     resolved.sort();
 
     if !tree {

@@ -372,6 +372,14 @@ pub(super) fn construction_plan_label(
     }
 }
 
+/// Outcome of reverse-dependency expansion: why each plan is being rebuilt
+/// and, for plans pulled in transitively, which rebuilt dependency triggered
+/// their inclusion.
+pub(super) struct RebuildExpansion {
+    pub reasons: HashMap<String, RebuildReason>,
+    pub triggers: HashMap<String, String>,
+}
+
 pub(super) async fn expand_rebuild_deps(
     plans_to_build: &mut HashSet<PathBuf>,
     index: &PlanIndex,
@@ -379,8 +387,9 @@ pub(super) async fn expand_rebuild_deps(
     max_depth: usize,
     installed_names: &HashSet<String>,
     stable_toolchain: &[String],
-) -> Result<HashMap<String, RebuildReason>> {
+) -> Result<RebuildExpansion> {
     let mut reasons = HashMap::new();
+    let mut triggers = HashMap::new();
 
     let mut runtime_deps: HashMap<String, Vec<String>> = HashMap::new();
     let mut build_deps: HashMap<String, Vec<String>> = HashMap::new();
@@ -444,52 +453,64 @@ pub(super) async fn expand_rebuild_deps(
         if current_depth >= max_depth {
             break;
         }
-        let mut wave: Vec<(String, PathBuf, RebuildReason)> = Vec::new();
+        let mut wave: Vec<(String, PathBuf, RebuildReason, String)> = Vec::new();
         for (name, path) in &all_name_to_path {
             if rebuild_set.contains(name) || !installed_names.contains(name) {
                 continue;
             }
 
-            let link_changed = mode.contains(DepDomain::LINK)
-                && link_deps
+            // Find the first already-rebuilt dependency that pulls this plan
+            // in, per dependency domain. The trigger is recorded so callers
+            // can explain to the user why the plan is being rebuilt.
+            let link_trigger = if mode.contains(DepDomain::LINK) {
+                link_deps
                     .get(name)
-                    .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
-
-            let runtime_changed = mode.contains(DepDomain::RUNTIME)
-                && runtime_deps
+                    .and_then(|deps| deps.iter().find(|d| rebuild_set.contains(*d)))
+            } else {
+                None
+            };
+            let runtime_trigger = if mode.contains(DepDomain::RUNTIME) {
+                runtime_deps
                     .get(name)
-                    .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
-
-            let build_changed = mode.contains(DepDomain::BUILD)
-                && build_deps
+                    .and_then(|deps| deps.iter().find(|d| rebuild_set.contains(*d)))
+            } else {
+                None
+            };
+            let build_trigger = if mode.contains(DepDomain::BUILD) {
+                build_deps
                     .get(name)
-                    .is_some_and(|deps| deps.iter().any(|d| rebuild_set.contains(d)));
+                    .and_then(|deps| deps.iter().find(|d| rebuild_set.contains(*d)))
+            } else {
+                None
+            };
 
-            if link_changed || runtime_changed || build_changed {
+            let trigger = link_trigger.or(runtime_trigger).or(build_trigger);
+            if let Some(trigger) = trigger {
                 if !mode.contains(DepDomain::ALL) && stable_toolchain.iter().any(|t| t == name) {
                     continue;
                 }
 
-                let reason = if link_changed {
+                let reason = if link_trigger.is_some() {
                     RebuildReason::LinkDependency
                 } else {
                     RebuildReason::Transitive
                 };
-                wave.push((name.clone(), path.clone(), reason));
+                wave.push((name.clone(), path.clone(), reason, trigger.clone()));
             }
         }
         if wave.is_empty() {
             break;
         }
-        for (name, path, reason) in wave {
+        for (name, path, reason, trigger) in wave {
             rebuild_set.insert(name.clone());
             plans_to_build.insert(path);
-            reasons.insert(name, reason);
+            reasons.insert(name.clone(), reason);
+            triggers.insert(name, trigger);
         }
         current_depth += 1;
     }
 
-    Ok(reasons)
+    Ok(RebuildExpansion { reasons, triggers })
 }
 
 pub(super) fn build_dep_map(

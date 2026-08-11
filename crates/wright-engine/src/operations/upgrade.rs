@@ -4,7 +4,9 @@ use std::path::Path;
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use crate::operations::install::{InstallRequest, execute_install};
-use crate::resolve::{DepDomain, MatchPolicy, ResolveOptions, plan_search_dirs, resolve_build_set};
+use crate::resolve::{
+    DepDomain, MatchPolicy, RebuildReason, ResolveOptions, plan_search_dirs, resolve_build_set,
+};
 use wright_part::store::LocalPartStore;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::PlanManifest;
@@ -69,22 +71,42 @@ pub async fn execute_upgrade(
         .await
         .map_err(|e| WrightError::ForgeError(format!("resolve upgrade set: {}", e)))?;
 
-    if build_set.is_empty() {
+    if build_set.names.is_empty() {
         if !quiet {
             println!("nothing to upgrade");
         }
         return Ok(());
     }
 
+    let target_set: HashSet<&str> = targets.iter().map(String::as_str).collect();
+    let describe_extra = |name: &str| {
+        describe_rdep(
+            name,
+            build_set.rebuild_reasons.get(name),
+            build_set.rebuild_triggers.get(name),
+        )
+    };
+
     if !quiet {
-        let target_set: HashSet<&str> = targets.iter().map(String::as_str).collect();
-        let extras: Vec<&str> = build_set
+        let mut extras: Vec<&str> = build_set
+            .names
             .iter()
             .map(String::as_str)
             .filter(|n| !target_set.contains(n))
             .collect();
+        extras.sort_unstable();
         if !extras.is_empty() {
-            println!("also upgrading (rdeps): {}", extras.join(", "));
+            let described: Vec<String> = extras.iter().map(|n| describe_extra(n)).collect();
+            println!(
+                "also upgrading {} reverse {}: {}",
+                extras.len(),
+                if extras.len() == 1 {
+                    "dependency"
+                } else {
+                    "dependencies"
+                },
+                described.join(", ")
+            );
         }
     }
 
@@ -92,17 +114,21 @@ pub async fn execute_upgrade(
         println!("[dry-run] upgrade -> {}", root_dir.display());
         println!(
             "[dry-run] would rebuild and deploy {} plan(s):",
-            build_set.len()
+            build_set.names.len()
         );
-        for name in &build_set {
-            println!("  {}", name);
+        for name in &build_set.names {
+            if target_set.contains(name.as_str()) {
+                println!("  {}", name);
+            } else {
+                println!("  {}", describe_extra(name));
+            }
         }
         return Ok(());
     }
 
     // Run the full install workflow (resolve → forge → seal → deploy) for the resolved set.
     execute_install(InstallRequest {
-        targets: build_set,
+        targets: build_set.names,
         deps: DepDomain::ALL,
         rdeps: DepDomain::empty(),
         match_policies: vec![],
@@ -120,6 +146,20 @@ pub async fn execute_upgrade(
         dry_run: false,
     })
     .await
+}
+
+/// Render a reverse dependency pulled into an upgrade together with the
+/// reason it is being rebuilt, e.g. `aegis (link-depends on optics)` or
+/// `wavora (depends on aegis)`. Falls back to the bare plan name when no
+/// trigger was recorded.
+fn describe_rdep(name: &str, reason: Option<&RebuildReason>, trigger: Option<&String>) -> String {
+    let Some(trigger) = trigger else {
+        return name.to_string();
+    };
+    match reason {
+        Some(RebuildReason::LinkDependency) => format!("{name} (link-depends on {trigger})"),
+        _ => format!("{name} (depends on {trigger})"),
+    }
 }
 
 /// Filter explicit targets to only those whose plan manifest differs from the
@@ -236,9 +276,25 @@ async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Ve
 
 #[cfg(test)]
 mod tests {
-    use super::filter_outdated_targets;
+    use super::{describe_rdep, filter_outdated_targets};
     use crate::config::GlobalConfig;
+    use crate::resolve::RebuildReason;
     use wright_state::database::{InstalledDb, NewPart, NewPlan};
+
+    #[test]
+    fn describe_rdep_explains_link_and_transitive_triggers() {
+        let trigger = "optics".to_string();
+        assert_eq!(
+            describe_rdep("aegis", Some(&RebuildReason::LinkDependency), Some(&trigger)),
+            "aegis (link-depends on optics)"
+        );
+        assert_eq!(
+            describe_rdep("wavora", Some(&RebuildReason::Transitive), Some(&trigger)),
+            "wavora (depends on optics)"
+        );
+        // No recorded trigger (e.g. pulled in for another reason): bare name.
+        assert_eq!(describe_rdep("orphan", None, None), "orphan");
+    }
 
     #[tokio::test]
     async fn explicit_multi_output_plan_is_detected_as_outdated() {

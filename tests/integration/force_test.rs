@@ -64,7 +64,8 @@ arch = "x86_64"
     };
     let build_set_1 = resolve_build_set(&config, vec!["a".to_string()], opts_no_force)
         .await
-        .unwrap();
+        .unwrap()
+        .names;
     assert!(
         build_set_1.is_empty(),
         "Without force, converged target should be skipped"
@@ -80,7 +81,8 @@ arch = "x86_64"
     };
     let build_set_2 = resolve_build_set(&config, vec!["a".to_string()], opts_force)
         .await
-        .unwrap();
+        .unwrap()
+        .names;
     assert_eq!(
         build_set_2.len(),
         1,
