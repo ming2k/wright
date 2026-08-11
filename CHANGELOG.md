@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.17] - 2026-08-10
+
 ### Changed
 - **`wright upgrade` now explains why reverse dependencies are rebuilt.**
   The "also upgrading" notice lists each pulled-in plan with the rebuilt
