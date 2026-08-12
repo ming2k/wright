@@ -163,11 +163,16 @@ echo "glibc 2.40" | wright provide
 
 ### `wright list`
 
-List deployed parts.
+List deployed plans and parts. By default parts are grouped under the plan
+that produced them, showing the relationship behind the plan/output targets
+accepted by commands like `wright remove` and `wright files`. Use `--plans`
+or `--parts` for a flat one-per-line list of a single namespace.
 
 ```bash
 wright list
 wright list -l
+wright list --plans
+wright list --parts
 wright list --roots
 wright list --orphans
 wright list --provided
@@ -177,10 +182,12 @@ wright list --json
 | Flag | Description |
 |------|-------------|
 | `-l`, `--long` | Show origin, version, release, and architecture |
+| `--plans` | List only plans (one per line), without their parts |
+| `--parts` | List only parts (one per line), without plan grouping |
 | `--roots` | Show only top-level (root) parts with no deployed dependents |
 | `-o`, `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
 | `--provided` | Show provided (externally provided) parts |
-| `--json` | Emit a machine-readable JSON array of part records |
+| `--json` | Emit a machine-readable JSON array of part records (plan records with `--plans`) |
 | `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright files <TARGET>`

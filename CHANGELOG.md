@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+- **`wright list` groups parts under their plan by default.** The grouped
+  view lists plans and parts together and marks their relationship,
+  mirroring the plan/output targets accepted by `wright remove`, `wright
+  files`, and the other query commands. The new `--plans` and `--parts`
+  flags print a flat one-per-line list of a single namespace (the previous
+  default output is now `wright list --parts`); `--json` still emits flat
+  part records, and `--plans --json` emits plan records.
 ## [5.3.20] - 2026-08-12
 
 ### Added

@@ -97,7 +97,7 @@ pub enum SystemCommands {
 
 #[derive(Subcommand)]
 pub enum QueryCommands {
-    /// List installed parts
+    /// List deployed plans and parts
     #[command(display_order = 10)]
     List(list::ListArgs),
 
