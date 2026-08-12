@@ -686,14 +686,31 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
 
     // Rule C: terminal completion line for the entire install workflow.
+    // Warnings shown earlier are non-fatal by definition once we reach this
+    // line, so surface their count to close the loop for the user.
     if !quiet {
         let elapsed = workflow_t0.elapsed().as_secs_f64();
+        let warnings = crate::util::logging::cli_warn_count();
+        let summary = if warnings == 0 {
+            format!(
+                "install in {}",
+                crate::foundry::logging::format_duration(elapsed)
+            )
+        } else {
+            format!(
+                "install in {} ({} {})",
+                crate::foundry::logging::format_duration(elapsed),
+                warnings,
+                if warnings == 1 { "warning" } else { "warnings" }
+            )
+        };
         info!(
             verb = "Finished",
             event = "install.completed",
             elapsed_secs = elapsed,
-            "install in {}",
-            crate::foundry::logging::format_duration(elapsed),
+            warnings,
+            "{}",
+            summary,
         );
     }
 
@@ -724,7 +741,7 @@ async fn register_folio_assumptions(
     Ok(())
 }
 
-fn manifest_part_names(manifest: &PlanManifest) -> Vec<String> {
+pub(crate) fn manifest_part_names(manifest: &PlanManifest) -> Vec<String> {
     match manifest.outputs {
         Some(OutputConfig::Multi(ref parts)) => parts.iter().map(|(n, _)| n.clone()).collect(),
         _ => vec![manifest.metadata.name.clone()],

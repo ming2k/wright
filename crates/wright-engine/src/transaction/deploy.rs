@@ -310,7 +310,8 @@ async fn warn_about_runtime_dependencies(
                 warn!(
                     event = "deploy.empty_dependency",
                     plan_name = name,
-                    "Part declares an empty runtime dependency; continuing deploy"
+                    "{} declares an empty runtime dependency; continuing deploy",
+                    name
                 );
                 continue;
             }
@@ -323,7 +324,9 @@ async fn warn_about_runtime_dependencies(
                         plan_name = name,
                         dependency = dep,
                         error = %e,
-                        "Part declares invalid runtime dependency; continuing deploy"
+                        "{} declares invalid runtime dependency '{}'; continuing deploy",
+                        name,
+                        dep
                     );
                     continue;
                 }
@@ -379,7 +382,9 @@ async fn warn_about_runtime_dependencies(
                 event = "deploy.missing_dependency",
                 dependency = output_name,
                 plan_name = name,
-                "Runtime dependency not deployed; continuing deploy"
+                "runtime dependency '{}' required by {} is not deployed; continuing deploy",
+                output_name,
+                name
             );
         }
     }

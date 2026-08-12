@@ -3,14 +3,14 @@ use std::path::Path;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
-use crate::operations::install::{InstallRequest, execute_install};
+use crate::operations::install::{InstallRequest, execute_install, manifest_part_names};
 use crate::resolve::{
     DepDomain, MatchPolicy, RebuildReason, ResolveOptions, plan_search_dirs, resolve_build_set,
 };
 use wright_part::store::LocalPartStore;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::PlanManifest;
-use wright_state::database::InstalledDb;
+use wright_state::database::{InstalledDb, PlanRecord};
 
 pub async fn execute_upgrade(
     targets: Vec<String>,
@@ -87,27 +87,21 @@ pub async fn execute_upgrade(
         )
     };
 
-    if !quiet {
-        let mut extras: Vec<&str> = build_set
-            .names
-            .iter()
-            .map(String::as_str)
-            .filter(|n| !target_set.contains(n))
-            .collect();
-        extras.sort_unstable();
-        if !extras.is_empty() {
-            let described: Vec<String> = extras.iter().map(|n| describe_extra(n)).collect();
-            println!(
-                "also upgrading {} reverse {}: {}",
-                extras.len(),
-                if extras.len() == 1 {
-                    "dependency"
-                } else {
-                    "dependencies"
-                },
-                described.join(", ")
-            );
-        }
+    let mut extras: Vec<&str> = build_set
+        .names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !target_set.contains(n))
+        .collect();
+    extras.sort_unstable();
+    if !extras.is_empty() {
+        let described: Vec<String> = extras.iter().map(|n| describe_extra(n)).collect();
+        crate::cli_action!(
+            "Cascading",
+            "rdeps of {}: {}",
+            targets.join(", "),
+            described.join(", ")
+        );
     }
 
     if dry_run {
@@ -162,6 +156,41 @@ fn describe_rdep(name: &str, reason: Option<&RebuildReason>, trigger: Option<&St
     }
 }
 
+/// Decide whether an installed plan is outdated relative to its current plan
+/// manifest, taking the manifest as the source of truth. A plan is outdated
+/// when the deployed (epoch, version, release) differs, when the manifest
+/// content changed since deploy (the recorded checksum covers added/removed
+/// outputs, include-pattern edits, dependency changes, etc.), or — for plans
+/// deployed before provenance was recorded, which have no checksum — when
+/// the declared outputs no longer match the parts registered for the plan.
+async fn plan_is_outdated(
+    db: &InstalledDb,
+    manifest: &PlanManifest,
+    plan: &PlanRecord,
+) -> Result<bool> {
+    let triple_changed = plan.epoch != manifest.metadata.epoch as i64
+        || plan.release != manifest.metadata.release as i64
+        || plan.version != manifest.metadata.version.as_deref().unwrap_or("");
+    if triple_changed {
+        return Ok(true);
+    }
+
+    if let (Some(deployed), Some(current)) = (&plan.plan_checksum, &manifest.plan_checksum) {
+        return Ok(deployed != current);
+    }
+
+    // Legacy deployments carry no plan checksum: fall back to comparing the
+    // manifest's declared outputs against the registered parts.
+    let expected: HashSet<String> = manifest_part_names(manifest).into_iter().collect();
+    let installed: HashSet<String> = db
+        .get_parts_by_plan(&plan.name)
+        .await?
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    Ok(expected != installed)
+}
+
 /// Filter explicit targets to only those whose plan manifest differs from the
 /// deployed version.
 async fn filter_outdated_targets(
@@ -207,12 +236,7 @@ async fn filter_outdated_targets(
             }
         };
 
-        let plan_epoch = manifest.metadata.epoch as i64;
-        let plan_release = manifest.metadata.release as i64;
-        let plan_version = manifest.metadata.version.as_deref().unwrap_or("");
-
-        if plan_epoch != plan.epoch || plan_release != plan.release || plan_version != plan.version
-        {
+        if plan_is_outdated(&db, &manifest, &plan).await? {
             outdated.push(target.clone());
         }
     }
@@ -220,26 +244,25 @@ async fn filter_outdated_targets(
     Ok(outdated)
 }
 
-/// Scan every installed part, compare its deployed version with the current
-/// plan manifest, and return the names of plans that are newer.
+/// Scan every installed plan, compare the deployed record with the current
+/// plan manifest, and return the names of plans that are outdated.
 async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Vec<String>> {
     let db = InstalledDb::open(db_path)
         .await
         .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
 
-    let installed = db
-        .list_parts()
+    let plans = db
+        .list_plans()
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("list parts: {}", e)))?;
+        .map_err(|e| WrightError::DatabaseError(format!("list plans: {}", e)))?;
 
     let plan_dirs = plan_search_dirs(config);
     let index = PlanIndex::discover(&plan_dirs)?;
 
     let mut outdated = Vec::new();
-    for part in installed {
-        let plan_name = &part.plan_name;
-        let Some(plan_path) = index.path_for(plan_name) else {
-            continue; // no local plan for this installed part
+    for plan in plans {
+        let Some(plan_path) = index.path_for(&plan.name) else {
+            continue; // no local plan for this installed plan
         };
 
         let manifest = match PlanManifest::from_file(plan_path) {
@@ -247,31 +270,11 @@ async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Ve
             Err(_) => continue,
         };
 
-        let installed_epoch = part.epoch;
-        let installed_release = part.release;
-        let installed_version = &part.version;
-
-        let plan_epoch = manifest.metadata.epoch as i64;
-        let plan_release = manifest.metadata.release as i64;
-        let plan_version = manifest.metadata.version.as_deref().unwrap_or("");
-
-        if plan_epoch != installed_epoch
-            || plan_release != installed_release
-            || plan_version != installed_version
-        {
-            outdated.push(plan_name.clone());
+        if plan_is_outdated(&db, &manifest, &plan).await? {
+            outdated.push(plan.name.clone());
         }
     }
-
-    // De-duplicate while preserving order.
-    let mut deduped = Vec::new();
-    let mut seen = HashSet::new();
-    for name in outdated {
-        if seen.insert(name.clone()) {
-            deduped.push(name);
-        }
-    }
-    Ok(deduped)
+    Ok(outdated)
 }
 
 #[cfg(test)]
@@ -285,7 +288,11 @@ mod tests {
     fn describe_rdep_explains_link_and_transitive_triggers() {
         let trigger = "optics".to_string();
         assert_eq!(
-            describe_rdep("aegis", Some(&RebuildReason::LinkDependency), Some(&trigger)),
+            describe_rdep(
+                "aegis",
+                Some(&RebuildReason::LinkDependency),
+                Some(&trigger)
+            ),
             "aegis (link-depends on optics)"
         );
         assert_eq!(
@@ -356,5 +363,198 @@ include = ["/usr/include/**"]
             .await
             .unwrap();
         assert_eq!(outdated, ["split-plan"]);
+    }
+
+    /// Same manifest version as deployed, but the plan gained an output and
+    /// the deployment predates provenance recording (no plan checksum): the
+    /// output-set fallback must flag the plan as outdated.
+    #[tokio::test]
+    async fn added_output_without_version_bump_is_detected_as_outdated() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("split-plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        std::fs::write(
+            plan_dir.join("plan.toml"),
+            r#"
+name = "split-plan"
+version = "1.0.0"
+release = 1
+description = "split plan"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "split-runtime"
+description = "runtime output"
+include = ["/usr/lib/**"]
+
+[[output]]
+name = "split-devel"
+description = "development output"
+include = ["/usr/include/**"]
+"#,
+        )
+        .unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path).await.unwrap();
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "split-plan",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            })
+            .await
+            .unwrap();
+        // Only the runtime output is deployed; split-devel was added later.
+        db.insert_part(NewPart {
+            name: "split-runtime",
+            plan_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        let outdated = filter_outdated_targets(&["split-plan".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert_eq!(outdated, ["split-plan"]);
+    }
+
+    /// Same version triple, but the recorded plan checksum no longer matches
+    /// the manifest on disk (e.g. an output was added): outdated.
+    #[tokio::test]
+    async fn changed_plan_checksum_is_detected_as_outdated() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("solo");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        std::fs::write(
+            plan_dir.join("plan.toml"),
+            r#"
+name = "solo"
+version = "1.0.0"
+release = 1
+description = "solo plan"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path).await.unwrap();
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "solo",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "solo",
+            plan_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        db.set_plan_provenance(
+            plan_id,
+            wright_state::database::NewPlanProvenance {
+                plan_checksum: Some(
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                ),
+                source_checksums: &[],
+                wright_version: "test",
+                isolation: "none",
+            },
+        )
+        .await
+        .unwrap();
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        let outdated = filter_outdated_targets(&["solo".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert_eq!(outdated, ["solo"]);
+    }
+
+    /// Same version triple and a matching plan checksum: up to date.
+    #[tokio::test]
+    async fn matching_plan_checksum_is_up_to_date() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("solo");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let plan_path = plan_dir.join("plan.toml");
+        std::fs::write(
+            &plan_path,
+            r#"
+name = "solo"
+version = "1.0.0"
+release = 1
+description = "solo plan"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+        let checksum = wright_plan::manifest::PlanManifest::from_file(&plan_path)
+            .unwrap()
+            .plan_checksum
+            .unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path).await.unwrap();
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "solo",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "solo",
+            plan_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        db.set_plan_provenance(
+            plan_id,
+            wright_state::database::NewPlanProvenance {
+                plan_checksum: Some(&checksum),
+                source_checksums: &[],
+                wright_version: "test",
+                isolation: "none",
+            },
+        )
+        .await
+        .unwrap();
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        let outdated = filter_outdated_targets(&["solo".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert!(outdated.is_empty());
     }
 }

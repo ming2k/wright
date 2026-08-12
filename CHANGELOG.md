@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+- **`wright upgrade` detects stale plans by content, not just version.** A
+  deployed plan is now rebuilt when its manifest changed since deploy —
+  the recorded plan checksum no longer matches, or, for pre-provenance
+  deployments without a checksum, the declared outputs no longer match the
+  registered parts. Previously only an (epoch, version, release) change
+  qualified, so adding an output without a version bump never triggered a
+  rebuild. Outdated scanning walks plans rather than parts, so
+  multi-output plans are evaluated exactly once.
+- **Warning visibility in terminal output.** `wright install`'s `Finished`
+  line reports the run's warning count (e.g. `install in 3.2s (2
+  warnings)`), deploy-time dependency warnings name the part and the
+  dependency involved, and the reverse-dependency rebuild notice moved
+  from `also upgrading ...` to the standard `Cascading` action line.
+
 ## [5.3.18] - 2026-08-12
 
 ### Added

@@ -253,6 +253,16 @@ pub fn clear_trace_id() {
 
 static SUPPRESS_CLI: AtomicBool = AtomicBool::new(false);
 
+/// Number of WARN events shown on the CLI during this command run. Used to
+/// qualify the terminal `Finished` line so a warning mid-run doesn't leave
+/// the user guessing whether it mattered.
+static CLI_WARN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Warnings displayed so far in this command run.
+pub fn cli_warn_count() -> usize {
+    CLI_WARN_COUNT.load(Ordering::Relaxed)
+}
+
 /// Silence ALL CLI-layer output. Use this on the terminal-failure path
 /// after `MULTI.clear()` so in-flight cleanup-path tracing events can't
 /// race with the multi-line failure block we're about to print.
@@ -296,6 +306,9 @@ where
             return;
         }
         let level = *event.metadata().level();
+        if level == tracing::Level::WARN {
+            CLI_WARN_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
 
         let mut v = FieldExtractor::default();
         event.record(&mut v);
