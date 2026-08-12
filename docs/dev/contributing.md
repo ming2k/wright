@@ -15,12 +15,14 @@ System libraries are needed for the non-vendored link steps:
 
 ```bash
 sudo apt-get install -y libsqlite3-dev liblzma-dev libbz2-dev libzstd-dev \
-  pkg-config perl make bubblewrap
+  pkg-config bubblewrap
 ```
 
-`git2`, `openssl`, and `libgit2` are vendored by Cargo features; do not
-install system copies. `bubblewrap` is optional — integration tests that
-need namespace isolation skip themselves when it is unavailable.
+The remaining vendored C dependencies (`zstd`, `lzma`, `sqlite` when the
+system package is absent) build with the C toolchain alone; git operations
+use the pure-Rust `gix` crate, so no OpenSSL or libgit2 build is involved.
+`bubblewrap` is optional — integration tests that need namespace isolation
+skip themselves when it is unavailable.
 
 ## Build
 

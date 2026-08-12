@@ -10,6 +10,17 @@
   flags print a flat one-per-line list of a single namespace (the previous
   default output is now `wright list --parts`); `--json` still emits flat
   part records, and `--plans --json` emits plan records.
+- **Git source fetching moved from libgit2 to gitoxide (ADR-0035).** All
+  git operations now go through the pure-Rust `gix` crate with HTTPS over
+  `reqwest` + `rustls`, so OpenSSL, libgit2, and libssh2 leave the build
+  entirely (the vendored OpenSSL build alone was ~32s of a clean build).
+  Fetch behavior is unchanged: shallow fetches still store the requested
+  ref under `refs/wright/`, full fetches still mirror heads and tags, and a
+  failed incremental shallow fetch still triggers one automatic cache
+  refresh. One behavioral note: `ssh://` git sources now use the system
+  `ssh` client (as git itself does); `https://`, `git://`, and local
+  sources remain fully self-contained.
+
 ## [5.3.20] - 2026-08-12
 
 ### Added

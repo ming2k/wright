@@ -9,7 +9,14 @@ description = "Application orchestration engine for Wright"
 chrono = { version = "0.4", features = ["serde"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures-util = "0.3.32"
-git2 = { version = "0.21", features = ["vendored-libgit2", "vendored-openssl"] }
+gix = { version = "0.76", default-features = false, features = [
+    "revision",
+    "index",
+    "worktree-mutation",
+    "blocking-network-client",
+    "blocking-http-transport-reqwest-rust-tls",
+    "parallel",
+] }
 globset = "0.4"
 indicatif = "0.18"
 libc = "0.2"

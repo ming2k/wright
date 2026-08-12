@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0035](0035-git-fetch-via-gitoxide.md)
 
 ## Context
 

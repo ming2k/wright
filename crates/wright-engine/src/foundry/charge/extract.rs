@@ -61,44 +61,111 @@ impl Charge {
                     } else {
                         git_ref.clone()
                     };
-                    let repo = if uses_private_ref {
-                        let repo = git2::Repository::init(&final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!("local git init failed: {e}"))
+                    let repo = gix::init(&final_dest).map_err(|e| {
+                        WrightError::ForgeError(format!("local git init failed: {e}"))
+                    })?;
+                    // An anonymous remote is enough: the fetch is driven by
+                    // explicit refspecs, nothing is persisted in the repo config.
+                    let remote = repo.remote_at(cache_str).map_err(|e| {
+                        WrightError::ForgeError(format!("local git remote setup failed: {e}"))
+                    })?;
+                    let refspec_strings: Vec<String> = if uses_private_ref {
+                        vec![format!("+{checkout_ref}:{checkout_ref}")]
+                    } else {
+                        // Mirror heads and tags so that branch names, tag names,
+                        // and arbitrary commit hashes all resolve locally.
+                        vec![
+                            "+refs/heads/*:refs/heads/*".to_string(),
+                            "+refs/tags/*:refs/tags/*".to_string(),
+                        ]
+                    };
+                    let extra_refspecs: Vec<gix::refspec::RefSpec> = refspec_strings
+                        .iter()
+                        .map(|spec| {
+                            gix::refspec::parse(
+                                spec.as_str().into(),
+                                gix::refspec::parse::Operation::Fetch,
+                            )
+                            .map(|r| r.to_owned())
+                        })
+                        .collect::<std::result::Result<Vec<_>, _>>()
+                        .map_err(|e| {
+                            WrightError::ForgeError(format!("invalid git refspec: {e}"))
                         })?;
-                        let mut remote = repo.remote("origin", cache_str).map_err(|e| {
-                            WrightError::ForgeError(format!("local git remote setup failed: {e}"))
+                    let interrupt = std::sync::atomic::AtomicBool::new(false);
+                    let connection =
+                        remote.connect(gix::remote::Direction::Fetch).map_err(|e| {
+                            WrightError::ForgeError(format!("local git connect failed: {e}"))
                         })?;
-                        let refspec = format!("+{checkout_ref}:{checkout_ref}");
-                        remote.fetch(&[refspec.as_str()], None, None).map_err(|e| {
+                    let prepare = connection
+                        .prepare_fetch(
+                            &mut gix::progress::Discard,
+                            gix::remote::ref_map::Options {
+                                extra_refspecs,
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(|e| {
                             WrightError::ForgeError(format!("local git fetch failed: {e}"))
                         })?;
-                        drop(remote);
-                        repo
-                    } else {
-                        git2::Repository::clone(cache_str, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!("local git clone failed: {e}"))
-                        })?
-                    };
-                    let (object, reference) = repo
-                        .revparse_ext(&checkout_ref)
-                        .or_else(|_| repo.revparse_ext(&format!("origin/{git_ref}")))
+                    prepare
+                        .receive(&mut gix::progress::Discard, &interrupt)
                         .map_err(|e| {
-                            WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
+                            WrightError::ForgeError(format!("local git fetch failed: {e}"))
                         })?;
-                    repo.checkout_tree(&object, None).map_err(|e| {
-                        WrightError::ForgeError(format!("git checkout failed: {e}"))
+                    let id = repo.rev_parse_single(checkout_ref.as_str()).map_err(|e| {
+                        WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
                     })?;
-                    match reference {
-                        Some(gref) => {
-                            let ref_name = gref.name().map_err(|error| {
-                                WrightError::ForgeError(format!(
-                                    "git reference name is invalid: {error}"
-                                ))
-                            })?;
-                            repo.set_head(ref_name)
+                    let tree = id
+                        .object()
+                        .map_err(|e| {
+                            WrightError::ForgeError(format!("failed to load git object: {e}"))
+                        })?
+                        .peel_to_tree()
+                        .map_err(|e| {
+                            WrightError::ForgeError(format!("failed to load git tree: {e}"))
+                        })?;
+                    let mut index = repo.index_from_tree(&tree.id).map_err(|e| {
+                        WrightError::ForgeError(format!("failed to build git index: {e}"))
+                    })?;
+                    let mut checkout_options = repo
+                        .checkout_options(
+                            gix::worktree::stack::state::attributes::Source::IdMapping,
+                        )
+                        .map_err(|e| {
+                            WrightError::ForgeError(format!("git checkout setup failed: {e}"))
+                        })?;
+                    checkout_options.destination_is_initially_empty = true;
+                    gix::worktree::state::checkout(
+                        &mut index,
+                        &final_dest,
+                        repo.objects.clone().into_arc().map_err(|e| {
+                            WrightError::ForgeError(format!("git object store error: {e}"))
+                        })?,
+                        &gix::progress::Discard,
+                        &gix::progress::Discard,
+                        &interrupt,
+                        checkout_options,
+                    )
+                    .map_err(|e| WrightError::ForgeError(format!("git checkout failed: {e}")))?;
+                    index.write(Default::default()).map_err(|e| {
+                        WrightError::ForgeError(format!("failed to write git index: {e}"))
+                    })?;
+                    let head_target = match repo.try_find_reference(&checkout_ref) {
+                        Ok(Some(reference)) => {
+                            gix::refs::Target::Symbolic(reference.name().to_owned())
                         }
-                        None => repo.set_head_detached(object.id()),
-                    }
+                        Ok(None) | Err(_) => gix::refs::Target::Object(id.detach()),
+                    };
+                    repo.edit_reference(gix::refs::transaction::RefEdit {
+                        change: gix::refs::transaction::Change::Update {
+                            log: gix::refs::transaction::LogChange::default(),
+                            expected: gix::refs::transaction::PreviousValue::Any,
+                            new: head_target,
+                        },
+                        name: "HEAD".try_into().expect("HEAD is a valid reference name"),
+                        deref: false,
+                    })
                     .map_err(|e| WrightError::ForgeError(format!("failed to update HEAD: {e}")))?;
                 }
                 Source::Http(http) => {
@@ -237,41 +304,73 @@ mod tests {
     async fn extract_checks_out_private_shallow_git_ref() {
         let root = tempfile::tempdir().unwrap();
         let upstream = root.path().join("upstream");
-        let upstream_repo = git2::Repository::init(&upstream).unwrap();
-        let signature = git2::Signature::now("Wright Test", "wright@example.invalid").unwrap();
+        let mut upstream_repo = gix::init(&upstream).unwrap();
 
         std::fs::write(upstream.join("payload.txt"), "from tagged source\n").unwrap();
-        let mut index = upstream_repo.index().unwrap();
-        index.add_path(Path::new("payload.txt")).unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = upstream_repo.find_tree(tree_id).unwrap();
+        let blob_id = upstream_repo
+            .write_blob(b"from tagged source\n")
+            .unwrap()
+            .detach();
+        let tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: "payload.txt".into(),
+                oid: blob_id,
+            }],
+        };
+        let tree_id = upstream_repo.write_object(&tree).unwrap().detach();
+        {
+            let mut config = upstream_repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::User::NAME, "Wright Test")
+                .unwrap();
+            config
+                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
+                .unwrap();
+        }
         let commit_id = upstream_repo
-            .commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .commit("HEAD", "initial", tree_id, Vec::<gix::ObjectId>::new())
             .unwrap();
-        let commit = upstream_repo.find_commit(commit_id).unwrap();
         upstream_repo
-            .tag("v1.0.0", commit.as_object(), &signature, "v1.0.0", false)
+            .reference(
+                "refs/tags/v1.0.0",
+                commit_id,
+                gix::refs::transaction::PreviousValue::Any,
+                "test tag",
+            )
             .unwrap();
 
         let source_url = "https://example.invalid/upstream.git";
         let sources_dir = root.path().join("sources");
         let cache_path = sources_dir.join("git").join(git_cache_dir_name(source_url));
         std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
-        let cache_repo = git2::Repository::init_bare(&cache_path).unwrap();
-        let mut remote = cache_repo
-            .remote("origin", upstream.to_str().unwrap())
+        let cache_repo = gix::init_bare(&cache_path).unwrap();
+        let remote = cache_repo.remote_at(upstream.to_str().unwrap()).unwrap();
+        let refspec = gix::refspec::parse(
+            "+refs/tags/*:refs/tags/*".into(),
+            gix::refspec::parse::Operation::Fetch,
+        )
+        .unwrap()
+        .to_owned();
+        let interrupt = std::sync::atomic::AtomicBool::new(false);
+        let connection = remote.connect(gix::remote::Direction::Fetch).unwrap();
+        connection
+            .prepare_fetch(
+                &mut gix::progress::Discard,
+                gix::remote::ref_map::Options {
+                    extra_refspecs: vec![refspec],
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .receive(&mut gix::progress::Discard, &interrupt)
             .unwrap();
-        remote
-            .fetch(&["+refs/tags/*:refs/tags/*"], None, None)
-            .unwrap();
-        drop(remote);
-        let tag_id = cache_repo.revparse_single("refs/tags/v1.0.0").unwrap().id();
+        let tag_id = cache_repo.rev_parse_single("refs/tags/v1.0.0").unwrap();
         cache_repo
             .reference(
                 "refs/wright/v1.0.0",
                 tag_id,
-                true,
+                gix::refs::transaction::PreviousValue::Any,
                 "test private shallow ref",
             )
             .unwrap();

@@ -23,7 +23,7 @@
 | [ADR-0019](0019-cas-delivery-recovery.md) | Two-layer CAS + WAL recovery for delivery | Accepted |
 | [ADR-0020](0020-merge-cli-and-commands-directories.md) | Merge `src/cli/` and `src/commands/` into a single directory | Accepted |
 | [ADR-0021](0021-cargo-style-span-driven-output.md) | Cargo-style span-driven CLI output (+ companion correctness fixes) | Accepted |
-| [ADR-0022](0022-git-fetch-via-libgit2-no-system-git.md) | Git source fetching via libgit2, never the system `git` | Accepted |
+| [ADR-0022](0022-git-fetch-via-libgit2-no-system-git.md) | Git source fetching via libgit2, never the system `git` | Superseded by ADR-0035 |
 | [ADR-0023](0023-parts-as-maintenance-ledger.md) | Parts are maintenance-ledger artifacts, not distribution products | Accepted |
 | [ADR-0024](0024-workdir-source-names-are-original-basenames.md) | Work-directory source names are original basenames | Accepted |
 | [ADR-0025](0025-incremental-cargo-workspace.md) | Incremental Cargo workspace with stable internal crate boundaries | Accepted |
@@ -36,3 +36,4 @@
 | [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted |
 | [ADR-0033](0033-plan-source-snapshots.md) | Plan-source snapshots in parts and the registry | Accepted |
 | [ADR-0034](0034-plan-output-namespaces-and-part-layout.md) | Plan/output namespaces and plan-qualified part layout | Accepted |
+| [ADR-0035](0035-git-fetch-via-gitoxide.md) | Git source fetching via gitoxide (gix) | Accepted |
