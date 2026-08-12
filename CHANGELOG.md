@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.19] - 2026-08-12
+
 ### Changed
 - **`wright upgrade` detects stale plans by content, not just version.** A
   deployed plan is now rebuilt when its manifest changed since deploy —
