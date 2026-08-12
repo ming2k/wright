@@ -8,6 +8,7 @@ mod cancellation;
 pub mod config;
 pub mod error;
 pub mod foundry;
+pub mod identify;
 pub mod isolation;
 pub mod operations;
 pub mod query;

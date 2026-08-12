@@ -512,9 +512,12 @@ mod tests {
         .await
         .unwrap();
 
-        // Parts are inserted for internal testing; plan-level queries are
-        // not exposed at the CLI layer to keep the user-facing interface
-        // part-centric.
+        // Plan-level queries back the universal plan/output identifier used
+        // by `wright files` and `wright remove`; the parts above exercise
+        // the lookup across two plans.
+        let toolchain_parts = db.get_parts_by_plan("toolchain").await.unwrap();
+        assert_eq!(toolchain_parts.len(), 2);
+        assert_eq!(toolchain_parts[0].plan_name, "toolchain");
     }
 
     #[tokio::test]

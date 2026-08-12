@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **Plan-level targets for `wright files` and `wright remove`.** Both
+  commands resolve the universal plan/output identifier: `plan` or `plan:*`
+  addresses every deployed output of a plan, while `output` or
+  `plan:output` addresses a single output. A bare name that matches both a
+  plan with deployed outputs and an output is rejected as ambiguous, and
+  the error names the absolute forms to use. `plan:output` membership is
+  now validated — naming the wrong plan is an error instead of silently
+  acting on the output.
+
 ## [5.3.17] - 2026-08-10
 
 ### Changed

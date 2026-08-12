@@ -9,18 +9,20 @@ use crate::error::Result;
 const WRIGHT_REMOVE_AFTER_HELP: &str = "\
 Examples:
   wright remove zlib
+  wright remove llvm              # every deployed output of plan llvm
+  wright remove llvm:clang        # one output, absolute form
   wright remove zlib --recursive
   wright remove zlib --cascade
   wright remove zlib --dry-run";
 
 #[derive(Args)]
 #[command(
-    long_about = "Remove deployed parts by name.\n\nBy default, removal is blocked when another deployed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
+    long_about = "Remove deployed parts.\n\nTargets follow the universal plan/output identifier: `plan` or `plan:*` removes every deployed output of a plan, `output` or `plan:output` removes a single output. A bare name matching both a plan and an output is rejected as ambiguous; use an absolute form instead.\n\nBy default, removal is blocked when another deployed part depends on the target. Use `--recursive` to remove dependents too, or `--force` to bypass safety checks.",
     after_help = WRIGHT_REMOVE_AFTER_HELP
 )]
 pub struct RemoveArgs {
-    /// Part names to remove
-    #[arg(required = true, value_name = "PART")]
+    /// Plan or output targets to remove (`plan`, `plan:*`, `output`, or `plan:output`)
+    #[arg(required = true, value_name = "TARGET")]
     pub parts: Vec<String>,
 
     /// Force removal even if other parts depend on this one

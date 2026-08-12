@@ -39,6 +39,9 @@ pub enum WrightError {
     #[error("part not found: {0}")]
     PartNotFound(String),
 
+    #[error("ambiguous target: {0}")]
+    AmbiguousTarget(String),
+
     #[error("part already deployed: {0}")]
     PartAlreadyInstalled(String),
 

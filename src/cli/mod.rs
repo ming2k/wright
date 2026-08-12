@@ -81,7 +81,7 @@ pub enum SystemCommands {
     #[command(display_order = 2)]
     Upgrade(upgrade::UpgradeArgs),
 
-    /// Uninstall deployed parts (supports `plan` or `plan:output`)
+    /// Uninstall deployed parts (supports `plan`, `plan:*`, and `plan:output` targets)
     #[command(display_order = 3)]
     Remove(remove::RemoveArgs),
 
@@ -100,7 +100,7 @@ pub enum QueryCommands {
     #[command(display_order = 10)]
     List(list::ListArgs),
 
-    /// List files owned by a part
+    /// List files owned by deployed parts (supports `plan`, `plan:*`, and `plan:output` targets)
     #[command(display_order = 11)]
     Files(files::FilesArgs),
 

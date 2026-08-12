@@ -103,13 +103,31 @@ wright upgrade zlib --force
 | `--depth <N>` | Maximum depth for reverse dependency expansion |
 | `--root <PATH>` | Operate on this target root instead of `/` |
 
-### `wright remove <PART...>`
+### `wright remove <TARGET...>`
 
-Remove deployed parts by name. Removal is blocked when another deployed part
-depends on the target unless `--recursive` or `--force` is used.
+Remove deployed parts. Each target follows the universal plan/output
+identifier scheme:
+
+| Form | Addresses |
+|------|-----------|
+| `plan` | Every deployed output of the plan |
+| `plan:*` | Every deployed output of the plan (absolute form) |
+| `output` | The single deployed output |
+| `plan:output` | The named output of the plan (absolute form) |
+
+A bare name that matches both a plan with deployed outputs and an output is
+ambiguous and rejected; the error names the absolute forms to use. A
+single-output plan whose output carries the plan name resolves without
+ambiguity. `plan:output` membership is validated: naming the wrong plan is
+an error.
+
+Removal is blocked when another deployed part depends on the target unless
+`--recursive` or `--force` is used.
 
 ```bash
 wright remove zlib
+wright remove llvm:clang
+wright remove llvm:*
 wright remove zlib --recursive
 wright remove zlib --cascade
 ```
@@ -162,9 +180,13 @@ wright list --json
 | `--json` | Emit a machine-readable JSON array of part records |
 | `--root <PATH>` | Query this target root instead of `/` |
 
-### `wright files <PART>`
+### `wright files <TARGET>`
 
-List files owned by a deployed part.
+List files owned by deployed parts. The target follows the same universal
+plan/output identifier scheme as `wright remove`: `plan` or `plan:*` lists
+the files of every deployed output of the plan; `output` or `plan:output`
+lists a single output. When a plan target resolves to multiple outputs,
+each printed line is prefixed with the owning output name.
 
 | Flag | Description |
 |------|-------------|
@@ -244,7 +266,7 @@ array). Output shapes:
 | Command | Shape |
 |---------|-------|
 | `list --json` | Array of `{"name","version","release","epoch","arch","origin","plan_name"}` |
-| `files --json` | `{"part","files":[...]}` |
+| `files --json` | `{"part","files":[...]}` for an output target; `{"plan","outputs":[{"part","files":[...]},...]}` for a plan target |
 | `owner --json` | Array of `{"path","owners":[...]}` |
 | `history --json` | Array of `{"timestamp","session_id","command","part","action","old_version","new_version","status"}` |
 | `check --json` | `{"scope","mode","issue_count","issues":[...]}`; each issue carries a `check` tag (e.g. `missing-file`, `broken-dependency`, `unresolved-soname`) |

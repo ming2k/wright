@@ -4,7 +4,7 @@ pub use wright_engine::{
     cli_aborted, cli_action, cli_error, cli_failed, cli_output, cli_span, cli_warn,
 };
 pub use wright_engine::{
-    config, error, foundry, isolation, operations, query, resolve, seal, transaction,
+    config, error, foundry, identify, isolation, operations, query, resolve, seal, transaction,
 };
 
 /// Compatibility facade for plan parsing and discovery.

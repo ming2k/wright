@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::error::{Result, WrightError};
+use crate::identify::Identifier;
 use crate::transaction;
 use wright_state::database::{InstalledDb, SessionContext};
 
@@ -13,18 +14,17 @@ pub async fn execute_remove(
     dry_run: bool,
     root_dir: &std::path::Path,
 ) -> Result<()> {
+    // Expand every target through the universal plan/output identifier:
+    // plan-level targets resolve to all deployed outputs of the plan,
+    // output-level targets to a single part. Duplicates collapse.
     let mut parts_owned: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for target in parts {
-        if let Some((_plan, output)) = target.split_once(':') {
-            parts_owned.push(output.trim().to_string());
-        } else {
-            let plan_parts = db.get_parts_by_plan(target).await.unwrap_or_default();
-            if !plan_parts.is_empty() {
-                for p in plan_parts {
-                    parts_owned.push(p.name);
-                }
-            } else {
-                parts_owned.push(target.to_string());
+        let ident = Identifier::parse(target)?;
+        let resolved = crate::identify::resolve(db, &ident).await?;
+        for part in resolved.parts() {
+            if seen.insert(part.name.clone()) {
+                parts_owned.push(part.name.clone());
             }
         }
     }
@@ -199,4 +199,101 @@ pub async fn execute_remove(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wright_state::database::{NewPart, NewPlan};
+
+    async fn test_db() -> InstalledDb {
+        InstalledDb::open_in_memory().await.unwrap()
+    }
+
+    async fn add_plan(db: &InstalledDb, name: &str, outputs: &[&str]) {
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for output in outputs {
+            db.insert_part(NewPart {
+                name: output,
+                plan_id,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn dry_run_expands_plan_and_output_targets() {
+        let db = test_db().await;
+        add_plan(&db, "llvm", &["clang", "lld"]).await;
+        add_plan(&db, "zlib", &["zlib"]).await;
+
+        // Plan-level, absolute output-level, and wildcard forms all resolve;
+        // dry-run stays read-only.
+        execute_remove(
+            &db,
+            &["llvm", "zlib:*", "lld", "llvm:clang"],
+            false,
+            false,
+            false,
+            true,
+            std::path::Path::new("/"),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_rejects_ambiguous_bare_name() {
+        let db = test_db().await;
+        add_plan(&db, "gcc", &["gcc", "libstdc++"]).await;
+
+        let err = execute_remove(
+            &db,
+            &["gcc"],
+            false,
+            false,
+            false,
+            true,
+            std::path::Path::new("/"),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, WrightError::AmbiguousTarget(_)),
+            "expected ambiguous target, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_rejects_output_of_the_wrong_plan() {
+        let db = test_db().await;
+        add_plan(&db, "llvm", &["clang"]).await;
+        add_plan(&db, "gcc", &["gcc"]).await;
+
+        let err = execute_remove(
+            &db,
+            &["gcc:clang"],
+            false,
+            false,
+            false,
+            true,
+            std::path::Path::new("/"),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, WrightError::ValidationError(_)),
+            "expected validation error, got: {}",
+            err
+        );
+    }
 }

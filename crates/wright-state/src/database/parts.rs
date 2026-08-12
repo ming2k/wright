@@ -158,6 +158,17 @@ impl InstalledDb {
             .map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))
     }
 
+    pub async fn get_part_with_plan(&self, name: &str) -> Result<Option<PartWithPlan>> {
+        let sql = format!("{} WHERE p.name = ?", PART_WITH_PLAN_SQL);
+        query_as::<_, PartWithPlan>(&sql)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to query part with plan: {}", e))
+            })
+    }
+
     pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {
         let sql = format!("{} ORDER BY p.name", PART_WITH_PLAN_SQL);
         query_as::<_, PartWithPlan>(&sql)
