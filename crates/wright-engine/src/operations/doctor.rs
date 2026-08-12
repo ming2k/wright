@@ -20,7 +20,7 @@ pub async fn execute_doctor(
     crate::cli_action!("Checking", "system health");
 
     let mut total_issues = super::health::run_standard_checks(
-        db, root_dir, None,  // only_part
+        db, root_dir, None,  // only_parts
         true,  // deep
         false, // integrity_only
         true,  // check_files

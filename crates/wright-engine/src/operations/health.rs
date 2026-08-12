@@ -52,7 +52,7 @@ pub(super) struct CheckOutcome {
 pub(super) async fn run_standard_checks(
     db: &InstalledDb,
     root_dir: &Path,
-    only_part: Option<&str>,
+    only_parts: Option<&[String]>,
     deep: bool,
     integrity_only: bool,
     check_files: bool,
@@ -71,14 +71,14 @@ pub(super) async fn run_standard_checks(
     }
 
     if check_files {
-        let (file_issues, mut found) = files_check(db, root_dir, only_part).await?;
+        let (file_issues, mut found) = files_check(db, root_dir, only_parts).await?;
         total_issues += file_issues;
         issues.append(&mut found);
     }
 
-    let registry_findings = registry_check(db, only_part).await?;
+    let registry_findings = registry_check(db, only_parts).await?;
     let elf_findings = if deep {
-        elf_check(db, root_dir, only_part).await?
+        elf_check(db, root_dir, only_parts).await?
     } else {
         DeepReport::default()
     };
@@ -184,12 +184,12 @@ async fn integrity_check(db: &InstalledDb) -> Result<(usize, Vec<CheckIssue>)> {
 
 async fn registry_check(
     db: &InstalledDb,
-    only_part: Option<&str>,
+    only_parts: Option<&[String]>,
 ) -> Result<Vec<query::BrokenDep>> {
     crate::cli_action!("Checking", "registry dependencies");
     let mut broken = query::check_dependencies_structured(db).await?;
-    if let Some(filter) = only_part {
-        broken.retain(|b| b.part == filter);
+    if let Some(names) = only_parts {
+        broken.retain(|b| names.iter().any(|name| name == &b.part));
     }
     Ok(broken)
 }
@@ -232,16 +232,22 @@ struct DeepMissing {
 async fn elf_check(
     db: &InstalledDb,
     root_dir: &Path,
-    only_part: Option<&str>,
+    only_parts: Option<&[String]>,
 ) -> Result<DeepReport> {
     crate::cli_action!("Checking", "ELF dynamic loads");
     let mut report = DeepReport::default();
 
-    let parts: Vec<(i64, String)> = match only_part {
-        Some(name) => match db.get_part(name).await? {
-            Some(p) => vec![(p.id, p.name)],
-            None => return Err(WrightError::PartNotFound(name.to_string())),
-        },
+    let parts: Vec<(i64, String)> = match only_parts {
+        Some(names) => {
+            let mut selected = Vec::with_capacity(names.len());
+            for name in names {
+                match db.get_part(name).await? {
+                    Some(p) => selected.push((p.id, p.name)),
+                    None => return Err(WrightError::PartNotFound(name.clone())),
+                }
+            }
+            selected
+        }
         None => db
             .list_parts()
             .await?
@@ -346,15 +352,21 @@ struct MissingPath {
 async fn files_check(
     db: &InstalledDb,
     root_dir: &Path,
-    only_part: Option<&str>,
+    only_parts: Option<&[String]>,
 ) -> Result<(usize, Vec<CheckIssue>)> {
     crate::cli_action!("Checking", "deployed file existence");
 
-    let parts: Vec<InstalledPart> = match only_part {
-        Some(name) => match db.get_part(name).await? {
-            Some(p) => vec![p],
-            None => return Err(WrightError::PartNotFound(name.to_string())),
-        },
+    let parts: Vec<InstalledPart> = match only_parts {
+        Some(names) => {
+            let mut selected = Vec::with_capacity(names.len());
+            for name in names {
+                match db.get_part(name).await? {
+                    Some(p) => selected.push(p),
+                    None => return Err(WrightError::PartNotFound(name.clone())),
+                }
+            }
+            selected
+        }
         None => db
             .list_parts()
             .await?

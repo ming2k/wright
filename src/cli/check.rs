@@ -10,6 +10,8 @@ const WRIGHT_CHECK_AFTER_HELP: &str = "\
 Examples:
   wright check
   wright check zlib
+  wright check llvm            # every deployed output of plan llvm
+  wright check llvm:clang      # one output, absolute form
   wright check --deep
   wright check --integrity-only
   wright check --json";
@@ -18,6 +20,10 @@ Examples:
 #[command(
     long_about = "Run system health checks covering database integrity, file conflicts, \
                   shadowed files, and runtime dependency resolution.\n\n\
+                  Targets follow the universal plan/output identifier: `plan` or `plan:*` \
+                  checks every deployed output of a plan, `output` or `plan:output` checks \
+                  a single output. A bare name matching both a plan and an output is \
+                  rejected as ambiguous; use an absolute form instead.\n\n\
                   With --deep, walk each deployed part's ELF binaries and \
                   verify their DT_NEEDED entries against the deployed \
                   file ownership table. This catches forgotten declarations \
@@ -37,10 +43,10 @@ Examples:
     after_help = WRIGHT_CHECK_AFTER_HELP
 )]
 pub struct CheckArgs {
-    /// Restrict the check to a single deployed part (registry-level
-    /// scope is unchanged when omitted).
-    #[arg(value_name = "PART")]
-    pub part: Option<String>,
+    /// Restrict the check to a plan or output target (`plan`, `plan:*`,
+    /// `output`, or `plan:output`); omit for registry-level scope.
+    #[arg(value_name = "TARGET")]
+    pub target: Option<String>,
 
     /// Walk ELF DT_NEEDED entries for each deployed binary and verify
     /// their providing parts via the files table. Reads disk; slower
@@ -71,7 +77,7 @@ pub async fn run(args: CheckArgs, ctx: &Context<'_>) -> Result<()> {
     crate::operations::check::execute_check(
         &db,
         &ctx.root_dir,
-        args.part.as_deref(),
+        args.target.as_deref(),
         args.deep,
         args.integrity_only,
         args.check_files,
