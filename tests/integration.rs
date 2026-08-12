@@ -8,4 +8,5 @@ mod integration {
     mod launch_test;
 
     mod migration_test;
+    mod plan_snapshot_test;
 }

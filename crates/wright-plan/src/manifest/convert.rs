@@ -67,6 +67,7 @@ impl SubFabricateOutput {
             backup,
             source_plan: Some(parent.metadata.name.clone()),
             plan_checksum: parent.plan_checksum.clone(),
+            plan_source: parent.plan_source.clone(),
         }
     }
 }
@@ -75,6 +76,43 @@ impl SubFabricateOutput {
 mod tests {
     use super::*;
     use crate::manifest::OutputConfig;
+
+    #[test]
+    fn sub_manifest_inherits_plan_source() {
+        let mut manifest = PlanManifest::parse(
+            r#"
+name = "gcc"
+version = "14.2.0"
+release = 1
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+arch = "x86_64"
+
+[pipeline.compile]
+script = "make -j4"
+
+[[output]]
+name = "gcc"
+
+[[output]]
+name = "libstdc++"
+description = "C++ standard library"
+include = ["/usr/lib/libstdc++.so*"]
+"#,
+        )
+        .unwrap();
+        manifest.plan_checksum = Some("deadbeef".to_string());
+        manifest.plan_source = Some("raw plan text".to_string());
+
+        let Some(OutputConfig::Multi(ref parts)) = manifest.outputs else {
+            panic!("expected multi-output manifest");
+        };
+        let (sub_name, sub_part) = parts.iter().find(|(n, _)| n == "libstdc++").unwrap();
+        let sub_manifest = sub_part.to_manifest(sub_name, &manifest);
+
+        assert_eq!(sub_manifest.plan_checksum.as_deref(), Some("deadbeef"));
+        assert_eq!(sub_manifest.plan_source.as_deref(), Some("raw plan text"));
+    }
 
     #[test]
     fn test_parse_multi_packages() {

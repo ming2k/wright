@@ -159,7 +159,7 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
         }
     };
 
-    let mut drifted: Vec<String> = Vec::new();
+    let mut drifted: Vec<(String, Option<String>)> = Vec::new();
     for plan in &plans {
         let Some(ref recorded) = plan.plan_checksum else {
             continue;
@@ -169,12 +169,14 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
         };
         match crate::util::checksum::sha256_file(path) {
             Ok(current) if &current != recorded => {
-                drifted.push(format!(
+                let detail = format!(
                     "{} (installed from {}…, source now {}…)",
                     plan.name,
                     &recorded[..12.min(recorded.len())],
                     &current[..12]
-                ));
+                );
+                let diff = plan_drift_diff(db, recorded, path).await;
+                drifted.push((detail, diff));
             }
             Ok(_) => {}
             Err(e) => crate::cli_warn!("cannot checksum {}: {}", path.display(), e),
@@ -186,12 +188,42 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
             "{} plan(s) changed since their parts were installed (advisory; rebuild to converge)",
             drifted.len()
         );
-        for line in &drifted {
+        for (line, diff) in &drifted {
             crate::util::progress::term_println(&format!("             - {}", line));
+            if let Some(diff) = diff {
+                for diff_line in diff.lines() {
+                    crate::util::progress::term_println(&format!("               {}", diff_line));
+                }
+            }
         }
     }
 
     Ok(drifted.len())
+}
+
+/// Unified diff between the plan-source snapshot recorded at seal time and
+/// the current source on disk (ADR-0033). `None` when no snapshot exists
+/// (parts sealed before snapshots) or the current source cannot be read —
+/// drift reporting is advisory, so diff problems degrade to the checksum
+/// line alone.
+async fn plan_drift_diff(db: &InstalledDb, recorded: &str, current_path: &Path) -> Option<String> {
+    let snapshot = db.get_plan_snapshot(recorded).await.ok()??;
+    let current = std::fs::read_to_string(current_path).ok()?;
+    let diff = similar::TextDiff::from_lines(&snapshot, &current)
+        .unified_diff()
+        .header(
+            &format!(
+                "installed snapshot {}…",
+                &recorded[..12.min(recorded.len())]
+            ),
+            "current plan source",
+        )
+        .to_string();
+    if diff.trim().is_empty() {
+        None
+    } else {
+        Some(diff)
+    }
 }
 
 fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {
@@ -214,4 +246,66 @@ fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {
         targets.push(plan);
     }
     targets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wright_state::database::{NewPlan, NewPlanProvenance, RegisterPlan};
+
+    async fn register_plan_with_snapshot(db: &InstalledDb, checksum: &str, source: &str) {
+        db.ensure_plan_registered(RegisterPlan {
+            plan: NewPlan {
+                name: "demo",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            },
+            provenance: Some(NewPlanProvenance {
+                plan_checksum: Some(checksum),
+                source_checksums: &[],
+                wright_version: "test",
+                isolation: "none",
+            }),
+        })
+        .await
+        .unwrap();
+        db.insert_plan_snapshot(checksum, source).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drift_diff_shows_snapshot_against_current_source() {
+        let db = InstalledDb::open_in_memory().await.unwrap();
+        register_plan_with_snapshot(&db, "deadbeefcafe", "release = 1\n").await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.toml");
+        std::fs::write(&plan_path, "release = 2\n").unwrap();
+
+        let diff = plan_drift_diff(&db, "deadbeefcafe", &plan_path)
+            .await
+            .expect("snapshot exists, diff expected");
+        assert!(diff.contains("-release = 1"), "diff was: {}", diff);
+        assert!(diff.contains("+release = 2"), "diff was: {}", diff);
+        assert!(
+            diff.contains("installed snapshot deadbeefcafe…"),
+            "diff was: {}",
+            diff
+        );
+    }
+
+    #[tokio::test]
+    async fn drift_diff_degrades_without_snapshot() {
+        let db = InstalledDb::open_in_memory().await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.toml");
+        std::fs::write(&plan_path, "release = 2\n").unwrap();
+
+        assert!(
+            plan_drift_diff(&db, "nosuchchecksum", &plan_path)
+                .await
+                .is_none()
+        );
+    }
 }

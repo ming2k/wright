@@ -322,6 +322,7 @@ impl PlanManifest {
             backup,
             source_plan: None,
             plan_checksum: None,
+            plan_source: None,
         };
 
         manifest.validate()?;
@@ -345,6 +346,7 @@ impl PlanManifest {
             other => other,
         })?;
         manifest.plan_checksum = Some(crate::checksum::sha256_bytes(content.as_bytes()));
+        manifest.plan_source = Some(content);
 
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");
@@ -370,6 +372,38 @@ impl PlanManifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_file_records_plan_source_and_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan.toml");
+        let content = r#"
+name = "snapshot-demo"
+version = "1.0.0"
+release = 1
+description = "snapshot demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#;
+        std::fs::write(&path, content).unwrap();
+
+        let manifest = PlanManifest::from_file(&path).unwrap();
+        assert_eq!(manifest.plan_source.as_deref(), Some(content));
+        assert_eq!(
+            manifest.plan_checksum.as_deref(),
+            Some(crate::checksum::sha256_bytes(content.as_bytes())).as_deref()
+        );
+
+        // String-parsed manifests carry neither checksum nor source.
+        let parsed = PlanManifest::parse(content).unwrap();
+        assert!(parsed.plan_source.is_none());
+        assert!(parsed.plan_checksum.is_none());
+    }
 
     #[test]
     fn test_parse_hello_fixture() {

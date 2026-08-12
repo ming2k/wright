@@ -42,8 +42,10 @@ deliberately has no key infrastructure to make such a check meaningful.
 
 What Wright does give you is **auditability**. A part's `.PARTINFO` records
 provenance — the checksum of the plan source that produced it, the source
-checksums verified at fetch time, and the sealing `wright` version — so you
-can see what a foreign part claims to be made from. Provenance is descriptive,
+checksums verified at fetch time, and the sealing `wright` version — and the
+archive carries the snapshotted plan source itself
+([ADR-0033](../adr/0033-plan-source-snapshots.md)), so you can see what a
+foreign part claims to be made from. Provenance is descriptive,
 not cryptographically attested; it supports inspection, not trust.
 
 ## Why provenance exists even without distribution

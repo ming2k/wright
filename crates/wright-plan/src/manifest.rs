@@ -211,6 +211,11 @@ pub struct PlanManifest {
     /// so the ledger can tie a part back to exact plan content (ADR-0023).
     /// `None` for manifests not loaded from a file.
     pub plan_checksum: Option<String>,
+    /// Raw plan.toml text this manifest was loaded from (`mvp.toml` overlay
+    /// excluded). Sealed into the part archive as `.PLANSRC` so the exact
+    /// plan content that produced a part survives later edits to the plan
+    /// source (ADR-0033). `None` for manifests not loaded from a file.
+    pub plan_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

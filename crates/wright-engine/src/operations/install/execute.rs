@@ -12,12 +12,52 @@ use crate::resolve::{
     resolve_build_set, resolve_explicit_plan_names,
 };
 use wright_part::folio;
+use wright_part::store::{LocalPartStore, ResolvedPartVersioned};
 use wright_plan::manifest::{OutputConfig, PlanManifest};
 use wright_state::cas::CasStore;
 use wright_state::database::{InstalledDb, SessionContext};
 
 use super::fingerprints::PlanFingerprints;
 use super::request::InstallRequest;
+
+/// Resolve the archive that a just-sealed (or CAS-restored) plan build must
+/// have produced.
+///
+/// Unlike a bare `part_store.resolve(name)`, this pins the originating plan
+/// and exact version/release/epoch, so a foreign archive that merely shares
+/// the part name — regardless of its version — is never picked up.
+async fn resolve_plan_part(
+    part_store: &LocalPartStore,
+    manifest: &PlanManifest,
+    part_name: &str,
+) -> Result<Option<ResolvedPartVersioned>> {
+    part_store
+        .resolve_from_plan(
+            part_name,
+            &manifest.metadata.name,
+            manifest.metadata.version.as_deref().unwrap_or(""),
+            manifest.metadata.release,
+            manifest.metadata.epoch,
+        )
+        .await
+        .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", part_name, e)))
+}
+
+/// Verify that a CAS entry actually holds the part expected from this plan
+/// build. The fingerprint namespace is shared across plans and wright eras,
+/// so a filename hit alone does not prove the content belongs to this plan.
+fn cas_entry_matches_manifest(cas_path: &Path, manifest: &PlanManifest, part_name: &str) -> bool {
+    match wright_part::archive::read_partinfo(cas_path) {
+        Ok(info) => {
+            info.name == part_name
+                && info.plan.name == manifest.metadata.name
+                && info.plan.version == manifest.metadata.version.as_deref().unwrap_or("")
+                && info.plan.release == manifest.metadata.release
+                && info.plan.epoch == manifest.metadata.epoch
+        }
+        Err(_) => false,
+    }
+}
 
 pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let workflow_t0 = std::time::Instant::now();
@@ -306,9 +346,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                     };
                     trace!(event = "fingerprint.cas_check", plan_name = %base, fp_key = %&fp_key[..8], "CAS check key computed");
                     let part_names = manifest_part_names(manifest);
-                    let all_in_cas = part_names
-                        .iter()
-                        .all(|pn| cas_store.resolve(pn, &fp_key).is_some());
+                    let all_in_cas = part_names.iter().all(|pn| {
+                        cas_store
+                            .resolve(pn, &fp_key)
+                            .is_some_and(|path| cas_entry_matches_manifest(&path, manifest, pn))
+                    });
                     if all_in_cas && !part_names.is_empty() {
                         info!(event = "cas.hit", plan_name = %base, "Using cached build");
                         debug!(event = "cas.found", plan_name = %base, "Found in cache");
@@ -484,10 +526,18 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             if let Some(fp) = plan_fps.get(base) {
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
-                    if let Ok(Some(resolved)) = part_store.resolve(pn).await
-                        && let Err(e) = cas_store.store(&resolved.path, pn, fp)
-                    {
-                        warn!(event = "cas.store_failed", part_name = %pn, error = %e, "Failed to store part in CAS");
+                    match resolve_plan_part(part_store, &manifest, pn).await {
+                        Ok(Some(resolved)) => {
+                            if let Err(e) = cas_store.store(&resolved.path, pn, fp) {
+                                warn!(event = "cas.store_failed", part_name = %pn, error = %e, "Failed to store part in CAS");
+                            }
+                        }
+                        Ok(None) => {
+                            warn!(event = "cas.store_part_missing", plan_name = %base, part_name = %pn, "Sealed part not found in part store; skipping CAS store");
+                        }
+                        Err(e) => {
+                            warn!(event = "cas.store_failed", part_name = %pn, error = %e, "Failed to store part in CAS");
+                        }
                     }
                 }
             }
@@ -570,8 +620,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
-                    let resolved = part_store
-                        .resolve(pn)
+                    let resolved = resolve_plan_part(part_store, &manifest, pn)
                         .await
                         .map_err(|e| {
                             WrightError::PartError(format!(
@@ -607,8 +656,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
                     let part_names = manifest_part_names(&manifest);
                     for pn in &part_names {
-                        let resolved = part_store
-                            .resolve(pn)
+                        let resolved = resolve_plan_part(part_store, &manifest, pn)
                             .await
                             .map_err(|e| {
                                 WrightError::PartError(format!(

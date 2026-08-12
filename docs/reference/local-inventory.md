@@ -33,6 +33,7 @@ Every `.wright.tar.zst` carries metadata files at the archive root:
 | `.PARTINFO` | TOML part metadata (sections below) |
 | `.FILELIST` | one absolute installed path per line |
 | `.HOOKS` | deploy hooks in TOML (optional; only when the plan declares hooks) |
+| `.PLANSRC` | exact `plan.toml` text the part was sealed from (optional; absent on parts sealed before ADR-0033 or from string-parsed manifests) |
 
 ### `.PARTINFO` sections
 
@@ -56,6 +57,14 @@ Every `.wright.tar.zst` carries metadata files at the archive root:
 Provenance is descriptive, never enforced; `wright doctor` uses
 `plan_checksum` to report drift between installed parts and current plan
 source. See [ADR-0023](../adr/0023-parts-as-maintenance-ledger.md).
+
+The `.PLANSRC` snapshot complements `plan_checksum`: the checksum says
+*that* the plan changed, the snapshot preserves *what it was*. Deploy and
+upgrade registration persist it into the `plan_snapshots` table (see
+[Database Design](database-design.md)); `wright doctor` diffs the snapshot
+against the current source on drift, and `wright plan <TARGET>` prints the
+recorded source. Neither member nor table is consulted by deploy, resolve,
+or remove. See [ADR-0033](../adr/0033-plan-source-snapshots.md).
 
 ## Low-Level Pipeline
 

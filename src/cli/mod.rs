@@ -12,6 +12,7 @@ pub mod list;
 pub mod merge;
 pub mod owner;
 pub mod package;
+pub mod plan;
 pub mod provide;
 pub mod prune;
 pub mod remove;
@@ -119,6 +120,10 @@ pub enum QueryCommands {
     /// Show transaction logs
     #[command(display_order = 15)]
     History(history::HistoryArgs),
+
+    /// Print the plan source recorded when a plan's parts were sealed
+    #[command(display_order = 16)]
+    Plan(plan::PlanArgs),
 }
 
 #[derive(Subcommand)]
@@ -250,6 +255,10 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
         Commands::Query(QueryCommands::History(mut args)) => {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             history::run(args, &ctx).await
+        }
+        Commands::Query(QueryCommands::Plan(mut args)) => {
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            plan::run(args, &ctx).await
         }
 
         // ── Build & Packaging ───────────────────────────────────────

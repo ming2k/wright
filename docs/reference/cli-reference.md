@@ -251,15 +251,36 @@ deployed file existence, registry dependency resolution, ELF `DT_NEEDED`
 verification, and a global `parts_dir` dependency closure scan. Use after
 batch deployments to detect missing files, providers, and stale dependencies.
 Also reports plans whose source changed since their parts were installed
-(provenance drift); drift is advisory and never fails the run.
+(provenance drift); when a plan-source snapshot was recorded, a unified diff
+between the snapshot and the current source follows the report line. Drift is
+advisory and never fails the run.
 
 | Flag | Description |
 |------|-------------|
 | `--root <PATH>` | Diagnose this target root instead of `/` |
 
+### `wright plan <TARGET>`
+
+Print the plan source recorded when the plan's parts were sealed. The output
+is the exact `plan.toml` bytes, so it round-trips onto disk even if the plan
+file has since been edited or deleted:
+
+```bash
+wright plan zlib
+wright plan zlib > plan.toml
+```
+
+Plans whose parts predate plan-source snapshots (ADR-0033) have none;
+rebuild and re-deploy to record one.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON instead of raw plan source |
+| `--root <PATH>` | Query this target root instead of `/` |
+
 ### JSON Output
 
-`list`, `files`, `owner`, `history`, and `check` accept `--json`. Empty
+`list`, `files`, `owner`, `history`, `plan`, and `check` accept `--json`. Empty
 results print `[]` (`check` prints a report object with an empty `issues`
 array). Output shapes:
 
@@ -269,6 +290,7 @@ array). Output shapes:
 | `files --json` | `{"part","files":[...]}` for an output target; `{"plan","outputs":[{"part","files":[...]},...]}` for a plan target |
 | `owner --json` | Array of `{"path","owners":[...]}` |
 | `history --json` | Array of `{"timestamp","session_id","command","part","action","old_version","new_version","status"}` |
+| `plan --json` | `{"plan","checksum","source"}` |
 | `check --json` | `{"scope","mode","issue_count","issues":[...]}`; each issue carries a `check` tag (e.g. `missing-file`, `broken-dependency`, `unresolved-soname`) |
 
 `check --json` prints the report first and still exits 1 when issues are

@@ -82,6 +82,7 @@ pub fn create_part_with_isolation(
             wright_version: env!("CARGO_PKG_VERSION").to_string(),
             isolation: isolation.to_string(),
         },
+        plan_source: plan.plan_source.clone(),
         hooks,
     };
     Ok(archive::write_part(part_dir, &spec, output_path)?)
@@ -299,6 +300,44 @@ script = "true"
         assert_eq!(provenance.isolation, "none");
         assert!(!staging.path().join(".PARTINFO").exists());
         assert!(!staging.path().join(".FILELIST").exists());
+    }
+
+    #[test]
+    fn sealing_embeds_plan_source_snapshot() {
+        let mut manifest = PlanManifest::parse(
+            r#"
+name = "demo"
+version = "1.2.3"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#,
+        )
+        .unwrap();
+        // Production manifests get both from PlanManifest::from_file; a
+        // string-parsed manifest simulates that here.
+        manifest.plan_checksum = Some("deadbeef".to_string());
+        manifest.plan_source = Some("name = \"demo\"\nrelease = 1\n".to_string());
+
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "payload").unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let path = create_part(staging.path(), &manifest, output.path(), None).unwrap();
+        let extract = tempfile::tempdir().unwrap();
+        let _ = archive::extract_part(&path, extract.path()).unwrap();
+        assert_eq!(
+            archive::read_plan_source(extract.path()).as_deref(),
+            Some("name = \"demo\"\nrelease = 1\n")
+        );
+        assert!(!staging.path().join(".PLANSRC").exists());
     }
 
     #[test]

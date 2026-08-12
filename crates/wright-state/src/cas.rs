@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::error::{Result, WrightError};
 
@@ -64,6 +64,15 @@ impl CasStore {
         format!("{}-{}.part", &fingerprint[..16], name)
     }
 
+    /// Content hash used to decide whether an existing store entry really
+    /// holds the same bytes as the part being stored.
+    fn content_hash(path: &Path) -> Option<String> {
+        let bytes = std::fs::read(path).ok()?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Some(format!("{:x}", hasher.finalize()))
+    }
+
     /// Check whether a part with the given name and fingerprint exists in the
     /// CAS store.  Returns the path to the `.part` file if found.
     pub fn resolve(&self, name: &str, fingerprint: &str) -> Option<PathBuf> {
@@ -108,10 +117,30 @@ impl CasStore {
             })?;
         }
 
-        // If destination already exists with the same content, skip.
+        // If destination already exists with the same content, skip. A
+        // same-named entry with different bytes is stale or foreign content
+        // (the fingerprint namespace is shared across plans and eras), and
+        // must never win over a freshly sealed part — replace it so the
+        // store self-heals instead of poisoning every later resolve.
         if dest.exists() {
-            debug!(event = "cas.exists", dest = %dest.display(), "CAS already exists, skipping copy");
-            return Ok(dest);
+            let same = match (Self::content_hash(&dest), Self::content_hash(part_path)) {
+                (Some(existing), Some(incoming)) => existing == incoming,
+                // Unreadable on either side: keep the old behavior of
+                // trusting the existing entry rather than risking data loss.
+                _ => true,
+            };
+            if same {
+                debug!(event = "cas.exists", dest = %dest.display(), "CAS already exists, skipping copy");
+                return Ok(dest);
+            }
+            warn!(event = "cas.replaced", dest = %dest.display(), src = %part_path.display(), "CAS entry content mismatch; replacing with freshly sealed part");
+            std::fs::remove_file(&dest).map_err(|e| {
+                WrightError::ForgeError(format!(
+                    "CAS: failed to replace mismatched entry {}: {}",
+                    dest.display(),
+                    e
+                ))
+            })?;
         }
 
         // Try hard-link first, fall back to copy.
@@ -158,5 +187,44 @@ impl CasStore {
             })?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_skips_identical_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = CasStore::new(tmp.path().join("store"));
+        let src = tmp.path().join("part-a");
+        std::fs::write(&src, b"same bytes").unwrap();
+
+        let fp = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first = store.store(&src, "demo", fp).unwrap();
+        let second = store.store(&src, "demo", fp).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read(&second).unwrap(), b"same bytes");
+    }
+
+    #[test]
+    fn store_replaces_mismatched_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = CasStore::new(tmp.path().join("store"));
+        let fp = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        // Simulate a stale/foreign entry occupying the slot.
+        let stale = tmp.path().join("stale");
+        std::fs::write(&stale, b"foreign content").unwrap();
+        let dest = store.store(&stale, "demo", fp).unwrap();
+
+        // A freshly sealed part with different bytes under the same
+        // fingerprint+name must replace the stale entry, not be dropped.
+        let fresh = tmp.path().join("fresh");
+        std::fs::write(&fresh, b"freshly sealed").unwrap();
+        let dest2 = store.store(&fresh, "demo", fp).unwrap();
+        assert_eq!(dest, dest2);
+        assert_eq!(std::fs::read(&dest2).unwrap(), b"freshly sealed");
     }
 }

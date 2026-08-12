@@ -44,8 +44,15 @@ pub(super) async fn self_replace_relations(
 /// Persist the plan-level projection carried by a part archive.
 ///
 /// The mapping belongs to the engine: archive and persistence types remain
-/// independent sibling boundaries.
-pub(super) async fn ensure_plan_registered(db: &InstalledDb, partinfo: &PartInfo) -> Result<i64> {
+/// independent sibling boundaries. `plan_source` is the raw `.PLANSRC`
+/// member read back from the extracted archive (ADR-0033); when both it and
+/// a plan checksum are present, the snapshot is recorded so the exact plan
+/// content survives later source edits.
+pub(super) async fn ensure_plan_registered(
+    db: &InstalledDb,
+    partinfo: &PartInfo,
+    plan_source: Option<&str>,
+) -> Result<i64> {
     let provenance =
         partinfo
             .provenance
@@ -57,7 +64,7 @@ pub(super) async fn ensure_plan_registered(db: &InstalledDb, partinfo: &PartInfo
                 isolation: &provenance.isolation,
             });
 
-    Ok(db
+    let plan_id = db
         .ensure_plan_registered(wright_state::database::RegisterPlan {
             plan: wright_state::database::NewPlan {
                 name: &partinfo.plan.name,
@@ -68,7 +75,19 @@ pub(super) async fn ensure_plan_registered(db: &InstalledDb, partinfo: &PartInfo
             },
             provenance,
         })
-        .await?)
+        .await?;
+
+    if let (Some(checksum), Some(source)) = (
+        partinfo
+            .provenance
+            .as_ref()
+            .and_then(|p| p.plan_checksum.as_deref()),
+        plan_source,
+    ) {
+        db.insert_plan_snapshot(checksum, source).await?;
+    }
+
+    Ok(plan_id)
 }
 
 pub(super) fn log_debug_timing(operation: &str, part_name: &str, phase: &str, elapsed: Duration) {

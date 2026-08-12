@@ -196,4 +196,41 @@ impl InstalledDb {
         .map_err(|e| WrightError::DatabaseError(format!("failed to set plan provenance: {}", e)))?;
         Ok(())
     }
+
+    /// Record a plan-source snapshot keyed by its checksum (ADR-0033).
+    /// Re-sealing an unchanged plan is a no-op: the checksum primary key
+    /// already holds the identical text.
+    pub async fn insert_plan_snapshot(&self, checksum: &str, source: &str) -> Result<()> {
+        query("INSERT OR IGNORE INTO plan_snapshots (checksum, source) VALUES (?, ?)")
+            .bind(checksum)
+            .bind(source)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to insert plan snapshot: {}", e))
+            })?;
+        Ok(())
+    }
+
+    /// Fetch the snapshotted plan source for a checksum (ADR-0033). `None`
+    /// when no deployed part carried a `.PLANSRC` member for that checksum.
+    pub async fn get_plan_snapshot(&self, checksum: &str) -> Result<Option<String>> {
+        let row = query("SELECT source FROM plan_snapshots WHERE checksum = ?")
+            .bind(checksum)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to get plan snapshot: {}", e))
+            })?;
+        match row {
+            Some(r) => {
+                use sqlx::Row;
+                let source = r
+                    .try_get(0)
+                    .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                Ok(Some(source))
+            }
+            None => Ok(None),
+        }
+    }
 }

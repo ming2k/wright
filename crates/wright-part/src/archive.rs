@@ -65,6 +65,10 @@ pub struct PartSpec {
     pub backup_files: Vec<String>,
     pub plan: PlanMetadata,
     pub provenance: Provenance,
+    /// Raw plan.toml text to embed as the archive's `.PLANSRC` member
+    /// (ADR-0033). `None` seals no snapshot — readers must treat the member
+    /// as optional, like pre-ADR-0023 provenance.
+    pub plan_source: Option<String>,
     pub hooks: PartHooks,
 }
 
@@ -117,11 +121,13 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let partinfo_path = part_dir.join(".PARTINFO");
     let filelist_path = part_dir.join(".FILELIST");
     let hooks_path = part_dir.join(".HOOKS");
+    let plansrc_path = part_dir.join(".PLANSRC");
     // A previously interrupted seal must not leak stale metadata into the
     // next archive.
     let _ = std::fs::remove_file(&partinfo_path);
     let _ = std::fs::remove_file(&filelist_path);
     let _ = std::fs::remove_file(&hooks_path);
+    let _ = std::fs::remove_file(&plansrc_path);
 
     // Generate .PARTINFO
     let partinfo = generate_partinfo(spec);
@@ -154,6 +160,11 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
                 .map_err(|e| WrightError::PartError(format!("failed to write .HOOKS: {}", e)))?;
         }
 
+        if let Some(ref plan_source) = spec.plan_source {
+            std::fs::write(&plansrc_path, plan_source)
+                .map_err(|e| WrightError::PartError(format!("failed to write .PLANSRC: {}", e)))?;
+        }
+
         let part_path = output_path.join(&spec.archive_name);
         crate::compression::create_tar_zst(part_dir, &part_path)?;
         Ok(part_path)
@@ -164,6 +175,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let _ = std::fs::remove_file(partinfo_path);
     let _ = std::fs::remove_file(filelist_path);
     let _ = std::fs::remove_file(hooks_path);
+    let _ = std::fs::remove_file(plansrc_path);
 
     result
 }
@@ -181,6 +193,13 @@ pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<(PartInfo, Stri
         "{}: archive does not contain .PARTINFO",
         part_path.display()
     )))
+}
+
+/// Read the `.PLANSRC` snapshot from an already-extracted archive directory.
+/// Returns `None` for archives sealed before ADR-0033 (or from manifests not
+/// loaded from a file); the member is optional by contract.
+pub fn read_plan_source(extract_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(extract_dir.join(".PLANSRC")).ok()
 }
 
 /// Light summary of an archive's metadata + file list, used by the
@@ -410,6 +429,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
             || relative_str.starts_with(".PARTINFO")
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
+            || relative_str.starts_with(".PLANSRC")
         {
             continue;
         }
@@ -597,6 +617,7 @@ mod tests {
                 wright_version: env!("CARGO_PKG_VERSION").to_string(),
                 isolation: isolation.to_string(),
             },
+            plan_source: None,
             hooks: PartHooks::default(),
         }
     }
@@ -629,6 +650,48 @@ mod tests {
 
         let err = super::write_part(staging.path(), &spec, out.path()).unwrap_err();
         assert!(err.to_string().contains("invalid part archive filename"));
+    }
+
+    #[test]
+    fn plan_source_seals_as_plansrc_member() {
+        let mut spec = part_spec("strict");
+        spec.plan_source = Some("name = \"demo\"\nrelease = 1\n".to_string());
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
+
+        // The snapshot survives in the archive, stays out of .FILELIST, and
+        // is cleaned from the staging tree after sealing.
+        let extract = tempfile::tempdir().unwrap();
+        let (_info, _hash) = super::extract_part(&part, extract.path()).unwrap();
+        assert_eq!(
+            super::read_plan_source(extract.path()).as_deref(),
+            Some("name = \"demo\"\nrelease = 1\n")
+        );
+        let meta = super::read_archive_meta(&part).unwrap();
+        assert!(
+            !meta.files.iter().any(|f| f.contains(".PLANSRC")),
+            ".PLANSRC must not appear in .FILELIST: {:?}",
+            meta.files
+        );
+        assert!(!staging.path().join(".PLANSRC").exists());
+    }
+
+    #[test]
+    fn plan_source_absent_means_no_plansrc_member() {
+        let spec = part_spec("strict"); // plan_source: None
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
+        let extract = tempfile::tempdir().unwrap();
+        let _ = super::extract_part(&part, extract.path()).unwrap();
+        assert!(super::read_plan_source(extract.path()).is_none());
     }
 
     #[test]

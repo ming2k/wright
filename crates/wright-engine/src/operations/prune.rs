@@ -13,7 +13,7 @@ pub async fn execute_prune(apply: bool, config: &GlobalConfig) -> Result<()> {
         return Ok(());
     }
 
-    let mut parts_by_name: HashMap<String, Vec<ResolvedPartVersioned>> = HashMap::new();
+    let mut parts_by_name: HashMap<(String, String), Vec<ResolvedPartVersioned>> = HashMap::new();
     if let Ok(entries) = std::fs::read_dir(parts_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -25,13 +25,20 @@ pub async fn execute_prune(apply: bool, config: &GlobalConfig) -> Result<()> {
             {
                 let versioned = ResolvedPartVersioned {
                     name: info.name.clone(),
+                    plan_name: info.plan.name.clone(),
                     version: info.plan.version,
                     release: info.plan.release,
                     epoch: info.plan.epoch,
                     path: path.clone(),
                     dependencies: info.runtime_deps,
                 };
-                parts_by_name.entry(info.name).or_default().push(versioned);
+                // Group by (plan, part): unrelated plans may ship same-named
+                // parts, and a newer version of one must not obsolete the
+                // other's archive.
+                parts_by_name
+                    .entry((info.plan.name, info.name))
+                    .or_default()
+                    .push(versioned);
             }
         }
     }

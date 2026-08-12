@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- **Plan-source snapshots (ADR-0033).** Sealing a part now embeds the exact
+  `plan.toml` text it was built from as a `.PLANSRC` archive member, and
+  deploy/upgrade registration persists it into the new `plan_snapshots`
+  database table keyed by the plan checksum. The ledger can now answer
+  "what produced this part" even after the plan source is edited or
+  deleted. `wright doctor` prints a unified diff between the recorded
+  snapshot and the current source when it reports plan drift, and the new
+  `wright plan <TARGET>` query command prints the recorded source (exact
+  bytes; `--json` available). Parts sealed before this change carry no
+  snapshot; rebuild and re-deploy to record one. Snapshots are audit data
+  only — deploy, resolve, and remove never consult them.
+
 ## [5.3.19] - 2026-08-12
 
 ### Changed

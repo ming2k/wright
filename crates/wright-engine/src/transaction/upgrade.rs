@@ -334,7 +334,8 @@ pub async fn upgrade_part(
     }
 
     phase_start = Instant::now();
-    let plan_id = ensure_plan_registered(db, &partinfo).await?;
+    let plan_source = archive::read_plan_source(temp_dir.path());
+    let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref()).await?;
     db.update_part(NewPart {
         name: &partinfo.name,
         plan_id,

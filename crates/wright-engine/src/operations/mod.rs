@@ -13,6 +13,7 @@ pub mod list;
 pub mod merge;
 pub mod owner;
 pub mod package;
+pub mod plan;
 pub mod provide;
 pub mod prune;
 pub mod remove;
