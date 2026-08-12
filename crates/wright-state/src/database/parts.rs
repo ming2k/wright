@@ -62,6 +62,25 @@ impl InstalledDb {
 
         let plan_id = match self.get_plan_id_by_name(name).await? {
             Some(id) => {
+                // Refuse to take over the name of a plan with genuinely
+                // deployed parts: providing it externally would rewrite that
+                // plan's version and provenance.
+                let deployed: i64 =
+                    query("SELECT COUNT(*) FROM parts WHERE plan_id = ? AND origin != 'external'")
+                        .bind(id)
+                        .fetch_one(&self.pool)
+                        .await
+                        .map_err(|e| {
+                            WrightError::DatabaseError(format!("failed to count plan parts: {}", e))
+                        })?
+                        .try_get(0)
+                        .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
+                if deployed > 0 {
+                    return Err(WrightError::PartAlreadyInstalled(format!(
+                        "plan '{}' has deployed parts; remove it first (`wright remove {}`) before providing it externally",
+                        name, name
+                    )));
+                }
                 query("UPDATE plans SET version = ? WHERE id = ?")
                     .bind(version)
                     .bind(id)

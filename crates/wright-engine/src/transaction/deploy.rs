@@ -17,7 +17,9 @@ use wright_state::database::{
     Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
 };
 
-use super::{ensure_plan_registered, log_debug_timing, remove_part, upgrade_part};
+use super::{
+    ensure_plan_registered, guard_plan_reparent, log_debug_timing, remove_part, upgrade_part,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanRevision {
@@ -163,6 +165,12 @@ pub async fn deploy_parts_with_explicit_targets(
                     );
                 }
                 let part = resolved_map.get(&name).expect("resolved part exists");
+                let partinfo = &candidates
+                    .iter()
+                    .find(|candidate| candidate.partinfo.name == name)
+                    .expect("install candidate exists")
+                    .partinfo;
+                guard_plan_reparent(db, partinfo, force).await?;
                 info!(
                     verb = "Upgrading",
                     event = "deploy.upgrading",
@@ -541,6 +549,7 @@ pub async fn deploy_part_with_origin(
                 plan_name = partinfo.name,
                 "Part already deployed, attempting upgrade/redeploy"
             );
+            guard_plan_reparent(db, &partinfo, force).await?;
             return upgrade_part(db, part_path, root_dir, true, run_hooks, session.clone()).await;
         }
         return Err(WrightError::PartAlreadyInstalled(partinfo.name.clone()));

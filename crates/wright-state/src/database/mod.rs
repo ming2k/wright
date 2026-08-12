@@ -643,4 +643,53 @@ mod tests {
             Some("name = \"demo\"\n")
         );
     }
+
+    #[tokio::test]
+    async fn test_provide_part_refuses_deployed_plan_name() {
+        let db = test_db().await;
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "real-plan",
+                version: "1.0.0",
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "real-output",
+            plan_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        // Providing the name of a plan with a genuinely deployed output would
+        // rewrite that plan's version and provenance, so it must be refused —
+        // and the plan row must keep its version.
+        let result = db.provide_part("real-plan", "9.9.9").await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::StateError::PartAlreadyInstalled(_))
+            ),
+            "expected PartAlreadyInstalled, got: {:?}",
+            result
+        );
+        let plan = db.get_plan("real-plan").await.unwrap().unwrap();
+        assert_eq!(plan.version, "1.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_provide_part_allows_external_only_plan_shell() {
+        let db = test_db().await;
+        db.provide_part("host-lib", "1.0").await.unwrap();
+        // Re-providing a name whose plan shell only holds the external
+        // placeholder keeps working and updates the version.
+        db.provide_part("host-lib", "2.0").await.unwrap();
+
+        let plan = db.get_plan("host-lib").await.unwrap().unwrap();
+        assert_eq!(plan.version, "2.0");
+        let part = db.get_part("host-lib").await.unwrap().unwrap();
+        assert_eq!(part.origin, Origin::External);
+    }
 }
