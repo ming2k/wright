@@ -7,7 +7,7 @@ use crate::resolve::bootstrap::{PlanGraph, collect_phase_deps};
 use wright_model::version;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::{OutputConfig, PlanManifest};
-use wright_state::database::InstalledDb;
+use wright_state::database::{InstalledDb, Origin};
 
 use crate::resolve::{BuildPlanOptions, DepDomain, MatchPolicy, RebuildReason};
 
@@ -55,8 +55,8 @@ pub(super) async fn expand_missing_dependencies(
             let dep_name = version::parse_dependency(dep)
                 .unwrap_or_else(|_| (dep.clone(), None))
                 .0;
-            let (dep_plan_name, dep_output_name) =
-                version::parse_dep_ref(&dep_name).to_plan_output();
+            let dep_ref = version::parse_dep_ref(&dep_name);
+            let dep_plan_name = dep_ref.plan().to_string();
             let dep_depth = depth + 1;
 
             if dep_depth > max_depth {
@@ -75,9 +75,7 @@ pub(super) async fn expand_missing_dependencies(
             }
 
             if !build_set.contains(&dep_plan_name)
-                && let Some(label) =
-                    dependency_match_label(&dep_output_name, &dep_plan_name, index, db, policies)
-                        .await?
+                && let Some(label) = dependency_match_label(&dep_ref, index, db, policies).await?
                 && let Some(plan_path) = index.path_for(&dep_plan_name)
             {
                 debug!(event = "graph.resolving", plan_name = %dep_plan_name, "Resolving dependency");
@@ -115,8 +113,8 @@ pub(super) async fn expand_missing_dependencies(
                         let rdep_name = version::parse_dependency(rdep)
                             .unwrap_or_else(|_| (rdep.clone(), None))
                             .0;
-                        let (rdep_plan_name, rdep_output_name) =
-                            version::parse_dep_ref(&rdep_name).to_plan_output();
+                        let rdep_ref = version::parse_dep_ref(&rdep_name);
+                        let rdep_plan_name = rdep_ref.plan().to_string();
                         if !runtime_seen.insert(rdep_plan_name.clone()) {
                             continue;
                         }
@@ -132,14 +130,8 @@ pub(super) async fn expand_missing_dependencies(
                         }
 
                         if !build_set.contains(&rdep_plan_name)
-                            && let Some(label) = dependency_match_label(
-                                &rdep_output_name,
-                                &rdep_plan_name,
-                                index,
-                                db,
-                                policies,
-                            )
-                            .await?
+                            && let Some(label) =
+                                dependency_match_label(&rdep_ref, index, db, policies).await?
                             && let Some(rdep_plan_path) = index.path_for(&rdep_plan_name)
                         {
                             debug!(event = "graph.resolving", plan_name = %rdep_plan_name, needed_by = %build_dep_plan_name, "Resolving dependency");
@@ -159,45 +151,80 @@ pub(super) async fn expand_missing_dependencies(
     Ok(resolved_count)
 }
 
+/// How a dependency reference stands in the deployed state, resolved with
+/// exact namespaces: a bare plan name is satisfied by any deployed output
+/// *of that plan*; `plan:output` only by the named output belonging to that
+/// plan (or an externally provided part of the same name).
+#[derive(Clone, Copy)]
+enum DepDeployment {
+    Missing,
+    Deployed { all_external: bool },
+}
+
+async fn dep_deployment(db: &InstalledDb, dep_ref: &version::DepRef) -> Result<DepDeployment> {
+    match dep_ref.output() {
+        Some(output) => {
+            let Some(part) = db.get_part_with_plan(output).await? else {
+                return Ok(DepDeployment::Missing);
+            };
+            // An externally provided part satisfies any reference to its
+            // name; a deployed part must belong to the referenced plan —
+            // an output name shadowing another plan does not count.
+            if part.origin != Origin::External && part.plan_name != dep_ref.plan() {
+                return Ok(DepDeployment::Missing);
+            }
+            Ok(DepDeployment::Deployed {
+                all_external: part.origin == Origin::External,
+            })
+        }
+        None => {
+            let Some(plan_id) = db.get_plan_id_by_name(dep_ref.plan()).await? else {
+                return Ok(DepDeployment::Missing);
+            };
+            let parts = db.get_parts_by_plan_id(plan_id).await?;
+            if parts.is_empty() {
+                return Ok(DepDeployment::Missing);
+            }
+            Ok(DepDeployment::Deployed {
+                all_external: parts.iter().all(|p| p.origin == Origin::External),
+            })
+        }
+    }
+}
+
 /// Returns the match reason label when the dependency matches any policy, or `None` if it doesn't.
 /// Combines the match check and label derivation into a single database round-trip.
 async fn dependency_match_label(
-    dep_output_name: &str,
-    dep_plan_name: &str,
+    dep_ref: &version::DepRef,
     index: &PlanIndex,
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<Option<&'static str>> {
-    let installed = db.get_part(dep_output_name).await?;
+    let deployment = dep_deployment(db, dep_ref).await?;
     for policy in policies {
         let label = match policy {
             MatchPolicy::All => Some("--match=all"),
-            MatchPolicy::Missing => {
-                if installed.is_none() {
-                    Some("missing")
-                } else {
-                    None
-                }
-            }
-            MatchPolicy::Installed => {
-                if installed.is_some()
-                    && !dependency_plan_differs(dep_output_name, dep_plan_name, index, db).await?
+            MatchPolicy::Missing => match deployment {
+                DepDeployment::Missing => Some("missing"),
+                DepDeployment::Deployed { .. } => None,
+            },
+            MatchPolicy::Installed => match deployment {
+                DepDeployment::Deployed { .. }
+                    if !dependency_plan_differs(deployment, dep_ref, index, db).await? =>
                 {
                     Some("installed")
-                } else {
-                    None
                 }
-            }
-            MatchPolicy::Outdated => {
-                if installed.is_none() {
-                    Some("missing")
-                } else if dependency_plan_differs(dep_output_name, dep_plan_name, index, db).await?
+                _ => None,
+            },
+            MatchPolicy::Outdated => match deployment {
+                DepDeployment::Missing => Some("missing"),
+                DepDeployment::Deployed { .. }
+                    if dependency_plan_differs(deployment, dep_ref, index, db).await? =>
                 {
                     Some("outdated")
-                } else {
-                    None
                 }
-            }
+                _ => None,
+            },
         };
         if label.is_some() {
             return Ok(label);
@@ -212,64 +239,43 @@ pub(super) async fn dependency_matches_policy(
     db: &InstalledDb,
     policies: &[MatchPolicy],
 ) -> Result<bool> {
-    // 首先尝试直接用 dep_name 查询（单 output plan 或恰好有同名的 output）
-    if dependency_match_label(dep_name, dep_name, index, db, policies)
+    // Exact namespaces make the multi-output fallback unnecessary: a bare
+    // plan name is satisfied by any deployed output of that plan.
+    let dep_ref = version::parse_dep_ref(dep_name);
+    Ok(dependency_match_label(&dep_ref, index, db, policies)
         .await?
-        .is_some()
-    {
-        return Ok(true);
-    }
-
-    // 如果是多 output plan，检查是否有任何 output 匹配
-    if let Some(_path) = index.path_for(dep_name)
-        && let Ok(Some(manifest)) = index.manifest_for(dep_name)
-        && let Some(OutputConfig::Multi(ref outputs)) = manifest.outputs
-    {
-        for (output_name, _) in outputs {
-            if dependency_match_label(output_name, dep_name, index, db, policies)
-                .await?
-                .is_some()
-            {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
+        .is_some())
 }
 
+/// Whether the deployed record of the dependency's plan diverges from the
+/// current plan manifest. The comparison is strictly between the plan named
+/// by the reference and its own manifest — never the record of another plan
+/// that happens to deploy a same-named output.
 async fn dependency_plan_differs(
-    dep_output_name: &str,
-    dep_plan_name: &str,
+    deployment: DepDeployment,
+    dep_ref: &version::DepRef,
     index: &PlanIndex,
     db: &InstalledDb,
 ) -> Result<bool> {
-    let Some(installed) = db.get_part(dep_output_name).await? else {
-        return Ok(true);
-    };
-
-    // Assumed parts are explicitly declared as externally provided.
-    // They have no local build plan to compare against, so treat them as
-    // up-to-date — wright should never auto-schedule rebuilds for them.
-    if installed.origin == wright_state::database::Origin::External {
-        return Ok(false);
+    match deployment {
+        DepDeployment::Missing => Ok(true),
+        // Assumed parts are explicitly declared as externally provided.
+        // They have no local build plan to compare against, so treat them as
+        // up-to-date — wright should never auto-schedule rebuilds for them.
+        DepDeployment::Deployed { all_external: true } => Ok(false),
+        DepDeployment::Deployed { .. } => {
+            let Some(manifest) = index.manifest_for(dep_ref.plan())? else {
+                return Ok(false);
+            };
+            let Some(plan) = db.get_plan(dep_ref.plan()).await? else {
+                return Ok(true);
+            };
+            let manifest_ver = manifest.metadata.version.as_deref().unwrap_or("");
+            Ok(plan.epoch != manifest.metadata.epoch as i64
+                || plan.version != manifest_ver
+                || plan.release != manifest.metadata.release as i64)
+        }
     }
-
-    let Some(_path) = index.path_for(dep_plan_name) else {
-        return Ok(false);
-    };
-    let manifest = match index.manifest_for(dep_plan_name)? {
-        Some(m) => m,
-        None => return Ok(false),
-    };
-
-    let Some(plan) = db.get_plan_by_id(installed.plan_id).await? else {
-        return Ok(true);
-    };
-    let manifest_ver = manifest.metadata.version.as_deref().unwrap_or("");
-    Ok(plan.epoch != manifest.metadata.epoch as i64
-        || plan.version != manifest_ver
-        || plan.release != manifest.metadata.release as i64)
 }
 
 pub(super) fn construction_plan_batches(
@@ -526,7 +532,13 @@ pub(super) fn build_dep_map(
     let mut build_set = HashSet::new();
     let mut bootstrap_excluded = HashMap::new();
 
+    // Maps an output or plan name back to its owning plan. Plan identities
+    // always win: a bare dependency reference names a plan (DepRef docs), so
+    // a plan named `x` outranks another plan's output named `x`. Contested
+    // output names (two plans declaring the same output) resolve to the
+    // lexicographically smallest plan name, deterministically.
     let mut part_to_plan = HashMap::new();
+    let mut known_plans = HashSet::new();
 
     // Load manifests for the explicit build set first.
     let mut build_manifests = Vec::with_capacity(plans_to_build.len());
@@ -537,16 +549,26 @@ pub(super) fn build_dep_map(
                 let name = manifest.metadata.name.clone();
                 name_to_path.insert(name.clone(), path.clone());
                 build_set.insert(name.clone());
+                known_plans.insert(name.clone());
                 part_to_plan.insert(name.clone(), name.clone());
-                if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
-                    for (sub_name, _) in parts {
-                        part_to_plan.insert(sub_name.clone(), name.clone());
-                    }
-                }
                 build_manifests.push((name, manifest));
             }
             Err(e) => {
                 validation_errors.push(format!("{}: {}", path.display(), e));
+            }
+        }
+    }
+    build_manifests.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Register outputs in a second, name-ordered pass so contested output
+    // names resolve deterministically (first plan wins; plan identities were
+    // already inserted above and are never overwritten here).
+    for (name, manifest) in &build_manifests {
+        if let Some(OutputConfig::Multi(ref parts)) = manifest.outputs {
+            for (sub_name, _) in parts {
+                part_to_plan
+                    .entry(sub_name.clone())
+                    .or_insert_with(|| name.clone());
             }
         }
     }
@@ -579,14 +601,20 @@ pub(super) fn build_dep_map(
                 .unwrap_or_else(|_| (dep_raw.to_string(), None))
                 .0;
             let dep_plan_name = version::parse_dep_ref(&dep_name).plan().to_string();
-            if !part_to_plan.contains_key(&dep_plan_name)
+            // Key on plan identity, not map membership: an output of another
+            // plan may already occupy this name in part_to_plan, and the
+            // plan itself must still be registered.
+            if !known_plans.contains(&dep_plan_name)
                 && let Some(dep_path) = index.path_for(&dep_plan_name)
                 && let Ok(dep_manifest) = PlanManifest::from_file(dep_path)
             {
+                known_plans.insert(dep_plan_name.clone());
                 part_to_plan.insert(dep_plan_name.clone(), dep_plan_name.clone());
                 if let Some(OutputConfig::Multi(ref parts)) = dep_manifest.outputs {
                     for (sub_name, _) in parts {
-                        part_to_plan.insert(sub_name.clone(), dep_plan_name.clone());
+                        part_to_plan
+                            .entry(sub_name.clone())
+                            .or_insert_with(|| dep_plan_name.clone());
                     }
                 }
             }
@@ -621,4 +649,227 @@ pub(super) fn build_dep_map(
         part_to_plan,
         bootstrap_excluded,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wright_state::database::{NewPart, NewPlan};
+
+    async fn test_db() -> InstalledDb {
+        InstalledDb::open_in_memory().await.unwrap()
+    }
+
+    async fn add_plan(db: &InstalledDb, name: &str, outputs: &[(&str, Origin)]) {
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name,
+                version: "1.0.0",
+                release: 1,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for (output, origin) in outputs {
+            db.insert_part(NewPart {
+                name: output,
+                plan_id,
+                origin: *origin,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_dep_is_deployed_when_any_output_of_plan_is_deployed() {
+        let db = test_db().await;
+        add_plan(
+            &db,
+            "llvm",
+            &[("clang", Origin::Manual), ("lld", Origin::Manual)],
+        )
+        .await;
+
+        let dep_ref = version::parse_dep_ref("llvm");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Deployed {
+                all_external: false
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn bare_dep_ignores_shadowing_output_of_another_plan() {
+        let db = test_db().await;
+        // Plan `x` deploys output `y`; plan `a` deploys an output named `x`.
+        add_plan(&db, "x", &[("y", Origin::Manual)]).await;
+        add_plan(&db, "a", &[("x", Origin::Manual)]).await;
+
+        // A bare dep on plan `x` is satisfied by plan `x`'s own output, not
+        // by the shadowing part named `x`.
+        let dep_ref = version::parse_dep_ref("x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Deployed { .. }
+        ));
+
+        // The shadowing output satisfies `a:x`, but not `x:x` — plan `x`
+        // has no output named `x`.
+        let dep_ref = version::parse_dep_ref("a:x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Deployed { .. }
+        ));
+        let dep_ref = version::parse_dep_ref("x:x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn shadowing_output_does_not_satisfy_qualified_dep_on_other_plan() {
+        let db = test_db().await;
+        add_plan(&db, "a", &[("x", Origin::Manual)]).await;
+
+        let dep_ref = version::parse_dep_ref("b:x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn external_parts_satisfy_and_mark_all_external() {
+        let db = test_db().await;
+        add_plan(&db, "x", &[("x", Origin::External)]).await;
+
+        let dep_ref = version::parse_dep_ref("x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Deployed { all_external: true }
+        ));
+        // An externally provided part satisfies a qualified reference to
+        // its name regardless of the referenced plan.
+        let dep_ref = version::parse_dep_ref("anything:x");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Deployed { all_external: true }
+        ));
+    }
+
+    #[tokio::test]
+    async fn plan_row_without_outputs_is_missing() {
+        let db = test_db().await;
+        db.insert_plan(NewPlan {
+            name: "empty",
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let dep_ref = version::parse_dep_ref("empty");
+        assert!(matches!(
+            dep_deployment(&db, &dep_ref).await.unwrap(),
+            DepDeployment::Missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_policy_ignores_shadowing_output() {
+        let db = test_db().await;
+        // Only plan `a`'s output `x` is deployed; plan `x` is not deployed.
+        add_plan(&db, "a", &[("x", Origin::Manual)]).await;
+        let index_dir = tempfile::tempdir().unwrap();
+        let index = PlanIndex::discover(&[index_dir.path().to_path_buf()]).unwrap();
+
+        let dep_ref = version::parse_dep_ref("x");
+        let label = dependency_match_label(&dep_ref, &index, &db, &[MatchPolicy::Missing])
+            .await
+            .unwrap();
+        assert_eq!(label, Some("missing"));
+    }
+
+    fn write_plan(plans_dir: &std::path::Path, name: &str, outputs: &[&str]) -> PathBuf {
+        let plan_dir = plans_dir.join(name);
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let outputs_toml: String = outputs
+            .iter()
+            .map(|o| {
+                format!(
+                    "\n[[output]]\nname = \"{o}\"\ndescription = \"{o} output\"\ninclude = [\"/usr/lib/**\"]\n"
+                )
+            })
+            .collect();
+        std::fs::write(
+            plan_dir.join("plan.toml"),
+            format!(
+                "name = \"{name}\"\nversion = \"1.0.0\"\nrelease = 1\ndescription = \"{name} plan\"\nlicense = \"MIT\"\narch = \"x86_64\"\n{outputs_toml}"
+            ),
+        )
+        .unwrap();
+        plan_dir.join("plan.toml")
+    }
+
+    fn dep_map_for(plans_dir: &std::path::Path, paths: &[PathBuf]) -> HashMap<String, String> {
+        let index = PlanIndex::discover(&[plans_dir.to_path_buf()]).unwrap();
+        let plans_to_build: HashSet<PathBuf> = paths.iter().cloned().collect();
+        build_dep_map(
+            &plans_to_build,
+            true,
+            false,
+            HashMap::new(),
+            &index,
+            DepDomain::ALL,
+        )
+        .unwrap()
+        .part_to_plan
+    }
+
+    #[test]
+    fn part_to_plan_prefers_plan_identity_over_shadowing_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        // Plan `a` declares an output named `x`; plan `x` also exists.
+        let a = write_plan(&plans_dir, "a", &["x"]);
+        let x = write_plan(&plans_dir, "x", &[]);
+
+        let part_to_plan = dep_map_for(&plans_dir, &[a, x]);
+        assert_eq!(part_to_plan.get("x"), Some(&"x".to_string()));
+    }
+
+    #[test]
+    fn part_to_plan_resolves_contested_outputs_deterministically() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        // Two plans declare an output named `x`; the lexicographically
+        // smallest plan name wins regardless of iteration order.
+        let b = write_plan(&plans_dir, "b", &["x"]);
+        let a = write_plan(&plans_dir, "a", &["x"]);
+
+        let part_to_plan = dep_map_for(&plans_dir, &[b, a]);
+        assert_eq!(part_to_plan.get("x"), Some(&"a".to_string()));
+    }
+
+    #[test]
+    fn part_to_plan_preload_registers_shadowed_plan_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        // Build-set plan `a` claims output name `x` in the map; plan `c`
+        // depends on plan `x`, whose identity must still be registered.
+        let a = write_plan(&plans_dir, "a", &["x"]);
+        let c = write_plan(&plans_dir, "c", &[]);
+        std::fs::write(
+            &c,
+            "name = \"c\"\nversion = \"1.0.0\"\nrelease = 1\ndescription = \"c plan\"\nlicense = \"MIT\"\narch = \"x86_64\"\nbuild_deps = [\"x\"]\n",
+        )
+        .unwrap();
+        write_plan(&plans_dir, "x", &[]);
+
+        let part_to_plan = dep_map_for(&plans_dir, &[a, c]);
+        assert_eq!(part_to_plan.get("x"), Some(&"x".to_string()));
+    }
 }

@@ -14,6 +14,7 @@ use crate::error::{Result, WrightError, WrightResultExt};
 use tracing::info;
 
 use crate::config::GlobalConfig;
+use wright_model::version;
 use wright_plan::manifest::PlanManifest;
 use wright_state::database::InstalledDb;
 
@@ -297,13 +298,24 @@ pub async fn resolve_build_set(
         }
 
         if !opts.rdeps.is_empty() {
-            let installed_names: HashSet<String> = db
-                .list_parts()
+            // Deployed plans, not parts: reverse-dependency expansion
+            // reasons about plan names, and a plan's name need not appear
+            // among deployed part names at all (multi-output plans).
+            let mut installed_names: HashSet<String> = HashSet::new();
+            for plan in db
+                .list_plans()
                 .await
-                .context("failed to list deployed parts for dependents filter")?
-                .into_iter()
-                .map(|p| p.name)
-                .collect();
+                .context("failed to list deployed plans for dependents filter")?
+            {
+                if !db
+                    .get_parts_by_plan_id(plan.id)
+                    .await
+                    .context("failed to list plan outputs")?
+                    .is_empty()
+                {
+                    installed_names.insert(plan.name);
+                }
+            }
             let expansion = expand_rebuild_deps(
                 &mut plans_to_build,
                 &index,
@@ -487,6 +499,42 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
 
     lint_static_plan_diagnostics(&plans_to_build);
 
+    // Cross-plan naming collisions and dependency-reference integrity
+    // (docs/reference/plan-manifest.md promises these checks). Warnings are
+    // advisory; a `plan:output` reference naming an output the plan does
+    // not declare is an error.
+    let mut ref_warnings = Vec::new();
+    let mut ref_errors = Vec::new();
+    for path in &plans_to_build {
+        if let Ok(manifest) = wright_plan::PlanManifest::from_file(path) {
+            dep_reference_diagnostics(
+                &manifest.metadata.name,
+                &manifest,
+                &index,
+                &mut ref_warnings,
+                &mut ref_errors,
+            );
+        }
+    }
+    let mut warnings = namespace_collision_warnings(&index);
+    warnings.extend(ref_warnings);
+    warnings.sort();
+    warnings.dedup();
+    for warning in &warnings {
+        println!("  [warning] {}", warning);
+    }
+    ref_errors.sort();
+    ref_errors.dedup();
+    for error in &ref_errors {
+        println!("  [error] {}", error);
+    }
+    if !ref_errors.is_empty() {
+        return Err(WrightError::ValidationError(format!(
+            "lint found {} dependency reference error(s)",
+            ref_errors.len()
+        )));
+    }
+
     let graph = graph::build_dep_map(
         &plans_to_build,
         false,
@@ -497,6 +545,121 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
     )?;
 
     lint_dependency_graph(&graph)
+}
+
+/// Output names declared by a manifest: the `[[output]]` names in
+/// multi-output mode, or the plan name itself for single-output plans.
+/// (Local copy of `operations::install::manifest_part_names`; kept here so
+/// the resolve layer does not depend on the operations layer.)
+fn manifest_output_names(manifest: &PlanManifest) -> Vec<String> {
+    match manifest.outputs {
+        Some(wright_plan::manifest::OutputConfig::Multi(ref parts)) => {
+            parts.iter().map(|(n, _)| n.clone()).collect()
+        }
+        _ => vec![manifest.metadata.name.clone()],
+    }
+}
+
+/// Check one plan's dependency references against the plan index.
+///
+/// - A reference to a plan missing from the index is a warning: it may be
+///   satisfied by an external `[[provide]]` at deploy time, but a typo
+///   looks exactly the same, so it is reported.
+/// - A `plan:output` reference whose output the plan does not declare is
+///   an error: unambiguously broken.
+fn dep_reference_diagnostics(
+    name: &str,
+    manifest: &PlanManifest,
+    index: &wright_plan::discovery::PlanIndex,
+    warnings: &mut Vec<String>,
+    errors: &mut Vec<String>,
+) {
+    let dep_fields = [
+        ("build_deps", &manifest.build_deps),
+        ("link_deps", &manifest.link_deps),
+        ("runtime_deps", &manifest.runtime_deps),
+    ];
+
+    for (field, deps) in dep_fields {
+        for dep_raw in deps {
+            let dep_name = version::parse_dependency(dep_raw)
+                .unwrap_or_else(|_| (dep_raw.clone(), None))
+                .0;
+            let dep_ref = version::parse_dep_ref(&dep_name);
+            let plan_name = dep_ref.plan();
+
+            let Some(dep_path) = index.path_for(plan_name) else {
+                warnings.push(format!(
+                    "plan '{}' {}: referenced plan '{}' is not in the plan index \
+                     (only acceptable if externally provided at deploy time)",
+                    name, field, plan_name
+                ));
+                continue;
+            };
+
+            if let Some(output) = dep_ref.output() {
+                let declares = wright_plan::PlanManifest::from_file(dep_path)
+                    .map(|m| manifest_output_names(&m))
+                    .unwrap_or_default();
+                if !declares.is_empty() && !declares.iter().any(|n| n == output) {
+                    errors.push(format!(
+                        "plan '{}' {}: plan '{}' declares no output named '{}' (declares: {})",
+                        name,
+                        field,
+                        plan_name,
+                        output,
+                        declares.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Warn about cross-plan name collisions in the index: an output shadowing
+/// another plan's name, or one output name declared by several plans. Both
+/// are tolerated at deploy time (the universal identifier disambiguates
+/// user targets), but they are flagged so plan authors opt in deliberately.
+fn namespace_collision_warnings(index: &wright_plan::discovery::PlanIndex) -> Vec<String> {
+    let Ok(all_manifests) = index.load_all() else {
+        return Vec::new();
+    };
+
+    let mut plan_names = std::collections::HashSet::new();
+    let mut output_owners: HashMap<String, Vec<String>> = HashMap::new();
+    for (plan_name, manifest) in &all_manifests {
+        plan_names.insert(plan_name.clone());
+        for output in manifest_output_names(manifest) {
+            output_owners
+                .entry(output)
+                .or_default()
+                .push(plan_name.clone());
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for (output, mut owners) in output_owners {
+        owners.sort();
+        owners.dedup();
+        if owners.len() > 1 {
+            warnings.push(format!(
+                "output name '{}' is declared by plans {}; deployed part names are globally \
+                 unique, so these outputs can never coexist on one system",
+                output,
+                owners.join(", ")
+            ));
+        }
+        if plan_names.contains(&output)
+            && let Some(foreign) = owners.iter().find(|o| *o != &output)
+        {
+            warnings.push(format!(
+                "output '{}' of plan '{}' shadows the plan named '{}'; bare references \
+                 resolve to the plan — write '{}:{}' where the output is meant",
+                output, foreign, output, foreign, output
+            ));
+        }
+    }
+    warnings
 }
 
 fn lint_static_plan_diagnostics(plans: &std::collections::HashSet<std::path::PathBuf>) {
@@ -590,5 +753,98 @@ impl BitOr for DepDomain {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self::Output {
         Self(self.0 | rhs.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_plan(plans_dir: &Path, name: &str, extra: &str) -> PathBuf {
+        let plan_dir = plans_dir.join(name);
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let path = plan_dir.join("plan.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "name = \"{name}\"\nversion = \"1.0.0\"\nrelease = 1\ndescription = \"d\"\nlicense = \"MIT\"\narch = \"x86_64\"\n{extra}"
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    fn lint_index(plans_dir: &Path) -> wright_plan::discovery::PlanIndex {
+        wright_plan::discovery::PlanIndex::discover(&[plans_dir.to_path_buf()]).unwrap()
+    }
+
+    #[test]
+    fn dep_reference_diagnostics_flags_missing_and_undeclared() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        write_plan(
+            &plans_dir,
+            "a",
+            "[[output]]\nname = \"x\"\ndescription = \"x\"\ninclude = [\"/usr/lib/**\"]\n",
+        );
+        let c_path = write_plan(&plans_dir, "c", "");
+        // c: build dep on a missing plan (warning), link dep on an
+        // undeclared output (error), runtime deps on a declared output and
+        // a constrained in-index plan (both clean).
+        std::fs::write(
+            &c_path,
+            "name = \"c\"\nversion = \"1.0.0\"\nrelease = 1\ndescription = \"d\"\nlicense = \"MIT\"\narch = \"x86_64\"\nbuild_deps = [\"nope\"]\nlink_deps = [\"a:y\"]\nruntime_deps = [\"a:x\", \"a >= 1.0\"]\n",
+        )
+        .unwrap();
+
+        let index = lint_index(&plans_dir);
+        let manifest = PlanManifest::from_file(&c_path).unwrap();
+        let (mut warnings, mut errors) = (Vec::new(), Vec::new());
+        dep_reference_diagnostics("c", &manifest, &index, &mut warnings, &mut errors);
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("nope"), "{:?}", warnings);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("no output named 'y'"), "{:?}", errors);
+    }
+
+    #[test]
+    fn namespace_collision_warnings_cover_shadowing_and_coexistence() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        write_plan(
+            &plans_dir,
+            "a",
+            "[[output]]\nname = \"x\"\ndescription = \"x\"\ninclude = [\"/usr/lib/**\"]\n",
+        );
+        write_plan(&plans_dir, "x", "");
+
+        let warnings = namespace_collision_warnings(&lint_index(&plans_dir));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("shadows the plan named 'x'")),
+            "shadowing warning present: {:?}",
+            warnings
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("declared by plans")),
+            "coexistence warning present: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn namespace_collision_warnings_ignore_coinciding_single_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        write_plan(&plans_dir, "zlib", "");
+
+        let warnings = namespace_collision_warnings(&lint_index(&plans_dir));
+        assert!(
+            warnings.is_empty(),
+            "no warnings for the coincide case: {:?}",
+            warnings
+        );
     }
 }

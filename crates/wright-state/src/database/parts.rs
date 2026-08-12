@@ -120,7 +120,10 @@ impl InstalledDb {
     }
 
     pub async fn remove_part(&self, name: &str) -> Result<()> {
-        let plan_opt = self.get_plan(name).await?;
+        // Fetch the part first: plan cleanup below is keyed by plan_id
+        // because part names and plan names are independent namespaces — a
+        // plan-name lookup with the part's name could hit an unrelated plan.
+        let part = self.get_part(name).await?;
 
         let res = query("DELETE FROM parts WHERE name = ?")
             .bind(name)
@@ -133,16 +136,16 @@ impl InstalledDb {
         }
 
         // Clean up the plan record if no other parts reference it.
-        if let Some(plan) = plan_opt {
+        if let Some(part) = part {
             let count: i64 = query("SELECT COUNT(*) FROM parts WHERE plan_id = ?")
-                .bind(plan.id)
+                .bind(part.plan_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?
                 .try_get(0)
                 .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
             if count == 0 {
-                let _ = self.remove_plan(name).await;
+                let _ = self.remove_plan_by_id(part.plan_id).await;
             }
         }
 

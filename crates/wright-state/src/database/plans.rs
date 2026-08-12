@@ -92,6 +92,24 @@ impl InstalledDb {
         Ok(())
     }
 
+    pub async fn remove_plan_by_id(&self, id: i64) -> Result<()> {
+        let res = query("DELETE FROM plans WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                WrightError::DatabaseError(format!("failed to remove plan by id: {}", e))
+            })?;
+
+        if res.rows_affected() == 0 {
+            return Err(WrightError::DatabaseError(format!(
+                "plan not found: id {}",
+                id
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn get_parts_by_plan_id(&self, plan_id: i64) -> Result<Vec<super::InstalledPart>> {
         use super::PART_COLUMNS;
         let sql = format!(

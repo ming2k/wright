@@ -324,6 +324,19 @@ pub fn parse_dependency(dep: &str) -> Result<(String, Option<VersionConstraint>)
     Ok((dep.to_string(), None))
 }
 
+/// The deployed part-name key of a dependency reference: its output
+/// component. `plan:output` normalizes to `output`; a bare `plan` stays
+/// as-is (a plan-level wildcard, matched against the plan's outputs).
+///
+/// Deployed part names are globally unique, so the output component is the
+/// canonical key for dependency edges in the installed-state database.
+pub fn dep_output_name(dep: &str) -> &str {
+    match dep.rsplit_once(':') {
+        Some((_, output)) => output.trim(),
+        None => dep.trim(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +370,13 @@ mod tests {
         assert!(v2 < v3);
         assert!(v3 < v4);
         assert_eq!(v1, Version::parse("1.0.0").unwrap());
+    }
+
+    #[test]
+    fn test_dep_output_name() {
+        assert_eq!(dep_output_name("optics:flux"), "flux");
+        assert_eq!(dep_output_name("zlib"), "zlib");
+        assert_eq!(dep_output_name(" optics : flux "), "flux");
     }
 
     #[test]

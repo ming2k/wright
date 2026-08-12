@@ -686,7 +686,10 @@ pub async fn deploy_part_with_origin(
     for d in &partinfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
         deps.push(Dependency {
-            name,
+            // Edges key on the deployed part name: `plan:output` deps are
+            // stored as their output component so dependent/orphan queries
+            // match them literally.
+            name: version::dep_output_name(&name).to_string(),
             version_constraint: constraint.map(|c| c.to_string()),
         });
     }

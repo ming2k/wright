@@ -543,10 +543,18 @@ pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
 }
 
 async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
-    // The required_name may be "plan:output" or just "output". Names are
-    // globally unique, so the output is what we look up.
-    let target = required.split(':').next_back().unwrap_or(required);
+    // Dependency edges are keyed by the deployed part (output) name; split
+    // legacy qualified references ("plan:output") the same way.
+    let target = wright_model::version::dep_output_name(required);
     if db.get_part(target).await?.is_some() {
+        return Ok(true);
+    }
+    // A bare reference is a plan wildcard: it is also satisfied when the
+    // plan is deployed through outputs that do not carry the plan's name.
+    if !required.contains(':')
+        && let Some(plan_id) = db.get_plan_id_by_name(target).await?
+        && !db.get_parts_by_plan_id(plan_id).await?.is_empty()
+    {
         return Ok(true);
     }
     // Replaces fallback: any deployed part declaring `replaces = [target]`

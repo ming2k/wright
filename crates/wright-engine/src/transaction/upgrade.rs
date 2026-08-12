@@ -377,7 +377,8 @@ pub async fn upgrade_part(
     for d in &partinfo.runtime_deps {
         let (name, constraint) = version::parse_dependency(d).unwrap_or_else(|_| (d.clone(), None));
         deps.push(Dependency {
-            name,
+            // See deploy: edges key on the deployed part (output) name.
+            name: version::dep_output_name(&name).to_string(),
             version_constraint: constraint.map(|c| c.to_string()),
         });
     }

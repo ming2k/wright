@@ -521,6 +521,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_remove_last_output_cleans_up_multi_output_plan() {
+        let db = test_db().await;
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "llvm",
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for output in ["clang", "lld"] {
+            db.insert_part(NewPart {
+                name: output,
+                plan_id,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        }
+
+        // Plan row survives while any output remains, and is removed with
+        // the last one — keyed by plan_id, not by the part's name.
+        db.remove_part("clang").await.unwrap();
+        assert!(db.get_plan("llvm").await.unwrap().is_some());
+        db.remove_part("lld").await.unwrap();
+        assert!(db.get_plan("llvm").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_remove_part_never_touches_same_named_unrelated_plan() {
+        let db = test_db().await;
+        // Plan `a` deploys an output named `x`; an unrelated plan `x` also
+        // exists with its own output `y`.
+        let a_id = db
+            .insert_plan(NewPlan {
+                name: "a",
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "x",
+            plan_id: a_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let x_id = db
+            .insert_plan(NewPlan {
+                name: "x",
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "y",
+            plan_id: x_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        // Removing part `x` (of plan `a`) must clean up plan `a` — which
+        // just lost its last output — and leave plan `x` untouched.
+        db.remove_part("x").await.unwrap();
+        assert!(db.get_plan("a").await.unwrap().is_none());
+        assert!(db.get_plan("x").await.unwrap().is_some());
+        assert!(db.get_part("y").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
     async fn test_register_plan_persists_archive_independent_provenance() {
         let db = test_db().await;
         let source_checksums = vec!["http https://example.org/src sha256=abc".to_string()];
