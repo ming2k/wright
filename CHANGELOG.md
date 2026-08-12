@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.20] - 2026-08-12
+
 ### Added
 - **Plan-source snapshots (ADR-0033).** Sealing a part now embeds the exact
   `plan.toml` text it was built from as a `.PLANSRC` archive member, and
