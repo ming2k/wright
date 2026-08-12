@@ -746,8 +746,11 @@ retry_count = 3
         String::from_utf8_lossy(&install.stderr)
     );
 
-    let archive = parts_dir.join("custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
-    assert!(archive.exists(), "archive should be created in parts_dir");
+    let archive = parts_dir.join("custom-out-dir/custom-out-dir-1.0.0-1-x86_64.wright.tar.zst");
+    assert!(
+        archive.exists(),
+        "archive should be created in the plan subdirectory of parts_dir"
+    );
 }
 
 #[test]

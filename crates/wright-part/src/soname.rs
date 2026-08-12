@@ -98,12 +98,9 @@ impl SonameIndex {
             return Ok(idx);
         }
 
-        for entry in std::fs::read_dir(parts_dir)
-            .map_err(|e| {
-                crate::error::WrightError::PartError(format!("read {}: {}", parts_dir.display(), e))
-            })?
-            .flatten()
-        {
+        // Recurse: current archives live in per-plan subdirectories, older
+        // ones flat at the top level.
+        for entry in WalkDir::new(parts_dir).into_iter().flatten() {
             let path = entry.path();
             if !path
                 .file_name()
@@ -114,7 +111,7 @@ impl SonameIndex {
                 continue;
             }
 
-            match read_archive_meta(&path) {
+            match read_archive_meta(path) {
                 Ok(meta) => {
                     if keep(&meta) {
                         idx.absorb(meta);

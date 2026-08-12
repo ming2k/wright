@@ -46,15 +46,7 @@ pub async fn execute_clean(
             "part archives in {}",
             config.general.parts_dir.display()
         );
-        remove_matching_entries(&config.general.parts_dir, |path, name| {
-            name.ends_with(".wright.tar.zst")
-                && (plan_names.is_empty()
-                    || wright_part::archive::read_partinfo(path).is_ok_and(|info| {
-                        plan_names
-                            .iter()
-                            .any(|plan| info.plan.name == **plan || info.name == **plan)
-                    }))
-        })?
+        remove_part_archives(&config.general.parts_dir, &plan_names)?
     } else {
         0
     };
@@ -74,6 +66,72 @@ pub async fn execute_clean(
         "Removed {workspaces} workspace(s), {archives} archive(s), and {log_files} log entry(s)."
     );
     Ok(())
+}
+
+/// Remove part archives belonging to `plan_names` (every archive when
+/// empty). Current archives live in per-plan subdirectories and older ones
+/// flat at the top level, so the walk recurses. Matching is by originating
+/// plan only — an output that merely shares the plan's name belongs to
+/// another plan and must survive. Plan subdirectories left empty are
+/// removed as well.
+fn remove_part_archives(parts_dir: &Path, plan_names: &[&str]) -> Result<usize> {
+    if !parts_dir.exists() {
+        return Ok(0);
+    }
+    let metadata =
+        std::fs::symlink_metadata(parts_dir).map_err(|error| io_error(parts_dir, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(WrightError::ValidationError(format!(
+            "cleanup root must be a directory, not a symlink or file: {}",
+            parts_dir.display()
+        )));
+    }
+
+    let mut matches = Vec::<PathBuf>::new();
+    for entry in walkdir::WalkDir::new(parts_dir).into_iter().flatten() {
+        let path = entry.path();
+        let is_archive = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".wright.tar.zst"));
+        if !is_archive {
+            continue;
+        }
+        let belongs = plan_names.is_empty()
+            || wright_part::archive::read_partinfo(path)
+                .is_ok_and(|info| plan_names.iter().any(|plan| info.plan.name == *plan));
+        if belongs {
+            matches.push(path.to_path_buf());
+        }
+    }
+    matches.sort();
+
+    let removed = matches.len();
+    for path in &matches {
+        remove_entry(path)?;
+    }
+
+    // Drop plan subdirectories the removal just emptied (`remove_dir`
+    // refuses non-empty directories, so foreign content is safe).
+    for entry in std::fs::read_dir(parts_dir).map_err(|error| io_error(parts_dir, error))? {
+        let entry = entry.map_err(|error| io_error(parts_dir, error))?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let targeted =
+            plan_names.is_empty() || name.to_str().is_some_and(|name| plan_names.contains(&name));
+        if targeted && metadata_is_plain_dir(&entry) {
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
+
+    Ok(removed)
+}
+
+fn metadata_is_plain_dir(entry: &std::fs::DirEntry) -> bool {
+    entry
+        .file_type()
+        .map(|file_type| file_type.is_dir() && !file_type.is_symlink())
+        .unwrap_or(false)
 }
 
 fn remove_matching_entries(

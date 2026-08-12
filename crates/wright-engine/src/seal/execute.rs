@@ -85,7 +85,13 @@ pub fn create_part_with_isolation(
         plan_source: plan.plan_source.clone(),
         hooks,
     };
-    Ok(archive::write_part(part_dir, &spec, output_path)?)
+    // Seal into the per-plan subdirectory of parts_dir (Debian pool style):
+    // several plans may ship same-named outputs, and the plan-qualified
+    // layout keeps their archives from overwriting each other. The store
+    // scans recursively, so identity still comes from .PARTINFO alone.
+    let output_dir = output_path.join(manifest.plan_name());
+    std::fs::create_dir_all(&output_dir).map_err(WrightError::IoError)?;
+    Ok(archive::write_part(part_dir, &spec, &output_dir)?)
 }
 
 fn source_provenance_line(source: &Source, plan: &PlanManifest) -> String {
@@ -338,6 +344,79 @@ script = "true"
             Some("name = \"demo\"\nrelease = 1\n")
         );
         assert!(!staging.path().join(".PLANSRC").exists());
+    }
+
+    #[test]
+    fn sealing_writes_archive_into_plan_subdirectory() {
+        // Single-output manifest: the archive lands in `<parts>/<plan>/`.
+        let manifest = PlanManifest::parse(
+            r#"
+name = "demo"
+version = "1.2.3"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#,
+        )
+        .unwrap();
+
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "payload").unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let path = create_part(staging.path(), &manifest, output.path(), None).unwrap();
+        assert_eq!(path, output.path().join(manifest.part_rel_path()));
+        assert_eq!(
+            path,
+            output
+                .path()
+                .join("demo/demo-1.2.3-1-x86_64.wright.tar.zst")
+        );
+
+        // Sub-output manifest: the subdirectory is the originating plan,
+        // not the output name, so two plans may ship same-named outputs.
+        let parent = PlanManifest::parse(
+            r#"
+name = "optics"
+version = "0.0.11"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "true"
+
+[[output]]
+name = "flux"
+"#,
+        )
+        .unwrap();
+        let Some(OutputConfig::Multi(ref parts)) = parent.outputs else {
+            panic!("expected multi-output manifest");
+        };
+        let (sub_name, sub_part) = parts.iter().find(|(n, _)| n == "flux").unwrap();
+        let sub_manifest = sub_part.to_manifest(sub_name, &parent);
+
+        let sub_path = create_part_with_isolation(
+            staging.path(),
+            &sub_manifest,
+            output.path(),
+            Some(&parent),
+            IsolationLevel::None,
+        )
+        .unwrap();
+        assert_eq!(sub_path, output.path().join(sub_manifest.part_rel_path()));
+        assert_eq!(sub_path.parent().unwrap().file_name().unwrap(), "optics");
     }
 
     #[test]

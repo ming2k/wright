@@ -1,6 +1,7 @@
 //! Typed representation and validation of `plan.toml`.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
@@ -378,6 +379,21 @@ impl PlanManifest {
         }
     }
 
+    /// Name of the plan this manifest's archive belongs to.
+    ///
+    /// Sub-output manifests carry the originating plan in `source_plan`;
+    /// single-output manifests are their own plan. Archives are sealed
+    /// under `parts_dir/<plan_name>/` so several plans may ship same-named
+    /// outputs without overwriting each other.
+    pub fn plan_name(&self) -> &str {
+        self.source_plan.as_deref().unwrap_or(&self.metadata.name)
+    }
+
+    /// Archive path relative to `parts_dir`: `<plan_name>/<part_filename()>`.
+    pub fn part_rel_path(&self) -> PathBuf {
+        PathBuf::from(self.plan_name()).join(self.part_filename())
+    }
+
     /// Iterate over all outputs in declared order (multi-output mode only).
     pub fn output_parts(&self) -> impl Iterator<Item = (&str, &SubFabricateOutput)> {
         match self.outputs {
@@ -441,6 +457,24 @@ arch = "x86_64"
         assert_eq!(
             manifest.part_filename(),
             "hello-1.0.0-1-x86_64.wright.tar.zst"
+        );
+    }
+
+    #[test]
+    fn test_part_rel_path_uses_plan_subdirectory() {
+        let toml_str = r#"
+name = "hello"
+version = "1.0.0"
+release = 1
+description = "test"
+license = "MIT"
+arch = "x86_64"
+"#;
+        let manifest = PlanManifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.plan_name(), "hello");
+        assert_eq!(
+            manifest.part_rel_path(),
+            PathBuf::from("hello").join("hello-1.0.0-1-x86_64.wright.tar.zst")
         );
     }
 

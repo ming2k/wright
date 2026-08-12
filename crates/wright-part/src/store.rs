@@ -136,13 +136,26 @@ impl LocalPartStore {
         release: u32,
         epoch: u32,
     ) -> Result<Option<ResolvedPartVersioned>> {
+        let all = self.resolve_all_from_plan(name, plan_name).await?;
+        Ok(all
+            .into_iter()
+            .find(|p| p.version == version && p.release == release && p.epoch == epoch))
+    }
+
+    /// All versions of a part produced by a specific plan — the plan-pinned
+    /// counterpart of [`resolve_all`](Self::resolve_all). Use it when the
+    /// caller knows the originating plan and only needs to pick a version,
+    /// so archives from other plans never enter the candidate set.
+    pub async fn resolve_all_from_plan(
+        &self,
+        name: &str,
+        plan_name: &str,
+    ) -> Result<Vec<ResolvedPartVersioned>> {
         let all = self.resolve_all(name).await?;
-        Ok(all.into_iter().find(|p| {
-            p.plan_name == plan_name
-                && p.version == version
-                && p.release == release
-                && p.epoch == epoch
-        }))
+        Ok(all
+            .into_iter()
+            .filter(|p| p.plan_name == plan_name)
+            .collect())
     }
 
     pub async fn resolve_all(&self, name: &str) -> Result<Vec<ResolvedPartVersioned>> {
@@ -155,15 +168,10 @@ impl LocalPartStore {
                 if !dir.exists() {
                     continue;
                 }
-                let entries = match std::fs::read_dir(dir) {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-                for entry in entries {
-                    let entry = match entry {
-                        Ok(e) => e,
-                        Err(_) => continue,
-                    };
+                // Recurse: current archives live in per-plan subdirectories
+                // (`<dir>/<plan>/<file>`), older ones flat at the top level.
+                // Identity always comes from .PARTINFO, never from the path.
+                for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
                     let path = entry.path();
                     let fname = match path.file_name().and_then(|s| s.to_str()) {
                         Some(f) => f,
@@ -172,7 +180,7 @@ impl LocalPartStore {
                     if !fname.ends_with(".wright.tar.zst") {
                         continue;
                     }
-                    let partinfo = match archive::read_partinfo(&path) {
+                    let partinfo = match archive::read_partinfo(path) {
                         Ok(p) => p,
                         Err(_) => continue,
                     };
@@ -185,7 +193,7 @@ impl LocalPartStore {
                         version: partinfo.plan.version,
                         release: partinfo.plan.release,
                         epoch: partinfo.plan.epoch,
-                        path,
+                        path: path.to_path_buf(),
                         dependencies: partinfo.runtime_deps,
                     });
                 }
@@ -213,7 +221,36 @@ mod tests {
     use crate::archive::{PartHooks, PartSpec, PlanMetadata, Provenance, write_part};
 
     fn seal_part(parts_dir: &Path, staging_root: &Path, plan: &str, version: &str, release: u32) {
-        let staging = staging_root.join(format!("staging-{plan}"));
+        // Legacy flat layout: archives directly in parts_dir.
+        seal_part_at(
+            parts_dir.to_path_buf(),
+            staging_root,
+            plan,
+            version,
+            release,
+        );
+    }
+
+    fn seal_part_nested(
+        parts_dir: &Path,
+        staging_root: &Path,
+        plan: &str,
+        version: &str,
+        release: u32,
+    ) -> PathBuf {
+        // Current layout: archives in the per-plan subdirectory.
+        seal_part_at(parts_dir.join(plan), staging_root, plan, version, release)
+    }
+
+    fn seal_part_at(
+        output_dir: PathBuf,
+        staging_root: &Path,
+        plan: &str,
+        version: &str,
+        release: u32,
+    ) -> PathBuf {
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let staging = staging_root.join(format!("staging-{plan}-{release}"));
         std::fs::create_dir_all(staging.join("usr/lib")).unwrap();
         std::fs::write(staging.join("usr/lib/payload"), plan).unwrap();
         let spec = PartSpec {
@@ -239,7 +276,7 @@ mod tests {
             plan_source: None,
             hooks: PartHooks::default(),
         };
-        write_part(&staging, &spec, parts_dir).unwrap();
+        write_part(&staging, &spec, &output_dir).unwrap()
     }
 
     #[tokio::test]
@@ -285,5 +322,71 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn plan_subdirectories_keep_identical_versions_distinct() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parts_dir = tmp.path().join("parts");
+        std::fs::create_dir(&parts_dir).unwrap();
+
+        // Two plans ship an output named "prism" with the exact same
+        // version/release/arch: the archives must coexist as
+        // `<plan>/prism-1.0.0-1-x86_64.wright.tar.zst`.
+        let optics_path = seal_part_nested(&parts_dir, tmp.path(), "optics", "1.0.0", 1);
+        let prism_path = seal_part_nested(&parts_dir, tmp.path(), "prism", "1.0.0", 1);
+        assert_ne!(optics_path, prism_path);
+        assert_eq!(
+            optics_path,
+            parts_dir.join("optics/prism-1.0.0-1-x86_64.wright.tar.zst")
+        );
+        assert_eq!(
+            prism_path,
+            parts_dir.join("prism/prism-1.0.0-1-x86_64.wright.tar.zst")
+        );
+
+        let mut store = LocalPartStore::new();
+        store.add_search_dir(parts_dir.clone());
+
+        // The recursive scan finds both nested archives.
+        let all = store.resolve_all("prism").await.unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Plan-pinned resolution returns the archive from the requested plan.
+        let pinned = store
+            .resolve_from_plan("prism", "optics", "1.0.0", 1, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pinned.path, optics_path);
+        assert_eq!(pinned.plan_name, "optics");
+
+        let from_plan = store.resolve_all_from_plan("prism", "prism").await.unwrap();
+        assert_eq!(from_plan.len(), 1);
+        assert_eq!(from_plan[0].path, prism_path);
+    }
+
+    #[tokio::test]
+    async fn recursive_scan_still_finds_legacy_flat_archives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parts_dir = tmp.path().join("parts");
+        std::fs::create_dir(&parts_dir).unwrap();
+
+        // One archive sealed before the plan-subdirectory layout (flat),
+        // one sealed after (nested): both must resolve.
+        seal_part(&parts_dir, tmp.path(), "optics", "0.0.14", 2);
+        seal_part_nested(&parts_dir, tmp.path(), "prism", "1.0.0", 1);
+
+        let mut store = LocalPartStore::new();
+        store.add_search_dir(parts_dir);
+
+        let all = store.resolve_all("prism").await.unwrap();
+        assert_eq!(all.len(), 2);
+        let plans: Vec<&str> = {
+            let mut plans: Vec<&str> = all.iter().map(|p| p.plan_name.as_str()).collect();
+            plans.sort_unstable();
+            plans
+        };
+        assert_eq!(plans, ["optics", "prism"]);
     }
 }

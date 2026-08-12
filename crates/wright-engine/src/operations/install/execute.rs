@@ -566,6 +566,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                         if let Some(cas_path) = cas_store.resolve(pn, fp) {
                             // Copy CAS archive to parts_dir so the deploy
                             // step can find it via the normal part_store.
+                            // Restore into the same plan subdirectory the
+                            // seal step would have written.
                             let ver = manifest.metadata.version.as_deref().unwrap_or("");
                             let full_name = if manifest.metadata.epoch > 0 {
                                 if ver.is_empty() {
@@ -597,8 +599,10 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                                     pn, ver, manifest.metadata.release, manifest.metadata.arch
                                 )
                             };
-                            let dest = config.general.parts_dir.join(full_name);
+                            let plan_dir = config.general.parts_dir.join(&manifest.metadata.name);
+                            let dest = plan_dir.join(full_name);
                             if !dest.exists() {
+                                let _ = std::fs::create_dir_all(&plan_dir);
                                 let _ = std::fs::copy(&cas_path, &dest);
                             }
                         }

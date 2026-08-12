@@ -1,10 +1,10 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
-use wright_model::version;
+use wright_model::version::{self, DepRef};
 use wright_part::archive::read_archive_meta;
-use wright_part::soname::SonameIndex;
 use wright_state::database::InstalledDb;
 
 /// Run comprehensive system health checks.
@@ -60,67 +60,60 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
         return Ok(0);
     }
 
-    let mut archive_count = 0usize;
-    for entry in std::fs::read_dir(parts_dir)
-        .map_err(|e| WrightError::PartError(format!("read {}: {}", parts_dir.display(), e)))?
-        .flatten()
-    {
+    // Recurse: current archives live in per-plan subdirectories, older
+    // ones flat at the top level. Identity comes from .PARTINFO either way.
+    let mut metas = Vec::new();
+    for entry in walkdir::WalkDir::new(parts_dir).into_iter().flatten() {
         let path = entry.path();
-        if path
+        let is_archive = path
             .file_name()
             .and_then(|f| f.to_str())
             .map(|n| n.ends_with(".wright.tar.zst"))
-            .unwrap_or(false)
-        {
-            archive_count += 1;
+            .unwrap_or(false);
+        if !is_archive {
+            continue;
+        }
+        match read_archive_meta(path) {
+            Ok(meta) => metas.push(meta),
+            Err(e) => {
+                crate::cli_warn!("skipping unreadable archive {}: {}", path.display(), e);
+            }
         }
     }
-    if archive_count == 0 {
+    if metas.is_empty() {
         return Ok(0);
     }
 
-    crate::cli_action!(
-        "Checking",
-        "dependency closure ({} archives)",
-        archive_count
-    );
+    crate::cli_action!("Checking", "dependency closure ({} archives)", metas.len());
 
-    let index = SonameIndex::scan_parts_dir(parts_dir).unwrap_or_else(|e| {
-        crate::cli_warn!("failed to build SONAME index: {}", e);
-        SonameIndex::default()
-    });
+    // Providers are (plan, output) pairs; several plans may ship same-named
+    // outputs, so a qualified dep must match its plan exactly while a bare
+    // dep matches any plan's output (or plan) of that name.
+    let providers: HashSet<(String, String)> = metas
+        .iter()
+        .map(|meta| (meta.partinfo.plan.name.clone(), meta.partinfo.name.clone()))
+        .collect();
 
     let mut missing: Vec<String> = Vec::new();
 
-    for entry in std::fs::read_dir(parts_dir)
-        .map_err(|e| WrightError::PartError(format!("read {}: {}", parts_dir.display(), e)))?
-        .flatten()
-    {
-        let path = entry.path();
-        if !path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .map(|n| n.ends_with(".wright.tar.zst"))
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        let meta = match read_archive_meta(&path) {
-            Ok(m) => m,
-            Err(e) => {
-                crate::cli_warn!("skipping unreadable archive {}: {}", path.display(), e);
-                continue;
-            }
-        };
-
+    for meta in &metas {
         for dep in &meta.partinfo.runtime_deps {
             let dep = dep.trim();
             if dep.is_empty() {
                 continue;
             }
-            let targets = resolve_dep_targets(dep, &index);
-            if targets.is_empty() {
+            let Some(target) = resolve_dep_target(dep) else {
+                continue;
+            };
+            let satisfied = match &target {
+                DepTarget::Name(name) => providers
+                    .iter()
+                    .any(|(plan, output)| output == name || plan == name),
+                DepTarget::PlanOutput { plan, output } => {
+                    providers.iter().any(|(p, o)| p == plan && o == output)
+                }
+            };
+            if !satisfied {
                 missing.push(format!(
                     "{} needs {} (no provider in parts_dir)",
                     meta.partinfo.name, dep
@@ -226,26 +219,20 @@ async fn plan_drift_diff(db: &InstalledDb, recorded: &str, current_path: &Path) 
     }
 }
 
-fn resolve_dep_targets(dep: &str, index: &SonameIndex) -> Vec<String> {
-    let mut targets = Vec::new();
-    if dep.is_empty() {
-        return targets;
+/// A runtime-dep target for the closure check: either a bare name that any
+/// plan's output (or plan) may satisfy, or an absolute `plan:output` pair
+/// that only that plan's output satisfies.
+enum DepTarget {
+    Name(String),
+    PlanOutput { plan: String, output: String },
+}
+
+fn resolve_dep_target(dep: &str) -> Option<DepTarget> {
+    let (dep_ref, _) = version::parse_dependency(dep).ok()?;
+    match version::parse_dep_ref(&dep_ref) {
+        DepRef::Specific(plan, output) => Some(DepTarget::PlanOutput { plan, output }),
+        DepRef::Wildcard(name) => Some(DepTarget::Name(name)),
     }
-    let (dep_ref, _) = match version::parse_dependency(dep) {
-        Ok(parsed) => parsed,
-        Err(_) => return targets,
-    };
-    let (plan, output) = version::parse_dep_ref(&dep_ref).to_plan_output();
-    if !output.is_empty() {
-        targets.push(output);
-    } else if let Some(outs) = index.outputs_of(&plan) {
-        for o in outs {
-            targets.push(o.clone());
-        }
-    } else {
-        targets.push(plan);
-    }
-    targets
 }
 
 #[cfg(test)]
