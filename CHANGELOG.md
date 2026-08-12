@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.21] - 2026-08-12
+
 ### Changed
 - **`wright list` groups parts under their plan by default.** The grouped
   view lists plans and parts together and marks their relationship,

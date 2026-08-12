@@ -9,7 +9,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "5.3.20"
+version = "5.3.21"
 edition = "2024"
 license = "MIT"
 
