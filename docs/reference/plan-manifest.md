@@ -66,7 +66,16 @@ Version constraints follow the reference:
 link_deps = ["pcre2 >= 10.42"]
 ```
 
-`wright lint` validates that each referenced local plan exists. For explicit `plan:output` references, it also checks that the output is declared by that plan.
+`wright lint` validates dependency references against the plan index. A
+reference to a plan missing from the index is a warning (acceptable only
+when the target is externally provided at deploy time); a `plan:output`
+reference naming an output the plan does not declare is an error and fails
+the lint.
+
+Several plans may declare the same output name, and an output may share a
+name with another plan (ADR-0034). Both are tolerated — deployed part names
+stay globally unique, so same-named outputs never co-exist on one system —
+and lint warns about them so the overlap is deliberate.
 
 When a plan produces multiple outputs, use `plan:output` to depend on exactly one:
 

@@ -43,10 +43,13 @@ Interrupting a command with SIGINT exits with status 130.
 
 ### `wright merge <TARGET...>`
 
-Merge part archives into the target root. By default, arguments are plan names
-or plan directories. Wright reads each plan manifest, derives the expected
-output archive names, and merges those archives from `parts_dir`. Use `--path`
-to merge explicit archive paths instead.
+Merge part archives into the target root. Targets follow the universal
+plan/output identifier: `plan` or `plan:*` reads the plan manifest and
+merges every expected output archive from `parts_dir`; `output` or
+`plan:output` merges the latest archive of that output. A bare name whose
+archives come from several plans is ambiguous and rejected; the error
+names the absolute `plan:output` forms. Use `--path` to merge explicit
+archive paths instead.
 
 | Flag | Description |
 |------|-------------|
@@ -216,11 +219,16 @@ Exits 1 if any of the given paths is not owned by a deployed part; with
 | `--json` | Emit machine-readable JSON instead of text |
 | `--root <PATH>` | Query this target root instead of `/` |
 
-### `wright check [PART]`
+### `wright check [TARGET]`
 
 Perform system health checks covering database integrity, file conflicts,
-shadowed files, and runtime dependency resolution. With `--deep`, walk each
-deployed part's ELF binaries and verify their `DT_NEEDED` entries.
+shadowed files, and runtime dependency resolution. The target follows the
+universal plan/output identifier: `plan` or `plan:*` checks every deployed
+output of the plan, `output` or `plan:output` checks a single output, and
+no target checks the whole registry.
+
+With `--deep`, walk each deployed part's ELF binaries and verify their
+`DT_NEEDED` entries.
 
 With `--files`, verify every deployed file recorded in the database exists on
 disk (and is the correct type: file/symlink/directory). Use this to detect
@@ -234,10 +242,12 @@ files deleted by external tools or partially-uninstalled parts.
 | `--json` | Emit a machine-readable JSON report instead of text |
 | `--root <PATH>` | Check this target root instead of `/` |
 
-### `wright history [PART]`
+### `wright history [TARGET]`
 
-Show part transaction history (deploy, upgrade, remove). Filters to the named
-part when specified.
+Show part transaction history (deploy, upgrade, remove). The target follows
+the universal plan/output identifier: `plan` or `plan:*` shows the merged
+history of every deployed output of the plan, `output` or `plan:output`
+shows a single output, and no target shows everything.
 
 | Flag | Description |
 |------|-------------|
@@ -364,6 +374,15 @@ Validate plan syntax, dependency reference format, local plan and output
 references, and dependency graph cycles. When no targets are specified,
 lints all plans found under `plans_dir`.
 
+Dependency references are checked against the plan index: referencing a
+plan missing from the index is a warning (acceptable only when the target
+is externally provided at deploy time), while a `plan:output` reference
+naming an output the plan does not declare is an error and fails the lint.
+Lint also warns about cross-plan name collisions: an output shadowing
+another plan's name, or one output name declared by several plans (such
+outputs can never be deployed together; see
+[ADR-0034](../adr/0034-plan-output-namespaces-and-part-layout.md)).
+
 | Flag | Description |
 |------|-------------|
 | `--recursive` | Recurse into subdirectories when scanning for plans |
@@ -401,13 +420,14 @@ plan is given. Archive and command-log cleanup are explicit options.
 
 | Flag | Description |
 |------|-------------|
-| `--parts` | Also remove matching local part archives |
+| `--parts` | Also remove part archives sealed by the named plans (matched by archive plan metadata) |
 | `--logs` | Also remove Wright command logs |
 
 ### `wright prune`
 
-Remove older archive versions while retaining the latest version of each part.
-Bare `wright prune` is a dry run; pass `--apply` to actually delete.
+Remove older archive versions while retaining the latest version of each
+(plan, output) pair. Bare `wright prune` is a dry run; pass `--apply` to
+actually delete.
 
 | Flag | Description |
 |------|-------------|

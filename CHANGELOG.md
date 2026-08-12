@@ -14,6 +14,50 @@
   bytes; `--json` available). Parts sealed before this change carry no
   snapshot; rebuild and re-deploy to record one. Snapshots are audit data
   only — deploy, resolve, and remove never consult them.
+- **Plan-qualified part layout (ADR-0034).** New archives seal to
+  `parts_dir/<plan>/`, so two plans declaring the same output name no
+  longer overwrite each other's artifacts on identical version tuples.
+  Store scans recurse, so legacy flat archives remain readable; archive
+  identity always comes from `.PARTINFO`. `wright prune` groups by
+  (plan, output), `wright clean --parts` matches archives strictly by
+  plan metadata, and `wright merge` resolves the universal plan/output
+  identifier — a bare name matching archives of several plans fails with
+  the absolute `plan:output` forms to use.
+- **`wright check` and `wright history` accept plan/output targets.**
+  The optional positional follows the universal identifier: `wright
+  check 'llvm:*'` checks every deployed output of a plan, and `wright
+  history llvm:clang` filters to one output.
+- **`wright lint` validates dependency references and name collisions.**
+  A reference to a plan missing from the index warns; a `plan:output`
+  reference to an output the plan does not declare is an error and fails
+  the lint (this check was documented but never implemented). Lint also
+  warns when an output shadows another plan's name or when several plans
+  declare the same output name.
+
+### Fixed
+- **Namespace-exact dependency resolution (ADR-0034).** A bare
+  dependency is satisfied only by deployed outputs of that plan, not by
+  any same-named part, and a `plan:output` dep verifies the output
+  belongs to the named plan. Name shadowing no longer produces false
+  "satisfied" or perpetual "outdated" results, reverse-dependency
+  expansion reads the plans table instead of matching plan names against
+  part names, and the build graph resolves contested output names
+  deterministically with plan identity winning.
+- **`wright check` no longer reports spurious broken dependencies** for
+  bare references to multi-output plans whose outputs do not carry the
+  plan name.
+- **Dependency edges normalize to bare output names.** `plan:output`
+  runtime deps were stored verbatim and were invisible to removal
+  blocking and orphan cascades; migration V19 rewrites existing rows.
+- **Plan rows clean up by `plan_id` on part removal.** Removing the last
+  output of a multi-output plan now removes its plan row (previously
+  leaked forever), and removing a part can never delete an unrelated
+  same-named plan's registry row.
+- **Redeploy guards against silent re-parenting.** Installing a part
+  whose name is deployed under a different plan is a hard error unless
+  the incoming part declares the name in `replaces` or `--force` is
+  given (then a loud warning names both plans); `wright provide` refuses
+  a name owned by a plan with deployed parts.
 
 ## [5.3.19] - 2026-08-12
 

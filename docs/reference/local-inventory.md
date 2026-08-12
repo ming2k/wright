@@ -5,6 +5,7 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 ## Current Model
 
 - `wright build` builds plans into staging directories (`work/` and `staging/`), then seals outputs into `.wright.tar.zst` archives in `parts_dir`
+- Archives seal under a per-plan subdirectory, `parts_dir/<plan>/<output>-<version>-<release>-<arch>.wright.tar.zst` (ADR-0034): several plans may declare the same output name, and the directory keeps their artifacts distinct. Store scans are recursive and identity always comes from `.PARTINFO`, so flat archives sealed before ADR-0034 remain readable
 - `wright merge` resolves plan names to expected archives in `parts_dir` and deploys them
 - `wright merge --path` reads explicit archive paths and their `.PARTINFO` metadata
 - `wright merge` rejects mixed-revision archives from the same plan in one batch

@@ -172,7 +172,7 @@ erDiagram
 
 | Field | References | Purpose |
 |-------|------------|---------|
-| `dependencies.depends_on` | `parts.name` (or `replaces.name`) | Advisory runtime-dependency target. Soft pointer — target may be unresolved (treated as "unsatisfied" rather than an error). |
+| `dependencies.depends_on` | `parts.name` (or `replaces.name`) | Advisory runtime-dependency target, keyed by the bare output (part) name — `plan:output` declarations are normalized at registration and existing rows were rewritten by migration V19. Soft pointer — target may be unresolved (treated as "unsatisfied" rather than an error). |
 | `history.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
 | `history.session_id` | `delivery_transactions.id` (legacy) | Logical grouping for history records |
 | `plans.plan_checksum` | `plan_snapshots.checksum` | Seal-time provenance hash; the snapshot row holds the matching raw plan source when a deployed part carried `.PLANSRC`. Soft pointer — no FK, NULL or unmatched is valid. |

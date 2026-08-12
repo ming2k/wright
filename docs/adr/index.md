@@ -35,3 +35,4 @@
 | [ADR-0031](0031-folio-manifest-amendments.md) | Folio manifest amendments (hooks, `<name>.toml`, no `[config]`/`arch`) | Accepted |
 | [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted |
 | [ADR-0033](0033-plan-source-snapshots.md) | Plan-source snapshots in parts and the registry | Accepted |
+| [ADR-0034](0034-plan-output-namespaces-and-part-layout.md) | Plan/output namespaces and plan-qualified part layout | Accepted |
