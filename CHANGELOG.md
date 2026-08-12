@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.3.18] - 2026-08-12
+
 ### Added
 - **Plan-level targets for `wright files` and `wright remove`.** Both
   commands resolve the universal plan/output identifier: `plan` or `plan:*`
