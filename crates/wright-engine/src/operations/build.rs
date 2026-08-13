@@ -198,14 +198,19 @@ pub async fn execute_build(
                     .ok_or_else(|| WrightError::ForgeError("plan path has no parent".into()))?
                     .to_path_buf();
 
-                // Intra-step idempotence: skip when staging/ is already populated.
+                // Intra-step idempotence: skip when staging/ is already
+                // populated AND its output matches the manifest recorded in
+                // the checkpoint.  Verifying the manifest is essential — a
+                // prior hard crash leaves root-owned partial content in
+                // staging/ that a bare existence check would mistake for a
+                // complete deliverable.
                 let build_root = foundry.build_root(&manifest)?;
                 let can_short_circuit = !force
                     && options.stages.is_empty()
                     && options.until_stage.is_none()
                     && !options.fetch_only;
-                if can_short_circuit && staging_is_populated(&build_root) {
-                    info!(event = "build.short_circuited", plan_name = %base, reason = "staging_populated", "Build short-circuited — staging already populated");
+                if can_short_circuit && staging_matches_checkpoint(&build_root, &manifest) {
+                    info!(event = "build.short_circuited", plan_name = %base, reason = "staging_verified", "Build short-circuited — staging output verified against checkpoint");
                     return Ok(());
                 }
 
@@ -267,21 +272,30 @@ pub async fn execute_build(
     Ok(())
 }
 
-fn staging_is_populated(build_root: &std::path::Path) -> bool {
-    dir_is_populated(&build_root.join("staging"))
-}
+/// Verify that `staging/` on disk matches the output manifest stored in the
+/// checkpoint.  Returns `false` when there is no checkpoint, no recorded
+/// manifest, or the on-disk tree does not match — in every such case the
+/// caller must run a real build rather than trust the short-circuit.
+fn staging_matches_checkpoint(build_root: &std::path::Path, manifest: &PlanManifest) -> bool {
+    use crate::foundry::checkpoint::Checkpoint;
+    use crate::foundry::staging_manifest::compute_dir_manifest;
 
-fn dir_is_populated(dir: &std::path::Path) -> bool {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                return true;
-            }
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) && dir_is_populated(&p) {
-                return true;
-            }
-        }
+    let staging_dir = build_root.join("staging");
+    let checkpoint = match Checkpoint::load(
+        build_root.to_path_buf(),
+        &manifest.metadata.name,
+        manifest.metadata.version.as_deref().unwrap_or(""),
+    ) {
+        Ok(ck) => ck,
+        Err(_) => return false,
+    };
+
+    let Some(stored) = checkpoint.output_manifest_hash("staging") else {
+        return false;
+    };
+
+    match compute_dir_manifest(&staging_dir) {
+        Ok(actual) => actual == stored,
+        Err(_) => false,
     }
-    false
 }

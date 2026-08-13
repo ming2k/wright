@@ -60,4 +60,3 @@ pub async fn run(args: ListArgs, ctx: &Context<'_>) -> Result<()> {
     )
     .await
 }
-

@@ -21,6 +21,12 @@ pub struct StageRecord {
     pub status: StageStatus,
     #[serde(default)]
     pub input_hash: String,
+    /// SHA-256 manifest of the stage's on-disk **output**, when the stage
+    /// produces a persistent deliverable outside the layer stack (currently
+    /// only the `staging` stage).  `None` for stages whose output lives
+    /// entirely in `layers/` and is rebuilt on resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_manifest_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -184,17 +190,37 @@ impl Checkpoint {
     }
 
     pub fn mark_complete(&mut self, stage: &str, input_hash: &str) -> Result<()> {
+        self.mark_complete_with_output(stage, input_hash, None)
+    }
+
+    /// Mark a stage complete, optionally recording the manifest hash of its
+    /// persistent output (used for the `staging` stage).
+    pub fn mark_complete_with_output(
+        &mut self,
+        stage: &str,
+        input_hash: &str,
+        output_manifest_hash: Option<String>,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.state.stages.insert(
             stage.to_string(),
             StageRecord {
                 status: StageStatus::Completed,
                 input_hash: input_hash.to_string(),
+                output_manifest_hash,
                 completed_at: Some(now),
                 error: None,
             },
         );
         self.save()
+    }
+
+    /// Return the stored output manifest hash for a stage, if any.
+    pub fn output_manifest_hash(&self, stage: &str) -> Option<&str> {
+        self.state
+            .stages
+            .get(stage)
+            .and_then(|r| r.output_manifest_hash.as_deref())
     }
 
     pub fn mark_failed(&mut self, stage: &str, input_hash: &str, error: &str) -> Result<()> {
@@ -203,6 +229,7 @@ impl Checkpoint {
             StageRecord {
                 status: StageStatus::Failed,
                 input_hash: input_hash.to_string(),
+                output_manifest_hash: None,
                 completed_at: None,
                 error: Some(error.to_string()),
             },
@@ -224,6 +251,7 @@ impl Checkpoint {
                 StageRecord {
                     status: StageStatus::Pending,
                     input_hash: String::new(),
+                    output_manifest_hash: None,
                     completed_at: None,
                     error: None,
                 },

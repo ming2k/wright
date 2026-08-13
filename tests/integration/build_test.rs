@@ -173,6 +173,267 @@ install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/stage-resume
     );
 }
 
+// ---------------------------------------------------------------------------
+// Regression tests: interrupted / corrupt staging output.
+//
+// These reproduce the original bug class where a hard crash left the
+// checkpoint "complete" but the staging deliverable was missing or partial.
+// Before the fix the forge would silently return Ok with an empty staging
+// tree; after the fix it detects the mismatch and re-runs the staging stage.
+// ---------------------------------------------------------------------------
+
+/// Helper: build a manifest whose staging script appends to a counter file so
+/// tests can detect whether staging actually ran.
+fn staging_counter_manifest(counter_path: &std::path::Path) -> PlanManifest {
+    PlanManifest::parse(&format!(
+        r#"
+name = "staging-cache"
+version = "1.0.0"
+release = 1
+description = "staging cache regression"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = """
+printf x >> "{}"
+install -Dm644 /dev/null ${{STAGING_DIR}}/usr/share/staging-cache
+"""
+"#,
+        counter_path.display()
+    ))
+    .unwrap()
+}
+
+/// A successful second build is a no-op: staging is restored from the snapshot
+/// cache and the staging script does NOT run again.
+#[tokio::test]
+async fn test_successful_rebuild_restores_staging_from_cache_without_rerunning() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let counter = root.path().join("staging-counter");
+    let manifest = staging_counter_manifest(&counter);
+    let plan_dir = tempfile::tempdir().unwrap();
+    let foundry = Foundry::new(config);
+
+    // First build — populates staging and writes the snapshot cache.
+    let first = foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(first.staging_dir.join("usr/share/staging-cache").exists());
+    assert_eq!(std::fs::read_to_string(&counter).unwrap(), "x");
+
+    let build_root = foundry.build_root(&manifest).unwrap();
+    assert!(
+        build_root.join(".staging_cache").exists(),
+        "snapshot cache should exist after a successful build"
+    );
+
+    // Second build — should be a no-op that restores staging from cache.
+    let second = foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        second.staging_dir.join("usr/share/staging-cache").exists(),
+        "staging should be restored from cache on a no-op rebuild"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&counter).unwrap(),
+        "x",
+        "staging script should NOT run again on a verified no-op rebuild"
+    );
+}
+
+/// Simulate a hard crash: the checkpoint says staging is "complete" but the
+/// snapshot cache is gone (and staging/ was wiped).  The forge must detect the
+/// invalid output and re-run staging instead of silently returning Ok.
+#[tokio::test]
+async fn test_missing_staging_cache_forces_staging_rerun() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let counter = root.path().join("staging-counter");
+    let manifest = staging_counter_manifest(&counter);
+    let plan_dir = tempfile::tempdir().unwrap();
+    let foundry = Foundry::new(config);
+
+    // First build — successful.
+    foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&counter).unwrap(), "x");
+
+    let build_root = foundry.build_root(&manifest).unwrap();
+
+    // Simulate a hard crash that destroyed the snapshot cache but left the
+    // checkpoint file (which still records staging as "Completed").
+    std::fs::remove_dir_all(build_root.join(".staging_cache")).unwrap();
+
+    // Second build — must re-run staging because the output can't be verified.
+    let second = foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        second.staging_dir.join("usr/share/staging-cache").exists(),
+        "staging should be repopulated after cache loss"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&counter).unwrap(),
+        "xx",
+        "staging script should run again when output cache is missing"
+    );
+    assert!(
+        build_root.join(".staging_cache").exists(),
+        "snapshot cache should be recreated after re-running staging"
+    );
+}
+
+/// Simulate corruption: the checkpoint is "complete" but the snapshot cache
+/// contents have been tampered with (manifest mismatch).  The forge must
+/// detect the mismatch and re-run staging.
+#[tokio::test]
+async fn test_corrupt_staging_cache_forces_staging_rerun() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let counter = root.path().join("staging-counter");
+    let manifest = staging_counter_manifest(&counter);
+    let plan_dir = tempfile::tempdir().unwrap();
+    let foundry = Foundry::new(config);
+
+    // First build — successful.
+    foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&counter).unwrap(), "x");
+
+    let build_root = foundry.build_root(&manifest).unwrap();
+
+    // Corrupt the cache: add an extra file so the manifest no longer matches.
+    std::fs::write(
+        build_root
+            .join(".staging_cache")
+            .join("usr/share/injected-by-attacker"),
+        "garbage",
+    )
+    .unwrap();
+
+    // Second build — must re-run staging because the manifest doesn't match.
+    let second = foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        second.staging_dir.join("usr/share/staging-cache").exists(),
+        "staging should be repopulated after cache corruption"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&counter).unwrap(),
+        "xx",
+        "staging script should run again when output cache is corrupt"
+    );
+    assert!(
+        !second
+            .staging_dir
+            .join("usr/share/injected-by-attacker")
+            .exists(),
+        "corrupt injected file should not appear in restored staging"
+    );
+}
+
+/// A staging script that produces zero output should complete without error,
+/// but the empty-staging guard at the end of Foundry::build should reject it.
+#[tokio::test]
+async fn test_empty_staging_output_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let manifest = PlanManifest::parse(
+        r#"
+name = "empty-staging"
+version = "1.0.0"
+release = 1
+description = "empty staging guard"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#,
+    )
+    .unwrap();
+
+    let plan_dir = tempfile::tempdir().unwrap();
+    let foundry = Foundry::new(config);
+
+    let err = foundry
+        .build(
+            &manifest,
+            plan_dir.as_ref(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .expect_err("build with empty staging should fail");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no files") || msg.contains("contains no files"),
+        "error should mention empty staging: {msg}"
+    );
+}
+
 #[tokio::test]
 async fn test_archive_records_runtime_but_not_link_dependencies() {
     let manifest = PlanManifest::parse(
@@ -521,10 +782,11 @@ async fn test_build_single_stage() {
         .await
         .unwrap();
 
-    // Running only prepare: hello.c should exist but hello binary should not
-    // (output_dir is recreated fresh for single-stage runs)
+    // A second full build is a no-op: all stages up-to-date. The staging
+    // tree is wiped at the top of the build and then restored from the
+    // snapshot cache, so the deliverable should still be present.
     assert!(result.build_root.join("target/hello.c").exists());
-    assert!(!result.staging_dir.join("usr/bin/hello").exists());
+    assert!(result.staging_dir.join("usr/bin/hello").exists());
 }
 
 #[tokio::test]

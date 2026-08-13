@@ -68,6 +68,7 @@ pub struct Forge<'a> {
     compile_lock: Option<Arc<Semaphore>>,
     checkpoint: Checkpoint,
     layers: LayerManager,
+    work_dir: PathBuf,
     build_phase: Option<String>,
 }
 
@@ -79,6 +80,7 @@ impl<'a> Forge<'a> {
 
         let checkpoint = Checkpoint::load(ctx.work_dir.clone(), plan_name, version)?;
         let layers = LayerManager::new(&ctx.work_dir)?;
+        let work_dir = ctx.work_dir.clone();
 
         Ok(Self {
             manifest: ctx.manifest,
@@ -102,6 +104,7 @@ impl<'a> Forge<'a> {
             compile_lock: ctx.compile_lock,
             checkpoint,
             layers,
+            work_dir,
             build_phase,
         })
     }
@@ -176,9 +179,42 @@ impl<'a> Forge<'a> {
                     .rewind_from(&checkpoint_stages, rewind_idx)?;
                 self.layers.clear_layers_from(rewind_stage);
                 start_idx
-            } else {
-                info!(event = "stage.all_up_to_date", plan_name = %self.manifest.metadata.name, "All stages up-to-date — nothing to do");
+            } else if self.staging_output_verified() {
+                // All input hashes match AND the staging deliverable is
+                // genuinely present in the snapshot cache. `Foundry::build`
+                // wiped `staging/` before we started, so restore it now —
+                // downstream consumers (mold, seal) depend on it.
+                self.restore_staging()?;
+                info!(
+                    event = "stage.all_up_to_date",
+                    plan_name = %self.manifest.metadata.name,
+                    "All stages up-to-date — staging restored from cache"
+                );
                 return Ok(());
+            } else {
+                // Input hashes match but the staging output is missing or
+                // corrupt on disk (hard crash mid-staging, partial `wright
+                // clean`, root-owned leftover).  Rewind just the staging
+                // stage so it re-runs and repopulates `staging/`.
+                info!(
+                    event = "resume.staging_output_invalid",
+                    plan_name = %self.manifest.metadata.name,
+                    "Staging output missing/corrupt despite completed checkpoint — rewinding staging"
+                );
+                match checkpoint_stages.iter().position(|s| s == "staging") {
+                    Some(staging_ckpt_idx) => {
+                        let staging_stage = checkpoint_stages[staging_ckpt_idx].clone();
+                        let start_idx = order.iter().position(|s| s == &staging_stage).unwrap_or(0);
+                        self.checkpoint
+                            .rewind_from(&checkpoint_stages, staging_ckpt_idx)?;
+                        self.layers.clear_layers_from(&staging_stage);
+                        start_idx
+                    }
+                    None => {
+                        // This plan has no staging stage — nothing to verify.
+                        return Ok(());
+                    }
+                }
             }
         } else {
             self.checkpoint.invalidate_all();
@@ -233,12 +269,30 @@ impl<'a> Forge<'a> {
                 && let Some(eh) = expected.get(stage_name)
                 && self.checkpoint.is_complete(stage_name, eh)
             {
-                let plan_name = &self.manifest.metadata.name;
-                info!(event = "stage.skipped", plan_name = %plan_name, stage_name = %stage_name, reason = "checkpoint_up_to_date", "Stage skipped (up-to-date)");
-                if stop_after_index == Some(idx) {
-                    return Ok(());
+                // The staging stage's deliverable lives outside the layer
+                // stack, so its input hash alone cannot prove the output is
+                // present.  Verify the manifest; if invalid, fall through and
+                // re-run the stage instead of skipping.
+                if stage_name == "staging" && !self.staging_output_verified() {
+                    let plan_name = &self.manifest.metadata.name;
+                    info!(
+                        event = "resume.staging_output_invalid",
+                        plan_name = %plan_name,
+                        stage_name = %stage_name,
+                        "Staging output invalid — re-running despite completed checkpoint"
+                    );
+                    // Fall through to the stage-execution body below.
+                } else {
+                    if stage_name == "staging" {
+                        self.restore_staging()?;
+                    }
+                    let plan_name = &self.manifest.metadata.name;
+                    info!(event = "stage.skipped", plan_name = %plan_name, stage_name = %stage_name, reason = "checkpoint_up_to_date", "Stage skipped (up-to-date)");
+                    if stop_after_index == Some(idx) {
+                        return Ok(());
+                    }
+                    continue;
                 }
-                continue;
             }
 
             // --- Prepare layer and working directory for this stage ---
@@ -266,7 +320,18 @@ impl<'a> Forge<'a> {
                             .commit_layer(stage_name, &self.source_dir, &prev_stages)?;
                     }
                     if checkpoint_enabled && let Some(eh) = expected.get(stage_name) {
-                        self.checkpoint.mark_complete(stage_name, eh)?;
+                        if stage_name == "staging" {
+                            // Snapshot the staging deliverable into the
+                            // persistent cache and bind its manifest hash into
+                            // the checkpoint.  This is what makes future
+                            // resumes able to verify output integrity instead
+                            // of trusting the input hash alone.
+                            let manifest = self.snapshot_staging()?;
+                            self.checkpoint
+                                .mark_complete_with_output(stage_name, eh, manifest)?;
+                        } else {
+                            self.checkpoint.mark_complete(stage_name, eh)?;
+                        }
                     }
                     if stop_after_index == Some(idx) {
                         return Ok(());
@@ -291,5 +356,63 @@ impl<'a> Forge<'a> {
 
     fn get_stage(&self, name: &str) -> Option<&PipelineStage> {
         manifest_stage(self.manifest, self.build_phase.as_deref(), name)
+    }
+
+    // ---------------------------------------------------------------
+    // Staging-output integrity helpers.
+    //
+    // The staging stage's deliverable (`staging/`) is written by the user
+    // install script outside the OverlayFS layer stack and is wiped at the
+    // start of every build.  These helpers snapshot it into a persistent
+    // `.staging_cache/` and verify a content manifest so that:
+    //   * a skipped staging stage restores `staging/` from the cache, and
+    //   * a hard-crash mid-staging (checkpoint still "complete" but output
+    //     missing/corrupt) forces a re-run instead of a silent no-op.
+    // ---------------------------------------------------------------
+
+    fn staging_cache_dir(&self) -> PathBuf {
+        self.work_dir.join(".staging_cache")
+    }
+
+    /// True iff the staging snapshot cache exists and its manifest matches the
+    /// hash recorded in the checkpoint.  This is the single source of truth
+    /// for "is the staging deliverable genuinely on disk?".
+    fn staging_output_verified(&self) -> bool {
+        let cache = self.staging_cache_dir();
+        if !cache.exists() {
+            return false;
+        }
+        let Some(stored) = self.checkpoint.output_manifest_hash("staging") else {
+            return false;
+        };
+        match crate::foundry::staging_manifest::compute_dir_manifest(&cache) {
+            Ok(actual) => actual == stored,
+            Err(e) => {
+                debug!(event = "staging.manifest_error", error = %e, "Could not compute staging manifest for verification");
+                false
+            }
+        }
+    }
+
+    /// Snapshot `staging/` into `.staging_cache/` and return its manifest hash
+    /// (or `None` when staging produced no output).
+    fn snapshot_staging(&self) -> Result<Option<String>> {
+        let manifest = crate::foundry::staging_manifest::compute_dir_manifest(&self.output_dir)?;
+        let cache = self.staging_cache_dir();
+        if manifest.is_empty() {
+            if cache.exists() {
+                crate::foundry::staging_manifest::remove_tree_if_exists(&cache)?;
+            }
+            return Ok(None);
+        }
+        crate::foundry::staging_manifest::snapshot_tree(&self.output_dir, &cache)?;
+        Ok(Some(manifest))
+    }
+
+    /// Restore `staging/` from `.staging_cache/` (repopulating it after
+    /// `Foundry::build` wiped the directory).
+    fn restore_staging(&self) -> Result<()> {
+        let cache = self.staging_cache_dir();
+        crate::foundry::staging_manifest::restore_tree(&cache, &self.output_dir)
     }
 }

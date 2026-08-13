@@ -202,7 +202,9 @@ mod tests {
         let err = "access denied: permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)";
         assert_eq!(
             split_error_chain(err),
-            vec!["permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"]
+            vec![
+                "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"
+            ]
         );
     }
 

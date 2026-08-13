@@ -25,7 +25,9 @@ pub async fn execute_list(
                 .filter(|p| {
                     p.name.to_lowercase().contains(&filter_str)
                         || p.plan_name.to_lowercase().contains(&filter_str)
-                        || format!("{}:{}", p.plan_name, p.name).to_lowercase().contains(&filter_str)
+                        || format!("{}:{}", p.plan_name, p.name)
+                            .to_lowercase()
+                            .contains(&filter_str)
                 })
                 .collect()
         }
@@ -320,4 +322,3 @@ mod tests {
         }
     }
 }
-

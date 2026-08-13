@@ -5,6 +5,7 @@ pub mod forge;
 pub mod layers;
 pub mod logging;
 pub mod mold;
+pub mod staging_manifest;
 pub mod variables;
 
 use std::path::{Path, PathBuf};
@@ -396,6 +397,21 @@ impl Foundry {
             "build completed"
         );
 
+        // Fail fast on an empty staging tree.  A successful forge that produces
+        // zero output almost always means a stale checkpoint, a broken install
+        // stage, or output corruption — shipping it would publish a part that
+        // deploys nothing.  Only enforce this for full (non-partial) builds
+        // that are expected to reach staging; partial runs (--stage /
+        // --fetch-only) bail out earlier and never get here.
+        if !partial && !dir_is_populated(&staging_dir) {
+            return Err(WrightError::ForgeError(format!(
+                "forge completed but staging tree {} contains no files \
+                 (stale checkpoint, broken install stage, or output corruption — \
+                 re-run with --force --clean)",
+                staging_dir.display()
+            )));
+        }
+
         // ------------------------------------------------------------------
         // 3. Mold — output slicing
         // ------------------------------------------------------------------
@@ -428,11 +444,23 @@ async fn ensure_clean_dir(dir: &Path) -> Result<()> {
                 let _ = nix::mount::umount2(&dir.join("target"), nix::mount::MntFlags::MNT_DETACH);
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 if let Err(e2) = tokio::fs::remove_dir_all(dir).await {
-                    tracing::warn!(event = "cleanup.directory_failed", path = %dir.display(), error = %e2, reason = "stale_overlayfs", "could not clean {} (busy after retry)", dir.display());
+                    // A directory we cannot clean (root-owned leftovers, stale
+                    // mounts) would silently poison the next build.  Fail
+                    // loudly so the user knows to intervene rather than
+                    // shipping a partial or empty result.
+                    return Err(WrightError::ForgeError(format!(
+                        "could not clean {} (busy after retry): {e2} \
+                         (stale overlayfs or root-owned leftovers — re-run with --clean or as root)",
+                        dir.display()
+                    )));
                 }
             }
             Err(e) => {
-                tracing::warn!(event = "cleanup.directory_failed", path = %dir.display(), error = %e, "could not clean {}: {}", dir.display(), e);
+                return Err(WrightError::ForgeError(format!(
+                    "could not clean {}: {e} \
+                     (root-owned leftovers or permission denied — re-run with --clean or as root)",
+                    dir.display()
+                )));
             }
         }
     }
@@ -442,4 +470,19 @@ async fn ensure_clean_dir(dir: &Path) -> Result<()> {
             dir.display()
         ))
     })
+}
+
+fn dir_is_populated(dir: &Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                return true;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) && dir_is_populated(&p) {
+                return true;
+            }
+        }
+    }
+    false
 }
