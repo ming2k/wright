@@ -109,11 +109,30 @@ pub fn format_failure_report(
 /// `WrightError` variant prefixes (`forge error`, `deploy error`, etc.) so
 /// the user sees only the actual cause messages.
 fn split_error_chain(s: &str) -> Vec<String> {
-    s.split(": ")
-        .map(str::trim)
-        .filter(|seg| !seg.is_empty() && !is_wright_error_prefix(seg))
-        .map(str::to_string)
-        .collect()
+    let raw_segs: Vec<&str> = s.split(": ").map(str::trim).collect();
+    let mut segs: Vec<String> = Vec::new();
+    for seg in raw_segs {
+        if seg.is_empty() {
+            continue;
+        }
+        if is_wright_error_prefix(seg) {
+            continue;
+        }
+        if (seg.starts_with("try running")
+            || seg.starts_with("hint:")
+            || seg.starts_with("(hint:")
+            || seg.ends_with(')'))
+            && !segs.is_empty()
+            && segs.last().map_or(false, |l| l.contains("(hint"))
+        {
+            let last = segs.last_mut().unwrap();
+            last.push_str(": ");
+            last.push_str(seg);
+        } else {
+            segs.push(seg.to_string());
+        }
+    }
+    segs
 }
 
 fn is_wright_error_prefix(seg: &str) -> bool {
@@ -127,9 +146,13 @@ fn is_wright_error_prefix(seg: &str) -> bool {
             | "remove error"
             | "part error"
             | "config error"
+            | "access denied"
             | "lock error"
             | "version error"
             | "dependency error"
+            | "part not found"
+            | "ambiguous target"
+            | "part already deployed"
             | "upgrade error"
             | "script error"
             | "validation error"
@@ -172,6 +195,15 @@ mod tests {
     #[test]
     fn split_chain_handles_single_message() {
         assert_eq!(split_error_chain("plain message"), vec!["plain message"]);
+    }
+
+    #[test]
+    fn split_chain_preserves_hint_with_colon() {
+        let err = "access denied: permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)";
+        assert_eq!(
+            split_error_chain(err),
+            vec!["permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"]
+        );
     }
 
     #[test]
