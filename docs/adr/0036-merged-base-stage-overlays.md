@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-0037 (the stage-overlay mechanism; the merged-base
+bookkeeping this ADR introduced remains in effect)
 
 ## Context
 

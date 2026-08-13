@@ -114,7 +114,7 @@ during tight parallel exec windows.
 - Preserve jitter in retry delays.  Deterministic backoff can synchronize
   parallel retriers and recreate the collision.
 
-## EBUSY on stage transition (in-use upperdir as lowerdir) — eliminated by merged base
+## EBUSY on stage transition (in-use upperdir as lowerdir) — eliminated
 
 ### Symptom (pre-ADR-0036)
 
@@ -145,28 +145,26 @@ the mount retry budget was 300 ms.
 
 ### Fix (architecture, not retry)
 
-See [ADR-0036](../adr/0036-merged-base-stage-overlays.md):
-
-1. Each stage's delta is merged into `base/` after the stage; the next
-   stage's overlay uses `lowerdir=base` only.  `base/` is never an
-   `upperdir`/`workdir`, so the in-use lock can never fire on it.
-2. Stage overlays are mounted **inside the sandbox's mount namespace**.
-   They die with the sandbox, so crashes leave no stale mounts and no
-   cross-namespace superblock references.
-3. Stage retries call `LayerManager::freshen_upper_layer`, which renames
-   the layer aside and hard-links it back into a brand-new directory: the
-   in-use lock binds the upperdir root *inode*, so the retry's fresh inode
-   cannot collide with the previous attempt's dying overlay.
+ADR-0036 first removed the race terms (merged `base/` as the only
+lowerdir, sandbox-mounted stage overlays, fresh inodes on retry).
+ADR-0037 then removed stage overlays entirely: each stage runs against
+`target/`, a real directory tree populated from `base/`, and its delta is
+harvested by diff afterwards.  With nothing mounted per stage there is no
+superblock to outlive a stage and no in-use lock to collide with — the
+entire failure class is gone, not merely made unreachable.  (The stage
+overlay design additionally proved incompatible with OverlayFS directory
+-rename rules; see ADR-0037.)
 
 ### Prevention
 
 - Never introduce a mount whose `lowerdir` is, or contains, another
   overlay's current `upperdir`/`workdir`.  If a design seems to need it,
   merge into a neutral directory first.
-- Never mount stage overlays from the parent process; pass
-  `IsolationConfig::stage_overlay` and let the sandbox mount them.
+- Do not mount stage working trees at all: `target/` is a real directory,
+  populated from and harvested against `base/` by `LayerManager`.
 - Do not reintroduce time-based mount retries as the primary defence
-  against in-use collisions; fresh inodes are the deterministic fix.
+  against in-use collisions; structural exclusion is the deterministic
+  fix.
 
 ## EBUSY on cleanup (stale overlay mount from prior run) — legacy build roots only
 
@@ -182,14 +180,13 @@ root before populating it.
 
 ### Root cause
 
-Current Wright mounts stage overlays inside the sandbox namespace, so a
-dead build leaves no mounts behind.  This failure now only comes from
-build roots created by **pre-ADR-0036 Wright versions**, which mounted
-stage overlays in the parent namespace: an abnormal exit (SIGKILL, power
-loss, panic, OOM) left the overlay mount active in the kernel mount table,
-and the next run's `remove_dir_all` walked into the still-mounted
-directory and got `EBUSY` — you cannot `rmdir` a directory that is itself
-a mount point.
+Current Wright mounts nothing per stage (ADR-0037), so a dead build leaves
+no mounts behind.  This failure now only comes from build roots created by
+**pre-ADR-0036 Wright versions**, which mounted stage overlays in the
+parent namespace: an abnormal exit (SIGKILL, power loss, panic, OOM) left
+the overlay mount active in the kernel mount table, and the next run's
+`remove_dir_all` walked into the still-mounted directory and got `EBUSY` —
+you cannot `rmdir` a directory that is itself a mount point.
 
 ### Fix in place
 
@@ -234,8 +231,8 @@ mode here is exactly that the original process is gone.
 ### Symptom
 
 ```text
-forge error: failed to clear overlay work dir
-/var/tmp/wright/workshop/<name>-<version>/.ovl_work/03-compile:
+forge error: failed to clear isolation scratch dir
+/var/tmp/wright/workshop/<name>-<version>/.wright-isolation/<task_id>/work:
 Permission denied (os error 13)
 ```
 
@@ -243,18 +240,17 @@ Permission denied (os error 13)
 
 The kernel creates OverlayFS workdir internals (`work/`) with mode 000.
 Root walks straight through, but an unprivileged owner cannot traverse the
-directory, so `remove_dir_all` fails with `EACCES`.  Before ADR-0036 this
-path was unreachable for unprivileged builds (overlay mounts required
-root); with stage overlays mounted inside the user-namespace sandbox,
-unprivileged builds use the overlay path too and hit this on resume and
-retry cleanup.
+directory, so `remove_dir_all` fails with `EACCES`.  Stage working trees
+no longer use OverlayFS (ADR-0037), but the sandbox **root** overlay still
+has a per-task kernel workdir under `.wright-isolation/<task_id>/`, so the
+trap remains live for unprivileged builds on resume and cleanup.
 
 ### Fix in place
 
 `remove_tree_force` (`src/foundry/layers.rs`) restores owner `rwx` on every
 directory in a tree before removing it.  All forge-side recursive
-removals (layer dirs, overlay workdirs, `base/`, `force_clean_dir`) route
-through it.
+removals (layer dirs, isolation scratch dirs, `base/`, `force_clean_dir`)
+route through it.
 
 ### Prevention
 

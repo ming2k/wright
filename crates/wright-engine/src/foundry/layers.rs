@@ -137,21 +137,22 @@ pub fn canonical_layer_order() -> Vec<String> {
 }
 
 /// Manage the per-stage OverlayFS layers for a single plan build.
-///
 /// # Merged-base design
 ///
-/// Each stage's writes are captured in `layers/NN-stage/` (the OverlayFS
-/// `upperdir` while the stage runs).  After every stage, that delta is merged
-/// into `base/` — a hard-link union of `source_dir` and every completed stage
-/// layer.  The next stage's overlay then uses `base/` as its *only*
-/// `lowerdir`.
+/// Before a stage runs, its working tree `target/` is populated as a real
+/// directory tree — a reflink/hard-link union of `source_dir` and every
+/// completed stage layer, maintained as `base/`.  The sandbox bind-mounts
+/// `target/` as `/build`; after the stage exits, its delta is harvested into
+/// `layers/NN-stage/` (`commit_layer`) and merged back into `base/`
+/// (`merge_layer_into_base`).
 ///
-/// `base/` is never the `upperdir` or `workdir` of any overlay mount, so the
-/// kernel's in-use upperdir protection (`EBUSY` when a lowerdir is an in-use
-/// upperdir of a still-dying overlay) can never fire on it.  Stage overlays
-/// are mounted inside the sandbox's own mount namespace (see
-/// `isolation::StageOverlay`), so mounts die with the sandbox and can never
-/// leak into the parent mount table.
+/// `/build` is deliberately *not* an OverlayFS mount: overlayfs rejects
+/// directory renames near lower-layer directories with `EXDEV` (breaking
+/// cargo, which creates `target/` via a temp-dir rename, and any build
+/// script that renames directories), and the `redirect_dir` feature that
+/// lifts the restriction requires `trusted.overlay.*` xattrs, which user
+/// namespaces cannot write.  A real directory tree has no such semantic
+/// gaps.  (ADR-0037 supersedes the overlay-based design of ADR-0036.)
 ///
 /// Crash consistency: `.base_manifest` records exactly what has been merged
 /// into `base/`.  At forge start it is compared against the checkpointed set
@@ -162,7 +163,6 @@ pub struct LayerManager {
     layers_dir: PathBuf,
     base_dir: PathBuf,
     target_dir: PathBuf,
-    ovl_work_dir: PathBuf,
     base_manifest_path: PathBuf,
 }
 
@@ -171,7 +171,6 @@ impl LayerManager {
         let layers_dir = build_root.join("layers");
         let base_dir = build_root.join("base");
         let target_dir = build_root.join("target");
-        let ovl_work_dir = build_root.join(".ovl_work");
         let base_manifest_path = build_root.join(BASE_MANIFEST_NAME);
 
         std::fs::create_dir_all(&layers_dir).map_err(|e| {
@@ -184,12 +183,6 @@ impl LayerManager {
             WrightError::ForgeError(format!(
                 "failed to create base dir {}: {e}",
                 base_dir.display()
-            ))
-        })?;
-        std::fs::create_dir_all(&ovl_work_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create overlay work dir {}: {e}",
-                ovl_work_dir.display()
             ))
         })?;
 
@@ -213,7 +206,6 @@ impl LayerManager {
             layers_dir,
             base_dir,
             target_dir,
-            ovl_work_dir,
             base_manifest_path,
         })
     }
@@ -230,17 +222,6 @@ impl LayerManager {
         self.layers_dir.join(layer_dir_name(stage))
     }
 
-    /// Build the overlay specification for a stage.  The overlay is mounted
-    /// by the sandbox inside its own mount namespace as `/build`; the parent
-    /// process never mounts anything.
-    pub fn overlay_spec(&self, stage: &str) -> crate::isolation::StageOverlay {
-        crate::isolation::StageOverlay {
-            lowerdir: self.base_dir.clone(),
-            upperdir: self.layer_dir(stage),
-            workdir: self.work_dir_for_stage(stage),
-        }
-    }
-
     pub fn prepare_upper_layer(&self, stage: &str) -> Result<PathBuf> {
         let dir = self.layer_dir(stage);
         if dir.exists() {
@@ -252,54 +233,7 @@ impl LayerManager {
         std::fs::create_dir_all(&dir).map_err(|e| {
             WrightError::ForgeError(format!("failed to create layer dir {}: {e}", dir.display()))
         })?;
-        let work_dir = self.work_dir_for_stage(stage);
-        self.reset_overlay_work_dir(&work_dir)?;
         Ok(dir)
-    }
-
-    /// Give a stage's upper/work dirs fresh *root inodes* while preserving
-    /// their contents.
-    ///
-    /// OverlayFS takes its in-use lock on the upperdir and workdir root
-    /// dentries.  When a stage attempt is retried, the previous attempt's
-    /// sandbox overlay may still be dying in the kernel, holding the lock on
-    /// those inodes; remounting the same dirs would fail with `EBUSY` on
-    /// kernels where `index=on` is the default.  Renaming the layer aside
-    /// and hard-linking its contents into a brand-new directory yields fresh
-    /// root inodes that can never collide with the dying instance, without
-    /// discarding the stage's work so far.
-    pub fn freshen_upper_layer(&self, stage: &str) -> Result<()> {
-        let dir = self.layer_dir(stage);
-        if !dir.exists() {
-            self.prepare_upper_layer(stage)?;
-            return Ok(());
-        }
-        let tmp = dir.with_extension("freshen");
-        remove_path_if_exists(&tmp).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clear freshen dir {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        std::fs::rename(&dir, &tmp).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to set aside layer dir {}: {e}",
-                dir.display()
-            ))
-        })?;
-        std::fs::create_dir(&dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create layer dir {}: {e}", dir.display()))
-        })?;
-        hard_link_all_sync(&tmp, &dir)?;
-        remove_tree_force(&tmp).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to remove freshen dir {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        let work_dir = self.work_dir_for_stage(stage);
-        self.reset_overlay_work_dir(&work_dir)?;
-        Ok(())
     }
 
     /// Ensure `base/` matches `source_dir` + the given completed stage layers.
@@ -343,7 +277,7 @@ impl LayerManager {
         })?;
 
         if source_dir.exists() {
-            hard_link_all_sync(source_dir, &self.base_dir)?;
+            share_tree_sync(source_dir, &self.base_dir)?;
         }
         for stage in completed_stages {
             let layer = self.layer_dir(stage);
@@ -405,9 +339,8 @@ impl LayerManager {
         Ok(())
     }
 
-    /// Populate `target/` as a real directory tree (fallback mode, when a
-    /// stage runs without namespace isolation).  The tree is a hard-link
-    /// copy of the merged base.
+    /// Populate `target/` as the stage's real working tree: a reflink (or
+    /// hard-link, where reflinks are unsupported) copy of the merged base.
     pub fn populate_target(&self) -> Result<()> {
         if let Ok(read_dir) = std::fs::read_dir(&self.target_dir) {
             for entry in read_dir.flatten() {
@@ -420,12 +353,12 @@ impl LayerManager {
             }
         }
 
-        debug!(event = "layer.hardlink", layer = %self.base_dir.display(), "Hard-linking merged base into target");
-        hard_link_all_sync(&self.base_dir, &self.target_dir)?;
+        debug!(event = "layer.hardlink", layer = %self.base_dir.display(), "Sharing merged base into target");
+        share_tree_sync(&self.base_dir, &self.target_dir)?;
         Ok(())
     }
 
-    /// Harvest the fallback-mode delta from `target/` into the stage's layer
+    /// Harvest the stage's delta from `target/` into the stage's layer
     /// directory, and record deletions in the layer's tombstone manifest.
     pub fn commit_layer(&self, stage: &str) -> Result<()> {
         let layer_dir = self.layer_dir(stage);
@@ -450,9 +383,7 @@ impl LayerManager {
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                if std::fs::hard_link(target_file, &dest).is_err() {
-                    let _ = std::fs::copy(target_file, &dest);
-                }
+                let _ = share_file(target_file, &dest);
             }
         }
 
@@ -499,31 +430,7 @@ impl LayerManager {
         let from_idx = layer_index(from_stage).unwrap_or(0);
         for &stage in &LAYER_STAGES[from_idx..] {
             self.clear_layer(stage);
-            let work_dir = self.work_dir_for_stage(stage);
-            if let Err(e) = remove_path_if_exists(&work_dir) {
-                warn!(event = "layer.workdir_clear_failed", dir = %work_dir.display(), error = %e, "Failed to clear overlay work dir");
-            }
         }
-    }
-
-    fn work_dir_for_stage(&self, stage: &str) -> PathBuf {
-        self.ovl_work_dir.join(layer_dir_name(stage))
-    }
-
-    fn reset_overlay_work_dir(&self, work_dir: &Path) -> Result<()> {
-        remove_path_if_exists(work_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clear overlay work dir {}: {e}",
-                work_dir.display()
-            ))
-        })?;
-        std::fs::create_dir_all(work_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create overlay work dir {}: {e}",
-                work_dir.display()
-            ))
-        })?;
-        Ok(())
     }
 }
 
@@ -653,8 +560,8 @@ fn merge_layer_tree(layer_dir: &Path, base_dir: &Path) -> Result<()> {
                         dest.display()
                     ))
                 })?;
-            } else if std::fs::hard_link(&path, &dest).is_err() {
-                std::fs::copy(&path, &dest).map_err(|e| {
+            } else {
+                share_file(&path, &dest).map_err(|e| {
                     WrightError::ForgeError(format!(
                         "failed to copy {} to {}: {e}",
                         path.display(),
@@ -776,7 +683,7 @@ fn is_overlay_opaque(path: &Path, meta: &std::fs::Metadata) -> bool {
         || xattr_value(path, "user.overlay.opaque").as_deref() == Some(b"y")
 }
 
-fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
+fn share_tree_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
     let mut dirs_to_visit = vec![src_dir.to_path_buf()];
     while let Some(dir) = dirs_to_visit.pop() {
         let entries = match std::fs::read_dir(&dir) {
@@ -809,13 +716,62 @@ fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                 }
                 _ => {
                     let _ = std::fs::remove_file(&dest_path);
-                    if std::fs::hard_link(&path, &dest_path).is_err() {
-                        let _ = std::fs::copy(&path, &dest_path);
-                    }
+                    let _ = share_file(&path, &dest_path);
                 }
             }
         }
     }
+    Ok(())
+}
+
+/// Share `src`'s content with `dest` as cheaply as possible while keeping
+/// the two paths independent under later writes: a copy-on-write reflink
+/// where the filesystem supports it (btrfs/xfs), otherwise a hard link,
+/// otherwise a full copy.
+///
+/// Reflinks are preferred because a hard link couples every sibling's
+/// inode: an in-place write (e.g. `echo >> file`) through a hard-linked
+/// working tree would silently rewrite the merged base and the stage layer
+/// the file came from, corrupting the layer record.  A reflinked file
+/// copy-on-writes instead, so the modification stays private to the working
+/// tree and shows up as a real difference at harvest time.
+fn share_file(src: &Path, dest: &Path) -> std::io::Result<()> {
+    if reflink(src, dest).is_ok() {
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(dest);
+    if std::fs::hard_link(src, dest).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dest).map(|_| ())
+}
+
+/// Attempt a copy-on-write clone (`FICLONE`) of `src` onto `dest`,
+/// preserving mode and timestamps so the clone behaves like a hard link for
+/// build tooling without sharing an inode.
+fn reflink(src: &Path, dest: &Path) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let src_file = std::fs::File::open(src)?;
+    let meta = src_file.metadata()?;
+    let dest_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)?;
+    // FICLONE from linux/fs.h (_IOW(0x94, 9, int)); not exposed by libc.
+    const FICLONE: libc::c_ulong = 0x4004_9409;
+    // SAFETY: both fds are open files; the kernel clones src's extents onto
+    // dest or returns an error (unsupported fs, cross-device, …).
+    let rc = unsafe { libc::ioctl(dest_file.as_raw_fd(), FICLONE, src_file.as_raw_fd()) };
+    if rc != 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(dest);
+        return Err(error);
+    }
+    dest_file.set_permissions(meta.permissions())?;
+    let times = std::fs::FileTimes::new()
+        .set_accessed(meta.accessed()?)
+        .set_modified(meta.modified()?);
+    dest_file.set_times(times)?;
     Ok(())
 }
 
@@ -1162,28 +1118,28 @@ mod tests {
     }
 
     #[test]
-    fn freshen_preserves_content_with_fresh_root_inode() {
+    fn share_file_keeps_siblings_independent_under_in_place_writes() {
         let tmp = tempfile::tempdir().unwrap();
-        let build_root = tmp.path().join("workshop/pkg-1.0");
-        let mgr = LayerManager::new(&build_root).unwrap();
-        mgr.prepare_upper_layer("compile").unwrap();
-        let layer = mgr.layer_dir("compile");
-        write_file(&layer.join("obj/out.o"), "object");
-        let old_root_ino = std::fs::metadata(&layer).unwrap().ino();
-        let old_file_ino = std::fs::metadata(layer.join("obj/out.o")).unwrap().ino();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        write_file(&a, "original");
+        share_file(&a, &b).unwrap();
+        assert!(files_are_identical(&a, &b).unwrap());
 
-        mgr.freshen_upper_layer("compile").unwrap();
-
-        let layer = mgr.layer_dir("compile");
-        assert_eq!(read(&layer.join("obj/out.o")), "object");
-        assert_ne!(std::fs::metadata(&layer).unwrap().ino(), old_root_ino);
-        // File contents hard-link back: data inodes are preserved.
-        assert_eq!(
-            std::fs::metadata(layer.join("obj/out.o")).unwrap().ino(),
-            old_file_ino
-        );
-        // No freshen leftovers and the workdir is reset.
-        assert!(!build_root.join("layers/03-compile.freshen").exists());
-        assert!(build_root.join(".ovl_work/03-compile").exists());
+        // An in-place append through the share must never rewrite the
+        // sibling.  With reflinks this is guaranteed by copy-on-write; the
+        // hard-link fallback cannot promise it, so only assert where a
+        // reflink actually happened.
+        if std::fs::metadata(&a).unwrap().ino() != std::fs::metadata(&b).unwrap().ino() {
+            use std::io::Write;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&b)
+                .unwrap()
+                .write_all(b"+appended")
+                .unwrap();
+            assert_eq!(read(&a), "original");
+            assert_eq!(read(&b), "original+appended");
+        }
     }
 }

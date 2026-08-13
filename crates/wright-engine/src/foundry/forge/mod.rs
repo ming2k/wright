@@ -15,7 +15,6 @@ use wright_plan::manifest::{PipelineStage, PlanManifest};
 mod execute;
 mod pipeline;
 
-use self::execute::StageLayering;
 use self::pipeline::manifest_stage;
 pub use self::pipeline::stage_order_for_manifest;
 pub(crate) use self::pipeline::{compute_expected_hashes, effective_manifest_isolation};
@@ -313,35 +312,18 @@ impl<'a> Forge<'a> {
             }
 
             // --- Prepare layer and working directory for this stage ---
+            //
+            // The stage runs against a real working tree populated from the
+            // merged base (`target/`), isolated by the sandbox's namespaces;
+            // its delta is harvested into the stage layer afterwards.
             self.layers.prepare_upper_layer(stage_name)?;
+            self.layers.populate_target()?;
 
-            // Pick the layering mode for the whole canonical stage (hooks
-            // included): namespace-isolated stages run on a sandbox-mounted
-            // overlay; a stage whose weakest hook is unisolated runs against
-            // a real populated working tree instead.
-            let layering = if pipeline::effective_stage_isolation(
-                self.manifest,
-                self.build_phase.as_deref(),
-                stage_name,
-                self.executors,
-                self.default_isolation,
-            )? == IsolationLevel::None
-            {
-                self.layers.populate_target()?;
-                StageLayering::Fallback
-            } else {
-                StageLayering::Overlay(stage_name.to_string())
-            };
-
-            let result = self
-                .run_ordered_stage_in_target(stage_name, &layering)
-                .await;
+            let result = self.run_ordered_stage_in_target(stage_name).await;
 
             match result {
                 Ok(()) => {
-                    if matches!(layering, StageLayering::Fallback) {
-                        self.layers.commit_layer(stage_name)?;
-                    }
+                    self.layers.commit_layer(stage_name)?;
                     if expected.contains_key(stage_name) {
                         completed.push(stage_name.clone());
                     }

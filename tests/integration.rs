@@ -10,7 +10,7 @@ mod integration {
     mod install_test;
     mod isolation_test;
     mod launch_test;
-
+    mod layering_test;
     mod migration_test;
     mod output_test;
     mod plan_snapshot_test;

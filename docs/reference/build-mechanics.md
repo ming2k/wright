@@ -37,12 +37,11 @@ Each part gets its own working directory under `forge_dir`
 <forge_dir>/<name>-<version>/¹
 ├── .wright-checkpoint.json  # Stage state machine (hash-chain checkpoint records)
 ├── source/                # Immutable extracted source tree (Charge output)
-├── base/                  # Merged base: hard-link union of source + completed layers
-│                          # (the single lowerdir for the next stage's overlay)
+├── base/                  # Merged base: reflink/hard-link union of source +
+│                          # completed layers (source of the next stage's target/)
 ├── .base_manifest         # Records exactly what base/ contains (rebuild trigger)
-├── target/                # Real directory: fallback-mode working tree
-├── .ovl_work/             # OverlayFS per-stage working directories
-├── layers/                # Per-stage delta directories (upperdir while a stage runs)
+├── target/                # Real directory: the stage's working tree (/build)
+├── layers/                # Per-stage harvested delta directories
 │   ├── 01-prepare/        # Patched files
 │   ├── 02-configure/      # ./configure output (Makefiles, config.h)
 │   ├── 03-compile/        # .o files and binaries
@@ -57,15 +56,15 @@ Each part gets its own working directory under `forge_dir`
 ¹ When `version` is omitted from `plan.toml`, the directory uses `<name>-noversion`.
 ```
 
-Each stage's writes are captured in its dedicated `layers/<NN>-<stage>/`
-directory: for sandboxed stages, that directory is the `upperdir` of an
-OverlayFS mounted as `/build` **inside the sandbox's own mount namespace**,
-with `base/` as the only `lowerdir`.  After every stage, the stage's delta
-is merged into `base/` with hard-links (whiteouts and deletions included),
-so the next stage always sees the full accumulated tree through `base/`
-alone.  No stage overlay ever appears in the host mount table, so crashed
+Before a stage runs, `target/` is populated from `base/` (reflinks where
+the filesystem supports them, hard links otherwise) and the sandbox
+bind-mounts it as `/build` — a real directory tree with ordinary
+filesystem semantics, not an OverlayFS mount.  After the stage exits, its
+delta is harvested into `layers/<NN>-<stage>/` (deletions recorded as
+tombstones) and merged into `base/`, so the next stage always starts from
+the full accumulated tree.  Nothing is mounted per stage, so crashed
 builds leave no stale mounts behind.  See
-[OverlayFS Layers and the Merged Base](../explanation/overlayfs-layers.md).
+[Stage Layers, the Merged Base, and OverlayFS](../explanation/overlayfs-layers.md).
 
 `layers/` replaces the flat `work/` directory from previous versions.  When
 the build key has not changed (same version, sources, and pipeline scripts),

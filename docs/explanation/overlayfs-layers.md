@@ -1,12 +1,12 @@
-# OverlayFS Layers and the Merged Base
+# Stage Layers, the Merged Base, and OverlayFS
 
-Wright uses OverlayFS in two separate but related places: the **build
-pipeline** (`LayerManager`) captures each build stage's output as an
-OverlayFS `upperdir` and merges it into a cumulative **merged base**; and
-the **strict isolation sandbox** mounts a per-task writable root filesystem
-on top of read-only host system directories.  Both stage overlays and the
-sandbox root overlay are mounted *inside the sandbox's own mount
-namespace*, so no build mount ever appears in the host mount table.
+Wright's build pipeline (`LayerManager`) captures each build stage's output
+as a per-stage **layer** directory and maintains a cumulative **merged
+base**; each stage runs against a real working tree populated from that
+base.  Separately, the isolation sandbox mounts a per-task writable
+**OverlayFS** root filesystem on top of read-only host system directories.
+Stage working trees are deliberately *not* OverlayFS mounts — this document
+explains both designs and why they differ.
 
 ## OverlayFS core mechanism
 
@@ -61,49 +61,50 @@ flowchart LR
     U1 -- "atomic rename via" --> W1
 ```
 
-## Two usage patterns in Wright
+## Build stage layering (`LayerManager`)
 
-### Build stage layering (`LayerManager`)
-
-The forge maintains per-stage delta directories and a cumulative merged
-base under the build root:
+The forge maintains per-stage delta directories, a cumulative merged base,
+and a real working tree under the build root:
 
 ```text
 <build_root>/
-├── base/               ← merged base: hard-link union of source + all
-│                          completed stage layers; the ONLY lowerdir
+├── base/               ← merged base: reflink/hard-link union of source +
+│                          all completed stage layers
 ├── layers/
-│   ├── 01-prepare/     ← stage delta (upperdir while prepare ran)
-│   ├── 02-configure/   ← stage delta (upperdir while configure ran)
-│   └── 03-compile/     ← current stage's upperdir
-├── target/             ← real directory: fallback-mode working tree
-├── .ovl_work/          ← kernel workdirs, one per stage
+│   ├── 01-prepare/     ← prepare stage's harvested delta
+│   ├── 02-configure/   ← configure stage's harvested delta
+│   └── 03-compile/     ← compile stage's harvested delta
+├── target/             ← real directory: the stage's working tree (/build)
 ├── source/             ← immutable extracted source (Charge)
 └── .base_manifest      ← records exactly what base/ contains
 ```
 
-When a stage starts, the sandbox mounts an overlay whose *only* lowerdir
-is `base/` and whose upperdir is the stage's fresh `layers/NN-stage`
-directory.  The build script runs with that overlay as `/build`, so all of
-its writes land directly in the stage's own delta directory via copy-up.
+When a stage starts, `populate_target` populates `target/` from `base/` —
+reflinks (copy-on-write clones) where the filesystem supports them (btrfs,
+xfs), hard links elsewhere, full copies as a last resort.  The sandbox then
+bind-mounts `target/` as `/build` (unisolated stages work in it directly),
+so the build script sees an ordinary directory tree with ordinary
+filesystem semantics.
 
-When the stage finishes, the forge merges the delta into `base/` with
-hard-links.  The next stage then sees the complete accumulated tree
-through `base/` alone — there is no stack of overlays.
+When the stage finishes, `commit_layer` harvests the delta: everything in
+`target/` that is absent from — or differs from — `base/` is linked into
+the stage's `layers/NN-stage/` directory, and paths the stage deleted are
+recorded in a tombstone manifest.  The layer is then merged into `base/`,
+so the next stage's `target/` starts from the complete accumulated tree.
 
 ```mermaid
 flowchart LR
     subgraph stage1 ["prepare stage"]
-        P1["overlay: lower=base(empty+source)<br/>upper=layers/01-prepare"]
+        P1["target/ ← populate(base)<br/>run script"]
     end
-    subgraph merge1 ["merge"]
-        M1["base += layers/01-prepare"]
+    subgraph harvest1 ["harvest + merge"]
+        M1["layers/01-prepare ← delta<br/>base += layer"]
     end
     subgraph stage2 ["configure stage"]
-        C1["overlay: lower=base<br/>upper=layers/02-configure"]
+        C1["target/ ← populate(base)<br/>run script"]
     end
 
-    stage1 --> merge1 --> stage2
+    stage1 --> harvest1 --> stage2
 ```
 
 #### Why `layers/` and `base/` are both needed
@@ -112,8 +113,8 @@ They have completely different roles:
 
 | Directory | Role | Lifetime | Content |
 |-----------|------|----------|---------|
-| `layers/<NN>-<stage>/` | **`upperdir`** during the stage; frozen per-stage delta after | Kept for checkpoint resume | Exactly the files the stage created, modified, or deleted (as whiteouts) |
-| `base/` | **single `lowerdir`** for the next stage | Rebuilt on resume/rewind | Hard-link union of `source/` and all completed layers |
+| `layers/<NN>-<stage>/` | Frozen per-stage delta | Kept for checkpoint resume | Exactly the files the stage created or modified, plus a tombstone manifest for deletions |
+| `base/` | Source for the next stage's `target/` | Rebuilt on resume/rewind | Reflink/hard-link union of `source/` and all completed layers |
 
 `layers/` stores **bookkeeping** (per-stage deltas that let resume rewind
 to any stage), while `base/` stores the **working view**.  Per-stage
@@ -121,35 +122,66 @@ deltas can always be re-merged, so `base/` is a derived artifact: a
 recorded manifest (`.base_manifest`) tracks its contents, and any
 mismatch with the checkpointed stages triggers a rebuild.
 
-#### Deletions: whiteouts, opaque directories, tombstones
+#### Why not OverlayFS for `/build`? (ADR-0037)
 
-A stage that deletes a file from a lower layer produces a *whiteout* in
-its upperdir: a char device `0:0` (privileged mounts) or a zero-length
-file carrying a `user.overlay.whiteout` xattr (user-namespace mounts).
-A directory replaced wholesale carries an `*.overlay.opaque=y` marker.
-The merge step translates these encodings into real deletions and
-replacements in `base/`.  In the unisolated fallback path — where the
-stage runs against a plain populated directory tree — deletions are
-recorded as a tombstone manifest inside the layer and applied to `base/`
-at merge time.
+An earlier design ([ADR-0036](../adr/0036-merged-base-stage-overlays.md),
+superseded) mounted each stage's overlay as `/build` with `lowerdir=base`.
+It collapsed within a day of release: cargo creates `target/` via a
+temporary-directory rename, and OverlayFS rejects directory renames in the
+vicinity of lower-layer directories with `EXDEV`.  The mount option that
+lifts the restriction, `redirect_dir=on`, stores its metadata in
+`trusted.overlay.*` xattrs, which only the initial user namespace's
+`CAP_SYS_ADMIN` may write — so user-namespace mounts (the only kind Wright
+makes, even as root) reject it with `EPERM`.  There is no mount-option
+combination that makes directory renames work in an unprivileged overlay,
+and directory renames are stock behavior for build tooling.
 
-### Isolation sandbox root
+A real directory tree has no such semantic gaps, and it also removes every
+mount-lifecycle failure mode by construction: there is nothing to leak on
+crash and nothing to race at stage transitions.
+
+#### Reflinks vs hard links
+
+Populating `target/` by hard links couples inodes across the working tree,
+`base/`, and the layers a file came from: an in-place write
+(`echo >> file`) would silently rewrite every sibling and corrupt the
+layer record.  Reflinks (`FICLONE`) are therefore preferred wherever the
+filesystem supports them — a copy-on-write clone keeps the modification
+private to the working tree, where the harvest diff sees it as a real
+change.  On filesystems without reflink support the hard-link fallback
+retains the historical caveat: build scripts must replace files rather
+than rewrite them in place (the common case — `sed -i`, `patch`, editors —
+all replace via rename).
+
+#### Deletions: tombstones (and legacy whiteouts)
+
+A stage that deletes a path simply deletes it from `target/`; the harvest
+records the relative path in the layer's tombstone manifest
+(`.wright-layer-deletions`), and the merge applies it to `base/`.
+
+Layer directories written by overlay-based builds (≤ 5.5.1) may instead
+contain OverlayFS whiteouts (char device `0:0`, or zero-length files with a
+`user.overlay.whiteout` xattr) and opaque-directory markers.  The merge
+still translates those encodings so that resuming an older build root
+produces the same `base/`.
+
+## Isolation sandbox root (OverlayFS, unchanged)
 
 Strict isolation runs each build command inside a mount namespace. Instead
 of copying a full sysroot, the sandbox mounts an OverlayFS whose lower
 layers are the host system directories (`/usr`, `/bin`, `/lib`, `/lib64`)
 and whose upper/work directories are per-task scratch paths under
-`<build_root>/.wright-isolation/<task_id>/`.  The stage overlay described
-above is mounted as `/build` inside the same namespace; `/output` is a
-bind-mount.
+`<build_root>/.wright-isolation/<task_id>/`.  `target/` is bind-mounted as
+`/build` inside the same namespace; `/output` is a bind-mount.
 
 The result is a private, writable root filesystem that is cheap to create
 (no copying) and always reflects the live host system libraries and tools.
 Any writes to system paths are captured in the task-private upper layer
-and are discarded when the namespace is torn down. See
-[ADR-0013](../adr/0013-multi-lowerdir-isolation.md) for the design record
-and [ADR-0036](../adr/0036-merged-base-stage-overlays.md) for the stage
-layering record.
+and are discarded when the namespace is torn down.  Build scripts
+essentially never rename directories under system paths, so the OverlayFS
+rename restriction does not apply here in practice — and this design
+([ADR-0013](../adr/0013-multi-lowerdir-isolation.md)) predates and is
+unaffected by the stage-layering change.
 
 ```mermaid
 flowchart TD
@@ -182,7 +214,7 @@ flowchart TD
     UPPER -.upperdir.-> overlay
     WORK -.workdir.-> overlay
 
-    BM1["stage overlay<br/>lower=base, upper=layers/NN"] --> O3
+    BM1["bind-mount<br/>target/ (real dir)"] --> O3
     BM2["bind-mount<br/>config.output_dir"] --> O4
 ```
 
@@ -221,37 +253,13 @@ any process still references it — an orphan in the sandbox's PID
 namespace, a deferred kernel `mntput` — its upperdir stays locked.  Under
 heavy parallel build load this window was observed to exceed 600 ms.
 
-### The old topology, and why it raced
-
-Before [ADR-0036](../adr/0036-merged-base-stage-overlays.md), stage N+1's
-overlay listed stage N's `layers/NN` directory — the previous stage's
-`upperdir`, still locked while stage N's overlay was dying — inside its
-`lowerdir` stack.  The mount collided with the in-use protection whenever
-teardown lagged, producing fatal `EBUSY` at stage transitions.  Retry
-loops with a few hundred milliseconds of budget lost the race under load,
-and crash-leftover mounts in the host mount table made repeat failures
-likely.
-
-### Why the merged base cannot race
-
-The current design removes every term of the collision:
-
-- **`lowerdir=base/`** — `base/` is never any overlay's `upperdir` or
-  `workdir`, so it can never carry an in-use lock.  Slow teardown of a
-  previous stage's overlay is irrelevant: dying overlays reference `base/`
-  only as a lowerdir, which the kernel never locks.
-- **`upperdir=layers/NN-stage`** — prepared fresh for each stage.  When a
-  stage attempt is retried, the layer directory is *freshened*: renamed
-  aside and hard-linked back into a brand-new directory.  The in-use lock
-  binds the upperdir's root inode, so a retry mounts a fresh inode that
-  the dying instance cannot hold.
-- **Sandbox-owned mounts** — stage overlays live and die inside the
-  sandbox's mount namespace.  A crashed build leaves no mount behind, so
-  there is no stale mount for a later run to trip over.
-
-There is deliberately no retry loop and no mount-flag workaround around
-this path: the failure mode is excluded by construction rather than
-absorbed.
+This protection is now only relevant to the sandbox **root** overlay, whose
+upper/work dirs are per-task scratch that nothing else references.  Stage
+layering mounts nothing at all: `target/` is a plain directory, so there
+is no superblock to outlive a stage and no in-use lock to collide with.
+The pre-ADR-0036 topology (stage N+1's `lowerdir` inside stage N's still
+-dying `upperdir`) and ADR-0036's in-sandbox stage overlays are both gone,
+and with them the entire stage-transition `EBUSY` class.
 
 ## ETXTBUSY on exec: shared inode write-count contention
 
@@ -303,24 +311,18 @@ the same time.
    the shebang case (`./configure` → kernel resolves `#!/bin/sh` →
    `/bin/sh` busy) that the lower-level `execvp` retry never sees.
 
-   Each overlay-mode retry also freshens the stage's upper/work directory
-   root inodes (see above), so the retry's mount cannot collide with the
-   previous attempt's still-dying overlay.
-
 ## Summary of kernel error codes
 
 | Error | Where it appears | Trigger | Defence |
 |-------|------------------|---------|---------|
-| `EBUSY` | stage overlay mount (in-sandbox) | Previous attempt's overlay still holds the in-use lock on the upper/work dir root inodes | Fresh root inodes per attempt (`freshen_upper_layer`); lowerdir (`base/`) can never be locked |
+| `EXDEV` | directory rename in an OverlayFS working tree | Rename near lower-layer directories requires `redirect_dir`, unavailable in user namespaces | `/build` is a real directory tree, not an overlay (ADR-0037) |
 | `EBUSY` | `remove_dir_all()` in `force_clean_dir()` | Stale overlay mount left by a *pre-ADR-0036* crashed run | Parse `/proc/self/mounts`, `MNT_DETACH` stale mounts, retry |
-| `EACCES` | recursive cleanup of `.ovl_work/` | Kernel creates overlay workdir internals with mode 000 | `remove_tree_force` restores owner `rwx` before removal |
 | `ETXTBSY` | `execvp()` inside isolation | Host process briefly holds write reference to lower-layer inode | Per-task upper layer + execvp retry + stage-level jittered retry |
-| `EPERM` | overlay mount (unprivileged host without user namespaces) | Missing `CAP_SYS_ADMIN` and no userns overlay support | Fall back to hard-link based `populate_target()` |
 
 ## References
 
 - `crates/wright-engine/src/foundry/layers.rs` — `LayerManager`, merged
-  base, merge/freshen/cleanup machinery
+  base, populate/harvest/merge machinery, reflink sharing
 - `crates/wright-engine/src/isolation/native/run.rs` — isolation sandbox
   mount namespace and overlay setup
 - `crates/wright-engine/src/foundry/forge/execute.rs` — stage execution
@@ -329,7 +331,9 @@ the same time.
   upper layer design (superseded)
 - [ADR-0013](../adr/0013-multi-lowerdir-isolation.md) — multi-lowerdir
   isolation design (sandbox root overlay)
-- [ADR-0036](../adr/0036-merged-base-stage-overlays.md) — merged-base
-  stage layers with sandbox-mounted stage overlays
+- [ADR-0036](../adr/0036-merged-base-stage-overlays.md) — merged-base stage
+  layers with sandbox-mounted stage overlays (superseded)
+- [ADR-0037](../adr/0037-real-directory-stage-trees.md) — real directory
+  stage working trees
 - [Isolation Race Handling](../dev/isolation-pitfalls.md) —
   contributor-oriented deep dive on all races

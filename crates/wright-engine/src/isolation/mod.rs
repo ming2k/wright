@@ -102,20 +102,6 @@ pub struct ResourceLimits {
     pub timeout_secs: Option<u64>,
 }
 
-/// Overlay specification for a build stage's `/build` mount.
-///
-/// The sandbox mounts this overlay itself, inside its own mount namespace,
-/// so the mount dies with the sandbox process and can never leak into the
-/// parent mount table.  `lowerdir` is the merged base maintained by
-/// `foundry::layers::LayerManager`; `upperdir`/`workdir` are per-stage
-/// directories under the build root.
-#[derive(Debug, Clone)]
-pub struct StageOverlay {
-    pub lowerdir: PathBuf,
-    pub upperdir: PathBuf,
-    pub workdir: PathBuf,
-}
-
 pub struct IsolationConfig {
     pub level: IsolationLevel,
     pub base_root: PathBuf,
@@ -137,9 +123,6 @@ pub struct IsolationConfig {
     /// Build-dependency mounts: (host_path, isolation_path).
     /// These are mounted read-only into the isolation environment.
     pub dep_mounts: Vec<(PathBuf, PathBuf)>,
-    /// When set, the sandbox mounts this overlay as `/build` instead of
-    /// bind-mounting `src_dir`.
-    pub stage_overlay: Option<StageOverlay>,
     /// Override the executable used for the single-threaded isolation helper.
     /// Normal Wright invocations use the current executable. Embedders and
     /// integration tests may point this at a compatible Wright binary.
@@ -168,7 +151,6 @@ impl IsolationConfig {
             log_stdout: None,
             log_stderr: None,
             dep_mounts: Vec::new(),
-            stage_overlay: None,
             helper_executable: None,
         }
     }
@@ -217,17 +199,6 @@ impl IsolationConfig {
             ("build root", build_root),
         ] {
             validate_overlay_option_path(label, path)?;
-        }
-
-        if let Some(overlay) = &self.stage_overlay {
-            for (label, path) in [
-                ("overlay lowerdir", overlay.lowerdir.as_path()),
-                ("overlay upperdir", overlay.upperdir.as_path()),
-                ("overlay workdir", overlay.workdir.as_path()),
-            ] {
-                validate_absolute_directory(label, path)?;
-                validate_overlay_option_path(label, path)?;
-            }
         }
 
         for (source, target, _) in &self.extra_binds {

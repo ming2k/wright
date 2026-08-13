@@ -37,4 +37,5 @@
 | [ADR-0033](0033-plan-source-snapshots.md) | Plan-source snapshots in parts and the registry | Accepted |
 | [ADR-0034](0034-plan-output-namespaces-and-part-layout.md) | Plan/output namespaces and plan-qualified part layout | Accepted |
 | [ADR-0035](0035-git-fetch-via-gitoxide.md) | Git source fetching via gitoxide (gix) | Accepted |
-| [ADR-0036](0036-merged-base-stage-overlays.md) | Merged-base stage layers with sandbox-mounted stage overlays | Accepted |
+| [ADR-0036](0036-merged-base-stage-overlays.md) | Merged-base stage layers with sandbox-mounted stage overlays | Superseded by ADR-0037 |
+| [ADR-0037](0037-real-directory-stage-trees.md) | Real directory stage working trees instead of stage overlays | Accepted |

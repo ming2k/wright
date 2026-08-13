@@ -66,25 +66,24 @@ The file is the **single source of truth** for the pipeline state.
 Individual file-system sentinels (like the old `.wright-stage-<name>` markers)
 are no longer used.
 
-## Layered OverlayFS sandbox
+## Layered stage deltas and the merged base
 
-Instead of a flat `work/` directory, the build sandbox uses a stack of
-per-stage OverlayFS layers:
+Instead of a flat `work/` directory, each build stage works in a real
+directory tree (`target/`) populated from a cumulative merged base, and its
+delta is harvested into a per-stage layer:
 
 ```
 <build_root>/
-├── .wright-pipeline.json    # Stage state machine
-├── target/                  # OverlayFS merge mount point (virtual root for the container)
-├── .ovl_work/               # OverlayFS working directory
+├── .wright-checkpoint.json  # Stage state machine
+├── base/                    # Merged base: reflink/hard-link union of source + completed layers
+├── .base_manifest           # Records exactly what base/ contains
+├── target/                  # Real directory: the stage's working tree (/build)
 ├── layers/
-│   ├── 01-fetch/            # Hard-links to the global source cache (no actual file copies)
-│   ├── 02-verify/           # (empty — verification-only stage)
-│   ├── 03-extract/          # Extracted source tree
-│   ├── 04-prepare/          # Files changed by the prepare stage (e.g. patches)
-│   ├── 05-configure/        # ./configure output (Makefiles, config.h)
-│   ├── 06-compile/          # Compiled objects and binaries
-│   ├── 07-check/            # (empty — test-only stage)
-│   └── 08-staging/          # make install output (files written under /output)
+│   ├── 01-prepare/          # Files changed by the prepare stage (e.g. patches)
+│   ├── 02-configure/        # ./configure output (Makefiles, config.h)
+│   ├── 03-compile/          # Compiled objects and binaries
+│   ├── 04-check/            # (empty — test-only stage)
+│   └── 05-staging/          # make install output (files written under /output)
 ├── staging/                 # Convenience alias for the final staging directory
 ├── outputs/                 # Sliced output directories (hard-linked from staging/)
 └── logs/                    # Per-stage log files
@@ -93,39 +92,41 @@ per-stage OverlayFS layers:
 ### Why layered directories
 
 The `.o` files from a failed `make` are physically isolated in
-`layers/06-compile/`.  If the compile step fails:
+`layers/03-compile/`.  If the compile step fails:
 
-1. The dirty layer (`06-compile`) is deleted entirely.
-2. The next attempt starts with a pristine empty upperdir.
+1. The dirty layer (`03-compile`) is deleted entirely.
+2. The next attempt populates a pristine `target/` from `base/`.
 3. There is no risk of leftover `.o` files poisoning the retry — a common
    failure mode with flat `work/` directories where `make clean` is optional
    and often forgotten.
 
-Conversely, when a stage succeeds, its layer is **frozen read-only** and
-becomes part of the lowerdir stack for all subsequent stages.  Each stage only
-sees the accumulated results of all previous successful stages.
+Conversely, when a stage succeeds, its layer is frozen and merged into
+`base/`, so each stage only sees the accumulated results of all previous
+successful stages.
 
-### Per-stage mount / execute / commit cycle
+### Per-stage populate / execute / harvest cycle
 
 For each stage N, the engine performs an atomic three-step cycle:
 
 ```
-1. MOUNT
-   lowerdir = layers/01 : layers/02 : ... : layers/N-1
-   upperdir = layers/N   (must be empty)
-   merged   = target/
+1. POPULATE
+   target/ ← reflink/hard-link copy of base/
+   (base/ = source + layers/01 .. layers/N-1)
 
 2. EXECUTE
-   Run the stage script inside target/.  All writes (creates, modifies,
-   deletes) are physically redirected by the kernel into layers/N via
-   OverlayFS copy-up.
+   Run the stage script with target/ as its working tree (/build inside
+   the sandbox).  All writes land in target/ directly — it is a real
+   directory, so renames, appends, and metadata operations behave exactly
+   as on the host filesystem.
 
 3. COMMIT or ROLLBACK
-   ─ On success:  Unmount target/.  Freeze layers/N — it is now a read-only
-                  lowerdir for all subsequent stages.  Write COMPLETED status
-                  and input_hash to .wright-pipeline.json.
-   ─ On failure:  Unmount target/.  Delete layers/N/ entirely.  The next
-                  attempt will create a fresh empty upperdir.
+   ─ On success:  Harvest the delta (target/ vs base/) into layers/N —
+                  additions and modifications are linked in, deletions are
+                  recorded as tombstones — then merge layers/N into base/.
+                  Write COMPLETED status and input_hash to
+                  .wright-checkpoint.json.
+   ─ On failure:  Delete layers/N/ entirely.  The next attempt re-populates
+                  a pristine target/ from base/.
 ```
 
 ### Global source cache

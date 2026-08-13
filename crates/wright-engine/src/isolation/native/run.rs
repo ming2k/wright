@@ -270,41 +270,14 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
                         Ok(())
                     };
 
-                    // Build and output directories (read-write).
-                    //
-                    // The stage overlay is mounted here, inside the sandbox's
-                    // own mount namespace, so the mount dies with the sandbox
-                    // process and can never leak into the parent mount table
-                    // (no stale mounts after crashes, no cross-namespace
-                    // superblock references).  Its lowerdir is the merged
-                    // base maintained by LayerManager, which is never any
-                    // overlay's upperdir/workdir — so the kernel's in-use
-                    // upperdir protection cannot fire on it.
-                    if let Some(ref overlay) = config.stage_overlay {
-                        let dest = match prepare_mount_destination(
-                            &newroot,
-                            &overlay.lowerdir,
-                            Path::new("/build"),
-                        ) {
-                            Ok(dest) => dest,
-                            Err(e) => die(e),
-                        };
-                        let opts = format!(
-                            "lowerdir={},upperdir={},workdir={}",
-                            overlay.lowerdir.display(),
-                            overlay.upperdir.display(),
-                            overlay.workdir.display(),
-                        );
-                        if let Err(e) = mount(
-                            Some("overlay"),
-                            &dest,
-                            Some("overlay"),
-                            MsFlags::empty(),
-                            Some(opts.as_str()),
-                        ) {
-                            die(format!("stage overlay mount on {}: {e}", dest.display()));
-                        }
-                    } else if let Err(e) = bind(&config.src_dir, Path::new("/build"), false) {
+                    // Build and output directories (read-write). /build is a
+                    // plain bind mount of the stage's real working tree —
+                    // overlayfs is deliberately not used for /build: it
+                    // rejects directory renames near lower-layer dirs with
+                    // EXDEV (breaking cargo and any build script that renames
+                    // directories), and the redirect_dir feature that lifts
+                    // the restriction is unavailable inside user namespaces.
+                    if let Err(e) = bind(&config.src_dir, Path::new("/build"), false) {
                         die(e);
                     }
                     if let Err(e) = bind(&config.output_dir, Path::new("/output"), false) {

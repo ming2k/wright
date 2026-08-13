@@ -165,35 +165,6 @@ pub(crate) fn effective_manifest_isolation(
     Ok(weakest.unwrap_or(global_default))
 }
 
-/// Resolve the weakest isolation level across one canonical stage and its
-/// pre/post hooks.  The forge uses this to pick the layering mode for the
-/// whole stage: namespace-isolated stages run on a sandbox-mounted overlay,
-/// while a stage whose weakest hook runs unisolated falls back to a real
-/// populated working tree for every hook.
-pub(super) fn effective_stage_isolation(
-    manifest: &PlanManifest,
-    build_phase: Option<&str>,
-    stage_name: &str,
-    executors: &ExecutorRegistry,
-    global_default: IsolationLevel,
-) -> Result<IsolationLevel> {
-    let mut weakest = None;
-    for effective_name in stage_with_hooks(stage_name) {
-        let Some(stage) = manifest_stage(manifest, build_phase, &effective_name) else {
-            continue;
-        };
-        let executor = executor_for_stage(&effective_name, stage, executors)?;
-        let level = executor::resolve_isolation(
-            &effective_name,
-            stage.isolation.as_deref(),
-            executor,
-            global_default,
-        )?;
-        weakest = Some(weakest.map_or(level, |current: IsolationLevel| current.min(level)));
-    }
-    Ok(weakest.unwrap_or(global_default))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

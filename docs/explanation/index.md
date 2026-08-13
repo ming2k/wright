@@ -13,5 +13,5 @@ Discussions that explain why things work the way they do.
 - [Dependency DAG](dependency-dag.md) — How Wright uses two separate DAGs for build ordering and runtime installation ordering
 - [Delivery Recovery](delivery-recovery.md)
 - [Isolation Model](isolation-model.md)
-- [OverlayFS Layers and the Merged Base](overlayfs-layers.md) — How OverlayFS is used in the build pipeline and isolation sandbox, and why the merged base cannot race
+- [Stage Layers, the Merged Base, and OverlayFS](overlayfs-layers.md) — How stage deltas are layered without mounting anything, and where OverlayFS is still used (the sandbox root)
 - [Filesystem Hierarchy Standard](filesystem-hierarchy-standard.md)
