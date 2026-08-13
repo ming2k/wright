@@ -74,7 +74,7 @@ wright upgrade all
 ```bash
 wright remove nginx
 wright remove --cascade nginx
-wright list --orphans
+wright list --filter orphan
 wright resolve nginx --tree --rdeps
 wright list --long
 wright files nginx

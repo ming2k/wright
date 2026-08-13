@@ -163,31 +163,26 @@ echo "glibc 2.40" | wright provide
 
 ### `wright list`
 
-List deployed plans and parts. By default parts are grouped under the plan
-that produced them, showing the relationship behind the plan/output targets
-accepted by commands like `wright remove` and `wright files`. Use `--plans`
-or `--parts` for a flat one-per-line list of a single namespace.
+List deployed targets, plans, and parts. By default parts are listed as canonical target identifiers (`plan:output`, e.g. `optics:flux`). Use `--plan-only` or `--part-only` to project output to a single namespace. Use `-f`/`--filter` to apply resource access graph (RAG) query filters (e.g. `leaf`, `orphan`, `provided`).
 
 ```bash
 wright list
 wright list -l
-wright list --plans
-wright list --parts
-wright list --roots
-wright list --orphans
-wright list --provided
+wright list --plan-only
+wright list --part-only
+wright list --filter leaf
+wright list --filter orphan
+wright list --filter provided
 wright list --json
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-l`, `--long` | Show origin, version, release, and architecture |
-| `--plans` | List only plans (one per line), without their parts |
-| `--parts` | List only parts (one per line), without plan grouping |
-| `--roots` | Show only top-level (root) parts with no deployed dependents |
-| `-o`, `--orphans` | Show orphan parts (auto-deployed deps no longer needed) |
-| `--provided` | Show provided (externally provided) parts |
-| `--json` | Emit a machine-readable JSON array of part records (plan records with `--plans`) |
+| `--plan-only` | Output only plan names (one per line) |
+| `--part-only` | Output only bare part names (one per line) |
+| `-f`, `--filter <EXPR>` | Filter nodes by resource access graph query (e.g. `leaf`, `orphan`, `provided`) |
+| `--json` | Emit a machine-readable JSON array of records |
 | `--root <PATH>` | Query this target root instead of `/` |
 
 ### `wright files <TARGET>`

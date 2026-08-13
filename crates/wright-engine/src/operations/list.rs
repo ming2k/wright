@@ -1,29 +1,38 @@
 use crate::error::Result;
 use wright_state::database::{InstalledDb, Origin, PartWithPlan};
 
-#[allow(clippy::too_many_arguments)]
 pub async fn execute_list(
     db: &InstalledDb,
     long: bool,
-    roots: bool,
-    provided: bool,
-    orphans: bool,
+    filter: Option<&str>,
     json: bool,
-    plans: bool,
-    parts_only: bool,
+    plan_only: bool,
+    part_only: bool,
 ) -> Result<()> {
-    let parts = if provided {
+    let filter_str = filter.unwrap_or("").trim().to_lowercase();
+    let parts = if filter_str == "provided" {
         db.get_provided_parts().await?
-    } else if orphans {
+    } else if filter_str == "orphan" || filter_str == "orphans" {
         db.get_orphan_parts().await?
-    } else if roots {
+    } else if filter_str == "leaf" || filter_str == "roots" || filter_str == "root" {
         db.get_root_parts().await?
     } else {
-        db.list_parts().await?
+        let all = db.list_parts().await?;
+        if filter_str.is_empty() {
+            all
+        } else {
+            all.into_iter()
+                .filter(|p| {
+                    p.name.to_lowercase().contains(&filter_str)
+                        || p.plan_name.to_lowercase().contains(&filter_str)
+                        || format!("{}:{}", p.plan_name, p.name).to_lowercase().contains(&filter_str)
+                })
+                .collect()
+        }
     };
 
     if json {
-        if plans {
+        if plan_only {
             let out: Vec<serde_json::Value> = unique_plans(&parts)
                 .iter()
                 .map(|plan| {
@@ -42,6 +51,7 @@ pub async fn execute_list(
             .iter()
             .map(|part| {
                 serde_json::json!({
+                    "target": format!("{}:{}", part.plan_name, part.name),
                     "name": part.name.as_str(),
                     "version": part.version.as_str(),
                     "release": part.release,
@@ -56,8 +66,8 @@ pub async fn execute_list(
     }
 
     if parts.is_empty() {
-        if !provided && !roots && !orphans {
-            if plans {
+        if filter.is_none() {
+            if plan_only {
                 println!("no plans deployed");
             } else {
                 println!("no parts deployed");
@@ -66,12 +76,12 @@ pub async fn execute_list(
         return Ok(());
     }
 
-    let lines = if plans {
+    let lines = if plan_only {
         format_plans(&unique_plans(&parts), long)
-    } else if parts_only {
+    } else if part_only {
         format_parts(&parts, long)
     } else {
-        format_grouped(&parts, long)
+        format_targets(&parts, long)
     };
     for line in lines {
         println!("{}", line);
@@ -118,33 +128,32 @@ fn ver_rel_arch(version: &str, release: i64, arch: &str) -> String {
     }
 }
 
-/// Default view: plans with their parts indented beneath them, mirroring
-/// the plan/output targets accepted by commands like `remove` and `files`.
-fn format_grouped(parts: &[PartWithPlan], long: bool) -> Vec<String> {
-    let mut lines = Vec::new();
-    for plan in unique_plans(parts) {
-        lines.push(plan.name.to_string());
-        for part in parts.iter().filter(|part| part.plan_name == plan.name) {
+/// Default view: canonical target identifiers (plan:output, e.g. optics:flux).
+fn format_targets(parts: &[PartWithPlan], long: bool) -> Vec<String> {
+    parts
+        .iter()
+        .map(|part| {
+            let target = format!("{}:{}", part.plan_name, part.name);
             if !long {
-                lines.push(format!("  {}", part.name));
-            } else if part.origin == Origin::External {
+                return target;
+            }
+            if part.origin == Origin::External {
                 let ver = if part.version.is_empty() {
                     "-"
                 } else {
                     &part.version
                 };
-                lines.push(format!("  {:<12} {:<24} {}", "external", part.name, ver));
+                format!("{:<12} {:<24} {}", "external", target, ver)
             } else {
-                lines.push(format!(
-                    "  {:<12} {:<24} {:<20}",
+                format!(
+                    "{:<12} {:<24} {:<20}",
                     part.origin,
-                    part.name,
+                    target,
                     ver_rel_arch(&part.version, part.release, &part.arch)
-                ));
+                )
             }
-        }
-    }
-    lines
+        })
+        .collect()
 }
 
 /// Flat plan names, one per line (pipe-friendly).
@@ -226,32 +235,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grouped_view_lists_each_plan_with_its_parts() {
+    async fn default_target_view_lists_canonical_targets() {
         let db = test_db().await;
         add_plan(&db, "llvm", "20.1.0", &["clang", "lld"]).await;
         add_plan(&db, "zlib", "1.3.1", &["zlib"]).await;
 
         let parts = db.list_parts().await.unwrap();
-        let lines = format_grouped(&parts, false);
-        assert_eq!(lines, ["llvm", "  clang", "  lld", "zlib", "  zlib"]);
+        let lines = format_targets(&parts, false);
+        assert_eq!(lines, ["llvm:clang", "llvm:lld", "zlib:zlib"]);
     }
 
     #[tokio::test]
-    async fn grouped_long_view_adds_origin_and_version_per_part() {
+    async fn target_long_view_adds_origin_and_version_per_target() {
         let db = test_db().await;
         add_plan(&db, "zlib", "1.3.1", &["zlib"]).await;
 
         let parts = db.list_parts().await.unwrap();
-        let lines = format_grouped(&parts, true);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "zlib");
-        assert!(lines[1].starts_with("  manual"));
-        assert!(lines[1].contains("zlib"));
-        assert!(lines[1].contains("1.3.1-1-x86_64"));
+        let lines = format_targets(&parts, true);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("manual"));
+        assert!(lines[0].contains("zlib:zlib"));
+        assert!(lines[0].contains("1.3.1-1-x86_64"));
     }
 
     #[tokio::test]
-    async fn plans_view_lists_each_plan_once() {
+    async fn plan_only_view_lists_each_plan_once() {
         let db = test_db().await;
         add_plan(&db, "llvm", "20.1.0", &["clang", "lld"]).await;
         add_plan(&db, "zlib", "1.3.1", &["zlib"]).await;
@@ -266,7 +274,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parts_view_keeps_flat_one_per_line_output() {
+    async fn part_only_view_keeps_flat_one_per_line_output() {
         let db = test_db().await;
         add_plan(&db, "llvm", "20.1.0", &["clang", "lld"]).await;
         add_plan(&db, "zlib", "1.3.1", &["zlib"]).await;
@@ -286,17 +294,17 @@ mod tests {
         add_plan(&db, "llvm", "20.1.0", &["clang", "lld"]).await;
 
         for json in [false, true] {
-            for (plans, parts_only) in [(false, false), (true, false), (false, true)] {
-                execute_list(&db, false, false, false, false, json, plans, parts_only)
+            for (plan_only, part_only) in [(false, false), (true, false), (false, true)] {
+                execute_list(&db, false, None, json, plan_only, part_only)
                     .await
                     .unwrap();
-                execute_list(&db, true, false, false, false, json, plans, parts_only)
+                execute_list(&db, true, None, json, plan_only, part_only)
                     .await
                     .unwrap();
             }
         }
-        for (roots, provided, orphans) in [(true, false, false), (false, true, true)] {
-            execute_list(&db, true, roots, provided, orphans, false, false, false)
+        for filter in ["leaf", "provided", "orphan", "llvm"] {
+            execute_list(&db, true, Some(filter), false, false, false)
                 .await
                 .unwrap();
         }
@@ -305,10 +313,11 @@ mod tests {
     #[tokio::test]
     async fn execute_list_on_empty_database_is_quiet() {
         let db = test_db().await;
-        for (plans, parts_only) in [(false, false), (true, false), (false, true)] {
-            execute_list(&db, false, false, false, false, false, plans, parts_only)
+        for (plan_only, part_only) in [(false, false), (true, false), (false, true)] {
+            execute_list(&db, false, None, false, plan_only, part_only)
                 .await
                 .unwrap();
         }
     }
 }
+
