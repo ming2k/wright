@@ -58,9 +58,9 @@ pub async fn execute_list(
     if parts.is_empty() {
         if !provided && !roots && !orphans {
             if plans {
-                println!("no plans installed");
+                println!("no plans deployed");
             } else {
-                println!("no parts installed");
+                println!("no parts deployed");
             }
         }
         return Ok(());
