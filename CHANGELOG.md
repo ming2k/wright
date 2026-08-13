@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.5.3] - 2026-08-14
+
 ### Added
 - **Every install/upgrade run now closes with a per-step timing report, on failure as well as success.** A unified `util::timing` facility times each workflow step (`resolve`, `prepare`, `forge`, `seal`, `deploy`) via RAII guards, so a step that fails or is cancelled still has its duration recorded and is shown with a `(failed)` marker; the report lists each step's total (aggregated as `×N` across dependency batches) plus the run's wall-clock total. It renders as a Cargo-style `Timing` block on the terminal and as a structured `workflow.timing` event in the daily log file. All previous ad-hoc timing was consolidated into this single facility: the per-stage `elapsed_secs` fields on `stage.completed`/`build.completed` events, the `=== Duration ===` footers in per-stage build logs, and the per-phase debug timings in the deploy/upgrade paths are gone (per-pipeline timing can be reintroduced later on top of the new registry).
 
