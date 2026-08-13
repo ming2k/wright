@@ -151,9 +151,7 @@ impl Foundry {
                     if let Some(ref r#ref) = git.r#ref {
                         hasher.update(variables::process_uri(r#ref, manifest).as_bytes());
                     }
-                    if let Some(depth) = git.depth {
-                        hasher.update(depth.to_le_bytes());
-                    }
+                    hasher.update([git.git_metadata as u8]);
                     if let Some(ref ext) = git.extract_to {
                         hasher.update(ext.as_bytes());
                     }
@@ -377,7 +375,6 @@ impl Foundry {
         })?;
 
         let plan_name = &manifest.metadata.name;
-        let forge_t0 = std::time::Instant::now();
         info!(
             verb = "Building",
             event = "build.started",
@@ -389,11 +386,9 @@ impl Foundry {
             info!(event = "build.failed", plan_name = %plan_name, error = %e, "Forge failed");
             return Err(e);
         }
-        let forge_elapsed = forge_t0.elapsed().as_secs_f64();
         info!(
             event = "build.completed",
             plan_name = %plan_name,
-            elapsed_secs = forge_elapsed,
             "build completed"
         );
 

@@ -12,7 +12,7 @@ when work is skipped or repeated.
 | Location | Purpose | Typical contents | Lifecycle |
 |----------|---------|------------------|-----------|
 | `forge_dir` (default `/var/tmp/wright/workshop`) | Live working directory for a build | `work/`, `staging/`, `outputs/`, `logs/` | Scratch/workspace; may be deleted and recreated freely |
-| `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, bare git repos | Persistent cache across builds |
+| `source_dir` (default `/var/lib/wright/sources`) | Reusable source input cache | Downloaded tarballs, zip files, git source snapshots | Persistent cache across builds |
 
 ### How the two layers relate
 
@@ -110,7 +110,6 @@ Each file contains:
 ```
 === Stage: compile ===
 === Exit code: 0 ===
-=== Duration: 42.3s ===
 === Working dir: /var/tmp/wright/workshop/zlib-1.3.1/work ===
 
 --- script ---
@@ -162,8 +161,7 @@ across builds:
 <source_dir>/
 ├── zlib-zlib-1.3.1.tar.gz     # <part_name>-<dependency_basename>
 ├── gcc-gcc-14.2.0.tar.xz
-└── git/
-  └── linux            # bare git repos
+└── linux-6.9.8-1a2b3c4d.tar.zst   # git source snapshot: <repo>-<ref>-<url-hash>
 ```
 
 The filename is prefixed with the part name to avoid collisions between

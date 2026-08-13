@@ -9,8 +9,6 @@ mod verify;
 
 use crate::error::{Result, WrightError};
 use std::path::PathBuf;
-use std::time::Duration;
-use tracing::debug;
 use wright_part::archive::PartInfo;
 use wright_state::database::{InstalledDb, Origin};
 
@@ -142,16 +140,6 @@ pub(super) async fn guard_plan_reparent(
         partinfo.name,
         partinfo.plan.name,
     )))
-}
-
-pub(super) fn log_debug_timing(operation: &str, part_name: &str, phase: &str, elapsed: Duration) {
-    debug!(
-        "{} {}: {} completed in {:.3}s",
-        operation,
-        part_name,
-        phase,
-        elapsed.as_secs_f64()
-    );
 }
 
 pub mod dag;

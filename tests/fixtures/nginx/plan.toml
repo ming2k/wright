@@ -78,7 +78,6 @@ install -Dm644 conf/nginx.conf ${STAGING_DIR}/etc/nginx/nginx.conf
 [[output]]
 name = "nginx"
 conflicts = ["apache"]
-provides = ["http-server"]
 runtime_deps = ["openssl", "pcre2 >= 10.42", "zlib >= 1.2"]
 backup = [
     "/etc/nginx/nginx.conf",

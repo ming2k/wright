@@ -154,7 +154,6 @@ fn parse_output_section(
                     let relations = Relations {
                         replaces: catchall.replaces.clone(),
                         conflicts: catchall.conflicts.clone(),
-                        provides: catchall.provides.clone(),
                     };
                     let deploy_scripts = catchall.hooks.as_ref().map(|h| DeployScripts {
                         pre_install: h.pre_install.clone(),
@@ -522,7 +521,6 @@ make DESTDIR=${STAGING_DIR} install
 
 [[output]]
 conflicts = ["apache"]
-provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf", "/etc/nginx/mime.types"]
 
 [output.hooks]
@@ -535,7 +533,6 @@ pre_remove = "systemctl stop nginx 2>/dev/null || true"
         assert_eq!(manifest.metadata.url.as_deref(), Some("https://nginx.org"));
         assert!(manifest.runtime_deps.is_empty());
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
-        assert_eq!(manifest.relations.provides, vec!["http-server"]);
         assert_eq!(manifest.sources.entries.len(), 2);
         assert!(!manifest.options.static_);
         assert!(manifest.pipeline.contains_key("check"));
@@ -979,12 +976,10 @@ arch = "x86_64"
 [[output]]
 replaces = ["old-nginx"]
 conflicts = ["apache"]
-provides = ["http-server"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.relations.replaces, vec!["old-nginx"]);
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
-        assert_eq!(manifest.relations.provides, vec!["http-server"]);
     }
 
     #[test]

@@ -103,6 +103,25 @@ Rules:
 
 Sources use TOML's array-of-tables syntax with a mandatory `type` field.
 
+### Choose a Source Type
+
+Prefer source types in this order:
+
+1. **`http` archives.** Release tarballs — or host-generated archives, which
+   GitHub and GitLab provide for every tag and commit — are verified against
+   `sha256` and bounded to a single snapshot in the source cache.
+2. **`git` with a tag or branch.** Shallow, one snapshot per pinned ref.
+3. **`git` with a full commit hash.** Fetched shallow when the server
+   allows fetching by hash, otherwise via a one-off full mirror.
+
+A `git` source is cached as a tree snapshot tarball: the checked-out tree
+without git metadata (ADR-0038). If the build runs git commands in the
+source tree — `git submodule update --init`, `git describe` — set
+`git_metadata = true` on the source; it is then cloned into `${WORKDIR}`
+and bypasses the source cache. See
+[Plan Manifest Reference](../reference/plan-manifest.md) for the field
+tables.
+
 ### Download a Remote Archive
 
 ```toml
@@ -119,10 +138,9 @@ sha256 = "a51897b1e37e9e73e70d28b9b12c9a31779116c15a1115e3f3dd65291e26bd83"
 type = "git"
 url = "https://github.com/example/repo.git"
 ref = "v1.2.3"
-depth = 1
 ```
 
-You can use variable substitution in `ref` (e.g. `ref = "v${VERSION}"`) to tie the checkout tag to the plan version.
+The checkout is shallow; the fetched tree lands in the source cache as a snapshot tarball. You can use variable substitution in `ref` (e.g. `ref = "v${VERSION}"`) to tie the checkout tag to the plan version.
 
 ### Include Local Files
 
@@ -311,7 +329,6 @@ name = "nginx"
 
 [[output]]
 conflicts = ["apache"]
-provides = ["http-server"]
 backup = ["/etc/nginx/nginx.conf"]
 
 [output.hooks]
@@ -379,7 +396,6 @@ Relations are **per-output**, not per-plan. In multi-output mode, each sub-part 
 
 - **`conflicts`** — Mutual exclusion. Wright refuses to install this part while a conflicting part is present (or vice versa). Use when two parts provide overlapping functionality and cannot coexist (e.g. `nginx` and `apache` both binding port 80). Conflicts are **bidirectional**.
 
-- **`provides`** — **Deprecated.** Still parsed for plan-source compatibility but no longer recognized at runtime. Virtual aliasing has been retired in favour of the advisory runtime model: depend on a concrete `plan:output`, and use `replaces` to handle renames or splits. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 
 #### Backup Files
 

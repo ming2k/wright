@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::error::{Result, WrightError};
@@ -13,7 +12,7 @@ use wright_state::database::{
     Dependency, FileType, HistoryAction, InstalledDb, NewPart, SessionContext,
 };
 
-use super::{ensure_plan_registered, log_debug_timing, self_replace_relations};
+use super::{ensure_plan_registered, self_replace_relations};
 
 pub async fn upgrade_part(
     db: &InstalledDb,
@@ -23,25 +22,15 @@ pub async fn upgrade_part(
     run_hooks: bool,
     session: SessionContext,
 ) -> Result<()> {
-    let overall_start = Instant::now();
-
     let staging_dir = root_dir.join("var/lib/wright/staging");
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
     let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
-    let mut phase_start = Instant::now();
 
     // Blocking call to extract_part, but it's mainly I/O.
     // We could wrap it in spawn_blocking if it's too slow.
     let (partinfo, part_hash) = archive::extract_part(part_path, temp_dir.path())?;
-
-    log_debug_timing(
-        "upgrade",
-        &partinfo.name,
-        "archive extraction",
-        phase_start.elapsed(),
-    );
 
     let installed_part = db.get_part(&partinfo.name).await?.ok_or_else(|| {
         WrightError::UpgradeError(format!(
@@ -108,14 +97,7 @@ pub async fn upgrade_part(
     }
 
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
-    phase_start = Instant::now();
     let new_entries = collect_file_entries(temp_dir.path(), &partinfo)?;
-    log_debug_timing(
-        "upgrade",
-        &partinfo.name,
-        "file scan and metadata collection",
-        phase_start.elapsed(),
-    );
 
     let incoming_ver_rel = if partinfo.plan.version.is_empty() {
         partinfo.plan.release.to_string()
@@ -134,7 +116,6 @@ pub async fn upgrade_part(
         new_entries.len(),
     );
 
-    phase_start = Instant::now();
     let file_paths: Vec<&str> = new_entries
         .iter()
         .filter(|e| e.file_type == FileType::File)
@@ -159,12 +140,6 @@ pub async fn upgrade_part(
             divert_paths.insert(entry.path.clone());
         }
     }
-    log_debug_timing(
-        "upgrade",
-        &partinfo.name,
-        "owner conflict check",
-        phase_start.elapsed(),
-    );
 
     let mut tx = TransactionContext::begin(
         db,
@@ -236,20 +211,12 @@ pub async fn upgrade_part(
 
     if run_hooks && let Some(ref script) = hooks.pre_install {
         log_running_hook(&partinfo.name, "pre_install");
-        phase_start = Instant::now();
         if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await {
             warn!(event = "upgrade.hook_failed", plan_name = partinfo.name, hook = "pre_install", error = %e, "Hook failed");
         }
-        log_debug_timing(
-            "upgrade",
-            &partinfo.name,
-            "pre_install hook",
-            phase_start.elapsed(),
-        );
     }
 
     let config_paths = collect_config_paths(&new_entries);
-    phase_start = Instant::now();
 
     // copy_entries_to_root should probably also be async.
     // For now I'll assume it's still sync and wraps internal tokio calls if needed,
@@ -273,12 +240,6 @@ pub async fn upgrade_part(
         }
     };
 
-    log_debug_timing(
-        "upgrade",
-        &partinfo.name,
-        "filesystem copy into target root",
-        phase_start.elapsed(),
-    );
     for path in preserved_configs {
         info!(event = "upgrade.config_preserved", path, "Preserved config");
     }
@@ -333,7 +294,6 @@ pub async fn upgrade_part(
         }
     }
 
-    phase_start = Instant::now();
     let plan_source = archive::read_plan_source(temp_dir.path());
     let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref()).await?;
     db.update_part(NewPart {
@@ -388,28 +348,14 @@ pub async fn upgrade_part(
     self_replace_relations(db, updated_part.id, &partinfo).await?;
 
     tx.commit().await?;
-    log_debug_timing(
-        "upgrade",
-        &partinfo.name,
-        "database update",
-        phase_start.elapsed(),
-    );
 
     if run_hooks && let Some(ref script) = hooks.post_upgrade {
         log_running_hook(&partinfo.name, "post_upgrade");
-        phase_start = Instant::now();
         if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "post_upgrade").await {
             warn!(event = "upgrade.hook_failed", plan_name = partinfo.name, hook = "post_upgrade", error = %e, "Hook failed");
         }
-        log_debug_timing(
-            "upgrade",
-            &partinfo.name,
-            "post_upgrade hook",
-            phase_start.elapsed(),
-        );
     }
 
-    log_debug_timing("upgrade", &partinfo.name, "total", overall_start.elapsed());
     let installed_ver_rel = if installed_plan.version.is_empty() {
         format!("{}", installed_plan.release)
     } else {

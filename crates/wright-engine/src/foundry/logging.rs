@@ -32,19 +32,6 @@ pub fn part_filename(part_path: &Path) -> String {
         .unwrap_or_else(|| part_path.to_string_lossy().into_owned())
 }
 
-/// Compact human-readable duration: `<1s` → `Nms`, `<60s` → `1.2s`,
-/// otherwise `1m23s`.
-pub fn format_duration(secs: f64) -> String {
-    if secs < 1.0 {
-        format!("{}ms", (secs * 1000.0).round() as u64)
-    } else if secs < 60.0 {
-        format!("{:.1}s", secs)
-    } else {
-        let total = secs.round() as u64;
-        format!("{}m{:02}s", total / 60, total % 60)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,13 +44,6 @@ mod tests {
         assert_eq!(stage_verb("staging"), "Staging");
         assert_eq!(stage_verb("fetch"), "Fetching");
         assert_eq!(stage_verb("custom"), "Running");
-    }
-
-    #[test]
-    fn format_duration_chooses_unit() {
-        assert_eq!(format_duration(0.05), "50ms");
-        assert_eq!(format_duration(4.6), "4.6s");
-        assert_eq!(format_duration(124.0), "2m04s");
     }
 
     #[test]

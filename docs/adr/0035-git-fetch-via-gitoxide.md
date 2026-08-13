@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted (cache layout and extract mechanics superseded by
+[ADR-0038](0038-git-source-snapshots.md))
 
 ## Context
 

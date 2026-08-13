@@ -47,9 +47,6 @@ pub struct SubFabricateOutput {
     /// Parts that cannot coexist with this output.
     #[serde(default)]
     pub conflicts: Vec<String>,
-    /// Virtual part names this output satisfies.
-    #[serde(default)]
-    pub provides: Vec<String>,
     #[serde(default)]
     pub include: Option<Vec<String>>,
     #[serde(default)]
@@ -124,8 +121,6 @@ pub struct Relations {
     pub replaces: Vec<String>,
     #[serde(default)]
     pub conflicts: Vec<String>,
-    #[serde(default)]
-    pub provides: Vec<String>,
 }
 
 /// A single source entry in the `[[sources]]` array-of-tables format.
@@ -153,10 +148,12 @@ pub struct HttpSource {
 pub struct GitSource {
     pub url: String,
     pub r#ref: Option<String>,
-    /// Git fetch depth. Defaults to 1 (shallow clone). Set to `null` or omit
-    /// to use full clone when needed (e.g. for arbitrary commit hashes).
-    #[serde(default = "default_git_depth")]
-    pub depth: Option<u32>,
+    /// Keep git metadata in the work directory: clone a real repository
+    /// instead of extracting a snapshot of the pinned tree. Required by
+    /// builds that run git commands in the source tree (e.g. `git submodule
+    /// update --init`). Such sources bypass the source cache entirely.
+    #[serde(default)]
+    pub git_metadata: bool,
     /// Optional subdirectory under WORKDIR to extract/copy this source into.
     pub extract_to: Option<String>,
 }
@@ -174,10 +171,6 @@ pub struct LocalSource {
 
 fn default_skip() -> String {
     "SKIP".to_string()
-}
-
-fn default_git_depth() -> Option<u32> {
-    Some(1)
 }
 
 #[derive(Debug, Clone)]

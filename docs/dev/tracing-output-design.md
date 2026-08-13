@@ -57,6 +57,12 @@ Every event with a `verb` field renders as a Cargo-style action line:
      Sealing linux-lts
    Deploying 1 part
     Finished install in 2m45s
+      Timing install step timing:
+                resolve     0.2s
+                forge      2m31s
+                seal        0.9s
+                deploy     12.9s
+                total      2m45s
 ```
 
 - **12-character right-aligned verb column**, single space, then the target.
@@ -80,7 +86,18 @@ one of the terminal Rule C verbs `Finished` / `Failed` / `Aborted`.
 | Delivery | `Deploying`, `Upgrading`, `Installing`, `Removing`, `Providing`, `Cascading` |
 | Diagnostic commands | `Checking`, `Linting`, `Verifying` |
 | Cache / skip | `Skipping`, `Cached` |
-| Workflow end | `Finished` (success), `Failed` (error), `Aborted` (user interrupt) |
+| Workflow end | `Finished` (success), `Failed` (error), `Aborted` (user interrupt), `Timing` (step-duration report) |
+
+The `Timing` verb is the one exception to Rule A's initiation semantics: it
+heads the end-of-run step-timing report, a single event whose message is a
+multi-line block — one row per workflow step (`resolve`, `prepare`, `forge`,
+`seal`, `deploy`, aggregated as `name ×N` across batches) plus a wall-clock
+`total` row, continuation lines aligned under the message column. The report
+closes every run, success or failure; on failure it renders at WARN so it is
+always shown, the header reads `install step timing (failed):`, and the step
+that was in flight when the error hit keeps its elapsed time with a `(failed)`
+marker. Timings are recorded by RAII guards (`util::timing::WorkflowTiming`),
+so an early `?` return can never lose a step's duration.
 
 When a stage name is custom (user-defined in a plan), `forge::logging::stage_verb`
 maps the stage to its gerund; unknown stages fall back to `Running`.

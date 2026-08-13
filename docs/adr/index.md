@@ -39,3 +39,4 @@
 | [ADR-0035](0035-git-fetch-via-gitoxide.md) | Git source fetching via gitoxide (gix) | Accepted |
 | [ADR-0036](0036-merged-base-stage-overlays.md) | Merged-base stage layers with sandbox-mounted stage overlays | Superseded by ADR-0037 |
 | [ADR-0037](0037-real-directory-stage-trees.md) | Real directory stage working trees instead of stage overlays | Accepted |
+| [ADR-0038](0038-git-source-snapshots.md) | Git sources cached as tree snapshots | Accepted |

@@ -5,7 +5,6 @@ mod helper;
 pub mod native;
 mod process;
 #[doc(hidden)]
-pub mod reaper;
 mod resources;
 
 use std::io::{Read, Seek, Write};

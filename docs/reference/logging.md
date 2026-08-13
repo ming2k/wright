@@ -69,5 +69,6 @@ and spinner) read them; the file layer logs them all.
 | `event` | string | Stable event slug for aggregation (e.g. `forge.started`) |
 | `error` | display | Underlying error — folded into the body on WARN/ERROR levels |
 | `bytes_done` / `bytes_total` | u64 | Recorded on spans to swap the row to a download bar |
-| `elapsed_secs` | f64 | Duration of completed stage |
+| `elapsed_secs` | f64 | Total workflow duration on the terminal `install.completed` event |
+| `total_secs` / `steps` / `ok` | f64 / string / bool | Wall-clock total, compact per-step list, and outcome on the end-of-run `workflow.timing` event |
 | `trace_id` | string | Per-command UUID, propagated across the call tree |

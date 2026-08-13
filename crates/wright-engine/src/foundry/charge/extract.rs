@@ -9,7 +9,7 @@ use wright_part::compression as compress;
 use wright_part::store::sanitize_cache_filename;
 use wright_plan::manifest::{PlanManifest, Source};
 
-use super::git::{git_cache_dir_name, local_fetch_ref, uses_private_fetch_ref};
+use super::git::git_snapshot_filename;
 use super::{Charge, source_cache_filename};
 
 impl Charge {
@@ -27,146 +27,51 @@ impl Charge {
             match source {
                 Source::Git(git) => {
                     let processed_url = variables::process_uri(&git.url, manifest);
-                    let git_dir_name = git_cache_dir_name(&processed_url);
-                    let cache_path = self.cache_dir.join("git").join(&git_dir_name);
                     let git_ref = git
                         .r#ref
                         .as_deref()
                         .map(|r| variables::process_uri(r, manifest))
                         .unwrap_or_else(|| "HEAD".to_string());
+                    let snapshot_name = git_snapshot_filename(&processed_url, &git_ref);
                     let final_dest = if let Some(ref sub) = git.extract_to {
                         let sub = variables::process_uri(sub, manifest);
-                        let p = dest_dir.join(&sub);
-                        tokio::fs::create_dir_all(&p)
-                            .await
-                            .map_err(WrightError::IoError)?;
-                        p
+                        dest_dir.join(&sub)
                     } else {
-                        dest_dir.join(&git_dir_name)
+                        dest_dir.join(snapshot_name.trim_end_matches(".tar.zst"))
                     };
-                    debug!(
-                        "Extracting Git repo to {} (ref: {})...",
-                        final_dest.display(),
-                        git_ref
-                    );
-                    let cache_str = cache_path.to_str().ok_or_else(|| {
-                        WrightError::ForgeError(format!(
-                            "git cache path contains non-UTF-8 characters: {}",
-                            cache_path.display()
-                        ))
-                    })?;
-                    let uses_private_ref = uses_private_fetch_ref(&git_ref, git.depth);
-                    let checkout_ref = if uses_private_ref {
-                        local_fetch_ref(&git_ref)
+                    tokio::fs::create_dir_all(&final_dest)
+                        .await
+                        .map_err(WrightError::IoError)?;
+                    if git.git_metadata {
+                        // The build expects a working git repository (e.g. for
+                        // `git submodule update --init`): clone from upstream
+                        // straight into the work directory.
+                        self.clone_git_source(
+                            &processed_url,
+                            &git_ref,
+                            &final_dest,
+                            &manifest.metadata.name,
+                        )?;
                     } else {
-                        git_ref.clone()
-                    };
-                    let repo = gix::init(&final_dest).map_err(|e| {
-                        WrightError::ForgeError(format!("local git init failed: {e}"))
-                    })?;
-                    // An anonymous remote is enough: the fetch is driven by
-                    // explicit refspecs, nothing is persisted in the repo config.
-                    let remote = repo.remote_at(cache_str).map_err(|e| {
-                        WrightError::ForgeError(format!("local git remote setup failed: {e}"))
-                    })?;
-                    let refspec_strings: Vec<String> = if uses_private_ref {
-                        vec![format!("+{checkout_ref}:{checkout_ref}")]
-                    } else {
-                        // Mirror heads and tags so that branch names, tag names,
-                        // and arbitrary commit hashes all resolve locally.
-                        vec![
-                            "+refs/heads/*:refs/heads/*".to_string(),
-                            "+refs/tags/*:refs/tags/*".to_string(),
-                        ]
-                    };
-                    let extra_refspecs: Vec<gix::refspec::RefSpec> = refspec_strings
-                        .iter()
-                        .map(|spec| {
-                            gix::refspec::parse(
-                                spec.as_str().into(),
-                                gix::refspec::parse::Operation::Fetch,
-                            )
-                            .map(|r| r.to_owned())
-                        })
-                        .collect::<std::result::Result<Vec<_>, _>>()
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("invalid git refspec: {e}"))
+                        debug!(
+                            "Extracting git snapshot {} to {} ...",
+                            snapshot_name,
+                            final_dest.display()
+                        );
+                        let label = progress::source_label(&processed_url);
+                        let _span = crate::cli_span!(
+                            "Extracting",
+                            "{} ({})",
+                            label,
+                            manifest.metadata.name
+                        );
+                        let snapshot = self.cache_dir.join(&snapshot_name);
+                        compress::extract_part(&snapshot, &final_dest).map_err(|e| {
+                            WrightError::ForgeError(format!(
+                                "failed to extract git snapshot {snapshot_name}: {e}"
+                            ))
                         })?;
-                    let interrupt = std::sync::atomic::AtomicBool::new(false);
-                    let connection =
-                        remote.connect(gix::remote::Direction::Fetch).map_err(|e| {
-                            WrightError::ForgeError(format!("local git connect failed: {e}"))
-                        })?;
-                    let prepare = connection
-                        .prepare_fetch(
-                            &mut gix::progress::Discard,
-                            gix::remote::ref_map::Options {
-                                extra_refspecs,
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("local git fetch failed: {e}"))
-                        })?;
-                    prepare
-                        .receive(&mut gix::progress::Discard, &interrupt)
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("local git fetch failed: {e}"))
-                        })?;
-                    let id = repo.rev_parse_single(checkout_ref.as_str()).map_err(|e| {
-                        WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
-                    })?;
-                    let tree = id
-                        .object()
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("failed to load git object: {e}"))
-                        })?
-                        .peel_to_tree()
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("failed to load git tree: {e}"))
-                        })?;
-                    let mut index = repo.index_from_tree(&tree.id).map_err(|e| {
-                        WrightError::ForgeError(format!("failed to build git index: {e}"))
-                    })?;
-                    let mut checkout_options = repo
-                        .checkout_options(
-                            gix::worktree::stack::state::attributes::Source::IdMapping,
-                        )
-                        .map_err(|e| {
-                            WrightError::ForgeError(format!("git checkout setup failed: {e}"))
-                        })?;
-                    checkout_options.destination_is_initially_empty = true;
-                    gix::worktree::state::checkout(
-                        &mut index,
-                        &final_dest,
-                        repo.objects.clone().into_arc().map_err(|e| {
-                            WrightError::ForgeError(format!("git object store error: {e}"))
-                        })?,
-                        &gix::progress::Discard,
-                        &gix::progress::Discard,
-                        &interrupt,
-                        checkout_options,
-                    )
-                    .map_err(|e| WrightError::ForgeError(format!("git checkout failed: {e}")))?;
-                    index.write(Default::default()).map_err(|e| {
-                        WrightError::ForgeError(format!("failed to write git index: {e}"))
-                    })?;
-                    let head_target = match repo.try_find_reference(&checkout_ref) {
-                        Ok(Some(reference)) => {
-                            gix::refs::Target::Symbolic(reference.name().to_owned())
-                        }
-                        Ok(None) | Err(_) => gix::refs::Target::Object(id.detach()),
-                    };
-                    repo.edit_reference(gix::refs::transaction::RefEdit {
-                        change: gix::refs::transaction::Change::Update {
-                            log: gix::refs::transaction::LogChange::default(),
-                            expected: gix::refs::transaction::PreviousValue::Any,
-                            new: head_target,
-                        },
-                        name: "HEAD".try_into().expect("HEAD is a valid reference name"),
-                        deref: false,
-                    })
-                    .map_err(|e| WrightError::ForgeError(format!("failed to update HEAD: {e}")))?;
+                    }
                 }
                 Source::Http(http) => {
                     let processed_url = variables::process_uri(&http.url, manifest);
@@ -301,12 +206,19 @@ mod tests {
     use wright_plan::manifest::PlanManifest;
 
     #[tokio::test]
-    async fn extract_checks_out_private_shallow_git_ref() {
+    async fn extract_extracts_git_snapshot_without_metadata() {
         let root = tempfile::tempdir().unwrap();
         let upstream = root.path().join("upstream");
         let mut upstream_repo = gix::init(&upstream).unwrap();
-
-        std::fs::write(upstream.join("payload.txt"), "from tagged source\n").unwrap();
+        {
+            let mut config = upstream_repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::User::NAME, "Wright Test")
+                .unwrap();
+            config
+                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
+                .unwrap();
+        }
         let blob_id = upstream_repo
             .write_blob(b"from tagged source\n")
             .unwrap()
@@ -319,15 +231,6 @@ mod tests {
             }],
         };
         let tree_id = upstream_repo.write_object(&tree).unwrap().detach();
-        {
-            let mut config = upstream_repo.config_snapshot_mut();
-            config
-                .set_value(&gix::config::tree::User::NAME, "Wright Test")
-                .unwrap();
-            config
-                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
-                .unwrap();
-        }
         let commit_id = upstream_repo
             .commit("HEAD", "initial", tree_id, Vec::<gix::ObjectId>::new())
             .unwrap();
@@ -340,41 +243,18 @@ mod tests {
             )
             .unwrap();
 
-        let source_url = "https://example.invalid/upstream.git";
+        let source_url = upstream.to_str().unwrap();
         let sources_dir = root.path().join("sources");
-        let cache_path = sources_dir.join("git").join(git_cache_dir_name(source_url));
-        std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
-        let cache_repo = gix::init_bare(&cache_path).unwrap();
-        let remote = cache_repo.remote_at(upstream.to_str().unwrap()).unwrap();
-        let refspec = gix::refspec::parse(
-            "+refs/tags/*:refs/tags/*".into(),
-            gix::refspec::parse::Operation::Fetch,
-        )
-        .unwrap()
-        .to_owned();
-        let interrupt = std::sync::atomic::AtomicBool::new(false);
-        let connection = remote.connect(gix::remote::Direction::Fetch).unwrap();
-        connection
-            .prepare_fetch(
-                &mut gix::progress::Discard,
-                gix::remote::ref_map::Options {
-                    extra_refspecs: vec![refspec],
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .receive(&mut gix::progress::Discard, &interrupt)
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = sources_dir.clone();
+        let charge = Charge::new(&config, Arc::new(Semaphore::new(1)));
+
+        // Populate the source cache the way the fetch stage does.
+        let snapshot = sources_dir.join(git_snapshot_filename(source_url, "v1.0.0"));
+        charge
+            .fetch_git_snapshot(source_url, Some("v1.0.0"), &snapshot, "test")
             .unwrap();
-        let tag_id = cache_repo.rev_parse_single("refs/tags/v1.0.0").unwrap();
-        cache_repo
-            .reference(
-                "refs/wright/v1.0.0",
-                tag_id,
-                gix::refs::transaction::PreviousValue::Any,
-                "test private shallow ref",
-            )
-            .unwrap();
-        drop(cache_repo);
 
         let manifest = PlanManifest::parse(&format!(
             r#"
@@ -394,9 +274,6 @@ extract_to = "source"
         ))
         .unwrap();
 
-        let mut config = GlobalConfig::default();
-        config.general.source_dir = sources_dir;
-        let charge = Charge::new(&config, Arc::new(Semaphore::new(1)));
         let dest_dir = root.path().join("work");
         std::fs::create_dir_all(&dest_dir).unwrap();
 
@@ -405,6 +282,128 @@ extract_to = "source"
         assert_eq!(
             std::fs::read_to_string(dest_dir.join("source/payload.txt")).unwrap(),
             "from tagged source\n"
+        );
+        assert!(
+            !dest_dir.join("source/.git").exists(),
+            "snapshot extraction must not leave git metadata"
+        );
+    }
+
+    /// Point git config discovery at empty sources and unset identity-related
+    /// environment variables, restoring the previous environment on drop.
+    struct IdentityEnvGuard {
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl IdentityEnvGuard {
+        fn scrubbed() -> Self {
+            const VARS: [&str; 5] = [
+                "GIT_CONFIG_GLOBAL",
+                "GIT_CONFIG_NOSYSTEM",
+                "GIT_COMMITTER_NAME",
+                "GIT_COMMITTER_EMAIL",
+                "GIT_COMMITTER_DATE",
+            ];
+            let saved: Vec<_> = VARS
+                .into_iter()
+                .map(|var| (var, std::env::var_os(var)))
+                .collect();
+            // SAFETY: test-only; no other test in this crate reads these
+            // variables to resolve a git identity (they set repo-local
+            // identities instead), so transient mutation is harmless.
+            unsafe {
+                std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+                std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+                std::env::remove_var("GIT_COMMITTER_NAME");
+                std::env::remove_var("GIT_COMMITTER_EMAIL");
+                std::env::remove_var("GIT_COMMITTER_DATE");
+            }
+            Self { saved }
+        }
+    }
+
+    impl Drop for IdentityEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: see IdentityEnvGuard::scrubbed.
+            unsafe {
+                for (var, value) in &self.saved {
+                    match value {
+                        Some(value) => std::env::set_var(var, value),
+                        None => std::env::remove_var(var),
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn extract_git_metadata_clone_without_configured_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let upstream = root.path().join("upstream");
+        let mut upstream_repo = gix::init(&upstream).unwrap();
+        {
+            let mut config = upstream_repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::User::NAME, "Wright Test")
+                .unwrap();
+            config
+                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
+                .unwrap();
+        }
+        let blob_id = upstream_repo.write_blob(b"payload\n").unwrap().detach();
+        let tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: "payload.txt".into(),
+                oid: blob_id,
+            }],
+        };
+        let tree_id = upstream_repo.write_object(&tree).unwrap().detach();
+        let commit_id = upstream_repo
+            .commit("HEAD", "initial", tree_id, Vec::<gix::ObjectId>::new())
+            .unwrap();
+        let commit_hex = commit_id.to_string();
+
+        // A commit-hash ref forces the non-shallow mirror clone, which updates
+        // refs/heads/* in the non-bare work repo and therefore writes reflogs.
+        let manifest = PlanManifest::parse(&format!(
+            r#"
+name = "git-mirror-source"
+version = "1.0.0"
+release = 1
+description = "test git mirror source"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "git"
+url = "{upstream}"
+ref = "{commit_hex}"
+git_metadata = true
+extract_to = "source"
+"#,
+            upstream = upstream.display()
+        ))
+        .unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        let charge = Charge::new(&config, Arc::new(Semaphore::new(1)));
+        let dest_dir = root.path().join("work");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Under sudo there is no configured committer identity; the reflog
+        // writes triggered by the mirror fetch must not abort the clone.
+        let _env = IdentityEnvGuard::scrubbed();
+        charge.extract(&manifest, &dest_dir).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest_dir.join("source/payload.txt")).unwrap(),
+            "payload\n"
+        );
+        assert!(
+            dest_dir.join("source/.git").exists(),
+            "git_metadata sources keep their repository"
         );
     }
 

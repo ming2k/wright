@@ -38,7 +38,7 @@
 | `delivery_transactions` | **Temporary WAL**: user-invoked delivery command status (cleaned after commit/rollback) |
 | `transaction_ops` | **Temporary WAL**: per-DAG-node deploy actions (cleaned after commit/rollback) |
 
-Build deps, link deps, and `provides` are deliberately not persisted. See
+Build deps and link deps are deliberately not persisted. See
 [Dependency DAG](../explanation/dependency-dag.md) and
 [ADR-0016](../adr/0016-advisory-runtime-dependencies.md).
 

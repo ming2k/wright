@@ -524,24 +524,6 @@ pub async fn check_dependencies_structured(db: &InstalledDb) -> Result<Vec<Broke
     Ok(broken)
 }
 
-/// Legacy formatted variant kept for callers that just want a string list.
-pub async fn check_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
-    let broken = check_dependencies_structured(db).await?;
-    Ok(broken
-        .into_iter()
-        .map(|b| {
-            let vc = b
-                .version_constraint
-                .map(|c| format!(" ({})", c))
-                .unwrap_or_default();
-            format!(
-                "Part '{}' has a broken dependency: '{}'{} not found",
-                b.part, b.required_name, vc
-            )
-        })
-        .collect())
-}
-
 async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
     // Dependency edges are keyed by the deployed part (output) name; split
     // legacy qualified references ("plan:output") the same way.

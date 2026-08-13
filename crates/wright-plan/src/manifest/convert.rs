@@ -54,7 +54,6 @@ impl SubFabricateOutput {
             relations: Relations {
                 replaces: self.replaces.clone(),
                 conflicts: self.conflicts.clone(),
-                provides: self.provides.clone(),
             },
             sources: Sources::default(),
             options: PlanBuildOptions::default(),
@@ -188,28 +187,23 @@ script = "make DESTDIR=${STAGING_DIR} install"
 [[output]]
 name = "nginx"
 conflicts = ["apache"]
-provides = ["http-server"]
 
 [[output]]
 name = "nginx-doc"
 description = "Nginx documentation files"
-provides = ["nginx-documentation"]
 include = ["/usr/share/doc/**"]
 "#;
         let manifest = PlanManifest::parse(toml_str).unwrap();
         assert_eq!(manifest.relations.conflicts, vec!["apache"]);
-        assert_eq!(manifest.relations.provides, vec!["http-server"]);
 
         match manifest.outputs {
             Some(OutputConfig::Multi(ref parts)) => {
                 let (_, main) = parts.iter().find(|(n, _)| n == "nginx").unwrap();
                 let main_manifest = main.to_manifest("nginx", &manifest);
                 assert_eq!(main_manifest.relations.conflicts, vec!["apache"]);
-                assert_eq!(main_manifest.relations.provides, vec!["http-server"]);
 
                 let (_, doc) = parts.iter().find(|(n, _)| n == "nginx-doc").unwrap();
                 let doc_manifest = doc.to_manifest("nginx-doc", &manifest);
-                assert_eq!(doc_manifest.relations.provides, vec!["nginx-documentation"]);
                 assert!(doc_manifest.relations.conflicts.is_empty());
             }
             _ => panic!("expected Multi output config"),

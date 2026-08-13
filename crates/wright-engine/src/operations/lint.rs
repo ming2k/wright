@@ -1,6 +1,7 @@
 use crate::config::GlobalConfig;
 use crate::error::Result;
 use crate::resolve;
+use crate::util::timing::WorkflowTiming;
 
 pub async fn execute_lint(
     targets: Vec<String>,
@@ -16,7 +17,7 @@ pub async fn execute_lint(
 }
 
 async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
-    let t0 = std::time::Instant::now();
+    let t0 = WorkflowTiming::new();
     let db_path = config.general.db_path.clone();
     let db = wright_state::database::InstalledDb::open(&db_path)
         .await
@@ -41,7 +42,7 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
         crate::cli_action!(
             "Finished",
             "verify in {}: {} parts clean",
-            crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
+            crate::util::timing::format_duration(t0.elapsed()),
             parts.len(),
         );
         return Ok(());
@@ -63,7 +64,7 @@ async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
 }
 
 async fn execute_plan_lint(targets: Vec<String>, config: &GlobalConfig) -> Result<()> {
-    let t0 = std::time::Instant::now();
+    let t0 = WorkflowTiming::new();
     crate::cli_action!("Linting", "{} plan(s)", targets.len());
     if let Err(e) = resolve::lint_dependency_graph_for_targets(config, &targets) {
         return Err(crate::error::WrightError::ValidationError(format!(
@@ -74,7 +75,7 @@ async fn execute_plan_lint(targets: Vec<String>, config: &GlobalConfig) -> Resul
     crate::cli_action!(
         "Finished",
         "lint in {}: {} plans clean",
-        crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
+        crate::util::timing::format_duration(t0.elapsed()),
         targets.len(),
     );
     Ok(())

@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use std::time::Instant;
-
 use tracing::{debug, info, trace, warn};
 
 use crate::error::{Result, WrightError};
@@ -17,9 +15,7 @@ use wright_state::database::{
     Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
 };
 
-use super::{
-    ensure_plan_registered, guard_plan_reparent, log_debug_timing, remove_part, upgrade_part,
-};
+use super::{ensure_plan_registered, guard_plan_reparent, remove_part, upgrade_part};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanRevision {
@@ -491,22 +487,13 @@ pub async fn deploy_part_with_origin(
     run_hooks: bool,
     session: SessionContext,
 ) -> Result<()> {
-    let overall_start = Instant::now();
-
     let staging_dir = root_dir.join("var/lib/wright/staging");
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
     let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
         .map_err(|e| WrightError::DeployError(format!("failed to create temp dir: {}", e)))?;
 
-    let mut phase_start = Instant::now();
     let (partinfo, part_hash) = archive::extract_part(part_path, temp_dir.path())?;
-    log_debug_timing(
-        "deploy",
-        &partinfo.name,
-        "archive extraction",
-        phase_start.elapsed(),
-    );
 
     for replaced_name in &partinfo.replaces {
         if db.get_part(replaced_name).await?.is_some() {
@@ -556,14 +543,7 @@ pub async fn deploy_part_with_origin(
     }
 
     let (hooks_content, hooks) = read_hooks(temp_dir.path());
-    phase_start = Instant::now();
     let file_entries = collect_file_entries(temp_dir.path(), &partinfo)?;
-    log_debug_timing(
-        "deploy",
-        &partinfo.name,
-        "file scan and metadata collection",
-        phase_start.elapsed(),
-    );
 
     info!(
         event = "deploy.installing",
@@ -572,7 +552,6 @@ pub async fn deploy_part_with_origin(
         "Installing package"
     );
 
-    phase_start = Instant::now();
     let file_paths: Vec<&str> = file_entries
         .iter()
         .filter(|e| e.file_type == FileType::File)
@@ -598,12 +577,6 @@ pub async fn deploy_part_with_origin(
             divert_paths.insert(entry.path.clone());
         }
     }
-    log_debug_timing(
-        "deploy",
-        &partinfo.name,
-        "owner conflict check",
-        phase_start.elapsed(),
-    );
 
     let mut tx = TransactionContext::begin(
         db,
@@ -622,19 +595,11 @@ pub async fn deploy_part_with_origin(
 
     if run_hooks && let Some(ref script) = hooks.pre_install {
         log_running_hook(&partinfo.name, "pre_install");
-        phase_start = Instant::now();
         if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "pre_install").await {
             warn!(event = "deploy.hook_failed", plan_name = partinfo.name, hook = "pre_install", error = %e, "Hook failed");
         }
-        log_debug_timing(
-            "install",
-            &partinfo.name,
-            "pre_install hook",
-            phase_start.elapsed(),
-        );
     }
 
-    phase_start = Instant::now();
     match copy_entries_to_root(
         &file_entries,
         temp_dir.path(),
@@ -653,14 +618,7 @@ pub async fn deploy_part_with_origin(
             return Err(e);
         }
     }
-    log_debug_timing(
-        "deploy",
-        &partinfo.name,
-        "filesystem copy into target root",
-        phase_start.elapsed(),
-    );
 
-    phase_start = Instant::now();
     let plan_source = archive::read_plan_source(temp_dir.path());
     let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref()).await?;
     let part_id = db
@@ -716,25 +674,12 @@ pub async fn deploy_part_with_origin(
     }
 
     tx.commit().await?;
-    log_debug_timing(
-        "deploy",
-        &partinfo.name,
-        "database update",
-        phase_start.elapsed(),
-    );
 
     if run_hooks && let Some(ref script) = hooks.post_install {
         log_running_hook(&partinfo.name, "post_install");
-        phase_start = Instant::now();
         if let Err(e) = run_deploy_script(script, root_dir, &partinfo.name, "post_install").await {
             warn!(event = "deploy.hook_failed", plan_name = partinfo.name, hook = "post_install", error = %e, "Hook failed");
         }
-        log_debug_timing(
-            "install",
-            &partinfo.name,
-            "post_install hook",
-            phase_start.elapsed(),
-        );
     }
 
     let ver_rel = if partinfo.plan.version.is_empty() {
@@ -748,8 +693,6 @@ pub async fn deploy_part_with_origin(
         version = ver_rel,
         "Installed"
     );
-
-    log_debug_timing("install", &partinfo.name, "total", overall_start.elapsed());
 
     Ok(())
 }

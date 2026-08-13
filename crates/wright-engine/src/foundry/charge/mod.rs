@@ -128,9 +128,7 @@ impl Charge {
                     if let Some(ref r#ref) = git.r#ref {
                         hasher.update(r#ref.as_bytes());
                     }
-                    if let Some(depth) = git.depth {
-                        hasher.update(depth.to_le_bytes());
-                    }
+                    hasher.update([git.git_metadata as u8]);
                     if let Some(ref ext) = git.extract_to {
                         hasher.update(ext.as_bytes());
                     }

@@ -53,7 +53,7 @@ max_concurrent_downloads = 8
 | `folios_dir` | `/var/lib/wright/folios` | folio manifest directory (peer of `plans_dir`) |
 | `parts_dir` | `/var/lib/wright/parts` | local archive store |
 | `store_dir` | `/var/lib/wright/store` | content-addressed storage for delivery recovery |
-| `source_dir` | `/var/lib/wright/sources` | source and git cache |
+| `source_dir` | `/var/lib/wright/sources` | source cache (downloads and git source snapshots) |
 | `db_path` | `/var/lib/wright/wright.db` | system state database |
 | `logs_dir` | `/var/log/wright` | reserved operation log directory |
 | `executors_dir` | `/etc/wright/executors` | custom executor directory |
@@ -81,7 +81,7 @@ max_concurrent_downloads = 8
 - `parts_dir` is the local stock of built archives.
 - `db_path` tracks the authoritative state of installed parts, files, dependencies, and build sessions.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
-- `source_dir` caches downloaded sources and git repositories.
+- `source_dir` caches downloaded sources and git source snapshots.
 - `forge_dir` has a default and normally does not need to be declared.
   Override it only when build workspaces must live on another filesystem or
   volume.

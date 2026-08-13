@@ -19,6 +19,7 @@ use wright_state::database::{InstalledDb, SessionContext};
 
 use super::fingerprints::PlanFingerprints;
 use super::request::InstallRequest;
+use crate::util::timing::{WorkflowTiming, format_duration};
 
 /// Resolve the archive that a just-sealed (or CAS-restored) plan build must
 /// have produced.
@@ -59,8 +60,47 @@ fn cas_entry_matches_manifest(cas_path: &Path, manifest: &PlanManifest, part_nam
     }
 }
 
+/// Run the install workflow and close every run — success or failure —
+/// with the terminal `Finished` line plus the per-step timing report. The
+/// step in flight when an error hit keeps its elapsed time and is marked
+/// failed in the report; see [`WorkflowTiming`].
 pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
-    let workflow_t0 = std::time::Instant::now();
+    let quiet = request.quiet;
+    let timing = WorkflowTiming::new();
+    let result = execute_install_inner(request, &timing).await;
+
+    // Rule C: terminal completion line for the entire install workflow.
+    // Warnings shown earlier are non-fatal by definition once we reach this
+    // line, so surface their count to close the loop for the user.
+    if result.is_ok() && !quiet {
+        let elapsed = timing.elapsed();
+        let warnings = crate::util::logging::cli_warn_count();
+        let summary = if warnings == 0 {
+            format!("install in {}", format_duration(elapsed))
+        } else {
+            format!(
+                "install in {} ({} {})",
+                format_duration(elapsed),
+                warnings,
+                if warnings == 1 { "warning" } else { "warnings" }
+            )
+        };
+        info!(
+            verb = "Finished",
+            event = "install.completed",
+            elapsed_secs = elapsed.as_secs_f64(),
+            warnings,
+            "{}",
+            summary,
+        );
+    }
+
+    timing.log_report("install", result.is_ok(), quiet);
+
+    result
+}
+
+async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTiming) -> Result<()> {
     let InstallRequest {
         targets,
         deps,
@@ -85,6 +125,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             "no targets specified (pass plan names, folio names prefixed with '@', or paths as arguments or via stdin)".into()
         ));
     }
+
+    let resolve_step = timing.step("resolve");
 
     let folio_dirs = [config.general.folios_dir.clone()];
     let expansion = folio::expand(&targets, &folio_dirs)?;
@@ -132,6 +174,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 targets.join(", ")
             );
         }
+        resolve_step.success();
         return Ok(());
     }
 
@@ -212,6 +255,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         }
     }
 
+    resolve_step.success();
+
     if dry_run {
         // Preview only: the plan above is fully resolved, so report the exact
         // batches and stop before any forge/seal/deploy side effects.
@@ -226,6 +271,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         }
         return Ok(());
     }
+
+    let prepare_step = timing.step("prepare");
 
     let plan = Arc::new(plan);
     let foundry = Arc::new(Foundry::new(config.clone()));
@@ -300,6 +347,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
         }
     }
 
+    prepare_step.success();
+
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         bail_if_cancelled!();
 
@@ -323,6 +372,8 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 bases.join(", ")
             );
         }
+
+        let forge_step = timing.step("forge");
 
         // Collect which bases in this batch have CAS hits.
         // When --force is set, skip CAS lookup entirely so that forge
@@ -476,8 +527,11 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             }
         }
 
+        forge_step.success();
+
         // 2. Seal distinct non-bootstrap bases in this batch.
         //    Skip bases with CAS hits (they don't need re-sealing).
+        let seal_step = timing.step("seal");
         let mut bases_in_batch: Vec<String> = Vec::new();
         let mut bases_seen: HashSet<String> = HashSet::new();
         for task in batch {
@@ -544,10 +598,13 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
             }
         }
 
+        seal_step.success();
+
         // 3. Deploy this wave.
         //    Also restore CAS parts for bases with CAS hits (they weren't
         //    freshly sealed above, so we need to make them available in
         //    parts_dir for the deploy step).
+        let deploy_step = timing.step("deploy");
         bail_if_cancelled!();
         if !bases_in_batch.is_empty() || !cas_hit_bases.is_empty() {
             // Restore CAS parts for bases with CAS hits.
@@ -732,40 +789,12 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
                 }
             }
         }
+        deploy_step.success();
     }
 
     // ── Mark delivery as COMPLETED ──────────────────────────────────
     wright_state::delivery::complete_delivery(&db, tx_id).await?;
     let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
-
-    // Rule C: terminal completion line for the entire install workflow.
-    // Warnings shown earlier are non-fatal by definition once we reach this
-    // line, so surface their count to close the loop for the user.
-    if !quiet {
-        let elapsed = workflow_t0.elapsed().as_secs_f64();
-        let warnings = crate::util::logging::cli_warn_count();
-        let summary = if warnings == 0 {
-            format!(
-                "install in {}",
-                crate::foundry::logging::format_duration(elapsed)
-            )
-        } else {
-            format!(
-                "install in {} ({} {})",
-                crate::foundry::logging::format_duration(elapsed),
-                warnings,
-                if warnings == 1 { "warning" } else { "warnings" }
-            )
-        };
-        info!(
-            verb = "Finished",
-            event = "install.completed",
-            elapsed_secs = elapsed,
-            warnings,
-            "{}",
-            summary,
-        );
-    }
 
     Ok(())
 }

@@ -6,7 +6,7 @@ use crate::foundry::variables;
 use crate::util::{checksum, download, progress};
 use wright_plan::manifest::{PlanManifest, Source};
 
-use super::git::git_cache_dir_name;
+use super::git::git_snapshot_filename;
 use super::{Charge, source_cache_filename};
 
 impl Charge {
@@ -38,32 +38,34 @@ impl Charge {
     ) -> Result<()> {
         match source {
             Source::Git(git) => {
-                let _permit = self
-                    .network_pool
-                    .acquire()
-                    .await
-                    .expect("network semaphore closed");
                 let processed_url = variables::process_uri(&git.url, manifest);
-                let git_dir_name = git_cache_dir_name(&processed_url);
-                let git_cache_dir = self.cache_dir.join("git");
-                if tokio::fs::metadata(&git_cache_dir).await.is_err() {
-                    tokio::fs::create_dir_all(&git_cache_dir).await.ok();
-                }
-                let dest = git_cache_dir.join(&git_dir_name);
                 let processed_ref = git
                     .r#ref
                     .as_deref()
-                    .map(|r| variables::process_uri(r, manifest));
-                let commit_id = self
-                    .fetch_git_repo(
+                    .map(|r| variables::process_uri(r, manifest))
+                    .unwrap_or_else(|| "HEAD".to_string());
+                if git.git_metadata {
+                    // Cloned straight into the work directory at extract
+                    // time; nothing is cached.
+                    return Ok(());
+                }
+                let filename = git_snapshot_filename(&processed_url, &processed_ref);
+                let dest = self.cache_dir.join(&filename);
+                if tokio::fs::metadata(&dest).await.is_err() {
+                    let _permit = self
+                        .network_pool
+                        .acquire()
+                        .await
+                        .expect("network semaphore closed");
+                    if let Some(commit_id) = self.fetch_git_snapshot(
                         &processed_url,
-                        processed_ref.as_deref(),
-                        git.depth,
+                        Some(processed_ref.as_str()),
                         &dest,
                         &manifest.metadata.name,
-                    )
-                    .await?;
-                debug!("Fetched Git commit: {} for {}", commit_id, git_dir_name);
+                    )? {
+                        debug!("Fetched Git commit: {} for {}", commit_id, filename);
+                    }
+                }
             }
             Source::Http(http) => {
                 let processed_url = variables::process_uri(&http.url, manifest);

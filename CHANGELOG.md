@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **Every install/upgrade run now closes with a per-step timing report, on failure as well as success.** A unified `util::timing` facility times each workflow step (`resolve`, `prepare`, `forge`, `seal`, `deploy`) via RAII guards, so a step that fails or is cancelled still has its duration recorded and is shown with a `(failed)` marker; the report lists each step's total (aggregated as `×N` across dependency batches) plus the run's wall-clock total. It renders as a Cargo-style `Timing` block on the terminal and as a structured `workflow.timing` event in the daily log file. All previous ad-hoc timing was consolidated into this single facility: the per-stage `elapsed_secs` fields on `stage.completed`/`build.completed` events, the `=== Duration ===` footers in per-stage build logs, and the per-phase debug timings in the deploy/upgrade paths are gone (per-pipeline timing can be reintroduced later on top of the new registry).
+
+### Changed
+- **Git sources are fetched minimally and cached as tree snapshot tarballs; the bare-repository cache under `sources/git/` is gone (ADR-0038).** Tag/branch pins are shallow-fetched as before, but the fetched tree is now published to `source_dir` as `<repo>-<ref>-<urlhash8>.tar.zst` (no git metadata, zeroed mtimes, atomic rename), and extraction is a plain untar — the extract stage no longer runs git operations for cached sources. Commit-hash pins first attempt a shallow fetch by hash and fall back to a full mirror fetch on servers that refuse it; the mirror is discarded after snapshotting, so the cache no longer grows with upstream history. The shallow-cache staleness detection and re-clone retry machinery is gone: snapshot fetches always start from a fresh temporary clone. Plans whose builds run git commands in the source tree (e.g. `git submodule update --init`) must declare `git_metadata = true` on the source; such sources are cloned into the work directory and bypass the cache.
+- **The `depth` field is removed from `git` sources.** Named refs are always fetched shallow (a single commit) and commit-hash refs fall back to a full mirror, so the knob had no observable effect on snapshot contents; builds that need repository history should pin a full commit hash with `git_metadata = true`.
+- **The deprecated `provides` field is removed from `[[output]]` entries.** It was parsed but never read at runtime; no plan in the wild declared it. Depend on a concrete `plan:output` and use `replaces` for renames, as before (ADR-0016).
+
+### Fixed
+- **Git source extraction no longer fails under sudo with "Failed to update references to their new position to match their remote locations".** A mirror fetch into a non-bare work repository updates `refs/heads/*`, which triggers reflog writes; reflog entries require a committer identity, and there is none in a stripped sudo environment, so the ref transaction aborted after the pack had already been received. Repository-producing clones now fall back to a generic committer when none is configured, and fetch errors report their full source chain instead of the opaque top-level message. Snapshot-cached sources avoid the entire class: their extract path performs no git operations.
+
 ## [5.5.2] - 2026-08-13
 
 ### Fixed

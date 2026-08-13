@@ -48,11 +48,9 @@ impl<'a> Forge<'a> {
         }
 
         if let Some(stage) = self.get_stage(stage_name) {
-            let t0 = std::time::Instant::now();
             self.run_stage_in_target(stage_name, stage, cpu_count)
                 .await?;
-            let elapsed = t0.elapsed().as_secs_f64();
-            info!(event = "stage.completed", plan_name = %plan_name, stage_name = %stage_name, elapsed_secs = elapsed, "Stage completed");
+            info!(event = "stage.completed", plan_name = %plan_name, stage_name = %stage_name, "Stage completed");
         } else {
             debug!(event = "stage.undefined", plan_name = %plan_name, stage_name = %stage_name, "Skipping undefined stage");
         }
@@ -101,14 +99,11 @@ impl<'a> Forge<'a> {
         }
 
         if let Some(stage) = self.get_stage(stage_name) {
-            let t0 = std::time::Instant::now();
             self.run_stage_legacy(stage_name, stage, cpu_count).await?;
-            let elapsed = t0.elapsed().as_secs_f64();
             info!(
                 event = "stage.completed",
                 plan_name = %self.manifest.metadata.name,
                 stage_name = %stage_name,
-                elapsed_secs = elapsed,
                 "stage completed"
             );
         } else {
@@ -160,7 +155,6 @@ impl<'a> Forge<'a> {
 
         let stdout_log_path_owned = PathBuf::from(&log_path);
 
-        let t0 = std::time::Instant::now();
         let _stage_span = crate::cli_span!(
             logging::stage_verb(stage_name),
             "{}",
@@ -240,17 +234,13 @@ impl<'a> Forge<'a> {
             );
         }
 
-        let elapsed = t0.elapsed().as_secs_f64();
         let exit_code = result.status.code().unwrap_or(-1);
 
         if let Ok(mut log_file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
             use std::io::Write;
             let _ = log_file.write_all(b"\n--- stderr ---\n");
             let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
-            let _ = write!(
-                log_file,
-                "\n=== Exit code: {exit_code} ===\n=== Duration: {elapsed:.1}s ===\n",
-            );
+            let _ = write!(log_file, "\n=== Exit code: {exit_code} ===\n",);
         }
 
         if exit_code != 0 {
@@ -298,7 +288,6 @@ impl<'a> Forge<'a> {
 
         let stdout_log_path_owned = PathBuf::from(&log_path);
 
-        let t0 = std::time::Instant::now();
         let _stage_span = crate::cli_span!(
             logging::stage_verb(stage_name),
             "{}",
@@ -374,17 +363,13 @@ impl<'a> Forge<'a> {
             );
         }
 
-        let elapsed = t0.elapsed().as_secs_f64();
         let exit_code = result.status.code().unwrap_or(-1);
 
         if let Ok(mut log_file) = std::fs::OpenOptions::new().append(true).open(&log_path) {
             use std::io::Write;
             let _ = log_file.write_all(b"\n--- stderr ---\n");
             let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
-            let _ = write!(
-                log_file,
-                "\n=== Exit code: {exit_code} ===\n=== Duration: {elapsed:.1}s ===\n",
-            );
+            let _ = write!(log_file, "\n=== Exit code: {exit_code} ===\n",);
         }
 
         if exit_code != 0 {

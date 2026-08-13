@@ -5,6 +5,7 @@ pub mod logging;
 pub mod output;
 pub mod progress;
 pub mod stdin;
+pub mod timing;
 
 /// Compact a file path for logging by replacing middle segments with `…`
 /// when the path exceeds 45 characters.

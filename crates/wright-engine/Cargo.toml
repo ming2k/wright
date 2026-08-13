@@ -28,6 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10"
 similar = "2"
+tar = "0.4"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1.52.1", features = ["full"] }
@@ -37,6 +38,7 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
+zstd = "0.13"
 wright-model = { path = "../wright-model" }
 wright-part = { path = "../wright-part" }
 wright-plan = { path = "../wright-plan" }

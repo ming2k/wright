@@ -1,8 +1,8 @@
 use std::path::Path;
-use std::time::Instant;
 
 use crate::error::{Result, WrightError};
 use crate::identify::{Identifier, ResolvedTarget};
+use crate::util::timing::WorkflowTiming;
 use wright_state::database::InstalledDb;
 
 /// Implementation of `wright check`.
@@ -19,7 +19,7 @@ pub async fn execute_check(
     check_files: bool,
     json: bool,
 ) -> Result<()> {
-    let t0 = Instant::now();
+    let t0 = WorkflowTiming::new();
 
     // The optional target goes through the universal plan/output
     // identifier: plan-level targets check every deployed output of the
@@ -67,7 +67,7 @@ pub async fn execute_check(
             "Finished",
             "check {} in {}: {} clean",
             mode,
-            crate::foundry::logging::format_duration(t0.elapsed().as_secs_f64()),
+            crate::util::timing::format_duration(t0.elapsed()),
             scope,
         );
         return Ok(());

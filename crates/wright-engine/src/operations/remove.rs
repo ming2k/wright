@@ -89,7 +89,7 @@ pub async fn execute_remove(
         command: command_str,
     };
 
-    let workflow_t0 = std::time::Instant::now();
+    let timing = crate::util::timing::WorkflowTiming::new();
     let mut total_removed = 0usize;
 
     for name in &removal_order {
@@ -190,11 +190,10 @@ pub async fn execute_remove(
     wright_state::delivery::complete_delivery(db, tx_id).await?;
     let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
 
-    let elapsed = workflow_t0.elapsed().as_secs_f64();
     crate::cli_action!(
         "Finished",
         "remove in {}: {} part(s)",
-        crate::foundry::logging::format_duration(elapsed),
+        crate::util::timing::format_duration(timing.elapsed()),
         total_removed,
     );
 

@@ -4623,6 +4623,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "tar",
  "tempfile",
  "thiserror",
  "tokio",
@@ -4636,6 +4637,7 @@ dependencies = [
  "wright-part",
  "wright-plan",
  "wright-state",
+ "zstd",
 ]
 
 [[package]]

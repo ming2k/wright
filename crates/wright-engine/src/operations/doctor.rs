@@ -16,7 +16,7 @@ pub async fn execute_doctor(
     root_dir: &Path,
     config: &GlobalConfig,
 ) -> Result<()> {
-    let t0 = std::time::Instant::now();
+    let t0 = crate::util::timing::WorkflowTiming::new();
     crate::cli_action!("Checking", "system health");
 
     let mut total_issues = super::health::run_standard_checks(
@@ -36,12 +36,11 @@ pub async fn execute_doctor(
     // count that fails doctor.
     check_plan_drift(db, config).await?;
 
-    let elapsed = t0.elapsed().as_secs_f64();
     if total_issues == 0 {
         crate::cli_action!(
             "Finished",
             "doctor in {}: clean",
-            crate::foundry::logging::format_duration(elapsed)
+            crate::util::timing::format_duration(t0.elapsed())
         );
         Ok(())
     } else {

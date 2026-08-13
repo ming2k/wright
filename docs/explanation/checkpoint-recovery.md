@@ -141,8 +141,7 @@ for the system instance) and uses CAS filenames: `[sha256_hash]-[filename]`.
 ~/.cache/wright/sources/
 ├── a51897bf1d2e-nginx-1.25.3.tar.gz
 ├── b3f4a6219c8d-zlib-1.3.1.tar.xz
-└── git/
-    └── linux-a1b2c3d4/
+└── linux-master-1a2b3c4d.tar.zst   # git source snapshot
 ```
 
 This design decouples network downloads from sandbox pipeline:

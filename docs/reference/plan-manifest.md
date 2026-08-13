@@ -93,6 +93,21 @@ Runtime dependencies are declared per-output inside each `[[output]]` entry via 
 
 Array-of-tables with a mandatory `type` field.
 
+Choose the source type in this order of preference:
+
+1. `http` — release tarballs and host-generated archives (GitHub/GitLab
+   provide one for every tag and commit). Checksum-verified via `sha256` and
+   bounded to a single snapshot in the source cache.
+2. `git` with a tag or branch — shallow, one snapshot per pinned ref.
+3. `git` with a full commit hash — fetched shallow when the server allows
+   fetching by hash, otherwise via a one-off full mirror.
+
+Either way, a `git` source is cached as a tree snapshot tarball — the
+checked-out tree without git metadata (ADR-0038). Set `git_metadata = true`
+when the build runs git commands in the source tree (e.g. `git submodule
+update --init`); such sources are cloned into `${WORKDIR}` and bypass the
+source cache.
+
 ### `type = "http"`
 
 | Field | Type | Default | Description |
@@ -108,8 +123,11 @@ Array-of-tables with a mandatory `type` field.
 |-------|------|---------|-------------|
 | `url` | string | required | Git repository URL |
 | `ref` | string | `"HEAD"` | Branch, tag, or commit hash to check out |
-| `depth` | integer | optional | Shallow clone depth. Defaults to `1`. Set to `null` or omit for full clone. Disabled for 40-character commit hashes |
+| `git_metadata` | bool | `false` | Clone a real repository instead of extracting a tree snapshot. Needed by builds that run git commands in the source tree (e.g. `git submodule update --init`). Bypasses the source cache |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to check out into |
+
+Named refs are fetched shallow (a single commit); commit-hash refs fall back
+to a full mirror fetch when the server refuses a shallow fetch by hash.
 
 ### `type = "local"`
 
@@ -223,7 +241,6 @@ metadata as well as split outputs.
 | `backup` | No | Per-output backup files |
 | `replaces` | No | Per-output replacement relations |
 | `conflicts` | No | Per-output conflict relations |
-| `provides` | No | **Deprecated.** Parsed but ignored. Virtual provides are no longer recognized; the field will be removed in a future release. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md). |
 
 **Coverage rules:**
 
@@ -262,7 +279,6 @@ Relations are per-output.
 |----------|----------|
 | `replaces` | On install, silently removes any installed part in this list. One-way. Use for renames/merges. |
 | `conflicts` | Mutual exclusion. Install refused while a conflicting part is present. Bidirectional. |
-| `provides` | **Deprecated.** Parsed but ignored — virtual aliasing is not part of the advisory runtime model. Depend on a concrete `plan:output` and use `replaces` for renames. See [ADR-0016](../adr/0016-advisory-runtime-dependencies.md). |
 
 ### Backup Files
 

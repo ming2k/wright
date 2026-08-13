@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::error::{Result, WrightError};
 use crate::util::progress;
@@ -11,265 +11,380 @@ use wright_part::store::sanitize_cache_filename;
 use super::Charge;
 
 impl Charge {
-    pub(super) async fn fetch_git_repo(
+    /// Fetch `git_ref` of `git_url` into a snapshot tarball at `dest`.
+    ///
+    /// The snapshot holds the checked-out tree of the pinned ref — no git
+    /// metadata. Returns the resolved commit id, or `None` when the snapshot
+    /// is already cached.
+    ///
+    /// Fetching is minimal-effort: a shallow fetch of exactly the requested
+    /// ref. For 40-character commit hashes, servers that refuse shallow
+    /// wants by hash fall back to a full mirror fetch.
+    pub(super) fn fetch_git_snapshot(
         &self,
         git_url: &str,
         git_ref: Option<&str>,
-        depth: Option<u32>,
         dest: &Path,
         scope: &str,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         let actual_ref = git_ref.unwrap_or("HEAD");
-        let effective_depth = effective_git_depth(actual_ref, depth);
-        if depth.is_some() && effective_depth.is_none() && is_commit_hash(actual_ref) {
-            tracing::debug!(
-                "[{}] ref '{}' looks like a commit hash; disabling shallow clone",
+        if dest.exists() {
+            debug!(
+                "[{}] git snapshot already cached: {}",
                 scope,
-                actual_ref
+                dest.display()
             );
+            return Ok(None);
         }
+
         let label = progress::source_label(git_url);
+        // Stage the clone next to the cache so the final rename is atomic.
+        let tmp = tempfile::tempdir_in(&self.cache_dir).map_err(WrightError::IoError)?;
+        let repo = gix::init_bare(tmp.path().join("repo"))
+            .map_err(|e| WrightError::ForgeError(format!("git init failed: {e}")))?;
 
-        let mut retry_stale = false;
-        loop {
-            let is_fresh_clone = tokio::fs::metadata(dest).await.is_err();
-
-            let attempt = self.git_fetch_attempt(
+        let resolve_target = if is_commit_hash(actual_ref) {
+            let local_ref = local_fetch_ref(actual_ref);
+            let shallow = fetch_refs(
+                &repo,
                 git_url,
-                actual_ref,
-                effective_depth,
-                dest,
-                scope,
+                &[format!("+{actual_ref}:{local_ref}")],
+                Some(1),
+                gix::remote::fetch::Tags::None,
                 &label,
-                is_fresh_clone,
-                retry_stale,
+                scope,
             );
-
-            match attempt {
-                GitFetchAttempt::Done(id) => return Ok(id),
-                GitFetchAttempt::StaleCache if !retry_stale => {
-                    // A non-spurious fetch failure against an existing cache
-                    // usually means the shallow cache could not be updated
-                    // incrementally. This is usually NOT an upstream problem
-                    // (a moved side-branch or a shallow-boundary mismatch is
-                    // enough); refreshing the cache resolves it cleanly.
-                    debug!(
-                        "[{}] shallow git cache could not be updated incrementally; \
-                         refreshing cache: {}",
-                        scope,
-                        dest.display()
-                    );
-                    tokio::fs::remove_dir_all(dest).await.map_err(|rm_err| {
-                        WrightError::ForgeError(format!(
-                            "failed to remove stale git cache {}: {rm_err}",
-                            dest.display()
-                        ))
-                    })?;
-                    retry_stale = true;
-                    continue;
-                }
-                GitFetchAttempt::StaleCache => {
-                    return Err(WrightError::ForgeError(format!(
-                        "git fetch failed for {git_url}: refreshing the shallow cache did not \
-                         resolve the issue.\n\
-                         Remove the cache manually and retry:\n    rm -rf {}",
-                        dest.display()
-                    )));
-                }
-                GitFetchAttempt::Failed(err) => return Err(err),
+            if let Err(e) = shallow {
+                debug!(
+                    "[{}] shallow fetch by commit hash failed ({}); falling back to full mirror",
+                    scope, e
+                );
+                fetch_refs(
+                    &repo,
+                    git_url,
+                    &mirror_refspecs(),
+                    None,
+                    gix::remote::fetch::Tags::All,
+                    &label,
+                    scope,
+                )?;
             }
-        }
+            actual_ref.to_string()
+        } else {
+            let local_ref = local_fetch_ref(actual_ref);
+            fetch_refs(
+                &repo,
+                git_url,
+                &[format!("+{actual_ref}:{local_ref}")],
+                Some(1),
+                gix::remote::fetch::Tags::None,
+                &label,
+                scope,
+            )?;
+            local_ref
+        };
+
+        let id = repo
+            .rev_parse_single(resolve_target.as_str())
+            .map_err(|e| {
+                WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
+            })?;
+        let object = id
+            .object()
+            .map_err(|e| WrightError::ForgeError(format!("failed to load git object: {e}")))?;
+        let commit_id = object
+            .clone()
+            .peel_to_commit()
+            .map_err(|e| WrightError::ForgeError(format!("failed to load git commit: {e}")))?
+            .id;
+        let tree = object
+            .peel_to_tree()
+            .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+
+        let snapshot_tmp = tmp.path().join("snapshot");
+        write_tree_snapshot(&repo, tree.id, &snapshot_tmp)?;
+        std::fs::rename(&snapshot_tmp, dest).map_err(WrightError::IoError)?;
+        Ok(Some(commit_id.to_string()))
     }
 
-    fn git_fetch_attempt(
+    /// Clone `git_ref` of `git_url` into `dest` as a real working repository.
+    ///
+    /// Backs sources with `git_metadata = true`: the build runs git commands
+    /// in the source tree (e.g. `git submodule update --init`). Such sources
+    /// bypass the source cache and always fetch from upstream.
+    pub(super) fn clone_git_source(
         &self,
         git_url: &str,
-        actual_ref: &str,
-        effective_depth: Option<u32>,
+        git_ref: &str,
         dest: &Path,
         scope: &str,
-        label: &str,
-        is_fresh_clone: bool,
-        force_fetch: bool,
-    ) -> GitFetchAttempt {
-        let repo = if is_fresh_clone {
-            info!("[{}] Cloning Git repository: {}", scope, git_url);
-            match gix::init_bare(dest) {
-                Ok(r) => r,
-                Err(e) => {
-                    return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                        "git init failed: {e}"
-                    )));
-                }
-            }
+    ) -> Result<()> {
+        let label = progress::source_label(git_url);
+        // Commit hashes cannot be fetched shallow everywhere, so they get a
+        // full mirror; named refs are shallow-fetched into a private ref.
+        let uses_private_ref = !is_commit_hash(git_ref);
+        let checkout_ref = if uses_private_ref {
+            local_fetch_ref(git_ref)
         } else {
-            match gix::open(dest) {
-                Ok(r) => r,
-                Err(e) => {
-                    return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                        "git open failed: {e}"
-                    )));
-                }
-            }
+            git_ref.to_string()
         };
-
-        // Decide what to fetch. For shallow fetches, only request the single ref
-        // we actually need, stored in a private namespace. Mirroring every branch
-        // and tag (`+refs/heads/*` / `+refs/tags/*`) drags unrelated upstream
-        // branches — which active repos routinely rebase or force-push — into the
-        // shallow negotiation, which is the dominant source of spurious
-        // negotiation failures. A full (non-shallow) fetch has no shallow
-        // boundary, so mirroring is safe there and keeps arbitrary commit hashes
-        // resolvable.
-        let shallow = matches!(effective_depth, Some(d) if d > 0);
-        let local_ref = local_fetch_ref(actual_ref);
-        let (refspecs, resolve_target): (Vec<String>, String) = if shallow {
-            (vec![format!("+{actual_ref}:{local_ref}")], local_ref)
-        } else {
+        let mut repo = gix::init(dest)
+            .map_err(|e| WrightError::ForgeError(format!("local git init failed: {e}")))?;
+        // A mirror fetch writes refs/heads/*, which triggers reflog writes in
+        // the non-bare worktree repo. Reflog entries need a committer identity,
+        // and there usually is none configured when running under sudo —
+        // without a fallback the fetch aborts its ref transaction after the
+        // pack was already received.
+        repo.committer_or_set_generic_fallback()
+            .map_err(|e| WrightError::ForgeError(format!("git identity setup failed: {e}")))?;
+        // A mirror fetch writes refs/heads/*, which triggers reflog writes in
+        // the non-bare worktree repo. Reflog entries need a committer identity,
+        // and there usually is none configured when running under sudo —
+        // without a fallback the fetch aborts its ref transaction after the
+        // pack was already received.
+        let (refspecs, tags, depth) = if uses_private_ref {
             (
-                vec![
-                    "+refs/heads/*:refs/heads/*".to_string(),
-                    "+refs/tags/*:refs/tags/*".to_string(),
-                ],
-                actual_ref.to_string(),
+                vec![format!("+{git_ref}:{checkout_ref}")],
+                gix::remote::fetch::Tags::None,
+                Some(1),
             )
-        };
-
-        if !is_fresh_clone
-            && !force_fetch
-            && let Ok(id) = repo.rev_parse_single(resolve_target.as_str())
-        {
-            tracing::debug!(
-                "[{}] git ref '{}' already available locally; skipping fetch",
-                scope,
-                actual_ref
-            );
-            return GitFetchAttempt::Done(id.to_string());
-        }
-
-        // An anonymous remote is sufficient: gix negotiates the fetch purely
-        // from the explicit refspecs passed below, so nothing needs to be
-        // persisted in the repository configuration.
-        let remote = match repo.remote_at(git_url) {
-            Ok(r) => r,
-            Err(e) => {
-                return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                    "git remote setup failed: {e}"
-                )));
-            }
-        };
-        // A shallow fetch wants only the requested ref, so don't pull every tag
-        // (which would re-introduce the broad negotiation we are avoiding). A
-        // full fetch mirrors everything and therefore mirrors all tags as well.
-        let remote = remote.with_fetch_tags(if shallow {
-            gix::remote::fetch::Tags::None
         } else {
-            gix::remote::fetch::Tags::All
-        });
-
-        let extra_refspecs: Vec<gix::refspec::RefSpec> = match refspecs
-            .iter()
-            .map(|spec| {
-                gix::refspec::parse(spec.as_str().into(), gix::refspec::parse::Operation::Fetch)
-                    .map(|r| r.to_owned())
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()
-        {
-            Ok(specs) => specs,
-            Err(e) => {
-                return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                    "invalid git refspec: {e}"
-                )));
-            }
+            // Mirror heads and tags so that branch names, tag names, and
+            // arbitrary commit hashes all resolve locally.
+            (mirror_refspecs(), gix::remote::fetch::Tags::All, None)
         };
+        fetch_refs(&repo, git_url, &refspecs, depth, tags, &label, scope)?;
 
-        let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
-        let mut fetch_progress = FetchProgress::new(git_span.clone());
+        let id = repo.rev_parse_single(checkout_ref.as_str()).map_err(|e| {
+            WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
+        })?;
+        let tree = id
+            .object()
+            .map_err(|e| WrightError::ForgeError(format!("failed to load git object: {e}")))?
+            .peel_to_tree()
+            .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+        let mut index = repo
+            .index_from_tree(&tree.id)
+            .map_err(|e| WrightError::ForgeError(format!("failed to build git index: {e}")))?;
+        let mut checkout_options = repo
+            .checkout_options(gix::worktree::stack::state::attributes::Source::IdMapping)
+            .map_err(|e| WrightError::ForgeError(format!("git checkout setup failed: {e}")))?;
+        checkout_options.destination_is_initially_empty = true;
         let interrupt = AtomicBool::new(false);
-
-        // Connection and handshake failures survive a cache refresh, so they
-        // are terminal right away.
-        let connection = match remote.connect(gix::remote::Direction::Fetch) {
-            Ok(c) => c,
-            Err(e) => {
-                return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                    "git fetch failed: {e}"
-                )));
-            }
+        gix::worktree::state::checkout(
+            &mut index,
+            dest,
+            repo.objects
+                .clone()
+                .into_arc()
+                .map_err(|e| WrightError::ForgeError(format!("git object store error: {e}")))?,
+            &gix::progress::Discard,
+            &gix::progress::Discard,
+            &interrupt,
+            checkout_options,
+        )
+        .map_err(|e| WrightError::ForgeError(format!("git checkout failed: {e}")))?;
+        index
+            .write(Default::default())
+            .map_err(|e| WrightError::ForgeError(format!("failed to write git index: {e}")))?;
+        let head_target = match repo.try_find_reference(&checkout_ref) {
+            Ok(Some(reference)) => gix::refs::Target::Symbolic(reference.name().to_owned()),
+            Ok(None) | Err(_) => gix::refs::Target::Object(id.detach()),
         };
-        let mut prepare = match connection.prepare_fetch(
+        repo.edit_reference(gix::refs::transaction::RefEdit {
+            change: gix::refs::transaction::Change::Update {
+                log: gix::refs::transaction::LogChange::default(),
+                expected: gix::refs::transaction::PreviousValue::Any,
+                new: head_target,
+            },
+            name: "HEAD".try_into().expect("HEAD is a valid reference name"),
+            deref: false,
+        })
+        .map_err(|e| WrightError::ForgeError(format!("failed to update HEAD: {e}")))?;
+        Ok(())
+    }
+}
+
+/// Fetch the given refspecs from `git_url` into `repo`.
+fn fetch_refs(
+    repo: &gix::Repository,
+    git_url: &str,
+    refspec_strings: &[String],
+    depth: Option<u32>,
+    tags: gix::remote::fetch::Tags,
+    label: &str,
+    scope: &str,
+) -> Result<()> {
+    // An anonymous remote is enough: the fetch is driven by explicit
+    // refspecs, nothing is persisted in the repo config.
+    let remote = repo
+        .remote_at(git_url)
+        .map_err(|e| WrightError::ForgeError(format!("git remote setup failed: {e}")))?;
+    let remote = remote.with_fetch_tags(tags);
+    let extra_refspecs: Vec<gix::refspec::RefSpec> = refspec_strings
+        .iter()
+        .map(|spec| {
+            gix::refspec::parse(spec.as_str().into(), gix::refspec::parse::Operation::Fetch)
+                .map(|r| r.to_owned())
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| WrightError::ForgeError(format!("invalid git refspec: {e}")))?;
+
+    let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
+    let mut fetch_progress = FetchProgress::new(git_span.clone());
+    let interrupt = AtomicBool::new(false);
+    let connection = remote
+        .connect(gix::remote::Direction::Fetch)
+        .map_err(|e| WrightError::ForgeError(format!("git fetch failed: {}", error_chain(&e))))?;
+    let mut prepare = connection
+        .prepare_fetch(
             &mut fetch_progress,
             gix::remote::ref_map::Options {
                 extra_refspecs,
                 ..Default::default()
             },
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                return GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                    "git fetch failed: {e}"
-                )));
-            }
-        };
-        if let Some(d) = effective_depth
-            && d > 0
-            && let Some(depth) = NonZeroU32::new(d)
-        {
-            prepare = prepare.with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(depth));
-        }
-        let fetch_result = prepare.receive(&mut fetch_progress, &interrupt);
-        drop(git_span);
-
-        match fetch_result {
-            Ok(_outcome) => {}
-            Err(e) if is_stale_cache_candidate(&e) => {
-                return GitFetchAttempt::StaleCache;
-            }
-            Err(e) => {
-                return GitFetchAttempt::Failed(git_fetch_error(e, git_url, dest));
-            }
-        }
-
-        match repo.rev_parse_single(resolve_target.as_str()) {
-            Ok(id) => GitFetchAttempt::Done(id.to_string()),
-            Err(e) => GitFetchAttempt::Failed(WrightError::ForgeError(format!(
-                "failed to resolve git ref '{actual_ref}': {e}"
-            ))),
-        }
-    }
-}
-
-enum GitFetchAttempt {
-    Done(String),
-    StaleCache,
-    Failed(WrightError),
-}
-
-/// A stale cache is only worth refreshing for non-spurious receive-phase
-/// failures (negotiation, pack transfer or resolution, local ref/object
-/// updates). Missing remote refs, transport-level failures, and transient
-/// network errors all survive a cache refresh, so they are reported
-/// immediately instead.
-fn is_stale_cache_candidate(e: &gix::remote::fetch::Error) -> bool {
-    use gix::protocol::transport::IsSpuriousError;
-    !e.is_spurious()
-        && !matches!(
-            e,
-            gix::remote::fetch::Error::NoMapping { .. } | gix::remote::fetch::Error::Client(_)
         )
+        .map_err(|e| WrightError::ForgeError(format!("git fetch failed: {}", error_chain(&e))))?;
+    if let Some(d) = depth
+        && d > 0
+        && let Some(depth) = NonZeroU32::new(d)
+    {
+        prepare = prepare.with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(depth));
+    }
+    let fetch_result = prepare.receive(&mut fetch_progress, &interrupt);
+    drop(git_span);
+    fetch_result.map_err(|e| {
+        WrightError::ForgeError(format!(
+            "git fetch failed for {git_url}: {}",
+            error_chain(&e)
+        ))
+    })?;
+    Ok(())
 }
 
-/// Turn a fetch failure into an actionable error.
-fn git_fetch_error(e: gix::remote::fetch::Error, url: &str, cache: &Path) -> WrightError {
-    if is_stale_cache_candidate(&e) {
-        return WrightError::ForgeError(format!(
-            "git fetch failed for {url}: {e}\n\
-             The shallow cache could not be refreshed automatically.\n\
-             Remove the cache manually and retry:\n    rm -rf {}",
-            cache.display()
-        ));
+/// Write a git tree as a `.tar.zst` snapshot: plain file entries only, no git
+/// metadata. Submodule pins (gitlinks) carry no content and are skipped.
+/// Entry order follows the tree and mtimes are zeroed, so the same commit
+/// always produces the same snapshot.
+fn write_tree_snapshot(repo: &gix::Repository, tree: gix::ObjectId, out: &Path) -> Result<()> {
+    let file = std::fs::File::create(out).map_err(WrightError::IoError)?;
+    let encoder = zstd::Encoder::new(file, 3)
+        .map_err(|e| WrightError::ForgeError(format!("zstd encoder init failed: {e}")))?;
+    let mut builder = tar::Builder::new(encoder);
+    write_tree_entries(repo, tree, Path::new(""), &mut builder)?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|e| WrightError::ForgeError(format!("tar finish failed: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| WrightError::ForgeError(format!("zstd finish failed: {e}")))?;
+    Ok(())
+}
+
+fn write_tree_entries(
+    repo: &gix::Repository,
+    tree: gix::ObjectId,
+    prefix: &Path,
+    builder: &mut tar::Builder<impl std::io::Write>,
+) -> Result<()> {
+    use gix::objs::tree::EntryKind;
+
+    let tree = repo
+        .find_tree(tree)
+        .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+    for entry in tree.iter() {
+        let entry = entry
+            .map_err(|e| WrightError::ForgeError(format!("failed to decode git tree: {e}")))?;
+        let path = prefix.join(os_str_from_bytes(entry.filename()));
+        match entry.mode().kind() {
+            EntryKind::Blob | EntryKind::BlobExecutable => {
+                let blob = repo.find_blob(entry.oid().to_owned()).map_err(|e| {
+                    WrightError::ForgeError(format!("failed to load git blob: {e}"))
+                })?;
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_mode(if entry.mode().kind() == EntryKind::BlobExecutable {
+                    0o755
+                } else {
+                    0o644
+                });
+                header.set_size(blob.data.len() as u64);
+                header.set_mtime(0);
+                header
+                    .set_path(&path)
+                    .map_err(|e| WrightError::ForgeError(format!("tar set path failed: {e}")))?;
+                header.set_cksum();
+                builder
+                    .append(&header, &blob.data[..])
+                    .map_err(|e| WrightError::ForgeError(format!("tar append failed: {e}")))?;
+            }
+            EntryKind::Link => {
+                let target = repo.find_blob(entry.oid().to_owned()).map_err(|e| {
+                    WrightError::ForgeError(format!("failed to load git blob: {e}"))
+                })?;
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_mode(0o777);
+                header.set_size(0);
+                header.set_mtime(0);
+                builder
+                    .append_link(
+                        &mut header,
+                        &path,
+                        os_str_from_bytes(target.data.as_slice()),
+                    )
+                    .map_err(|e| WrightError::ForgeError(format!("tar append link failed: {e}")))?;
+            }
+            EntryKind::Tree => {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_mode(0o755);
+                header.set_size(0);
+                header.set_mtime(0);
+                header
+                    .set_path(&path)
+                    .map_err(|e| WrightError::ForgeError(format!("tar set path failed: {e}")))?;
+                header.set_cksum();
+                builder
+                    .append(&header, std::io::empty())
+                    .map_err(|e| WrightError::ForgeError(format!("tar append dir failed: {e}")))?;
+                write_tree_entries(repo, entry.oid().to_owned(), &path, builder)?;
+            }
+            // A gitlink only records another repository's commit — there is
+            // no content to snapshot.
+            EntryKind::Commit => {}
+        }
     }
-    WrightError::ForgeError(format!("git fetch failed: {e}"))
+    Ok(())
+}
+
+#[cfg(unix)]
+fn os_str_from_bytes(bytes: &[u8]) -> &std::ffi::OsStr {
+    std::os::unix::ffi::OsStrExt::from_bytes(bytes)
+}
+
+fn mirror_refspecs() -> Vec<String> {
+    vec![
+        "+refs/heads/*:refs/heads/*".to_string(),
+        "+refs/tags/*:refs/tags/*".to_string(),
+    ]
+}
+
+/// Filename of the snapshot tarball caching one pinned git source tree,
+/// derived from the repository URL and the requested ref.
+pub(super) fn git_snapshot_filename(git_url: &str, git_ref: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let last_segment = git_url.split('/').next_back().unwrap_or("repo");
+    let stem = sanitize_cache_filename(last_segment.strip_suffix(".git").unwrap_or(last_segment));
+    let mut h = Sha256::new();
+    h.update(git_url.as_bytes());
+    let hash = format!("{:x}", h.finalize());
+    format!(
+        "{}-{}-{}.tar.zst",
+        stem,
+        sanitize_ref_component(git_ref),
+        &hash[..8]
+    )
 }
 
 /// prodash progress adapter that forwards fetch step counts to the wright
@@ -361,21 +476,17 @@ fn is_commit_hash(git_ref: &str) -> bool {
     git_ref.len() == 40 && git_ref.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn effective_git_depth(git_ref: &str, depth: Option<u32>) -> Option<u32> {
-    if is_commit_hash(git_ref) { None } else { depth }
-}
-
-pub(super) fn uses_private_fetch_ref(git_ref: &str, depth: Option<u32>) -> bool {
-    matches!(effective_git_depth(git_ref, depth), Some(d) if d > 0)
-}
-
 /// Map a requested git ref into a private, path-safe ref namespace.
 ///
-/// Shallow fetches store the single ref they request here instead of mirroring
-/// upstream's `refs/heads/*` and `refs/tags/*`. Encoding the ref keeps different
-/// refs of the same cached repo from colliding.
+/// Fetches store the single ref they request here instead of mirroring
+/// upstream's `refs/heads/*` and `refs/tags/*`. Encoding the ref keeps
+/// different refs of the same repo from colliding.
 pub(super) fn local_fetch_ref(git_ref: &str) -> String {
-    let safe: String = git_ref
+    format!("refs/wright/{}", sanitize_ref_component(git_ref))
+}
+
+fn sanitize_ref_component(git_ref: &str) -> String {
+    git_ref
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
@@ -384,18 +495,21 @@ pub(super) fn local_fetch_ref(git_ref: &str) -> String {
                 '_'
             }
         })
-        .collect();
-    format!("refs/wright/{safe}")
+        .collect()
 }
 
-pub(super) fn git_cache_dir_name(url: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let last_segment = url.split('/').next_back().unwrap_or("repo");
-    let stem = sanitize_cache_filename(last_segment.strip_suffix(".git").unwrap_or(last_segment));
-    let mut h = Sha256::new();
-    h.update(url.as_bytes());
-    let hash = format!("{:x}", h.finalize());
-    format!("{}-{}", stem, &hash[..8])
+/// Format an error with its entire source chain. gix error `Display`
+/// implementations omit the underlying cause, which hides the actionable
+/// part of fetch failures (e.g. "reflog messages need a committer").
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 #[cfg(test)]
@@ -462,71 +576,113 @@ mod tests {
         Charge::new(&config, Arc::new(Semaphore::new(1)))
     }
 
-    #[tokio::test]
-    async fn fetch_git_repo_full_fetch_mirrors_and_skips_when_current() {
-        let root = tempfile::tempdir().unwrap();
-        let (upstream, branch, _first, tip) = make_upstream(root.path());
-        let cache = root.path().join("cache");
-        let charge = test_charge(root.path().join("sources"));
-
-        let url = upstream.to_str().unwrap();
-        let id = charge
-            .fetch_git_repo(url, Some(&branch), None, &cache, "test")
-            .await
-            .unwrap();
-        assert_eq!(id, tip, "full fetch should resolve the branch tip");
-
-        // A second fetch against the populated cache resolves the same commit
-        // without contacting the remote again.
-        let id = charge
-            .fetch_git_repo(url, Some(&branch), None, &cache, "test")
-            .await
-            .unwrap();
-        assert_eq!(id, tip);
-
-        // Mirrored tags resolve as well.
-        let id = charge
-            .fetch_git_repo(url, Some("v1.0.0"), None, &cache, "test")
-            .await
-            .unwrap();
-        assert_eq!(id, _first);
+    /// Read a snapshot tarball back into (path, contents) pairs.
+    fn read_snapshot(path: &Path) -> Vec<(String, String)> {
+        let file = std::fs::File::open(path).unwrap();
+        let decoder = zstd::Decoder::new(file).unwrap();
+        let mut archive = tar::Archive::new(decoder);
+        let mut entries = Vec::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.header().entry_type() != tar::EntryType::Regular {
+                continue;
+            }
+            let path = entry.path().unwrap().to_string_lossy().into_owned();
+            let mut contents = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+            entries.push((path, contents));
+        }
+        entries
     }
 
-    #[tokio::test]
-    async fn fetch_git_repo_shallow_fetch_uses_private_ref() {
+    #[test]
+    fn snapshot_fetch_creates_tarball_for_tag_ref() {
         let root = tempfile::tempdir().unwrap();
         let (upstream, _branch, first, _tip) = make_upstream(root.path());
-        let cache = root.path().join("cache-shallow");
-        let charge = test_charge(root.path().join("sources"));
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir.clone());
 
         let url = upstream.to_str().unwrap();
-        let id = charge
-            .fetch_git_repo(url, Some("v1.0.0"), Some(1), &cache, "test")
-            .await
-            .unwrap();
-        assert_eq!(id, first);
+        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0"));
+        let commit = charge
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
+            .unwrap()
+            .expect("fresh fetch reports the commit");
+        assert_eq!(commit, first);
 
-        // The shallow fetch stores the ref in the private namespace and does
-        // not mirror public heads.
-        let repo = gix::open(&cache).unwrap();
-        assert!(
-            repo.try_find_reference("refs/wright/v1.0.0")
-                .unwrap()
-                .is_some(),
-            "shallow fetch should create the private ref"
+        let entries = read_snapshot(&dest);
+        assert_eq!(
+            entries,
+            vec![("a.txt".to_string(), "one\n".to_string())],
+            "snapshot should hold exactly the tagged tree"
         );
-        assert!(
-            repo.try_find_reference("refs/tags/v1.0.0")
-                .unwrap()
-                .is_none(),
-            "shallow fetch should not mirror tags"
-        );
+    }
 
-        // Re-fetching the same shallow ref resolves from the cache.
-        let id = charge
-            .fetch_git_repo(url, Some("v1.0.0"), Some(1), &cache, "test")
-            .await
+    #[test]
+    fn snapshot_fetch_falls_back_to_full_mirror_for_commit_hash() {
+        let root = tempfile::tempdir().unwrap();
+        let (upstream, _branch, first, _tip) = make_upstream(root.path());
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir.clone());
+
+        let url = upstream.to_str().unwrap();
+        let dest = sources_dir.join(git_snapshot_filename(url, &first));
+        let commit = charge
+            .fetch_git_snapshot(url, Some(&first), &dest, "test")
+            .unwrap()
+            .expect("fresh fetch reports the commit");
+        assert_eq!(commit, first);
+
+        let entries = read_snapshot(&dest);
+        assert_eq!(
+            entries,
+            vec![("a.txt".to_string(), "one\n".to_string())],
+            "snapshot should hold exactly the pinned tree"
+        );
+    }
+
+    #[test]
+    fn snapshot_fetch_skips_existing_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let (upstream, _branch, _first, _tip) = make_upstream(root.path());
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir.clone());
+
+        let url = upstream.to_str().unwrap();
+        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0"));
+        charge
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
             .unwrap();
-        assert_eq!(id, first);
+
+        // The upstream is gone; a cached snapshot must still be usable.
+        std::fs::remove_dir_all(&upstream).unwrap();
+        let commit = charge
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
+            .unwrap();
+        assert!(commit.is_none(), "cached snapshot skips the fetch");
+    }
+
+    #[test]
+    fn clone_git_source_checks_out_worktree() {
+        let root = tempfile::tempdir().unwrap();
+        let (upstream, _branch, _first, _tip) = make_upstream(root.path());
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir);
+
+        let dest = root.path().join("work");
+        std::fs::create_dir_all(&dest).unwrap();
+        charge
+            .clone_git_source(upstream.to_str().unwrap(), "v1.0.0", &dest, "test")
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("a.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(dest.join(".git").exists(), "clone keeps git metadata");
     }
 }
