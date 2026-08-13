@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [5.4.2] - 2026-08-13
+
+### Fixed
+- **Staging output integrity bound to checkpoint.** A hard-crash mid-staging (SIGKILL, OOM, lost terminal) left the checkpoint recording staging as "Completed" while `staging/` was wiped or partially populated with root-owned files. On retry the forge silently returned `Ok` with an empty tree, or the build short-circuit trusted stale leftovers as a complete deliverable — producing parts that deployed zero or partial files. The forge now snapshots `staging/` into a persistent `.staging_cache/` after a successful staging stage and records a content manifest hash in the checkpoint. Resume verifies the manifest before honouring a skip: a match restores `staging/` from cache; a mismatch (missing cache, tampered files) rewinds and re-runs staging.
+- **`ensure_clean_dir` failures are now fatal.** Root-owned leftovers or stale overlay mounts that could not be removed previously produced a warn-and-continue, silently poisoning the next build. They now fail loudly with actionable guidance (`--clean` or re-run as root).
+- **Empty-staging guard moved up to build time.** A successful forge that produced zero staging output (stale checkpoint, broken install stage) was only caught at seal time (`archive.rs`). The same check now runs at the end of `Foundry::build`, so the build itself fails instead of deferring the error.
+- **Build short-circuit requires checkpoint + manifest consistency.** The intra-batch idempotence short-circuit previously trusted bare file existence in `staging/`. It now requires the staging tree's manifest to match the hash recorded in the checkpoint, eliminating false positives from crash-leftover files.
+
 ## [5.4.1] - 2026-08-13
 
 ### Changed
