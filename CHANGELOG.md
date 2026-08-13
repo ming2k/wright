@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-08-13
+
+### Changed
+- **`wright list` defaults to canonical `plan:output` target identifiers.** Output lines are now formatted as `plan:output` (e.g. `optics:flux`), ensuring zero-ambiguity outputs suitable for direct grep matching and copy-paste execution into subsequent commands (`wright remove`, `wright files`).
+- **Refactored CLI flags for `wright list`.** Replaced `--plans` and `--parts` with `--plan-only` and `--part-only` for explicit namespace projections. Replaced hardcoded `--roots`, `--provided`, and `--orphans` flags with a unified Resource Access Graph (RAG) filter `-f`/`--filter <EXPR>` (e.g. `--filter leaf`, `--filter orphan`, `--filter provided`).
+
 ## [5.3.21] - 2026-08-12
 
 ### Changed
