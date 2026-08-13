@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.5.2] - 2026-08-13
+
 ### Fixed
 - **Build stages can rename directories again (fatal `EXDEV` building e.g. any cargo project).** 5.5.0's stage overlays (ADR-0036) put `/build` on OverlayFS, which rejects directory renames near lower-layer directories with `EXDEV`; cargo creates `target/` via exactly such a rename, so `wright build wright` failed at the compile stage. The `redirect_dir` feature that lifts the restriction requires `trusted.overlay.*` xattrs and is therefore unavailable inside the user namespaces wright always mounts in. `/build` is a real directory tree again (ADR-0037): `target/` is populated from the merged `base/` before each stage and the delta is harvested into the stage layer afterwards, as was already the case for unisolated stages. The merged-base bookkeeping, checkpoint resume/rewind semantics, and per-stage layers introduced by ADR-0036 are unchanged, and no per-stage mounts means the mount-leak and stage-transition `EBUSY` classes stay eliminated. The isolation helper wire protocol moves to version 4; stale helpers fail closed.
 - **Tree sharing prefers copy-on-write reflinks (btrfs/xfs) over hard links.** A hard-linked working tree couples inodes with `base/` and the stage layers, so an in-place write (`echo >> file`) would silently corrupt the layer record. Reflinked files copy-on-write instead, keeping the modification private to the working tree and visible to the delta harvest. Hard links remain the fallback on filesystems without reflink support, with the pre-existing in-place caveat.
