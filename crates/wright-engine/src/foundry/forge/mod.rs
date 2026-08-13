@@ -15,6 +15,7 @@ use wright_plan::manifest::{PipelineStage, PlanManifest};
 mod execute;
 mod pipeline;
 
+use self::execute::StageLayering;
 use self::pipeline::manifest_stage;
 pub use self::pipeline::stage_order_for_manifest;
 pub(crate) use self::pipeline::{compute_expected_hashes, effective_manifest_isolation};
@@ -222,6 +223,22 @@ impl<'a> Forge<'a> {
             0
         };
 
+        // --- Reconcile the merged base with the checkpointed layers ---
+        //
+        // `base/` must equal source_dir + every checkpoint-completed stage
+        // layer.  `reconcile_base` is a no-op when the manifest matches and
+        // otherwise rebuilds via hard-links (resume, rewind, crash recovery).
+        let mut completed: Vec<String> = order
+            .iter()
+            .filter(|stage| {
+                expected
+                    .get(*stage)
+                    .is_some_and(|eh| self.checkpoint.is_complete(stage, eh))
+            })
+            .cloned()
+            .collect();
+        self.layers.reconcile_base(&self.source_dir, &completed)?;
+
         // --- Emit one summary line for everything we'll skip up front ---
         if start_index > 0 {
             let plan_name = &self.manifest.metadata.name;
@@ -296,29 +313,40 @@ impl<'a> Forge<'a> {
             }
 
             // --- Prepare layer and working directory for this stage ---
-            let prev_stages: Vec<String> = order[..idx].to_vec();
-
             self.layers.prepare_upper_layer(stage_name)?;
 
-            let overlay_mounted =
-                self.layers
-                    .mount_overlay(stage_name, &self.source_dir, &prev_stages)?;
+            // Pick the layering mode for the whole canonical stage (hooks
+            // included): namespace-isolated stages run on a sandbox-mounted
+            // overlay; a stage whose weakest hook is unisolated runs against
+            // a real populated working tree instead.
+            let layering = if pipeline::effective_stage_isolation(
+                self.manifest,
+                self.build_phase.as_deref(),
+                stage_name,
+                self.executors,
+                self.default_isolation,
+            )? == IsolationLevel::None
+            {
+                self.layers.populate_target()?;
+                StageLayering::Fallback
+            } else {
+                StageLayering::Overlay(stage_name.to_string())
+            };
 
-            if !overlay_mounted {
-                self.layers
-                    .populate_target(&self.source_dir, &prev_stages)?;
-            }
-
-            let result = self.run_ordered_stage_in_target(stage_name).await;
-
-            self.layers.unmount_overlay();
+            let result = self
+                .run_ordered_stage_in_target(stage_name, &layering)
+                .await;
 
             match result {
                 Ok(()) => {
-                    if !overlay_mounted {
-                        self.layers
-                            .commit_layer(stage_name, &self.source_dir, &prev_stages)?;
+                    if matches!(layering, StageLayering::Fallback) {
+                        self.layers.commit_layer(stage_name)?;
                     }
+                    if expected.contains_key(stage_name) {
+                        completed.push(stage_name.clone());
+                    }
+                    self.layers
+                        .merge_layer_into_base(stage_name, &self.source_dir, &completed)?;
                     if checkpoint_enabled && let Some(eh) = expected.get(stage_name) {
                         if stage_name == "staging" {
                             // Snapshot the staging deliverable into the

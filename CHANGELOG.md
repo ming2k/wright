@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+- **Merged-base stage layering; stage overlays now mount inside the sandbox (ADR-0036).** Each forge stage's delta is still captured in `layers/<NN>-<stage>/`, but after every stage the delta is merged with hard-links into a new `base/` directory under the build root, and the next stage's overlay uses `base/` as its only `lowerdir`. The overlay itself is mounted by the sandbox inside its own mount namespace as `/build`; the parent process never mounts stage overlays. Consequences: crashed or SIGKILLed builds leave no stale mounts in the host mount table; stage transitions no longer depend on kernel overlay teardown timing; resume/rewind deterministically rebuilds `base/` from the surviving layers (tracked by `.base_manifest`). Build roots from older versions are still cleaned of any legacy stale mounts on startup.
+- **Unprivileged builds use the real OverlayFS path where user namespaces are available.** Overlay mounts happen inside the user-namespace sandbox, so non-root builds no longer fall back to the slower hard-link pipeline for that reason. Cleanup now tolerates the kernel's mode-000 overlay workdirs (`EACCES` on recursive removal).
+
+### Fixed
+- **Fatal `EBUSY` at stage transitions under parallel load (e.g. `wright upgrade all` aborting mid-batch).** The previous topology stacked stage N's `upperdir` inside stage N+1's `lowerdir` while the previous overlay was still dying in the kernel; with `index=on` kernels (`CONFIG_OVERLAY_FS_INDEX=y`) the mount failed with `EBUSY` beyond the retry budget. The merged base is never any overlay's `upperdir`/`workdir`, so the kernel's in-use protection cannot fire, and stage retries mount fresh upper/work dir inodes (`freshen_upper_layer`) instead of racing kernel teardown with sleeps.
+- **Stage retries no longer collide with the previous attempt's dying overlay.** Any retry (ETXTBSY or mount `EBUSY`) renames the upper layer aside and hard-links its contents into a fresh directory before remounting, preserving the stage's work while guaranteeing the mount cannot hit the in-use lock.
+
 ## [5.4.2] - 2026-08-13
 
 ### Fixed

@@ -35,18 +35,19 @@ Each part gets its own working directory under `forge_dir`
 
 ```
 <forge_dir>/<name>-<version>/¹
-├── .wright-pipeline.json  # Stage state machine (hash-chain checkpoint records)
-├── target/                # OverlayFS merge mount point (virtual root for the container)
-├── .ovl_work/             # OverlayFS internal working directory
-├── layers/                # Per-stage isolated directories
-│   ├── 01-fetch/          # Hard-links to the global source cache
-│   ├── 02-verify/         # (verification-only)
-│   ├── 03-extract/        # Extracted source tree
-│   ├── 04-prepare/        # Patched files
-│   ├── 05-configure/      # ./configure output (Makefiles, config.h)
-│   ├── 06-compile/        # .o files and binaries
-│   ├── 07-check/          # (test-only)
-│   └── 08-staging/        # make install output
+├── .wright-checkpoint.json  # Stage state machine (hash-chain checkpoint records)
+├── source/                # Immutable extracted source tree (Charge output)
+├── base/                  # Merged base: hard-link union of source + completed layers
+│                          # (the single lowerdir for the next stage's overlay)
+├── .base_manifest         # Records exactly what base/ contains (rebuild trigger)
+├── target/                # Real directory: fallback-mode working tree
+├── .ovl_work/             # OverlayFS per-stage working directories
+├── layers/                # Per-stage delta directories (upperdir while a stage runs)
+│   ├── 01-prepare/        # Patched files
+│   ├── 02-configure/      # ./configure output (Makefiles, config.h)
+│   ├── 03-compile/        # .o files and binaries
+│   ├── 04-check/          # (test-only)
+│   └── 05-staging/        # Files installed into the build tree
 ├── staging/   # Convenience alias for final staging output
 ├── outputs/   # Sliced output directories (hard-linked from staging/)
 │   └── default/  # Catch-all output
@@ -57,15 +58,20 @@ Each part gets its own working directory under `forge_dir`
 ```
 
 Each stage's writes are captured in its dedicated `layers/<NN>-<stage>/`
-directory via OverlayFS.  The `target/` directory serves as the working
-directory for the build — it presents a merged view of all completed layers
-(lowerdir) with the current stage writing to its own upper layer.
+directory: for sandboxed stages, that directory is the `upperdir` of an
+OverlayFS mounted as `/build` **inside the sandbox's own mount namespace**,
+with `base/` as the only `lowerdir`.  After every stage, the stage's delta
+is merged into `base/` with hard-links (whiteouts and deletions included),
+so the next stage always sees the full accumulated tree through `base/`
+alone.  No stage overlay ever appears in the host mount table, so crashed
+builds leave no stale mounts behind.  See
+[OverlayFS Layers and the Merged Base](../explanation/overlayfs-layers.md).
 
 `layers/` replaces the flat `work/` directory from previous versions.  When
 the build key has not changed (same version, sources, and pipeline scripts),
-the layers from earlier stages (`fetch` through `extract`) are reused and only
+the layers from earlier stages are reused and only
 stages whose inputs changed are re-executed.  Stage completion is tracked in
-`.wright-pipeline.json` using a hash-chain fingerprint scheme — see
+`.wright-checkpoint.json` using a hash-chain fingerprint scheme — see
 [Checkpoint Recovery](../explanation/checkpoint-recovery.md).
 
 If multiple outputs are defined in `plan.toml` (split-parts), additional
@@ -266,10 +272,10 @@ directory is left intact for inspection after the build completes.
 ### Incremental builds
 
 By default, `layers/` is preserved across builds when the **build key** has not
-changed. The fetch and extract layers (01 through 03) are reused, and only
+changed. The extracted source tree and completed stage layers are reused, and only
 stages whose hash-chain fingerprint differs from the stored record are
 re-executed. This means a repeated `wright build` with no changes completes
-almost instantly — the smart resume algorithm in `.wright-pipeline.json` skips
+almost instantly — the smart resume algorithm in `.wright-checkpoint.json` skips
 all up-to-date stages automatically.
 
 When the build key changes — because the version, sources, or pipeline scripts

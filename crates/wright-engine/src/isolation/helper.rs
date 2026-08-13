@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::error::{IsolationError, Result};
 use super::{IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits};
 
-const PROTOCOL_VERSION: u8 = 2;
+const PROTOCOL_VERSION: u8 = 3;
 const INTERNAL_ARGUMENT: &str = "__wright_isolation_helper_v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,6 +49,7 @@ struct HelperRequest {
     // the helper process and owns that policy.
     cpu_count: Option<u32>,
     dep_mounts: Vec<(WirePath, WirePath)>,
+    stage_overlay: Option<(WirePath, WirePath, WirePath)>,
     command: String,
     args: Vec<String>,
 }
@@ -83,6 +84,13 @@ impl HelperRequest {
                 .iter()
                 .map(|(source, target)| (WirePath::from_path(source), WirePath::from_path(target)))
                 .collect(),
+            stage_overlay: config.stage_overlay.as_ref().map(|overlay| {
+                (
+                    WirePath::from_path(&overlay.lowerdir),
+                    WirePath::from_path(&overlay.upperdir),
+                    WirePath::from_path(&overlay.workdir),
+                )
+            }),
             command: command.to_string(),
             args: args.to_vec(),
         }
@@ -122,6 +130,13 @@ impl HelperRequest {
             .into_iter()
             .map(|(source, target)| (source.into_path(), target.into_path()))
             .collect();
+        config.stage_overlay = self.stage_overlay.map(|(lowerdir, upperdir, workdir)| {
+            super::StageOverlay {
+                lowerdir: lowerdir.into_path(),
+                upperdir: upperdir.into_path(),
+                workdir: workdir.into_path(),
+            }
+        });
         Ok((
             self.status_path.into_path(),
             config,
@@ -300,6 +315,43 @@ mod tests {
         assert_eq!(decoded.rlimits.timeout_secs, None);
         assert_eq!(command, "/bin/true");
         assert_eq!(args, vec!["--flag"]);
+    }
+
+    #[test]
+    fn request_roundtrips_stage_overlay() {
+        let root = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let status = tempfile::NamedTempFile::new().unwrap();
+        let mut config = IsolationConfig::new(
+            IsolationLevel::Strict,
+            root.path().to_path_buf(),
+            output.path().to_path_buf(),
+            "helper-overlay".to_string(),
+        );
+        config.stage_overlay = Some(crate::isolation::StageOverlay {
+            lowerdir: PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/base"),
+            upperdir: PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/layers/03-compile"),
+            workdir: PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/.ovl_work/03-compile"),
+        });
+        let request =
+            HelperRequest::new(&config, status.path(), "/bin/true", &["-x".to_string()]);
+        let bytes = serde_json::to_vec(&request).unwrap();
+        let decoded: HelperRequest = serde_json::from_slice(&bytes).unwrap();
+        let (_, decoded, _, _) = decoded.into_parts().unwrap();
+
+        let overlay = decoded.stage_overlay.expect("overlay must survive the wire");
+        assert_eq!(
+            overlay.lowerdir,
+            PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/base")
+        );
+        assert_eq!(
+            overlay.upperdir,
+            PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/layers/03-compile")
+        );
+        assert_eq!(
+            overlay.workdir,
+            PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/.ovl_work/03-compile")
+        );
     }
 
     #[test]

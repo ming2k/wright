@@ -9,15 +9,29 @@ use wright_plan::manifest::PipelineStage;
 use super::Forge;
 use super::pipeline::executor_for_stage;
 
+/// How a canonical stage's working tree is provided to its scripts.
+pub(super) enum StageLayering {
+    /// Namespace-isolated: the sandbox mounts the stage overlay as `/build`.
+    /// Carries the canonical stage name, which owns the layer directories.
+    Overlay(String),
+    /// Unisolated fallback: `target/` is populated as a real directory tree
+    /// and the delta is harvested by `commit_layer` afterwards.
+    Fallback,
+}
+
 impl<'a> Forge<'a> {
-    pub(super) async fn run_ordered_stage_in_target(&self, stage_name: &str) -> Result<()> {
+    pub(super) async fn run_ordered_stage_in_target(
+        &self,
+        stage_name: &str,
+        layering: &StageLayering,
+    ) -> Result<()> {
         if stage_name == "configure" {
             let _permit = if let Some(ref s) = self.configure_lock {
                 Some(s.acquire().await.expect("configure semaphore closed"))
             } else {
                 None
             };
-            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count)
+            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count, layering)
                 .await
         } else if stage_name == "compile" {
             let effective_cpu = self.compile_cpu_count.unwrap_or(self.cpu_count);
@@ -30,26 +44,31 @@ impl<'a> Forge<'a> {
             } else {
                 None
             };
-            self.run_stage_with_hooks_in_target(stage_name, effective_cpu)
+            self.run_stage_with_hooks_in_target(stage_name, effective_cpu, layering)
                 .await
         } else {
-            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count)
+            self.run_stage_with_hooks_in_target(stage_name, self.cpu_count, layering)
                 .await
         }
     }
 
-    async fn run_stage_with_hooks_in_target(&self, stage_name: &str, cpu_count: u32) -> Result<()> {
+    async fn run_stage_with_hooks_in_target(
+        &self,
+        stage_name: &str,
+        cpu_count: u32,
+        layering: &StageLayering,
+    ) -> Result<()> {
         let plan_name = &self.manifest.metadata.name;
         let pre_hook = format!("pre_{stage_name}");
         if let Some(stage) = self.get_stage(&pre_hook) {
             debug!(event = "hook.running", plan_name = %plan_name, hook = %pre_hook, "Running pre-hook");
-            self.run_stage_in_target(&pre_hook, stage, cpu_count)
+            self.run_stage_in_target(&pre_hook, stage, cpu_count, layering)
                 .await?;
         }
 
         if let Some(stage) = self.get_stage(stage_name) {
             let t0 = std::time::Instant::now();
-            self.run_stage_in_target(stage_name, stage, cpu_count)
+            self.run_stage_in_target(stage_name, stage, cpu_count, layering)
                 .await?;
             let elapsed = t0.elapsed().as_secs_f64();
             info!(event = "stage.completed", plan_name = %plan_name, stage_name = %stage_name, elapsed_secs = elapsed, "Stage completed");
@@ -60,7 +79,7 @@ impl<'a> Forge<'a> {
         let post_hook = format!("post_{stage_name}");
         if let Some(stage) = self.get_stage(&post_hook) {
             debug!(event = "hook.running", plan_name = %plan_name, hook = %post_hook, "Running post-hook");
-            self.run_stage_in_target(&post_hook, stage, cpu_count)
+            self.run_stage_in_target(&post_hook, stage, cpu_count, layering)
                 .await?;
         }
 
@@ -129,6 +148,7 @@ impl<'a> Forge<'a> {
         stage_name: &str,
         stage: &PipelineStage,
         cpu_count: u32,
+        layering: &StageLayering,
     ) -> Result<()> {
         if stage.script.is_empty() {
             debug!("Stage {stage_name} has empty script, skipping");
@@ -186,6 +206,22 @@ impl<'a> Forge<'a> {
                 stdout_log_file.take()
             };
 
+            let stage_overlay = match layering {
+                StageLayering::Overlay(canonical_stage) => {
+                    if attempt > 0 {
+                        // The previous attempt's sandbox overlay may still be
+                        // dying in the kernel, holding the overlayfs in-use
+                        // lock on the upper/work dir root inodes.  Freshen
+                        // them so this attempt mounts brand-new inodes that
+                        // can never collide with the dying instance — without
+                        // discarding the work done so far.
+                        self.layers.freshen_upper_layer(canonical_stage)?;
+                    }
+                    Some(self.layers.overlay_spec(canonical_stage))
+                }
+                StageLayering::Fallback => None,
+            };
+
             let mut options = ExecutorOptions {
                 level: isolation_level,
                 base_root: self.base_root.clone(),
@@ -197,9 +233,10 @@ impl<'a> Forge<'a> {
                 cpu_count: Some(cpu_count),
                 log_stdout,
                 dep_mounts: Vec::new(),
+                stage_overlay,
             };
 
-            let res = executor::execute_script(
+            let res = match executor::execute_script(
                 executor,
                 &stage.script,
                 working_dir,
@@ -207,7 +244,34 @@ impl<'a> Forge<'a> {
                 &self.vars,
                 &mut options,
             )
-            .await?;
+            .await
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    // Overlay mount failures surface here as setup errors.
+                    // They are transient by construction (a retry mounts
+                    // fresh upper/work inodes), so retry within the same
+                    // budget as ETXTBSY.
+                    let message = e.to_string();
+                    let is_ebusy =
+                        message.contains("EBUSY") || message.contains("Device or resource busy");
+                    if is_ebusy
+                        && matches!(layering, StageLayering::Overlay(_))
+                        && attempt < max_etxtbsy_retries
+                    {
+                        attempt += 1;
+                        let exp_base = 200_u64.saturating_mul(1_u64 << attempt.min(2)).min(1000);
+                        let delay_ms = exp_base + jitter_ms(exp_base);
+                        warn!(
+                            "[{}] EBUSY mounting stage overlay for '{stage_name}', retrying in {delay_ms}ms (attempt {attempt}/{max_etxtbsy_retries})",
+                            self.manifest.metadata.name,
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
 
             let code = res.status.code().unwrap_or(-1);
             let is_etxtbsy = code == 126
@@ -331,6 +395,7 @@ impl<'a> Forge<'a> {
                 cpu_count: Some(cpu_count),
                 log_stdout,
                 dep_mounts: Vec::new(),
+                stage_overlay: None,
             };
 
             let res = executor::execute_script(

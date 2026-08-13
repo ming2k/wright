@@ -113,6 +113,7 @@ for a full discussion.
 | **Full build** | The second pass after an MVP build; runs with all dependencies restored. |
 | **Isolation** | A sandboxed environment for running forge stages. Levels: `none`, `relaxed`, `strict`. |
 | **Sysroot** | A read-only copy of the host's `/usr`, `/bin`, and `/lib` trees used as the root for `strict`-isolation builds. |
+| **Merged base** | The `base/` directory under a build root: a hard-link union of the extracted source and all completed stage layers, used as the single `lowerdir` for the next stage's overlay. Rebuilt from the surviving layers whenever `.base_manifest` disagrees with the checkpoints. See [ADR-0036](../adr/0036-merged-base-stage-overlays.md). |
 
 ## Writing Guidance
 

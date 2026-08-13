@@ -9,7 +9,11 @@ use crate::error::{Result, WrightError};
 /// Best-effort detach of any overlay mounts under the given path.
 ///
 /// This is a lighter-weight alternative to `force_clean_dir` for use on
-/// startup: it unmounts stale overlays without deleting any files.
+/// startup: it unmounts stale overlays without deleting any files.  Stale
+/// mounts can only come from Wright versions before the merged-base redesign
+/// (which mounted stage overlays in the parent mount namespace); current
+/// Wright mounts stage overlays inside the sandbox namespace, where they die
+/// with the sandbox process.
 pub async fn detach_stale_mounts(path: &Path) -> Result<()> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -31,7 +35,7 @@ pub async fn force_clean_dir(path: &Path) -> Result<()> {
 fn force_clean_dir_blocking(path: &Path) -> Result<()> {
     let mut last_err: Option<std::io::Error> = None;
     for attempt in 0..3 {
-        match std::fs::remove_dir_all(path) {
+        match remove_tree_force(path) {
             Ok(()) => return Ok(()),
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
             Err(e) => {
@@ -95,53 +99,6 @@ pub(crate) fn detach_mounts_under(path: &Path) -> usize {
     detached
 }
 
-/// Synchronously unmount a stage overlay so its `upperdir`/`workdir` are
-/// released immediately.
-///
-/// A lazy (`MNT_DETACH`) unmount detaches the mount from the namespace but
-/// leaves the overlay superblock alive until every reference drops. While it
-/// lingers, the stage's `layers/NN-stage` dir stays pinned as an in-use
-/// `upperdir` — and overlayfs then refuses to reuse that dir as a `lowerdir`
-/// for the next stage's overlay, failing the mount with `EBUSY`. We therefore
-/// attempt a real unmount first, retrying briefly on `EBUSY`, and only fall
-/// back to a lazy detach if the mount stubbornly stays busy.
-fn unmount_overlay_point(mount: &Path) {
-    use nix::mount::{MntFlags, umount2};
-
-    for attempt in 0..5 {
-        match umount2(mount, MntFlags::empty()) {
-            Ok(()) => {
-                debug!(event = "layer.unmount", point = %mount.display(), "Unmounted stage overlay");
-                return;
-            }
-            // Already unmounted / not a mount point — nothing to do.
-            Err(nix::errno::Errno::EINVAL) => return,
-            Err(nix::errno::Errno::EBUSY) => {
-                thread::sleep(Duration::from_millis(20 * (1 << attempt)));
-            }
-            Err(e) => {
-                debug!("unmount overlay at {} (non-fatal): {e}", mount.display());
-                break;
-            }
-        }
-    }
-
-    // Last resort: lazy-detach so the build can still make progress. The next
-    // stage's mount may need to retry on EBUSY if the superblock is still alive.
-    match umount2(mount, MntFlags::MNT_DETACH) {
-        Ok(()) => debug!(
-            event = "layer.unmount",
-            point = %mount.display(),
-            "Lazy-unmounted stage overlay (fell back after EBUSY)"
-        ),
-        Err(nix::errno::Errno::EINVAL) => {}
-        Err(e) => debug!(
-            "lazy unmount overlay at {} (non-fatal): {e}",
-            mount.display()
-        ),
-    }
-}
-
 /// Build stage layer indices. Source stages (fetch/verify/extract) are NOT
 /// included — they are handled by `Charge` and fed into the forge as the
 /// immutable `source_dir` base.
@@ -154,6 +111,13 @@ const LAYER_INDICES: &[(&str, &str)] = &[
 ];
 
 pub const LAYER_STAGES: &[&str] = &["prepare", "configure", "compile", "check", "staging"];
+
+/// Name of the tombstone manifest inside a fallback-mode layer directory
+/// listing paths (relative to the build tree root) that the stage deleted.
+const LAYER_DELETIONS_FILE: &str = ".wright-layer-deletions";
+
+const BASE_MANIFEST_NAME: &str = ".base_manifest";
+const BASE_MANIFEST_FORMAT: &str = "wright-base-v1";
 
 pub fn layer_dir_name(stage: &str) -> String {
     for (s, idx) in LAYER_INDICES {
@@ -174,33 +138,52 @@ pub fn canonical_layer_order() -> Vec<String> {
 
 /// Manage the per-stage OverlayFS layers for a single plan build.
 ///
-/// The immutable `source_dir` is always the deepest lowerdir. Build stages
-/// layer on top of it via OverlayFS or hard-link fallback.
+/// # Merged-base design
+///
+/// Each stage's writes are captured in `layers/NN-stage/` (the OverlayFS
+/// `upperdir` while the stage runs).  After every stage, that delta is merged
+/// into `base/` — a hard-link union of `source_dir` and every completed stage
+/// layer.  The next stage's overlay then uses `base/` as its *only*
+/// `lowerdir`.
+///
+/// `base/` is never the `upperdir` or `workdir` of any overlay mount, so the
+/// kernel's in-use upperdir protection (`EBUSY` when a lowerdir is an in-use
+/// upperdir of a still-dying overlay) can never fire on it.  Stage overlays
+/// are mounted inside the sandbox's own mount namespace (see
+/// `isolation::StageOverlay`), so mounts die with the sandbox and can never
+/// leak into the parent mount table.
+///
+/// Crash consistency: `.base_manifest` records exactly what has been merged
+/// into `base/`.  At forge start it is compared against the checkpointed set
+/// of completed stages; any mismatch (crash mid-merge, rewound layers,
+/// tampering) triggers a full rebuild from `source_dir` + the surviving
+/// layers.
 pub struct LayerManager {
     layers_dir: PathBuf,
+    base_dir: PathBuf,
     target_dir: PathBuf,
-    stages_dir: PathBuf,
     ovl_work_dir: PathBuf,
-    current_mount: Option<PathBuf>,
-}
-
-impl Drop for LayerManager {
-    fn drop(&mut self) {
-        self.unmount_overlay();
-    }
+    base_manifest_path: PathBuf,
 }
 
 impl LayerManager {
     pub fn new(build_root: &Path) -> Result<Self> {
         let layers_dir = build_root.join("layers");
+        let base_dir = build_root.join("base");
         let target_dir = build_root.join("target");
-        let stages_dir = build_root.join("stages");
         let ovl_work_dir = build_root.join(".ovl_work");
+        let base_manifest_path = build_root.join(BASE_MANIFEST_NAME);
 
         std::fs::create_dir_all(&layers_dir).map_err(|e| {
             WrightError::ForgeError(format!(
                 "failed to create layers dir {}: {e}",
                 layers_dir.display()
+            ))
+        })?;
+        std::fs::create_dir_all(&base_dir).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to create base dir {}: {e}",
+                base_dir.display()
             ))
         })?;
         std::fs::create_dir_all(&ovl_work_dir).map_err(|e| {
@@ -209,30 +192,29 @@ impl LayerManager {
                 ovl_work_dir.display()
             ))
         })?;
-        std::fs::create_dir_all(&stages_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create stages dir {}: {e}",
-                stages_dir.display()
-            ))
-        })?;
 
-        let empty_stage = stages_dir.join(".empty");
-        std::fs::create_dir_all(&empty_stage).ok();
-
-        remove_path_if_exists(&target_dir)?;
-        std::os::unix::fs::symlink(&empty_stage, &target_dir).map_err(|e| {
+        // `target/` is a real directory (a symlink in pre-merged-base build
+        // roots).  In fallback mode it is the stage's working tree; in
+        // sandbox mode it is a placeholder path used for logging and scratch
+        // path derivation.
+        if let Ok(meta) = std::fs::symlink_metadata(&target_dir)
+            && !meta.is_dir()
+        {
+            remove_path_if_exists(&target_dir)?;
+        }
+        std::fs::create_dir_all(&target_dir).map_err(|e| {
             WrightError::ForgeError(format!(
-                "failed to create target symlink {}: {e}",
+                "failed to create target dir {}: {e}",
                 target_dir.display()
             ))
         })?;
 
         Ok(Self {
             layers_dir,
+            base_dir,
             target_dir,
-            stages_dir,
             ovl_work_dir,
-            current_mount: None,
+            base_manifest_path,
         })
     }
 
@@ -248,11 +230,22 @@ impl LayerManager {
         self.layers_dir.join(layer_dir_name(stage))
     }
 
+    /// Build the overlay specification for a stage.  The overlay is mounted
+    /// by the sandbox inside its own mount namespace as `/build`; the parent
+    /// process never mounts anything.
+    pub fn overlay_spec(&self, stage: &str) -> crate::isolation::StageOverlay {
+        crate::isolation::StageOverlay {
+            lowerdir: self.base_dir.clone(),
+            upperdir: self.layer_dir(stage),
+            workdir: self.work_dir_for_stage(stage),
+        }
+    }
+
     pub fn prepare_upper_layer(&self, stage: &str) -> Result<PathBuf> {
         let dir = self.layer_dir(stage);
         if dir.exists() {
             debug!(event = "layer.clear", dir = %dir.display(), "Clearing existing layer directory");
-            std::fs::remove_dir_all(&dir).map_err(|e| {
+            remove_tree_force(&dir).map_err(|e| {
                 WrightError::ForgeError(format!("failed to clear layer dir {}: {e}", dir.display()))
             })?;
         }
@@ -264,199 +257,189 @@ impl LayerManager {
         Ok(dir)
     }
 
-    pub fn populate_target(&self, source_dir: &Path, completed_stages: &[String]) -> Result<()> {
-        let resolved =
-            std::fs::canonicalize(&self.target_dir).unwrap_or_else(|_| self.target_dir.clone());
-
-        let Ok(read_dir) = std::fs::read_dir(&resolved) else {
+    /// Give a stage's upper/work dirs fresh *root inodes* while preserving
+    /// their contents.
+    ///
+    /// OverlayFS takes its in-use lock on the upperdir and workdir root
+    /// dentries.  When a stage attempt is retried, the previous attempt's
+    /// sandbox overlay may still be dying in the kernel, holding the lock on
+    /// those inodes; remounting the same dirs would fail with `EBUSY` on
+    /// kernels where `index=on` is the default.  Renaming the layer aside
+    /// and hard-linking its contents into a brand-new directory yields fresh
+    /// root inodes that can never collide with the dying instance, without
+    /// discarding the stage's work so far.
+    pub fn freshen_upper_layer(&self, stage: &str) -> Result<()> {
+        let dir = self.layer_dir(stage);
+        if !dir.exists() {
+            self.prepare_upper_layer(stage)?;
             return Ok(());
-        };
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink() {
-                let _ = std::fs::remove_dir_all(&path);
-            } else {
-                let _ = std::fs::remove_file(&path);
-            }
         }
-
-        // Source dir is always the first (deepest) lowerdir.
-        if source_dir.exists() {
-            debug!(event = "layer.hardlink", layer = %source_dir.display(), "Hard-linking source dir into target");
-            hard_link_all_sync(source_dir, &resolved)?;
-        }
-
-        for stage_name in completed_stages {
-            let layer_dir = self.layer_dir(stage_name);
-            if !layer_dir.exists() {
-                continue;
-            }
-            debug!(event = "layer.hardlink", stage = %stage_name, layer = %layer_dir.display(), "Hard-linking layer into target");
-            hard_link_all_sync(&layer_dir, &resolved)?;
-        }
-
+        let tmp = dir.with_extension("freshen");
+        remove_path_if_exists(&tmp).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to clear freshen dir {}: {e}",
+                tmp.display()
+            ))
+        })?;
+        std::fs::rename(&dir, &tmp).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to set aside layer dir {}: {e}",
+                dir.display()
+            ))
+        })?;
+        std::fs::create_dir(&dir).map_err(|e| {
+            WrightError::ForgeError(format!("failed to create layer dir {}: {e}", dir.display()))
+        })?;
+        hard_link_all_sync(&tmp, &dir)?;
+        remove_tree_force(&tmp).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to remove freshen dir {}: {e}",
+                tmp.display()
+            ))
+        })?;
+        let work_dir = self.work_dir_for_stage(stage);
+        self.reset_overlay_work_dir(&work_dir)?;
         Ok(())
     }
 
-    pub fn mount_overlay(
-        &mut self,
-        current_stage: &str,
-        source_dir: &Path,
-        completed_stages: &[String],
-    ) -> Result<bool> {
-        use nix::mount::{MsFlags, mount};
+    /// Ensure `base/` matches `source_dir` + the given completed stage layers.
+    ///
+    /// `completed_stages` must be in canonical stage order.  A matching
+    /// manifest makes this a no-op; otherwise `base/` is rebuilt from
+    /// scratch — an O(tree) hard-link pass that runs only on resume,
+    /// rewind, or after a crash interrupted an earlier merge.
+    pub fn reconcile_base(&self, source_dir: &Path, completed_stages: &[String]) -> Result<()> {
+        let expected = Self::base_manifest_contents(source_dir, completed_stages);
+        if std::fs::read_to_string(&self.base_manifest_path).ok().as_deref()
+            == Some(expected.as_str())
+        {
+            debug!(event = "layer.base_reuse", "Merged base up-to-date — reusing base/");
+            return Ok(());
+        }
 
-        let stage_point = self.stages_dir.join(layer_dir_name(current_stage));
-        let _ = force_clean_dir_blocking(&stage_point);
-        std::fs::create_dir_all(&stage_point).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create stage mount point {}: {e}",
-                stage_point.display()
-            ))
-        })?;
-
-        let upper_dir = self.layer_dir(current_stage);
-        if !upper_dir.exists() {
-            std::fs::create_dir_all(&upper_dir).map_err(|e| {
+        debug!(
+            event = "layer.base_rebuild",
+            stages = %completed_stages.join(","),
+            "Rebuilding merged base from source and completed layers"
+        );
+        if self.base_dir.exists() {
+            remove_tree_force(&self.base_dir).map_err(|e| {
                 WrightError::ForgeError(format!(
-                    "failed to create upper layer dir {}: {e}",
-                    upper_dir.display()
+                    "failed to clear base dir {}: {e}",
+                    self.base_dir.display()
                 ))
             })?;
         }
-        let ovl_work = self.work_dir_for_stage(current_stage);
-        self.reset_overlay_work_dir(&ovl_work)?;
+        std::fs::create_dir_all(&self.base_dir).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to create base dir {}: {e}",
+                self.base_dir.display()
+            ))
+        })?;
 
-        // Build lowerdir stack: completed stages are upper lowerdirs (leftmost
-        // = topmost), source_dir is always the deepest (rightmost).
-        let mut lower_parts: Vec<String> = Vec::new();
-        for prev_stage in completed_stages.iter().rev() {
-            let prev_dir = self.layer_dir(prev_stage);
-            if prev_dir.exists() {
-                lower_parts.push(prev_dir.display().to_string());
-            }
-        }
         if source_dir.exists() {
-            lower_parts.push(source_dir.display().to_string());
+            hard_link_all_sync(source_dir, &self.base_dir)?;
         }
-
-        let opts = if lower_parts.is_empty() {
-            let dummy_lower = self.layers_dir.join(".empty-lower");
-            std::fs::create_dir_all(&dummy_lower).ok();
-            format!(
-                "lowerdir={},upperdir={},workdir={}",
-                dummy_lower.display(),
-                upper_dir.display(),
-                ovl_work.display(),
-            )
-        } else {
-            format!(
-                "lowerdir={},upperdir={},workdir={}",
-                lower_parts.join(":"),
-                upper_dir.display(),
-                ovl_work.display(),
-            )
-        };
-
-        debug!(
-            event = "layer.mount",
-            stage = %current_stage,
-            point = %stage_point.display(),
-            lowerdirs = %lower_parts.join(":"),
-            upperdir = %upper_dir.display(),
-            "Mounting stage overlay to disposable point"
-        );
-
-        // Retry on EBUSY: a prior stage's overlay may still be releasing its
-        // upperdir (which we list as a lowerdir here), especially right after a
-        // lazy-detach fallback. A short backoff lets the kernel free it.
-        let mut mount_result = Ok(());
-        for attempt in 0..5 {
-            mount_result = mount(
-                Some("overlay"),
-                &stage_point,
-                Some("overlay"),
-                MsFlags::empty(),
-                Some(opts.as_str()),
-            );
-            if !matches!(mount_result, Err(nix::errno::Errno::EBUSY)) {
-                break;
+        for stage in completed_stages {
+            let layer = self.layer_dir(stage);
+            if layer.exists() {
+                merge_layer_tree(&layer, &self.base_dir)?;
             }
-            thread::sleep(Duration::from_millis(20 * (1 << attempt)));
         }
-
-        match mount_result {
-            Ok(()) => {
-                let temp_link = self.target_dir.with_extension("tmp");
-                std::os::unix::fs::symlink(&stage_point, &temp_link).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to create target symlink {}: {e}",
-                        temp_link.display()
-                    ))
-                })?;
-                std::fs::rename(&temp_link, &self.target_dir).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to rotate target symlink to {}: {e}",
-                        stage_point.display()
-                    ))
-                })?;
-                self.current_mount = Some(stage_point);
-                Ok(true)
-            }
-            Err(nix::errno::Errno::EPERM) => {
-                warn!(
-                    event = "layer.mount_no_cap",
-                    "overlay mount needs root (or CAP_SYS_ADMIN); using slower directory-based layering instead"
-                );
-                Ok(false)
-            }
-            Err(e) => Err(WrightError::ForgeError(format!(
-                "failed to mount overlay at {}: {e}",
-                stage_point.display()
-            ))),
-        }
+        self.write_base_manifest(&expected)
     }
 
-    pub fn unmount_overlay(&mut self) {
-        if let Some(mount) = self.current_mount.take() {
-            unmount_overlay_point(&mount);
-        }
-    }
-
-    pub fn commit_layer(
+    /// Merge a completed stage's layer into `base/` and record the new
+    /// manifest.  `completed_stages` must include `stage` and be in
+    /// canonical order — it becomes the manifest content.
+    ///
+    /// Runs after the stage's sandbox has exited.  The stage's overlay may
+    /// still be dying in the kernel (orphan processes releasing the
+    /// namespace), but it only references `base/` as a *lowerdir*, which the
+    /// kernel never locks — so mutating `base/` here cannot trip the in-use
+    /// upperdir protection.
+    pub fn merge_layer_into_base(
         &self,
         stage: &str,
         source_dir: &Path,
         completed_stages: &[String],
     ) -> Result<()> {
+        let layer = self.layer_dir(stage);
+        if layer.exists() {
+            merge_layer_tree(&layer, &self.base_dir)?;
+        }
+        let manifest = Self::base_manifest_contents(source_dir, completed_stages);
+        self.write_base_manifest(&manifest)?;
+        debug!(event = "layer.base_merge", stage = %stage, "Merged stage layer into base");
+        Ok(())
+    }
+
+    fn base_manifest_contents(source_dir: &Path, completed_stages: &[String]) -> String {
+        use std::fmt::Write as _;
+        let mut out = format!("{BASE_MANIFEST_FORMAT}\nsource {}\n", source_dir.display());
+        for stage in completed_stages {
+            let _ = writeln!(out, "stage {stage}");
+        }
+        out
+    }
+
+    fn write_base_manifest(&self, contents: &str) -> Result<()> {
+        let tmp = self.base_manifest_path.with_extension("tmp");
+        std::fs::write(&tmp, contents).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to write base manifest {}: {e}",
+                tmp.display()
+            ))
+        })?;
+        std::fs::rename(&tmp, &self.base_manifest_path).map_err(|e| {
+            WrightError::ForgeError(format!(
+                "failed to commit base manifest {}: {e}",
+                self.base_manifest_path.display()
+            ))
+        })?;
+        Ok(())
+    }
+
+    /// Populate `target/` as a real directory tree (fallback mode, when a
+    /// stage runs without namespace isolation).  The tree is a hard-link
+    /// copy of the merged base.
+    pub fn populate_target(&self) -> Result<()> {
+        if let Ok(read_dir) = std::fs::read_dir(&self.target_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink()
+                {
+                    let _ = remove_tree_force(&path);
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+
+        debug!(event = "layer.hardlink", layer = %self.base_dir.display(), "Hard-linking merged base into target");
+        hard_link_all_sync(&self.base_dir, &self.target_dir)?;
+        Ok(())
+    }
+
+    /// Harvest the fallback-mode delta from `target/` into the stage's layer
+    /// directory, and record deletions in the layer's tombstone manifest.
+    pub fn commit_layer(&self, stage: &str) -> Result<()> {
         let layer_dir = self.layer_dir(stage);
         if !self.target_dir.exists() {
             return Ok(());
         }
 
+        // Additions and modifications: anything in `target/` that is absent
+        // from, or differs from, the merged base.
         let mut all_files: Vec<PathBuf> = Vec::new();
         collect_files_recursive(&self.target_dir, &mut all_files)?;
-
         for target_file in &all_files {
             let rel_path = target_file
                 .strip_prefix(&self.target_dir)
                 .unwrap_or(target_file);
-
-            // Check against source_dir and all prior layers.
-            let already_present = {
-                let source_path = source_dir.join(rel_path);
-                if source_path.exists()
-                    && files_are_identical(&source_path, target_file).unwrap_or(false)
-                {
-                    true
-                } else {
-                    completed_stages.iter().rev().any(|s| {
-                        let prev_path = self.layer_dir(s).join(rel_path);
-                        prev_path.exists()
-                            && files_are_identical(&prev_path, target_file).unwrap_or(false)
-                    })
-                }
-            };
+            let base_path = self.base_dir.join(rel_path);
+            let already_present = base_path.exists()
+                && files_are_identical(&base_path, target_file).unwrap_or(false);
 
             if !already_present {
                 let dest = layer_dir.join(rel_path);
@@ -469,17 +452,45 @@ impl LayerManager {
             }
         }
 
+        // Deletions: base entries the stage removed from `target/`.  These
+        // become tombstones applied to `base/` at merge time.
+        let mut base_files: Vec<PathBuf> = Vec::new();
+        collect_files_recursive(&self.base_dir, &mut base_files)?;
+        let mut deletions: Vec<String> = Vec::new();
+        for base_file in &base_files {
+            let rel_path = base_file
+                .strip_prefix(&self.base_dir)
+                .unwrap_or(base_file);
+            if std::fs::symlink_metadata(self.target_dir.join(rel_path)).is_err() {
+                deletions.push(rel_path.to_string_lossy().into_owned());
+            }
+        }
+        let tombstone = layer_dir.join(LAYER_DELETIONS_FILE);
+        if deletions.is_empty() {
+            let _ = std::fs::remove_file(&tombstone);
+        } else {
+            std::fs::write(&tombstone, deletions.join("\n") + "\n").map_err(|e| {
+                WrightError::ForgeError(format!(
+                    "failed to write layer deletions {}: {e}",
+                    tombstone.display()
+                ))
+            })?;
+        }
+
         Ok(())
     }
 
     pub fn clear_layer(&self, stage: &str) {
         let dir = self.layer_dir(stage);
         if dir.exists() {
-            debug!(event = "layer.clear_failed", dir = %dir.display(), "Clearing failed stage layer");
-            if let Err(e) = std::fs::remove_dir_all(&dir) {
+            debug!(event = "layer.clear", dir = %dir.display(), "Clearing failed stage layer");
+            if let Err(e) = remove_tree_force(&dir) {
                 warn!(event = "layer.clear_failed", dir = %dir.display(), error = %e, "Failed to clear failed stage layer");
             }
         }
+        // The base no longer reflects the surviving layers; force the next
+        // reconcile to rebuild it.
+        let _ = std::fs::remove_file(&self.base_manifest_path);
     }
 
     pub fn clear_layers_from(&self, from_stage: &str) {
@@ -516,11 +527,251 @@ impl LayerManager {
 
 fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(meta) if meta.is_dir() => remove_tree_force(path),
         Ok(_) => std::fs::remove_file(path),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// Recursive removal that tolerates permission-restricted directories.
+///
+/// The kernel creates OverlayFS workdir internals (`work/`) with mode 000.
+/// That is no obstacle for root, but an unprivileged owner cannot traverse
+/// such a directory, so plain `remove_dir_all` fails with `EACCES`.  Restore
+/// owner rwx on every directory in the tree first, then remove it.
+fn remove_tree_force(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(());
+    }
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&dir) else {
+            continue;
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.permissions().mode() & 0o700 != 0o700 {
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o700);
+            let _ = std::fs::set_permissions(&dir, perms);
+        }
+        if let Ok(read_dir) = std::fs::read_dir(&dir) {
+            for entry in read_dir.flatten() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Merge a stage layer's delta tree into the merged base.
+///
+/// Handles the three OverlayFS delta encodings so that `base/` always
+/// reflects what the stage's merged view looked like:
+///
+/// * **Whiteouts** (deletions through the overlay): char device `0:0`
+///   (privileged mounts) or a zero-length regular file carrying a
+///   `trusted.overlay.whiteout` / `user.overlay.whiteout` xattr
+///   (user-namespace mounts).  The corresponding `base/` path is removed.
+/// * **Opaque directories** (`trusted.overlay.opaque=y` /
+///   `user.overlay.opaque=y`): the `base/` directory is replaced wholesale
+///   before the layer's contents are merged in.
+/// * **Tombstones** (`LAYER_DELETIONS_FILE`, produced by fallback-mode
+///   `commit_layer`): plain-text relative paths removed from `base/`.
+///
+/// Everything else is hard-linked over (or copied, on cross-device or
+/// hard-link failure) with the layer's version shadowing the base's.
+fn merge_layer_tree(layer_dir: &Path, base_dir: &Path) -> Result<()> {
+    let deletions_file = layer_dir.join(LAYER_DELETIONS_FILE);
+    if let Ok(raw) = std::fs::read_to_string(&deletions_file) {
+        for line in raw.lines() {
+            let rel = line.trim();
+            if rel.is_empty() {
+                continue;
+            }
+            remove_base_path(base_dir, Path::new(rel))?;
+        }
+    }
+
+    let mut stack: Vec<(PathBuf, PathBuf)> = vec![(layer_dir.to_path_buf(), PathBuf::new())];
+    while let Some((src, rel)) = stack.pop() {
+        let entries = match std::fs::read_dir(&src) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let rel = rel.join(entry.file_name());
+            if rel == Path::new(LAYER_DELETIONS_FILE) {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let dest = base_dir.join(&rel);
+
+            if is_overlay_whiteout(&path, &meta) {
+                remove_base_path(base_dir, &rel)?;
+                continue;
+            }
+
+            if meta.is_dir() {
+                if is_overlay_opaque(&path, &meta) && dest.exists() {
+                    std::fs::remove_dir_all(&dest).map_err(|e| {
+                        WrightError::ForgeError(format!(
+                            "failed to replace opaque dir {}: {e}",
+                            dest.display()
+                        ))
+                    })?;
+                }
+                ensure_dest_dir(&dest)?;
+                stack.push((path, rel));
+                continue;
+            }
+
+            // Regular file or symlink: shadow whatever the base has.
+            remove_dest_any(&dest)?;
+            if meta.file_type().is_symlink() {
+                let target = std::fs::read_link(&path).map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to read symlink {}: {e}",
+                        path.display()
+                    ))
+                })?;
+                std::os::unix::fs::symlink(&target, &dest).map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to create symlink {}: {e}",
+                        dest.display()
+                    ))
+                })?;
+            } else if std::fs::hard_link(&path, &dest).is_err() {
+                std::fs::copy(&path, &dest).map_err(|e| {
+                    WrightError::ForgeError(format!(
+                        "failed to copy {} to {}: {e}",
+                        path.display(),
+                        dest.display()
+                    ))
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Remove `base_dir.join(rel)` whatever its type, ignoring missing paths.
+/// Refuses relative paths that could escape the base directory.
+fn remove_base_path(base_dir: &Path, rel: &Path) -> Result<()> {
+    let is_safe = rel.components().all(|c| {
+        matches!(
+            c,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    });
+    if !is_safe || rel.as_os_str().is_empty() {
+        warn!(event = "layer.base_remove_unsafe", rel = %rel.display(), "Ignoring unsafe deletion path");
+        return Ok(());
+    }
+    let dest = base_dir.join(rel);
+    remove_dest_any(&dest)
+}
+
+fn remove_dest_any(dest: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(dest) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
+            remove_tree_force(dest).map_err(|e| {
+                WrightError::ForgeError(format!("failed to remove dir {}: {e}", dest.display()))
+            })
+        }
+        Ok(_) => std::fs::remove_file(dest).map_err(|e| {
+            WrightError::ForgeError(format!("failed to remove file {}: {e}", dest.display()))
+        }),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(WrightError::ForgeError(format!(
+            "failed to inspect {}: {e}",
+            dest.display()
+        ))),
+    }
+}
+
+fn ensure_dest_dir(dest: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(dest) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => Ok(()),
+        Ok(_) => {
+            std::fs::remove_file(dest).map_err(|e| {
+                WrightError::ForgeError(format!("failed to replace file {}: {e}", dest.display()))
+            })?;
+            std::fs::create_dir(dest).map_err(|e| {
+                WrightError::ForgeError(format!("failed to create dir {}: {e}", dest.display()))
+            })
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::create_dir(dest).map_err(|e| {
+                WrightError::ForgeError(format!("failed to create dir {}: {e}", dest.display()))
+            })
+        }
+        Err(e) => Err(WrightError::ForgeError(format!(
+            "failed to inspect {}: {e}",
+            dest.display()
+        ))),
+    }
+}
+
+fn xattr_value(path: &Path, name: &str) -> Option<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let c_name = std::ffi::CString::new(name).ok()?;
+    let size = unsafe { libc::lgetxattr(c_path.as_ptr(), c_name.as_ptr(), std::ptr::null_mut(), 0) };
+    if size < 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; size as usize];
+    let read = unsafe {
+        libc::lgetxattr(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    if read < 0 {
+        return None;
+    }
+    buf.truncate(read as usize);
+    Some(buf)
+}
+
+/// Detect an OverlayFS whiteout entry: either a char device with rdev 0
+/// (created by privileged overlay mounts) or a zero-length regular file
+/// carrying a whiteout xattr (user-namespace mounts).
+fn is_overlay_whiteout(path: &Path, meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    if meta.file_type().is_char_device() {
+        return meta.rdev() == 0;
+    }
+    if meta.is_file() && meta.len() == 0 {
+        return xattr_value(path, "trusted.overlay.whiteout").is_some()
+            || xattr_value(path, "user.overlay.whiteout").is_some();
+    }
+    false
+}
+
+/// Detect an OverlayFS opaque directory marker.
+fn is_overlay_opaque(path: &Path, meta: &std::fs::Metadata) -> bool {
+    if !meta.is_dir() {
+        return false;
+    }
+    xattr_value(path, "trusted.overlay.opaque").as_deref() == Some(b"y")
+        || xattr_value(path, "user.overlay.opaque").as_deref() == Some(b"y")
 }
 
 fn hard_link_all_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
@@ -585,12 +836,21 @@ fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 fn files_are_identical(a: &Path, b: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
     let meta_a = std::fs::symlink_metadata(a)?;
     let meta_b = std::fs::symlink_metadata(b)?;
 
     if meta_a.file_type().is_symlink() && meta_b.file_type().is_symlink() {
         return Ok(std::fs::read_link(a)? == std::fs::read_link(b)?);
     }
+
+    // Hard-linked copies of the same file are identical by construction —
+    // the common case when comparing a populated tree against the base.
+    if meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino() {
+        return Ok(true);
+    }
+
     if meta_a.len() != meta_b.len() {
         return Ok(false);
     }
@@ -617,6 +877,7 @@ fn files_are_identical(a: &Path, b: &Path) -> std::io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
 
     #[test]
     fn test_layer_dir_name() {
@@ -631,5 +892,301 @@ mod tests {
         assert_eq!(layer_index("compile"), Some(2));
         assert_eq!(layer_index("staging"), Some(4));
         assert_eq!(layer_index("unknown"), None);
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn read(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    fn set_xattr(path: &Path, name: &str, value: &[u8]) {
+        use std::os::unix::ffi::OsStrExt;
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let c_name = std::ffi::CString::new(name).unwrap();
+        let rc = unsafe {
+            libc::lsetxattr(
+                c_path.as_ptr(),
+                c_name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        assert_eq!(
+            rc,
+            0,
+            "lsetxattr {name} on {} failed: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        );
+    }
+
+    #[test]
+    fn merge_shadows_base_and_hardlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("base");
+        let layer = tmp.path().join("layer");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&layer).unwrap();
+
+        write_file(&base.join("keep.txt"), "base");
+        write_file(&base.join("shadow.txt"), "old");
+        write_file(&layer.join("shadow.txt"), "new");
+        write_file(&layer.join("added.txt"), "added");
+        std::os::unix::fs::symlink("added.txt", layer.join("link.txt")).unwrap();
+
+        merge_layer_tree(&layer, &base).unwrap();
+
+        assert_eq!(read(&base.join("keep.txt")), "base");
+        assert_eq!(read(&base.join("shadow.txt")), "new");
+        assert_eq!(read(&base.join("added.txt")), "added");
+        assert_eq!(
+            std::fs::read_link(base.join("link.txt")).unwrap(),
+            PathBuf::from("added.txt")
+        );
+        // Files merge as hard-links (same inode), not copies.
+        let ino_layer = std::fs::metadata(layer.join("added.txt")).unwrap().ino();
+        let ino_base = std::fs::metadata(base.join("added.txt")).unwrap().ino();
+        assert_eq!(ino_layer, ino_base);
+    }
+
+    #[test]
+    fn merge_applies_xattr_whiteout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("base");
+        let layer = tmp.path().join("layer");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&layer).unwrap();
+
+        write_file(&base.join("doomed.txt"), "x");
+        write_file(&base.join("sub/inner.txt"), "y");
+        write_file(&base.join("survivor.txt"), "z");
+
+        // Whiteout for a file and for a whole directory subtree.
+        write_file(&layer.join("doomed.txt"), "");
+        set_xattr(&layer.join("doomed.txt"), "user.overlay.whiteout", b"");
+        std::fs::create_dir_all(layer.join("sub")).unwrap();
+        write_file(&layer.join("sub/inner.txt"), "");
+        set_xattr(&layer.join("sub/inner.txt"), "user.overlay.whiteout", b"");
+
+        merge_layer_tree(&layer, &base).unwrap();
+
+        assert!(!base.join("doomed.txt").exists());
+        assert!(!base.join("sub/inner.txt").exists());
+        assert_eq!(read(&base.join("survivor.txt")), "z");
+        // The surviving base directory must not gain marker files.
+        assert!(base.join("sub").exists());
+    }
+
+    #[test]
+    fn merge_applies_char_device_whiteout_when_permitted() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("base");
+        let layer = tmp.path().join("layer");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&layer).unwrap();
+
+        write_file(&base.join("dev_gone.txt"), "x");
+        let marker = layer.join("dev_gone.txt");
+        let c_marker = std::ffi::CString::new(marker.as_os_str().as_bytes()).unwrap();
+        // Privileged overlay mounts encode whiteouts as char device 0:0.
+        let rc = unsafe {
+            libc::mknod(
+                c_marker.as_ptr(),
+                libc::S_IFCHR | 0o644,
+                libc::makedev(0, 0),
+            )
+        };
+        if rc != 0 {
+            eprintln!(
+                "mknod not permitted ({}) — skipping char-device whiteout test",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
+
+        merge_layer_tree(&layer, &base).unwrap();
+        assert!(!base.join("dev_gone.txt").exists());
+    }
+
+    #[test]
+    fn merge_applies_tombstones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("base");
+        let layer = tmp.path().join("layer");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&layer).unwrap();
+
+        write_file(&base.join("gone.txt"), "x");
+        write_file(&base.join("dir/inner.txt"), "y");
+        write_file(&base.join("stay.txt"), "z");
+        write_file(
+            &layer.join(LAYER_DELETIONS_FILE),
+            "gone.txt\ndir\n../escape\n\n",
+        );
+
+        merge_layer_tree(&layer, &base).unwrap();
+
+        assert!(!base.join("gone.txt").exists());
+        assert!(!base.join("dir").exists());
+        assert_eq!(read(&base.join("stay.txt")), "z");
+        // The tombstone manifest itself is never merged, and traversal
+        // entries are refused.
+        assert!(!base.join(LAYER_DELETIONS_FILE).exists());
+        assert!(!tmp.path().join("escape").exists());
+    }
+
+    #[test]
+    fn merge_replaces_opaque_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("base");
+        let layer = tmp.path().join("layer");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&layer).unwrap();
+
+        write_file(&base.join("o/legacy.txt"), "x");
+        write_file(&base.join("o/deep/nested.txt"), "y");
+        std::fs::create_dir_all(layer.join("o")).unwrap();
+        set_xattr(&layer.join("o"), "user.overlay.opaque", b"y");
+        write_file(&layer.join("o/fresh.txt"), "z");
+
+        merge_layer_tree(&layer, &base).unwrap();
+
+        assert!(!base.join("o/legacy.txt").exists());
+        assert!(!base.join("o/deep").exists());
+        assert_eq!(read(&base.join("o/fresh.txt")), "z");
+    }
+
+    #[test]
+    fn reconcile_builds_reuses_and_rewinds_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_root = tmp.path().join("workshop/pkg-1.0");
+        let source = tmp.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        write_file(&source.join("s.txt"), "src");
+
+        let mgr = LayerManager::new(&build_root).unwrap();
+        write_file(
+            &build_root.join("layers/01-prepare/p.txt"),
+            "prep",
+        );
+
+        // Initial build: source + completed layer.
+        let completed = vec!["prepare".to_string()];
+        mgr.reconcile_base(&source, &completed).unwrap();
+        let base = build_root.join("base");
+        assert_eq!(read(&base.join("s.txt")), "src");
+        assert_eq!(read(&base.join("p.txt")), "prep");
+
+        // Matching manifest: reconcile is a no-op (does not rebuild).
+        std::fs::remove_file(base.join("s.txt")).unwrap();
+        write_file(&base.join("s.txt"), "corrupted");
+        mgr.reconcile_base(&source, &completed).unwrap();
+        assert_eq!(read(&base.join("s.txt")), "corrupted");
+
+        // Dropped manifest forces a rebuild that restores consistency.
+        std::fs::remove_file(build_root.join(BASE_MANIFEST_NAME)).unwrap();
+        mgr.reconcile_base(&source, &completed).unwrap();
+        assert_eq!(read(&base.join("s.txt")), "src");
+
+        // Rewind: completed set shrinks, base loses the layer's content.
+        mgr.reconcile_base(&source, &[]).unwrap();
+        assert_eq!(read(&base.join("s.txt")), "src");
+        assert!(!base.join("p.txt").exists());
+    }
+
+    #[test]
+    fn commit_and_merge_fallback_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_root = tmp.path().join("workshop/pkg-1.0");
+        let source = tmp.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        write_file(&source.join("a.txt"), "alpha");
+        write_file(&source.join("del.txt"), "doomed");
+
+        let mgr = LayerManager::new(&build_root).unwrap();
+        mgr.reconcile_base(&source, &[]).unwrap();
+        mgr.prepare_upper_layer("configure").unwrap();
+        mgr.populate_target().unwrap();
+
+        // Simulate a fallback-mode stage: modify, add, delete.  Real tools
+        // replace files rather than writing through shared inodes.
+        let target = mgr.target_dir();
+        std::fs::remove_file(target.join("a.txt")).unwrap();
+        write_file(&target.join("a.txt"), "changed");
+        write_file(&target.join("new.txt"), "new");
+        std::fs::remove_file(target.join("del.txt")).unwrap();
+
+        mgr.commit_layer("configure").unwrap();
+        let layer = mgr.layer_dir("configure");
+        assert_eq!(read(&layer.join("a.txt")), "changed");
+        assert_eq!(read(&layer.join("new.txt")), "new");
+        assert!(!layer.join("del.txt").exists());
+        assert_eq!(
+            read(&layer.join(LAYER_DELETIONS_FILE)).trim(),
+            "del.txt"
+        );
+
+        let completed = vec!["configure".to_string()];
+        mgr.merge_layer_into_base("configure", &source, &completed)
+            .unwrap();
+        let base = build_root.join("base");
+        assert_eq!(read(&base.join("a.txt")), "changed");
+        assert_eq!(read(&base.join("new.txt")), "new");
+        assert!(!base.join("del.txt").exists());
+
+        // A subsequent resume reconcile reaches the same state.
+        std::fs::remove_file(build_root.join(BASE_MANIFEST_NAME)).unwrap();
+        mgr.reconcile_base(&source, &completed).unwrap();
+        assert_eq!(read(&base.join("a.txt")), "changed");
+        assert!(!base.join("del.txt").exists());
+    }
+
+    #[test]
+    fn identical_files_fastpath_hardlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        write_file(&a, "same");
+        std::fs::hard_link(&a, &b).unwrap();
+        assert!(files_are_identical(&a, &b).unwrap());
+        std::fs::remove_file(&b).unwrap();
+        write_file(&b, "same");
+        assert!(files_are_identical(&a, &b).unwrap());
+        write_file(&b, "different");
+        assert!(!files_are_identical(&a, &b).unwrap());
+    }
+
+    #[test]
+    fn freshen_preserves_content_with_fresh_root_inode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_root = tmp.path().join("workshop/pkg-1.0");
+        let mgr = LayerManager::new(&build_root).unwrap();
+        mgr.prepare_upper_layer("compile").unwrap();
+        let layer = mgr.layer_dir("compile");
+        write_file(&layer.join("obj/out.o"), "object");
+        let old_root_ino = std::fs::metadata(&layer).unwrap().ino();
+        let old_file_ino = std::fs::metadata(layer.join("obj/out.o")).unwrap().ino();
+
+        mgr.freshen_upper_layer("compile").unwrap();
+
+        let layer = mgr.layer_dir("compile");
+        assert_eq!(read(&layer.join("obj/out.o")), "object");
+        assert_ne!(std::fs::metadata(&layer).unwrap().ino(), old_root_ino);
+        // File contents hard-link back: data inodes are preserved.
+        assert_eq!(
+            std::fs::metadata(layer.join("obj/out.o")).unwrap().ino(),
+            old_file_ino
+        );
+        // No freshen leftovers and the workdir is reset.
+        assert!(!build_root.join("layers/03-compile.freshen").exists());
+        assert!(build_root.join(".ovl_work/03-compile").exists());
     }
 }

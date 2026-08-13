@@ -6,7 +6,8 @@ use tracing::debug;
 use crate::error::{Result, WrightError};
 use crate::foundry::variables;
 use crate::isolation::{
-    IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits, run_in_isolation,
+    IsolationConfig, IsolationLevel, IsolationOutput, ResourceLimits, StageOverlay,
+    run_in_isolation,
 };
 
 #[derive(Debug, Deserialize, Clone)]
@@ -178,6 +179,9 @@ pub struct ExecutorOptions {
     pub cpu_count: Option<u32>,
     pub log_stdout: Option<std::fs::File>,
     pub dep_mounts: Vec<(PathBuf, PathBuf)>,
+    /// Overlay to mount as `/build` inside the sandbox.  Only meaningful
+    /// when `level` is not `IsolationLevel::None`.
+    pub stage_overlay: Option<StageOverlay>,
 }
 
 pub async fn execute_script(
@@ -207,7 +211,14 @@ pub async fn execute_script(
 
     let expanded = variables::substitute(script, &effective_vars);
     let script_name = format!(".wright_script{}", executor.tempfile_extension);
-    let script_path = working_dir.join(&script_name);
+    // With a stage overlay, `/build` is the overlay's merged view inside the
+    // sandbox; writing the script into the upperdir (before the sandbox
+    // mounts the overlay) makes it appear at `/build/<script>`.
+    let script_dir = match &options.stage_overlay {
+        Some(overlay) => overlay.upperdir.clone(),
+        None => working_dir.to_path_buf(),
+    };
+    let script_path = script_dir.join(&script_name);
     tokio::fs::write(&script_path, &expanded)
         .await
         .map_err(|e| WrightError::ForgeError(format!("failed to write forge script: {}", e)))?;
@@ -242,6 +253,7 @@ pub async fn execute_script(
     config.cpu_count = options.cpu_count;
     config.log_stdout = options.log_stdout.take();
     config.dep_mounts = std::mem::take(&mut options.dep_mounts);
+    config.stage_overlay = options.stage_overlay.take();
 
     if let Some(ref main_part) = options.main_part_dir {
         config
