@@ -94,14 +94,32 @@ pub async fn execute_upgrade(
         .filter(|n| !target_set.contains(n))
         .collect();
     extras.sort_unstable();
-    if !extras.is_empty() {
-        let described: Vec<String> = extras.iter().map(|n| describe_extra(n)).collect();
+    if !extras.is_empty() && !quiet {
+        let mut groups: std::collections::BTreeMap<&str, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        for extra in &extras {
+            let trigger = build_set
+                .rebuild_triggers
+                .get(*extra)
+                .map(String::as_str)
+                .unwrap_or_else(|| targets.first().map(String::as_str).unwrap_or("target"));
+            groups.entry(trigger).or_default().push(extra);
+        }
+
         crate::cli_action!(
             "Cascading",
-            "rdeps of {}: {}",
+            "rdeps of {} ({} packages affected):",
             targets.join(", "),
-            described.join(", ")
+            extras.len()
         );
+        for (trigger, pkgs) in groups {
+            let label = if target_set.contains(trigger) {
+                format!("via {} (direct)", trigger)
+            } else {
+                format!("via {}", trigger)
+            };
+            println!("    {:<24} {}", label, pkgs.join(", "));
+        }
     }
 
     if dry_run {
