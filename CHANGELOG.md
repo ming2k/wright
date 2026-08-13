@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-08-13
+
+### Changed
+- **Grouped cascading rdeps in `wright upgrade` output by causal trigger.** Replaced single-line comma-separated rdep lists with Cargo-style 4-space indented causal groups (`via <trigger>`), preserving 12-column action verb alignment while eliminating wall-of-text line wrapping.
+
 ## [5.4.0] - 2026-08-13
 
 ### Changed
