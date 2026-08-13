@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-08-13
+
 ### Changed
 - **Merged-base stage layering; stage overlays now mount inside the sandbox (ADR-0036).** Each forge stage's delta is still captured in `layers/<NN>-<stage>/`, but after every stage the delta is merged with hard-links into a new `base/` directory under the build root, and the next stage's overlay uses `base/` as its only `lowerdir`. The overlay itself is mounted by the sandbox inside its own mount namespace as `/build`; the parent process never mounts stage overlays. Consequences: crashed or SIGKILLed builds leave no stale mounts in the host mount table; stage transitions no longer depend on kernel overlay teardown timing; resume/rewind deterministically rebuilds `base/` from the surviving layers (tracked by `.base_manifest`). Build roots from older versions are still cleaned of any legacy stale mounts on startup.
 - **Unprivileged builds use the real OverlayFS path where user namespaces are available.** Overlay mounts happen inside the user-namespace sandbox, so non-root builds no longer fall back to the slower hard-link pipeline for that reason. Cleanup now tolerates the kernel's mode-000 overlay workdirs (`EACCES` on recursive removal).
