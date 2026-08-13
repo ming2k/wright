@@ -90,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::print_stderr)] // test diagnostics, not CLI output
     fn libc_has_soname_and_no_unexpected_panic() {
         let candidates = host_libc_candidates();
         let Some(libc) = first_existing(&candidates) else {

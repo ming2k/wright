@@ -71,10 +71,10 @@ pub async fn execute_remove(
                 planned.extend(orphans);
             }
         }
-        println!("[dry-run] remove -> {}", root_dir.display());
-        println!("[dry-run] would remove {} part(s):", planned.len());
+        crate::outln!("[dry-run] remove -> {}", root_dir.display());
+        crate::outln!("[dry-run] would remove {} part(s):", planned.len());
         for name in &planned {
-            println!("  {}", name);
+            crate::outln!("  {}", name);
         }
         return Ok(());
     }

@@ -46,6 +46,10 @@ pub(super) fn run(
     // post-fork child of the multi-threaded application process.
     unsafe {
         child.pre_exec(move || {
+            // The stage command is user code: give it the traditional
+            // SIGPIPE disposition (wright itself keeps SIGPIPE ignored —
+            // see util::output). One fixed-size libc call, no allocation.
+            crate::util::output::restore_default_sigpipe();
             if let Some(count) = cpu_count {
                 resources::apply_cpu_affinity(count);
             }

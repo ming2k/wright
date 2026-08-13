@@ -123,7 +123,7 @@ fn split_error_chain(s: &str) -> Vec<String> {
             || seg.starts_with("(hint:")
             || seg.ends_with(')'))
             && !segs.is_empty()
-            && segs.last().map_or(false, |l| l.contains("(hint"))
+            && segs.last().is_some_and(|l| l.contains("(hint"))
         {
             let last = segs.last_mut().unwrap();
             last.push_str(": ");

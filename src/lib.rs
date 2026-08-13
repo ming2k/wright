@@ -1,7 +1,8 @@
 pub mod cli;
 
 pub use wright_engine::{
-    cli_aborted, cli_action, cli_error, cli_failed, cli_output, cli_span, cli_warn,
+    cli_aborted, cli_action, cli_error, cli_failed, cli_output, cli_span, cli_warn, errln, out,
+    outln,
 };
 pub use wright_engine::{
     config, error, foundry, identify, isolation, operations, query, resolve, seal, transaction,
@@ -41,8 +42,8 @@ pub mod part {
 /// lower-level crates.
 pub mod util {
     pub use wright_engine::util::{
-        checksum, compact_path, display, download, logging, progress, reset_sigpipe,
-        sanitize_filename, stdin,
+        checksum, compact_path, display, download, logging, output, progress, sanitize_filename,
+        stdin,
     };
 
     pub mod compress {

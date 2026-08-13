@@ -25,7 +25,7 @@ pub async fn execute_history(db: &InstalledDb, target: Option<&str>, json: bool)
     }
 
     if records.is_empty() {
-        println!("no history records found");
+        crate::outln!("no history records found");
     } else {
         for r in &records {
             let version = match (&r.old_version, &r.new_version) {
@@ -39,7 +39,7 @@ pub async fn execute_history(db: &InstalledDb, target: Option<&str>, json: bool)
             } else {
                 String::new()
             };
-            println!(
+            crate::outln!(
                 "{}  {:<9} {} {}{}",
                 r.timestamp.as_deref().unwrap_or_default(),
                 r.action,

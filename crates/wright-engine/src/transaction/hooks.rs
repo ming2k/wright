@@ -144,6 +144,16 @@ pub(super) async fn run_deploy_script(
     let root_env = if use_chroot { Path::new("/") } else { root_dir };
     let current_dir = if use_chroot { Path::new("/") } else { root_dir };
 
+    // Hooks are user scripts: restore the default SIGPIPE disposition for
+    // the exec'd shell (wright itself keeps SIGPIPE ignored — see
+    // util::output).
+    unsafe {
+        command.pre_exec(|| {
+            crate::util::output::restore_default_sigpipe();
+            Ok(())
+        });
+    }
+
     let mut child = command
         .arg("-e")
         .arg("-c")

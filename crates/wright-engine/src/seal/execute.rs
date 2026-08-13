@@ -170,7 +170,7 @@ pub async fn package_outputs(
                     "packed"
                 );
                 if print_parts {
-                    println!("{}", sub_part_path.display());
+                    crate::outln!("{}", sub_part_path.display());
                 }
             }
         }
@@ -194,7 +194,7 @@ pub async fn package_outputs(
                 "packed"
             );
             if print_parts {
-                println!("{}", part_path.display());
+                crate::outln!("{}", part_path.display());
             }
         }
     }

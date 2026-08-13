@@ -14,7 +14,7 @@ pub static MULTI: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
 /// lines visible.
 pub fn term_println(line: &str) {
     if MULTI.is_hidden() {
-        eprintln!("{line}");
+        crate::errln!("{line}");
     } else {
         let _ = MULTI.println(line);
     }

@@ -521,12 +521,12 @@ pub fn lint_dependency_graph_for_targets(config: &GlobalConfig, targets: &[Strin
     warnings.sort();
     warnings.dedup();
     for warning in &warnings {
-        println!("  [warning] {}", warning);
+        crate::outln!("  [warning] {}", warning);
     }
     ref_errors.sort();
     ref_errors.dedup();
     for error in &ref_errors {
-        println!("  [error] {}", error);
+        crate::outln!("  [error] {}", error);
     }
     if !ref_errors.is_empty() {
         return Err(WrightError::ValidationError(format!(
@@ -668,19 +668,19 @@ fn lint_static_plan_diagnostics(plans: &std::collections::HashSet<std::path::Pat
         if let Ok(manifest) = wright_plan::PlanManifest::from_file(path) {
             let diagnostics = wright_plan::lint_manifest(&manifest);
             if !diagnostics.is_empty() {
-                println!("\nPlan Style & Best Practice Report: {}", path.display());
+                crate::outln!("\nPlan Style & Best Practice Report: {}", path.display());
                 for diag in &diagnostics {
                     total_warnings += 1;
-                    println!("  [{}] {}: {}", diag.code, diag.level, diag.message);
+                    crate::outln!("  [{}] {}: {}", diag.code, diag.level, diag.message);
                     if let Some(ref help) = diag.help {
-                        println!("     └─ help: {}", help);
+                        crate::outln!("     └─ help: {}", help);
                     }
                 }
             }
         }
     }
     if total_warnings > 0 {
-        println!(
+        crate::outln!(
             "\nTotal style diagnostics: {} warning(s) found.",
             total_warnings
         );
@@ -691,8 +691,8 @@ fn lint_dependency_graph(graph: &bootstrap::PlanGraph) -> Result<()> {
     use bootstrap::{cycle_candidates_for, find_cycles, format_cycle_path, pick_candidate};
     let cycles = find_cycles(&graph.deps_map);
 
-    println!("Dependency Analysis Report");
-    println!(
+    crate::outln!("Dependency Analysis Report");
+    crate::outln!(
         "Status: {}",
         if cycles.is_empty() {
             "acyclic"
@@ -705,20 +705,20 @@ fn lint_dependency_graph(graph: &bootstrap::PlanGraph) -> Result<()> {
         return Ok(());
     }
 
-    println!();
-    println!("Cycles ({}):", cycles.len());
+    crate::outln!();
+    crate::outln!("Cycles ({}):", cycles.len());
     for (idx, cycle) in cycles.iter().enumerate() {
-        println!("{}: {}", idx + 1, format_cycle_path(cycle, &graph.deps_map));
+        crate::outln!("{}: {}", idx + 1, format_cycle_path(cycle, &graph.deps_map));
     }
 
-    println!();
-    println!("MVP Candidates (deterministic pick = fewest excluded edges, then name):");
-    println!("Cycle | Candidate | Excludes | Selected");
-    println!("----- | --------- | -------- | --------");
+    crate::outln!();
+    crate::outln!("MVP Candidates (deterministic pick = fewest excluded edges, then name):");
+    crate::outln!("Cycle | Candidate | Excludes | Selected");
+    crate::outln!("----- | --------- | -------- | --------");
     for (idx, cycle) in cycles.iter().enumerate() {
         let candidates = cycle_candidates_for(cycle, graph);
         if candidates.is_empty() {
-            println!("{} | - | - | no candidates", idx + 1);
+            crate::outln!("{} | - | - | no candidates", idx + 1);
             continue;
         }
         let chosen = pick_candidate(candidates.clone());
@@ -727,7 +727,7 @@ fn lint_dependency_graph(graph: &bootstrap::PlanGraph) -> Result<()> {
                 Some(c) if c.part == cand.part && c.excluded == cand.excluded => "yes",
                 _ => "no",
             };
-            println!(
+            crate::outln!(
                 "{} | {} | {} | {}",
                 idx + 1,
                 cand.part,

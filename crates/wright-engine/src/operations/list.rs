@@ -70,9 +70,9 @@ pub async fn execute_list(
     if parts.is_empty() {
         if filter.is_none() {
             if plan_only {
-                println!("no plans deployed");
+                crate::outln!("no plans deployed");
             } else {
-                println!("no parts deployed");
+                crate::outln!("no parts deployed");
             }
         }
         return Ok(());
@@ -86,7 +86,7 @@ pub async fn execute_list(
         format_targets(&parts, long)
     };
     for line in lines {
-        println!("{}", line);
+        crate::outln!("{}", line);
     }
     Ok(())
 }

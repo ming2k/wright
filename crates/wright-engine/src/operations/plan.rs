@@ -20,7 +20,7 @@ pub async fn execute_plan(db: &InstalledDb, name: &str, json: bool) -> Result<()
             source: &source,
         })
     } else {
-        print!("{}", source);
+        crate::out!("{}", source);
         Ok(())
     }
 }

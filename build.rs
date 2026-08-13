@@ -1,3 +1,6 @@
+// Build scripts communicate with cargo through stdout directives.
+#![allow(clippy::print_stdout)]
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

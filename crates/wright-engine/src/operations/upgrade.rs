@@ -31,12 +31,12 @@ pub async fn execute_upgrade(
         targets = find_outdated_plans(config, db_path).await?;
         if targets.is_empty() {
             if !quiet {
-                println!("all plans are up to date");
+                crate::outln!("all plans are up to date");
             }
             return Ok(());
         }
         if !quiet {
-            println!("found {} plan(s) to upgrade", targets.len());
+            crate::outln!("found {} plan(s) to upgrade", targets.len());
         }
     } else if !force {
         // For explicit targets without --force, filter out plans that are
@@ -44,7 +44,7 @@ pub async fn execute_upgrade(
         targets = filter_outdated_targets(&targets, config, db_path).await?;
         if targets.is_empty() {
             if !quiet {
-                println!("specified plans are already up to date");
+                crate::outln!("specified plans are already up to date");
             }
             return Ok(());
         }
@@ -73,7 +73,7 @@ pub async fn execute_upgrade(
 
     if build_set.names.is_empty() {
         if !quiet {
-            println!("nothing to upgrade");
+            crate::outln!("nothing to upgrade");
         }
         return Ok(());
     }
@@ -118,21 +118,21 @@ pub async fn execute_upgrade(
             } else {
                 format!("via {}", trigger)
             };
-            println!("    {:<24} {}", label, pkgs.join(", "));
+            crate::outln!("    {:<24} {}", label, pkgs.join(", "));
         }
     }
 
     if dry_run {
-        println!("[dry-run] upgrade -> {}", root_dir.display());
-        println!(
+        crate::outln!("[dry-run] upgrade -> {}", root_dir.display());
+        crate::outln!(
             "[dry-run] would rebuild and deploy {} plan(s):",
             build_set.names.len()
         );
         for name in &build_set.names {
             if target_set.contains(name.as_str()) {
-                println!("  {}", name);
+                crate::outln!("  {}", name);
             } else {
-                println!("  {}", describe_extra(name));
+                crate::outln!("  {}", describe_extra(name));
             }
         }
         return Ok(());

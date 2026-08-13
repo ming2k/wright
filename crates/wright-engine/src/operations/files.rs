@@ -16,7 +16,7 @@ pub async fn execute_files(db: &InstalledDb, target: &str, json: bool) -> Result
                 );
             }
             for file in &files {
-                println!("{}", file.path);
+                crate::outln!("{}", file.path);
             }
         }
         ResolvedTarget::Plan { plan, parts } => {
@@ -46,9 +46,9 @@ pub async fn execute_files(db: &InstalledDb, target: &str, json: bool) -> Result
             for (part, files) in &per_part {
                 for file in files {
                     if prefix {
-                        println!("{}: {}", part.name, file.path);
+                        crate::outln!("{}: {}", part.name, file.path);
                     } else {
-                        println!("{}", file.path);
+                        crate::outln!("{}", file.path);
                     }
                 }
             }

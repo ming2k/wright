@@ -44,7 +44,7 @@ pub async fn execute_resolve(request: ResolveRequest, config: &GlobalConfig) -> 
 
     if !tree {
         for name in resolved {
-            println!("{name}");
+            crate::outln!("{name}");
         }
         return Ok(());
     }
@@ -63,7 +63,7 @@ pub async fn execute_resolve(request: ResolveRequest, config: &GlobalConfig) -> 
         },
     )?;
     for line in render_dependency_forest(&graph) {
-        println!("{line}");
+        crate::outln!("{line}");
     }
     Ok(())
 }

@@ -211,10 +211,10 @@ pub async fn execute_merge(
     }
 
     if dry_run {
-        println!("[dry-run] merge -> {}", root_dir.display());
-        println!("[dry-run] would deploy {} archive(s):", paths.len());
+        crate::outln!("[dry-run] merge -> {}", root_dir.display());
+        crate::outln!("[dry-run] would deploy {} archive(s):", paths.len());
         for p in &paths {
-            println!("  {}", p.display());
+            crate::outln!("  {}", p.display());
         }
         return Ok(());
     }

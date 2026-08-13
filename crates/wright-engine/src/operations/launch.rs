@@ -107,7 +107,7 @@ pub async fn execute_launch(
 
     run_hooks(root_dir, &plan.hooks).await?;
 
-    println!("launched {} -> {}", plan.label, root_dir.display());
+    crate::outln!("launched {} -> {}", plan.label, root_dir.display());
     Ok(())
 }
 
@@ -186,25 +186,25 @@ fn dedup(v: Vec<PathBuf>) -> Vec<PathBuf> {
 // ── Dry run ────────────────────────────────────────────────────────────
 
 fn print_dry_run(plan: &LaunchPlan, root_dir: &Path) {
-    println!("[dry-run] {} -> {}", plan.label, root_dir.display());
-    println!(
+    crate::outln!("[dry-run] {} -> {}", plan.label, root_dir.display());
+    crate::outln!(
         "[dry-run] would forge and deploy {} plan(s):",
         plan.targets.len()
     );
     for t in &plan.targets {
-        println!("  {t}");
+        crate::outln!("  {t}");
     }
     if !plan.provides.is_empty() {
-        println!(
+        crate::outln!(
             "[dry-run] would assume {} external(s):",
             plan.provides.len()
         );
         for p in &plan.provides {
-            println!("  {} {}", p.name, p.version);
+            crate::outln!("  {} {}", p.name, p.version);
         }
     }
     if !plan.hooks.is_empty() {
-        println!(
+        crate::outln!(
             "[dry-run] would run {} post-launch hook(s)",
             plan.hooks.len()
         );
@@ -474,12 +474,22 @@ async fn run_hooks(root_dir: &Path, hooks: &[Hook]) -> Result<()> {
         let script = hook.script.clone();
         let root = root_dir.to_path_buf();
         let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("sh")
+            let mut command = std::process::Command::new("sh");
+            command
                 .arg("-c")
                 .arg(&script)
                 .env("WRIGHT_ROOT", &root)
-                .env("ROOT", &root)
-                .output()
+                .env("ROOT", &root);
+            // Hooks are user scripts: restore the default SIGPIPE
+            // disposition for the exec'd shell (wright itself keeps
+            // SIGPIPE ignored — see util::output).
+            unsafe {
+                std::os::unix::process::CommandExt::pre_exec(&mut command, || {
+                    crate::util::output::restore_default_sigpipe();
+                    Ok(())
+                });
+            }
+            command.output()
         })
         .await
         .map_err(|e| forge_err(format!("hook join: {e}")))?

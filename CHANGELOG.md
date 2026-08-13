@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **A broken pipe anywhere in the process can no longer kill wright silently.** Wright previously restored the traditional `SIG_DFL` SIGPIPE disposition process-wide so `wright list | head` would die quietly. The side effect: any write to a dead pipe — e.g. gix writing git protocol to an `ssh` child that had already exited — killed the whole process instantly, mid-operation, with no error and no logs (exit code 141). Wright now keeps Rust's default `SIG_IGN`, so broken-pipe writes surface as ordinary `EPIPE` errors that the owning operation reports like any other I/O failure.
+- **Build stages, deploy hooks, and launch hooks exec user code with the default SIGPIPE disposition restored.** `SIG_IGN` is inherited across `execve`; without an explicit reset, shell pipelines inside builds (`tar … | head`) would see `EPIPE` write errors instead of the traditional SIGPIPE death they were written against. The reset covers the raw-fork namespace helper, the direct (`isolation = "none"`) spawn path, and the hook runners.
+
+### Changed
+- **Console output is BrokenPipe-safe by construction.** All stdout/stderr printing goes through new `outln!`/`out!`/`errln!` macros (`util::output`): a closed stdout reader (`wright list | head`) exits quietly with code 0 — previously 141 via SIGPIPE death, now the ripgrep/bat convention — and stderr diagnostics are best-effort and never panic. Raw `println!`/`eprintln!` in CLI code are denied workspace-wide via clippy (`print_stdout`/`print_stderr`) so the policy cannot silently regress.
+
 ## [5.5.0] - 2026-08-13
 
 ### Changed

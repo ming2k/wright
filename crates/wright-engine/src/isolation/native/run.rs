@@ -488,7 +488,7 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
 
                     // Apply resource limits before exec.
                     if let Err(e) = apply_rlimits(prepared_limits) {
-                        eprintln!("rlimits: {e}");
+                        crate::errln!("rlimits: {e}");
                         unsafe { libc::_exit(1) }
                     }
 
@@ -498,6 +498,13 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
                     if let Some(n) = config.cpu_count {
                         apply_cpu_affinity(n);
                     }
+
+                    // Restore the default SIGPIPE disposition for the stage
+                    // command: wright keeps SIGPIPE ignored process-wide
+                    // (see util::output), and SIG_IGN is inherited across
+                    // execve — build-script pipelines (`tar … | head`) must
+                    // see the traditional death, not EPIPE write errors.
+                    crate::util::output::restore_default_sigpipe();
 
                     // Defensive retry for ETXTBUSY: multiple lowerdirs may
                     // kernels or filesystem configurations may briefly report the
@@ -510,13 +517,13 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
                                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                             }
                             Err(e) => {
-                                eprintln!("exec {command}: {e}");
+                                crate::errln!("exec {command}: {e}");
                                 unsafe { libc::_exit(127) }
                             }
                         }
                     }
                     // All retries exhausted.
-                    eprintln!("exec {command}: ETXTBUSY after retries");
+                    crate::errln!("exec {command}: ETXTBUSY after retries");
                     unsafe { libc::_exit(127) }
                 }
                 Ok(ForkResult::Parent { child: grandchild }) => {

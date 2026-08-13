@@ -18,6 +18,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(with_handlers)'] }
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
+# Console output must go through the BrokenPipe-safe outln!/out!/errln!
+# macros (see wright_engine::util::output); the raw print macros panic on
+# EPIPE. Test code and build.rs opt out locally.
+print_stdout = "deny"
+print_stderr = "deny"
 
 [package]
 name = "wright"

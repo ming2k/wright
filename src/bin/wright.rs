@@ -17,9 +17,6 @@ fn main() {
 
 #[tokio::main]
 async fn run_cli() {
-    // Die quietly on SIGPIPE (`wright list | head`) instead of panicking.
-    wright::util::reset_sigpipe();
-
     let cli = Cli::parse();
 
     // 1. Load Configuration First — pre-logging, so emit the error line
@@ -27,7 +24,7 @@ async fn run_cli() {
     let config = match GlobalConfig::load(cli.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{}", format_error(&format!("failed to load config: {}", e)));
+            wright::errln!("{}", format_error(&format!("failed to load config: {}", e)));
             std::process::exit(1);
         }
     };

@@ -127,7 +127,7 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
 
     if build_set.is_empty() {
         if !quiet {
-            println!(
+            crate::outln!(
                 "{} already installed and up to date (use --force to reinstall)",
                 targets.join(", ")
             );
@@ -215,13 +215,14 @@ pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     if dry_run {
         // Preview only: the plan above is fully resolved, so report the exact
         // batches and stop before any forge/seal/deploy side effects.
-        println!("[dry-run] install -> {}", root_dir.display());
-        println!(
+        crate::outln!("[dry-run] install -> {}", root_dir.display());
+        crate::outln!(
             "[dry-run] would forge and deploy {} package(s) across {} batch(es):",
-            total_packages, total_batches
+            total_packages,
+            total_batches
         );
         for (idx, entries) in batch_entries.iter().enumerate() {
-            println!("  batch {}: {}", idx + 1, entries.join(", "));
+            crate::outln!("  batch {}: {}", idx + 1, entries.join(", "));
         }
         return Ok(());
     }

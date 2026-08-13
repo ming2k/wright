@@ -28,9 +28,9 @@ pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf], json: bool) -> R
         } else {
             for owner in &owners {
                 if multi {
-                    println!("{}: {}", lookup, owner);
+                    crate::outln!("{}: {}", lookup, owner);
                 } else {
-                    println!("{}", owner);
+                    crate::outln!("{}", owner);
                 }
             }
         }

@@ -130,13 +130,13 @@ impl HelperRequest {
             .into_iter()
             .map(|(source, target)| (source.into_path(), target.into_path()))
             .collect();
-        config.stage_overlay = self.stage_overlay.map(|(lowerdir, upperdir, workdir)| {
-            super::StageOverlay {
-                lowerdir: lowerdir.into_path(),
-                upperdir: upperdir.into_path(),
-                workdir: workdir.into_path(),
-            }
-        });
+        config.stage_overlay =
+            self.stage_overlay
+                .map(|(lowerdir, upperdir, workdir)| super::StageOverlay {
+                    lowerdir: lowerdir.into_path(),
+                    upperdir: upperdir.into_path(),
+                    workdir: workdir.into_path(),
+                });
         Ok((
             self.status_path.into_path(),
             config,
@@ -228,7 +228,7 @@ pub(super) fn run_helper_process() -> ! {
     let request = match serde_json::from_reader::<_, HelperRequest>(std::io::stdin().lock()) {
         Ok(request) => request,
         Err(error) => {
-            eprintln!("invalid isolation helper request: {error}");
+            crate::errln!("invalid isolation helper request: {error}");
             exit(125);
         }
     };
@@ -241,14 +241,14 @@ pub(super) fn run_helper_process() -> ! {
         }
     };
     if let Err(error) = write_state(&status_path, &HelperState::Ready) {
-        eprintln!("write isolation helper ready state: {error}");
+        crate::errln!("write isolation helper ready state: {error}");
         exit(125);
     }
 
     match super::native::run_in_helper(&config, &command, &args) {
         Ok(status) => {
             if let Err(error) = write_state(&status_path, &HelperState::Complete) {
-                eprintln!("write isolation helper completion state: {error}");
+                crate::errln!("write isolation helper completion state: {error}");
                 exit(125);
             }
             propagate_status(status)
@@ -333,13 +333,14 @@ mod tests {
             upperdir: PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/layers/03-compile"),
             workdir: PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/.ovl_work/03-compile"),
         });
-        let request =
-            HelperRequest::new(&config, status.path(), "/bin/true", &["-x".to_string()]);
+        let request = HelperRequest::new(&config, status.path(), "/bin/true", &["-x".to_string()]);
         let bytes = serde_json::to_vec(&request).unwrap();
         let decoded: HelperRequest = serde_json::from_slice(&bytes).unwrap();
         let (_, decoded, _, _) = decoded.into_parts().unwrap();
 
-        let overlay = decoded.stage_overlay.expect("overlay must survive the wire");
+        let overlay = decoded
+            .stage_overlay
+            .expect("overlay must survive the wire");
         assert_eq!(
             overlay.lowerdir,
             PathBuf::from("/var/tmp/wright/workshop/pkg-1.0/base")

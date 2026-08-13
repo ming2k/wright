@@ -310,10 +310,15 @@ impl LayerManager {
     /// rewind, or after a crash interrupted an earlier merge.
     pub fn reconcile_base(&self, source_dir: &Path, completed_stages: &[String]) -> Result<()> {
         let expected = Self::base_manifest_contents(source_dir, completed_stages);
-        if std::fs::read_to_string(&self.base_manifest_path).ok().as_deref()
+        if std::fs::read_to_string(&self.base_manifest_path)
+            .ok()
+            .as_deref()
             == Some(expected.as_str())
         {
-            debug!(event = "layer.base_reuse", "Merged base up-to-date — reusing base/");
+            debug!(
+                event = "layer.base_reuse",
+                "Merged base up-to-date — reusing base/"
+            );
             return Ok(());
         }
 
@@ -407,8 +412,7 @@ impl LayerManager {
         if let Ok(read_dir) = std::fs::read_dir(&self.target_dir) {
             for entry in read_dir.flatten() {
                 let path = entry.path();
-                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink()
-                {
+                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !path.is_symlink() {
                     let _ = remove_tree_force(&path);
                 } else {
                     let _ = std::fs::remove_file(&path);
@@ -438,8 +442,8 @@ impl LayerManager {
                 .strip_prefix(&self.target_dir)
                 .unwrap_or(target_file);
             let base_path = self.base_dir.join(rel_path);
-            let already_present = base_path.exists()
-                && files_are_identical(&base_path, target_file).unwrap_or(false);
+            let already_present =
+                base_path.exists() && files_are_identical(&base_path, target_file).unwrap_or(false);
 
             if !already_present {
                 let dest = layer_dir.join(rel_path);
@@ -458,9 +462,7 @@ impl LayerManager {
         collect_files_recursive(&self.base_dir, &mut base_files)?;
         let mut deletions: Vec<String> = Vec::new();
         for base_file in &base_files {
-            let rel_path = base_file
-                .strip_prefix(&self.base_dir)
-                .unwrap_or(base_file);
+            let rel_path = base_file.strip_prefix(&self.base_dir).unwrap_or(base_file);
             if std::fs::symlink_metadata(self.target_dir.join(rel_path)).is_err() {
                 deletions.push(rel_path.to_string_lossy().into_owned());
             }
@@ -684,11 +686,10 @@ fn remove_base_path(base_dir: &Path, rel: &Path) -> Result<()> {
 
 fn remove_dest_any(dest: &Path) -> Result<()> {
     match std::fs::symlink_metadata(dest) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
-            remove_tree_force(dest).map_err(|e| {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => remove_tree_force(dest)
+            .map_err(|e| {
                 WrightError::ForgeError(format!("failed to remove dir {}: {e}", dest.display()))
-            })
-        }
+            }),
         Ok(_) => std::fs::remove_file(dest).map_err(|e| {
             WrightError::ForgeError(format!("failed to remove file {}: {e}", dest.display()))
         }),
@@ -730,7 +731,8 @@ fn xattr_value(path: &Path, name: &str) -> Option<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     let c_name = std::ffi::CString::new(name).ok()?;
-    let size = unsafe { libc::lgetxattr(c_path.as_ptr(), c_name.as_ptr(), std::ptr::null_mut(), 0) };
+    let size =
+        unsafe { libc::lgetxattr(c_path.as_ptr(), c_name.as_ptr(), std::ptr::null_mut(), 0) };
     if size < 0 {
         return None;
     }
@@ -985,6 +987,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::print_stderr)] // test diagnostics, not CLI output
     fn merge_applies_char_device_whiteout_when_permitted() {
         use std::os::unix::ffi::OsStrExt;
         let tmp = tempfile::tempdir().unwrap();
@@ -1073,10 +1076,7 @@ mod tests {
         write_file(&source.join("s.txt"), "src");
 
         let mgr = LayerManager::new(&build_root).unwrap();
-        write_file(
-            &build_root.join("layers/01-prepare/p.txt"),
-            "prep",
-        );
+        write_file(&build_root.join("layers/01-prepare/p.txt"), "prep");
 
         // Initial build: source + completed layer.
         let completed = vec!["prepare".to_string()];
@@ -1129,10 +1129,7 @@ mod tests {
         assert_eq!(read(&layer.join("a.txt")), "changed");
         assert_eq!(read(&layer.join("new.txt")), "new");
         assert!(!layer.join("del.txt").exists());
-        assert_eq!(
-            read(&layer.join(LAYER_DELETIONS_FILE)).trim(),
-            "del.txt"
-        );
+        assert_eq!(read(&layer.join(LAYER_DELETIONS_FILE)).trim(), "del.txt");
 
         let completed = vec!["configure".to_string()];
         mgr.merge_layer_into_base("configure", &source, &completed)

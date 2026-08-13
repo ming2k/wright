@@ -88,7 +88,7 @@ pub(crate) fn spawn_signal_handler(cancel_tx: tokio::sync::watch::Sender<bool>, 
         cancel_all();
         let _ = cancel_tx.send(true);
         if !quiet {
-            eprintln!("\nInterrupting — press Ctrl-C again to force-quit.");
+            crate::errln!("\nInterrupting — press Ctrl-C again to force-quit.");
         }
         wait_for_signal().await;
         cancel_all();
