@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.5.5] - 2026-08-14
+
 ### Added
 - **Parts now carry a `.BUILDINFO` archive member recording the sealing host's platform (ADR-0041).** The TOML member sits beside `.PLANSRC` and records `hostname`, `os`, `kernel`, `arch`, `cpu_model`, `cpu_cores`, `memory_bytes`, and the full `cpu_flags` — the facts needed to diagnose a part that installs cleanly but fails to run (microarchitecture mismatch, stale kernel, wrong build host). Inspect with `tar -xOf <part>.wright.tar.zst .BUILDINFO`. Like `.PLANSRC` it is metadata, not payload: excluded from `.FILELIST` and deploy-time file collection, and optional by contract on old archives.
 - **Every build attempt now appends a cost record to the per-plan ledger at `<ledger_dir>/<plan>/builds.jsonl` (ADR-0041).** One JSON line per forge attempt — success or failure — carrying the plan identity and `plan_checksum`, a host summary, per-step durations (`charge`, each forge stage that ran, `slice`) plus the wall-clock total, cached-source bytes, and staging-tree bytes and file count; failures include the flattened error chain. Partial runs (`--stage`, `--fetch-only`, `--until-stage`) are marked `full: false` so cost estimates can filter them. The file is append-only and survives `clean`/`prune`, so "what will the next upgrade cost?" is answerable from local history with `tail`/`jq` — including the failure rate. Ledger writes are advisory: they warn and drop on failure rather than failing the build.

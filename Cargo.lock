@@ -4588,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "wright"
-version = "5.5.4"
+version = "5.5.5"
 dependencies = [
  "clap",
  "clap_complete",
@@ -4606,7 +4606,7 @@ dependencies = [
 
 [[package]]
 name = "wright-engine"
-version = "5.5.4"
+version = "5.5.5"
 dependencies = [
  "chrono",
  "figment",
@@ -4642,11 +4642,11 @@ dependencies = [
 
 [[package]]
 name = "wright-model"
-version = "5.5.4"
+version = "5.5.5"
 
 [[package]]
 name = "wright-part"
-version = "5.5.4"
+version = "5.5.5"
 dependencies = [
  "bzip2",
  "chrono",
@@ -4672,7 +4672,7 @@ dependencies = [
 
 [[package]]
 name = "wright-plan"
-version = "5.5.4"
+version = "5.5.5"
 dependencies = [
  "regex",
  "serde",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "wright-state"
-version = "5.5.4"
+version = "5.5.5"
 dependencies = [
  "chrono",
  "futures-util",
