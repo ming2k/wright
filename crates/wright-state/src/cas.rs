@@ -109,11 +109,10 @@ impl CasStore {
         // Ensure the store directory exists.
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to create CAS store directory {}: {}",
-                    parent.display(),
-                    e
-                ))
+                WrightError::context(
+                    format!("failed to create CAS store directory {}", parent.display()),
+                    e,
+                )
             })?;
         }
 
@@ -135,11 +134,10 @@ impl CasStore {
             }
             warn!(event = "cas.replaced", dest = %dest.display(), src = %part_path.display(), "CAS entry content mismatch; replacing with freshly sealed part");
             std::fs::remove_file(&dest).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "CAS: failed to replace mismatched entry {}: {}",
-                    dest.display(),
-                    e
-                ))
+                WrightError::context(
+                    format!("CAS: failed to replace mismatched entry {}", dest.display()),
+                    e,
+                )
             })?;
         }
 
@@ -150,15 +148,11 @@ impl CasStore {
             }
             Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
                 debug!(event = "cas.cross_device_copy", src = %part_path.display(), dest = %dest.display(), "CAS cross-device, copying");
-                std::fs::copy(part_path, &dest).map_err(|e| {
-                    WrightError::ForgeError(format!("CAS: failed to copy part to store: {}", e))
-                })?;
+                std::fs::copy(part_path, &dest)
+                    .map_err(|e| WrightError::context("CAS: failed to copy part to store", e))?;
             }
             Err(e) => {
-                return Err(WrightError::ForgeError(format!(
-                    "CAS: failed to link part to store: {}",
-                    e
-                )));
+                return Err(WrightError::context("CAS: failed to link part to store", e));
             }
         }
 
@@ -183,7 +177,7 @@ impl CasStore {
         let path = self.store_dir.join(&filename);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| {
-                WrightError::ForgeError(format!("CAS: failed to remove {}: {}", path.display(), e))
+                WrightError::context(format!("CAS: failed to remove {}", path.display()), e)
             })?;
         }
         Ok(())

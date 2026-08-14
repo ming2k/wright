@@ -41,7 +41,7 @@ impl Charge {
         // Stage the clone next to the cache so the final rename is atomic.
         let tmp = tempfile::tempdir_in(&self.cache_dir).map_err(WrightError::IoError)?;
         let repo = gix::init_bare(tmp.path().join("repo"))
-            .map_err(|e| WrightError::ForgeError(format!("git init failed: {e}")))?;
+            .map_err(|e| WrightError::context("git init failed", e))?;
 
         let resolve_target = if is_commit_hash(actual_ref) {
             let local_ref = local_fetch_ref(actual_ref);
@@ -87,19 +87,19 @@ impl Charge {
         let id = repo
             .rev_parse_single(resolve_target.as_str())
             .map_err(|e| {
-                WrightError::ForgeError(format!("failed to resolve git ref '{actual_ref}': {e}"))
+                WrightError::context(format!("failed to resolve git ref '{actual_ref}'"), e)
             })?;
         let object = id
             .object()
-            .map_err(|e| WrightError::ForgeError(format!("failed to load git object: {e}")))?;
+            .map_err(|e| WrightError::context("failed to load git object", e))?;
         let commit_id = object
             .clone()
             .peel_to_commit()
-            .map_err(|e| WrightError::ForgeError(format!("failed to load git commit: {e}")))?
+            .map_err(|e| WrightError::context("failed to load git commit", e))?
             .id;
         let tree = object
             .peel_to_tree()
-            .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+            .map_err(|e| WrightError::context("failed to load git tree", e))?;
 
         let snapshot_tmp = tmp.path().join("snapshot");
         write_tree_snapshot(&repo, tree.id, &snapshot_tmp)?;
@@ -128,15 +128,15 @@ impl Charge {
         } else {
             git_ref.to_string()
         };
-        let mut repo = gix::init(dest)
-            .map_err(|e| WrightError::ForgeError(format!("local git init failed: {e}")))?;
+        let mut repo =
+            gix::init(dest).map_err(|e| WrightError::context("local git init failed", e))?;
         // A mirror fetch writes refs/heads/*, which triggers reflog writes in
         // the non-bare worktree repo. Reflog entries need a committer identity,
         // and there usually is none configured when running under sudo —
         // without a fallback the fetch aborts its ref transaction after the
         // pack was already received.
         repo.committer_or_set_generic_fallback()
-            .map_err(|e| WrightError::ForgeError(format!("git identity setup failed: {e}")))?;
+            .map_err(|e| WrightError::context("git identity setup failed", e))?;
         // A mirror fetch writes refs/heads/*, which triggers reflog writes in
         // the non-bare worktree repo. Reflog entries need a committer identity,
         // and there usually is none configured when running under sudo —
@@ -155,20 +155,20 @@ impl Charge {
         };
         fetch_refs(&repo, git_url, &refspecs, depth, tags, &label, scope)?;
 
-        let id = repo.rev_parse_single(checkout_ref.as_str()).map_err(|e| {
-            WrightError::ForgeError(format!("failed to resolve ref {git_ref}: {e}"))
-        })?;
+        let id = repo
+            .rev_parse_single(checkout_ref.as_str())
+            .map_err(|e| WrightError::context(format!("failed to resolve ref {git_ref}"), e))?;
         let tree = id
             .object()
-            .map_err(|e| WrightError::ForgeError(format!("failed to load git object: {e}")))?
+            .map_err(|e| WrightError::context("failed to load git object", e))?
             .peel_to_tree()
-            .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+            .map_err(|e| WrightError::context("failed to load git tree", e))?;
         let mut index = repo
             .index_from_tree(&tree.id)
-            .map_err(|e| WrightError::ForgeError(format!("failed to build git index: {e}")))?;
+            .map_err(|e| WrightError::context("failed to build git index", e))?;
         let mut checkout_options = repo
             .checkout_options(gix::worktree::stack::state::attributes::Source::IdMapping)
-            .map_err(|e| WrightError::ForgeError(format!("git checkout setup failed: {e}")))?;
+            .map_err(|e| WrightError::context("git checkout setup failed", e))?;
         checkout_options.destination_is_initially_empty = true;
         let interrupt = AtomicBool::new(false);
         gix::worktree::state::checkout(
@@ -177,16 +177,16 @@ impl Charge {
             repo.objects
                 .clone()
                 .into_arc()
-                .map_err(|e| WrightError::ForgeError(format!("git object store error: {e}")))?,
+                .map_err(|e| WrightError::context("git object store error", e))?,
             &gix::progress::Discard,
             &gix::progress::Discard,
             &interrupt,
             checkout_options,
         )
-        .map_err(|e| WrightError::ForgeError(format!("git checkout failed: {e}")))?;
+        .map_err(|e| WrightError::context("git checkout failed", e))?;
         index
             .write(Default::default())
-            .map_err(|e| WrightError::ForgeError(format!("failed to write git index: {e}")))?;
+            .map_err(|e| WrightError::context("failed to write git index", e))?;
         let head_target = match repo.try_find_reference(&checkout_ref) {
             Ok(Some(reference)) => gix::refs::Target::Symbolic(reference.name().to_owned()),
             Ok(None) | Err(_) => gix::refs::Target::Object(id.detach()),
@@ -200,7 +200,7 @@ impl Charge {
             name: "HEAD".try_into().expect("HEAD is a valid reference name"),
             deref: false,
         })
-        .map_err(|e| WrightError::ForgeError(format!("failed to update HEAD: {e}")))?;
+        .map_err(|e| WrightError::context("failed to update HEAD", e))?;
         Ok(())
     }
 }
@@ -219,7 +219,7 @@ fn fetch_refs(
     // refspecs, nothing is persisted in the repo config.
     let remote = repo
         .remote_at(git_url)
-        .map_err(|e| WrightError::ForgeError(format!("git remote setup failed: {e}")))?;
+        .map_err(|e| WrightError::context("git remote setup failed", e))?;
     let remote = remote.with_fetch_tags(tags);
     let extra_refspecs: Vec<gix::refspec::RefSpec> = refspec_strings
         .iter()
@@ -228,14 +228,14 @@ fn fetch_refs(
                 .map(|r| r.to_owned())
         })
         .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| WrightError::ForgeError(format!("invalid git refspec: {e}")))?;
+        .map_err(|e| WrightError::context("invalid git refspec", e))?;
 
     let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
     let mut fetch_progress = FetchProgress::new(git_span.clone());
     let interrupt = AtomicBool::new(false);
     let connection = remote
         .connect(gix::remote::Direction::Fetch)
-        .map_err(|e| WrightError::ForgeError(format!("git fetch failed: {}", error_chain(&e))))?;
+        .map_err(|e| WrightError::context("git fetch failed", e))?;
     let mut prepare = connection
         .prepare_fetch(
             &mut fetch_progress,
@@ -244,7 +244,7 @@ fn fetch_refs(
                 ..Default::default()
             },
         )
-        .map_err(|e| WrightError::ForgeError(format!("git fetch failed: {}", error_chain(&e))))?;
+        .map_err(|e| WrightError::context("git fetch failed", e))?;
     if let Some(d) = depth
         && d > 0
         && let Some(depth) = NonZeroU32::new(d)
@@ -253,12 +253,7 @@ fn fetch_refs(
     }
     let fetch_result = prepare.receive(&mut fetch_progress, &interrupt);
     drop(git_span);
-    fetch_result.map_err(|e| {
-        WrightError::ForgeError(format!(
-            "git fetch failed for {git_url}: {}",
-            error_chain(&e)
-        ))
-    })?;
+    fetch_result.map_err(|e| WrightError::context(format!("git fetch failed for {git_url}"), e))?;
     Ok(())
 }
 
@@ -269,15 +264,15 @@ fn fetch_refs(
 fn write_tree_snapshot(repo: &gix::Repository, tree: gix::ObjectId, out: &Path) -> Result<()> {
     let file = std::fs::File::create(out).map_err(WrightError::IoError)?;
     let encoder = zstd::Encoder::new(file, 3)
-        .map_err(|e| WrightError::ForgeError(format!("zstd encoder init failed: {e}")))?;
+        .map_err(|e| WrightError::context("zstd encoder init failed", e))?;
     let mut builder = tar::Builder::new(encoder);
     write_tree_entries(repo, tree, Path::new(""), &mut builder)?;
     let encoder = builder
         .into_inner()
-        .map_err(|e| WrightError::ForgeError(format!("tar finish failed: {e}")))?;
+        .map_err(|e| WrightError::context("tar finish failed", e))?;
     encoder
         .finish()
-        .map_err(|e| WrightError::ForgeError(format!("zstd finish failed: {e}")))?;
+        .map_err(|e| WrightError::context("zstd finish failed", e))?;
     Ok(())
 }
 
@@ -291,16 +286,15 @@ fn write_tree_entries(
 
     let tree = repo
         .find_tree(tree)
-        .map_err(|e| WrightError::ForgeError(format!("failed to load git tree: {e}")))?;
+        .map_err(|e| WrightError::context("failed to load git tree", e))?;
     for entry in tree.iter() {
-        let entry = entry
-            .map_err(|e| WrightError::ForgeError(format!("failed to decode git tree: {e}")))?;
+        let entry = entry.map_err(|e| WrightError::context("failed to decode git tree", e))?;
         let path = prefix.join(os_str_from_bytes(entry.filename()));
         match entry.mode().kind() {
             EntryKind::Blob | EntryKind::BlobExecutable => {
-                let blob = repo.find_blob(entry.oid().to_owned()).map_err(|e| {
-                    WrightError::ForgeError(format!("failed to load git blob: {e}"))
-                })?;
+                let blob = repo
+                    .find_blob(entry.oid().to_owned())
+                    .map_err(|e| WrightError::context("failed to load git blob", e))?;
                 let mut header = tar::Header::new_gnu();
                 header.set_entry_type(tar::EntryType::Regular);
                 header.set_mode(if entry.mode().kind() == EntryKind::BlobExecutable {
@@ -312,16 +306,16 @@ fn write_tree_entries(
                 header.set_mtime(0);
                 header
                     .set_path(&path)
-                    .map_err(|e| WrightError::ForgeError(format!("tar set path failed: {e}")))?;
+                    .map_err(|e| WrightError::context("tar set path failed", e))?;
                 header.set_cksum();
                 builder
                     .append(&header, &blob.data[..])
-                    .map_err(|e| WrightError::ForgeError(format!("tar append failed: {e}")))?;
+                    .map_err(|e| WrightError::context("tar append failed", e))?;
             }
             EntryKind::Link => {
-                let target = repo.find_blob(entry.oid().to_owned()).map_err(|e| {
-                    WrightError::ForgeError(format!("failed to load git blob: {e}"))
-                })?;
+                let target = repo
+                    .find_blob(entry.oid().to_owned())
+                    .map_err(|e| WrightError::context("failed to load git blob", e))?;
                 let mut header = tar::Header::new_gnu();
                 header.set_entry_type(tar::EntryType::Symlink);
                 header.set_mode(0o777);
@@ -333,7 +327,7 @@ fn write_tree_entries(
                         &path,
                         os_str_from_bytes(target.data.as_slice()),
                     )
-                    .map_err(|e| WrightError::ForgeError(format!("tar append link failed: {e}")))?;
+                    .map_err(|e| WrightError::context("tar append link failed", e))?;
             }
             EntryKind::Tree => {
                 let mut header = tar::Header::new_gnu();
@@ -343,11 +337,11 @@ fn write_tree_entries(
                 header.set_mtime(0);
                 header
                     .set_path(&path)
-                    .map_err(|e| WrightError::ForgeError(format!("tar set path failed: {e}")))?;
+                    .map_err(|e| WrightError::context("tar set path failed", e))?;
                 header.set_cksum();
                 builder
                     .append(&header, std::io::empty())
-                    .map_err(|e| WrightError::ForgeError(format!("tar append dir failed: {e}")))?;
+                    .map_err(|e| WrightError::context("tar append dir failed", e))?;
                 write_tree_entries(repo, entry.oid().to_owned(), &path, builder)?;
             }
             // A gitlink only records another repository's commit — there is
@@ -496,20 +490,6 @@ fn sanitize_ref_component(git_ref: &str) -> String {
             }
         })
         .collect()
-}
-
-/// Format an error with its entire source chain. gix error `Display`
-/// implementations omit the underlying cause, which hides the actionable
-/// part of fetch failures (e.g. "reflog messages need a committer").
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
 }
 
 #[cfg(test)]

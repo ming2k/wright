@@ -89,7 +89,7 @@ impl Charge {
         }
         tokio::fs::create_dir_all(&source_dir)
             .await
-            .map_err(|e| WrightError::ForgeError(format!("failed to create source dir: {e}")))?;
+            .map_err(|e| WrightError::context("failed to create source dir", e))?;
 
         self.fetch(manifest, plan_dir).await?;
         self.verify(manifest).await?;
@@ -97,7 +97,7 @@ impl Charge {
 
         tokio::fs::write(&marker, &fingerprint)
             .await
-            .map_err(|e| WrightError::ForgeError(format!("failed to write charge marker: {e}")))?;
+            .map_err(|e| WrightError::context("failed to write charge marker", e))?;
 
         Ok(ChargeResult {
             dir: source_dir,
@@ -158,11 +158,7 @@ fn source_cache_filename(part_name: &str, uri: &str) -> String {
 async fn force_clean_source_dir(dir: &Path) -> Result<()> {
     if tokio::fs::metadata(dir).await.is_ok() {
         tokio::fs::remove_dir_all(dir).await.map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clean source dir {}: {}",
-                dir.display(),
-                e
-            ))
+            WrightError::context(format!("failed to clean source dir {}", dir.display()), e)
         })?;
     }
     Ok(())

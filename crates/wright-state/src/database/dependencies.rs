@@ -16,7 +16,7 @@ impl InstalledDb {
                 .bind(&dep.version_constraint)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to insert dependency: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to insert dependency", e))?;
         }
         Ok(())
     }
@@ -26,9 +26,7 @@ impl InstalledDb {
             .bind(part_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to delete old dependencies: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to delete old dependencies", e))?;
 
         self.insert_dependencies(part_id, deps).await
     }
@@ -38,9 +36,7 @@ impl InstalledDb {
             .bind(name)
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to check part dependency: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to check part dependency", e))?;
 
         use sqlx::Row;
         let count: i64 = row
@@ -59,7 +55,7 @@ impl InstalledDb {
         .bind(name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependents: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to get dependents", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -78,7 +74,7 @@ impl InstalledDb {
             .bind(part_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))
+        .map_err(|e| WrightError::context("failed to get dependencies", e))
     }
 
     pub async fn get_dependencies_by_name(&self, name: &str) -> Result<Vec<Dependency>> {
@@ -91,7 +87,7 @@ impl InstalledDb {
         .bind(name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get dependencies: {}", e)))
+        .map_err(|e| WrightError::context("failed to get dependencies", e))
     }
 
     pub async fn get_recursive_dependents(&self, name: &str) -> Result<Vec<String>> {
@@ -142,7 +138,7 @@ impl InstalledDb {
             .bind(name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan deps: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to get orphan deps", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -162,9 +158,7 @@ impl InstalledDb {
                 .bind(name)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to insert conflicts: {}", e))
-                })?;
+                .map_err(|e| WrightError::context("failed to insert conflicts", e))?;
         }
         Ok(())
     }
@@ -174,9 +168,7 @@ impl InstalledDb {
             .bind(part_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to delete old conflicts: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to delete old conflicts", e))?;
 
         self.insert_conflicts(part_id, names).await
     }
@@ -186,7 +178,7 @@ impl InstalledDb {
             .bind(part_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get conflicts: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to get conflicts", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -208,9 +200,7 @@ impl InstalledDb {
         .bind(name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to find conflicting parts: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to find conflicting parts", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -230,9 +220,7 @@ impl InstalledDb {
                 .bind(name)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to insert replaces: {}", e))
-                })?;
+                .map_err(|e| WrightError::context("failed to insert replaces", e))?;
         }
         Ok(())
     }
@@ -242,9 +230,7 @@ impl InstalledDb {
             .bind(part_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to delete old replaces: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to delete old replaces", e))?;
 
         self.insert_replaces(part_id, names).await
     }
@@ -254,7 +240,7 @@ impl InstalledDb {
             .bind(part_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get replaces: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to get replaces", e))?;
 
         let mut result = Vec::new();
         for row in rows {

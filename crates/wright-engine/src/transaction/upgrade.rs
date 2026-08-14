@@ -26,7 +26,7 @@ pub async fn upgrade_part(
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
     let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
-        .map_err(|e| WrightError::UpgradeError(format!("failed to create temp dir: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to create temp dir", e))?;
 
     // Blocking call to extract_part, but it's mainly I/O.
     // We could wrap it in spawn_blocking if it's too slow.
@@ -156,8 +156,8 @@ pub async fn upgrade_part(
     let existing_files = db.get_files(installed_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
 
-    let backup_dir = tempfile::tempdir()
-        .map_err(|e| WrightError::UpgradeError(format!("failed to create backup dir: {}", e)))?;
+    let backup_dir =
+        tempfile::tempdir().map_err(|e| WrightError::context("failed to create backup dir", e))?;
 
     // Perform backup. For now, doing it sequentially but with async calls for safety.
     // Parallelizing async I/O can be done with join_all or similar.
@@ -176,11 +176,10 @@ pub async fn upgrade_part(
             let backup_path = backup_dir.path().join(file.path.trim_start_matches('/'));
             if let Some(parent) = backup_path.parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    WrightError::UpgradeError(format!(
-                        "failed to create backup directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
+                    WrightError::context(
+                        format!("failed to create backup directory {}", parent.display()),
+                        e,
+                    )
                 })?;
             }
             // Prefer hard_link (instant, no data copy) with copy fallback.
@@ -194,11 +193,10 @@ pub async fn upgrade_part(
                     tx.rollback_state().record_backup(full_path, backup_path);
                 }
                 Err(e) => {
-                    return Err(WrightError::UpgradeError(format!(
-                        "failed to backup {}: {}",
-                        full_path.display(),
-                        e
-                    )));
+                    return Err(WrightError::context(
+                        format!("failed to backup {}", full_path.display()),
+                        e,
+                    ));
                 }
             }
         } else if file.file_type == FileType::Symlink

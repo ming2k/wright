@@ -1,3 +1,4 @@
+use crate::error::BatchFailures;
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::{OwoColorize, Style};
 use std::collections::HashMap;
@@ -64,78 +65,169 @@ pub fn format_error(msg: &str) -> String {
 /// Build a multi-line failure report for a terminal error, in the style
 /// of `cargo` / `anyhow`.
 ///
-/// The single-string error chains produced by `WrightError` (which nest via
-/// `format!("{}: {}", prefix, inner)`) are split on `": "`, type-prefix
-/// segments (`forge error`, `deploy error`, …) are dropped, and the
-/// remaining causes render under a numbered `Caused by:` block. The
-/// trailing line points at the structured log file for the full trace.
+/// The report is driven by the real error chain (`std::error::Error::source`),
+/// never by re-parsing Display output: every chain node contributes at most
+/// one entry, so messages that themselves contain `": "` (sqlx's
+/// `(code: 8) …`, TOML parse errors, `(see log: …)` suffixes) can no longer
+/// be shredded into fake, numbered "causes".
 ///
-/// Layout follows `cargo`: zero-indent `error:` headline, blank
-/// separator, `Caused by:` block with 4-space numbered entries, blank
-/// separator, log-file hint. No verb-column alignment — failures
-/// prioritize information density over visual scanning.
+/// A node's own message is recovered by stripping its source's Display off
+/// the end of its own — `"{msg}: {source}"` is this workspace's nesting
+/// format (see `WrightError::context`). Nodes whose own text is empty
+/// (`#[error(transparent)]` wrappers) or exactly a variant label
+/// (`forge error`, `database error`, …) carry no information and are
+/// skipped. Nodes left over from string-flattened construction get leading
+/// variant labels stripped, but their text is otherwise shown whole —
+/// never split.
+///
+/// Layout follows `cargo`: zero-indent `error:` headline, blank separator,
+/// `Caused by:` block with 4-space indented unnumbered entries (multi-line
+/// messages keep their internal alignment), blank separator, log-file hint.
 ///
 /// Returns a `Vec<String>` so the caller can print each line through
 /// `MULTI.println` — which serializes against active progress bars.
 pub fn format_failure_report(
-    err: &dyn std::fmt::Display,
+    err: &(dyn std::error::Error + 'static),
     log_path: &std::path::Path,
 ) -> Vec<String> {
-    let chain = split_error_chain(&format!("{}", err));
-    let (head, causes) = match chain.split_first() {
-        Some((h, rest)) => (h.clone(), rest.to_vec()),
-        None => ("command failed".to_string(), Vec::new()),
+    let mut chain = error_chain_messages(err);
+    let head = if chain.is_empty() {
+        "command failed".to_string()
+    } else {
+        chain.remove(0)
     };
 
     let mut lines = Vec::new();
     lines.push(format_error(&head));
-    if !causes.is_empty() {
+    if !chain.is_empty() {
         lines.push(String::new());
         lines.push("Caused by:".to_string());
-        if causes.len() == 1 {
-            lines.push(format!("    {}", causes[0]));
-        } else {
-            for (i, c) in causes.iter().enumerate() {
-                lines.push(format!("    {}: {}", i, c));
-            }
-        }
+        push_indented(&mut lines, 4, &chain);
     }
     lines.push(String::new());
     lines.push(format!("See {} for the full trace.", log_path.display()));
     lines
 }
 
-/// Split a colon-joined error chain into segments, stripping the
-/// `WrightError` variant prefixes (`forge error`, `deploy error`, etc.) so
-/// the user sees only the actual cause messages.
-fn split_error_chain(s: &str) -> Vec<String> {
-    let raw_segs: Vec<&str> = s.split(": ").map(str::trim).collect();
-    let mut segs: Vec<String> = Vec::new();
-    for seg in raw_segs {
-        if seg.is_empty() {
-            continue;
-        }
-        if is_wright_error_prefix(seg) {
-            continue;
-        }
-        if (seg.starts_with("try running")
-            || seg.starts_with("hint:")
-            || seg.starts_with("(hint:")
-            || seg.ends_with(')'))
-            && !segs.is_empty()
-            && segs.last().is_some_and(|l| l.contains("(hint"))
-        {
-            let last = segs.last_mut().unwrap();
-            last.push_str(": ");
-            last.push_str(seg);
-        } else {
-            segs.push(seg.to_string());
-        }
-    }
-    segs
+/// Flatten an error's chain into a single line — the same per-node
+/// segmentation as the terminal failure report, rejoined with `": "`.
+/// Used for the immediate per-task failure notice.
+pub fn flatten_error_causes(err: &(dyn std::error::Error + 'static)) -> String {
+    error_chain_messages(err).join(": ")
 }
 
-fn is_wright_error_prefix(seg: &str) -> bool {
+/// Emit the immediate one-line notice for a task that failed mid-batch.
+/// Cargo-style: the failing task's siblings keep running, and every failure
+/// is settled together once the batch completes (see [`BatchFailures`]).
+pub fn report_task_failure(task: &str, panicked: bool, error: &(dyn std::error::Error + 'static)) {
+    let causes = flatten_error_causes(error);
+    let outcome = if panicked { "panicked" } else { "failed" };
+    if causes.is_empty() {
+        tracing::error!(event = "task.failed", task_name = %task, "task '{task}' {outcome}");
+    } else {
+        tracing::error!(
+            event = "task.failed",
+            task_name = %task,
+            "task '{task}' {outcome}: {causes}"
+        );
+    }
+}
+
+/// Build the settlement report for a batch that finished with more than one
+/// failed task — the multi-failure counterpart of [`format_failure_report`].
+/// Each entry carries one task's headline with its own cause chain nested
+/// underneath, so a long parallel run re-lists every failure that may have
+/// scrolled by since its immediate notice.
+pub fn format_batch_failure_report(
+    failures: &BatchFailures,
+    log_path: &std::path::Path,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(format_error(&failures.to_string()));
+    lines.push(String::new());
+    lines.push("Caused by:".to_string());
+    for failure in &failures.failures {
+        lines.push(format!("    {}", failure.headline()));
+        push_indented(&mut lines, 8, &error_chain_messages(&failure.error));
+    }
+    lines.push(String::new());
+    lines.push(format!("See {} for the full trace.", log_path.display()));
+    lines
+}
+
+/// Push each message under an `indent`-space margin, line by line.
+/// Multi-line messages keep their internal alignment; blank inner lines
+/// stay blank (no trailing whitespace).
+fn push_indented(lines: &mut Vec<String>, indent: usize, msgs: &[String]) {
+    let pad = " ".repeat(indent);
+    for msg in msgs {
+        for l in msg.lines() {
+            lines.push(format!("{}{}", pad, l).trim_end().to_string());
+        }
+    }
+}
+
+/// Flatten `err`'s `source()` chain into the per-node messages worth
+/// showing: headline first, then one entry per cause. Transparent wrappers
+/// and bare variant labels are dropped; no message is ever split.
+fn error_chain_messages(err: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    let mut msgs = Vec::new();
+    let mut cur = Some(err);
+    while let Some(node) = cur {
+        let msg = node_own_message(node);
+        if !msg.is_empty() && !is_variant_label(&msg) {
+            msgs.push(msg);
+        }
+        cur = node.source();
+    }
+    msgs
+}
+
+/// A node's own message: its Display with its source's Display stripped off
+/// the end (`"{own}: {source}"` nesting), then any leading variant labels
+/// removed. Empty for transparent wrappers, whose Display equals their
+/// source's. When the source's text is not a suffix (source embedded
+/// mid-message), the node's Display is kept whole — the source still
+/// appears as its own entry, so nothing is lost.
+fn node_own_message(err: &(dyn std::error::Error + 'static)) -> String {
+    let full = err.to_string();
+    let own = match err.source() {
+        Some(src) => {
+            let child = src.to_string();
+            if full == child {
+                String::new()
+            } else if !child.is_empty() && full.ends_with(&child) {
+                full[..full.len() - child.len()]
+                    .trim_end_matches([' ', ':'])
+                    .to_string()
+            } else {
+                full
+            }
+        }
+        None => full,
+    };
+    strip_variant_labels(&own)
+}
+
+/// Remove leading `"<label>: "` prefixes left over from string-flattened
+/// error construction (`VariantError(format!("…: {}", e))`). Labels are an
+/// exact, closed set drawn from this workspace's error enums, so this can
+/// never eat real message text.
+fn strip_variant_labels(msg: &str) -> String {
+    let mut s = msg;
+    for _ in 0..4 {
+        match s.split_once(": ") {
+            Some((head, rest)) if is_variant_label(head) && !rest.is_empty() => s = rest,
+            _ => break,
+        }
+    }
+    s.to_string()
+}
+
+/// The bare labels emitted by this workspace's error enums
+/// (`#[error("<label>: …")]` variants), as produced by `WrightError`,
+/// `StateError`, `PartError`, `PlanError`, and `ModelError`.
+fn is_variant_label(seg: &str) -> bool {
     matches!(
         seg,
         "parse error"
@@ -160,6 +252,7 @@ fn is_wright_error_prefix(seg: &str) -> bool {
             | "network error"
             | "TOML deserialization error"
             | "SQLite error"
+            | "cache error"
     )
 }
 
@@ -174,88 +267,220 @@ pub fn today_log_path(logs_dir: &std::path::Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::WrightError;
+
+    // Stand-ins for sqlx-style foreign errors whose Display nests the
+    // source's text: "error returned from database: (code: 8) …".
+    #[derive(Debug, thiserror::Error)]
+    enum DbError {
+        #[error("error returned from database: {0}")]
+        Returned(#[source] DbFailure),
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("(code: 8) attempt to write a readonly database")]
+    struct DbFailure;
+
+    // Mirror of `WrightError::context` / `StateError::SqliteError` shapes.
+    #[derive(Debug, thiserror::Error)]
+    enum TestError {
+        #[error("{msg}: {source}")]
+        Context {
+            msg: String,
+            #[source]
+            source: Box<dyn std::error::Error + Send + Sync>,
+        },
+        #[error("SQLite error: {0}")]
+        Sqlite(#[from] DbError),
+    }
+
+    fn context(
+        msg: &str,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> TestError {
+        TestError::Context {
+            msg: msg.to_string(),
+            source: source.into(),
+        }
+    }
 
     #[test]
-    fn split_chain_drops_wrighterror_prefixes() {
-        let s = "forge error: task 'bison' failed: forge error: forge bison: \
-                 forge error: failed to clean forge directory \
-                 /var/tmp/wright/workshop/bison-3.8.2: \
-                 Device or resource busy (os error 16)";
-        assert_eq!(
-            split_error_chain(s),
-            vec![
-                "task 'bison' failed",
-                "forge bison",
-                "failed to clean forge directory /var/tmp/wright/workshop/bison-3.8.2",
-                "Device or resource busy (os error 16)",
-            ]
+    fn failure_report_layers_structured_chain_without_numbers() {
+        // The readonly-database scenario: a `": "`-carrying sqlx message
+        // must survive as whole entries, never split into fake causes.
+        let err = context(
+            "failed to begin delivery transaction",
+            TestError::Sqlite(DbError::Returned(DbFailure)),
         );
-    }
-
-    #[test]
-    fn split_chain_handles_single_message() {
-        assert_eq!(split_error_chain("plain message"), vec!["plain message"]);
-    }
-
-    #[test]
-    fn split_chain_preserves_hint_with_colon() {
-        let err = "access denied: permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)";
-        assert_eq!(
-            split_error_chain(err),
-            vec![
-                "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"
-            ]
-        );
-    }
-
-    #[test]
-    fn failure_report_single_cause_unnumbered() {
-        let err = "forge error: task 'bison' failed: \
-                   Device or resource busy (os error 16)";
-        let path = std::path::PathBuf::from("/var/log/wright/wright.log.2026-05-15");
+        let path = std::path::PathBuf::from("/log");
         let lines = format_failure_report(&err, &path);
-        // headline / blank / Caused by / cause / blank / see ...
-        assert_eq!(lines.len(), 6);
-        assert!(lines[0].contains("error:"), "headline: {}", lines[0]);
+        assert_eq!(lines.len(), 7, "lines: {lines:?}");
         assert!(
-            lines[0].contains("task 'bison' failed"),
+            lines[0].contains("error:")
+                && lines[0].contains("failed to begin delivery transaction"),
             "headline: {}",
             lines[0]
         );
+        assert!(!lines[0].contains("SQLite"), "headline: {}", lines[0]);
         assert!(lines[1].is_empty());
         assert_eq!(lines[2], "Caused by:");
-        assert_eq!(lines[3], "    Device or resource busy (os error 16)");
-        assert!(lines[4].is_empty());
-        assert!(lines[5].starts_with("See "));
-        assert!(lines[5].contains("/var/log/wright/wright.log.2026-05-15"));
+        assert_eq!(lines[3], "    error returned from database");
+        assert_eq!(
+            lines[4],
+            "    (code: 8) attempt to write a readonly database"
+        );
+        assert!(lines[5].is_empty());
+        assert!(lines[6].starts_with("See "));
+        for line in &lines {
+            assert!(
+                !line.trim_start().starts_with("0:") && !line.trim_start().starts_with("1:"),
+                "cause entries are never numbered: {line}"
+            );
+        }
     }
 
     #[test]
-    fn failure_report_multi_cause_numbered() {
-        let err = "forge error: task 'bison' failed: \
-                   forge error: forge bison: \
-                   forge error: failed to clean forge directory /var/tmp/wright/workshop/bison-3.8.2: \
-                   Device or resource busy (os error 16)";
+    fn failure_report_skips_transparent_wrappers() {
+        // `#[error(transparent)] Model(#[from] ModelError)` adds no text of
+        // its own; the ModelError label is dropped too.
+        let err = WrightError::Model(wright_model::ModelError::ValidationError(
+            "bad version spec".to_string(),
+        ));
         let path = std::path::PathBuf::from("/log");
         let lines = format_failure_report(&err, &path);
-        // headline / blank / Caused by / 0 / 1 / 2 / blank / see ...
-        assert_eq!(lines.len(), 8);
-        assert_eq!(lines[2], "Caused by:");
-        assert_eq!(lines[3], "    0: forge bison");
-        assert!(lines[4].starts_with("    1: failed to clean forge directory"));
-        assert_eq!(lines[5], "    2: Device or resource busy (os error 16)");
+        assert_eq!(lines.len(), 3, "lines: {lines:?}");
+        assert!(
+            lines[0].contains("bad version spec"),
+            "headline: {}",
+            lines[0]
+        );
+        assert!(
+            !lines[0].contains("validation error"),
+            "headline: {}",
+            lines[0]
+        );
     }
 
     #[test]
-    fn failure_report_with_no_chain_omits_caused_by() {
-        let err = "plain failure";
+    fn failure_report_never_splits_flattened_nodes() {
+        // A legacy string-flattened error is shown whole: one headline, no
+        // invented causes, mid-string labels untouched.
+        let err = WrightError::ForgeError(
+            "task 'b' failed: forge error: error returned from database: (code: 8) attempt to write a readonly database".to_string(),
+        );
         let path = std::path::PathBuf::from("/log");
         let lines = format_failure_report(&err, &path);
-        // headline / blank / see ...
-        assert_eq!(lines.len(), 3);
-        assert!(lines[0].contains("plain failure"));
-        assert!(lines[1].is_empty());
-        assert!(lines[2].starts_with("See "));
+        assert_eq!(lines.len(), 3, "lines: {lines:?}");
+        assert!(
+            lines[0].contains(
+                "task 'b' failed: forge error: error returned from database: (code: 8) attempt to write a readonly database"
+            ),
+            "headline: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn failure_report_keeps_multiline_cause_alignment() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("TOML parse error at line 3, column 5\n  |\n3 | bad = [\n  |     ^")]
+        struct TomlLike;
+
+        let err = context("failed to parse plan file", TomlLike);
+        let path = std::path::PathBuf::from("/log");
+        let lines = format_failure_report(&err, &path);
+        let expected: Vec<String> = [
+            "error: failed to parse plan file",
+            "",
+            "Caused by:",
+            "    TOML parse error at line 3, column 5",
+            "      |",
+            "    3 | bad = [",
+            "      |     ^",
+            "",
+            "See /log for the full trace.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // The headline carries ANSI styling when colors are on; compare the
+        // body verbatim and the headline by content.
+        assert_eq!(lines.len(), expected.len(), "lines: {lines:?}");
+        assert!(lines[0].contains("error: failed to parse plan file"));
+        assert_eq!(&lines[1..], &expected[1..]);
+    }
+
+    #[test]
+    fn failure_report_hint_suffix_survives_whole() {
+        // "(hint: …)" used to need a dedicated re-join heuristic; with no
+        // splitting at all it simply stays put.
+        let err = WrightError::AccessDenied(
+            "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock".to_string(),
+        );
+        let path = std::path::PathBuf::from("/log");
+        let lines = format_failure_report(&err, &path);
+        assert_eq!(lines.len(), 3, "lines: {lines:?}");
+        assert!(
+            lines[0].contains(
+                "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"
+            ),
+            "headline: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
+    fn flatten_error_causes_rejoins_chain_nodes() {
+        let flat = WrightError::ForgeError(
+            "stage 'compile' failed with exit code 1 (see log: /tmp/compile.log)".to_string(),
+        );
+        assert_eq!(
+            flatten_error_causes(&flat),
+            "stage 'compile' failed with exit code 1 (see log: /tmp/compile.log)"
+        );
+
+        let layered = context(
+            "failed to begin delivery transaction",
+            TestError::Sqlite(DbError::Returned(DbFailure)),
+        );
+        assert_eq!(
+            flatten_error_causes(&layered),
+            "failed to begin delivery transaction: error returned from database: \
+             (code: 8) attempt to write a readonly database"
+        );
+    }
+
+    #[test]
+    fn batch_failure_report_nests_each_tasks_causes() {
+        use crate::error::{BatchFailures, TaskFailure};
+        let batch = BatchFailures {
+            batch_num: 1,
+            total_batches: 2,
+            failures: vec![
+                TaskFailure::failed(
+                    "igc",
+                    WrightError::ForgeError(
+                        "stage 'compile' failed with exit code 1 (see log: /tmp/compile.log)"
+                            .to_string(),
+                    ),
+                ),
+                TaskFailure::panicked("neenee", WrightError::ForgeError("task panicked".into())),
+            ],
+        };
+        let path = std::path::PathBuf::from("/log");
+        let lines = format_batch_failure_report(&batch, &path);
+        // headline / blank / Caused by / task / cause / task / cause / blank / see ...
+        assert_eq!(lines.len(), 9, "lines: {lines:?}");
+        assert!(lines[0].contains("2 tasks failed in batch 1/2"));
+        assert_eq!(lines[2], "Caused by:");
+        assert_eq!(lines[3], "    task 'igc' failed");
+        assert_eq!(
+            lines[4],
+            "        stage 'compile' failed with exit code 1 (see log: /tmp/compile.log)"
+        );
+        assert_eq!(lines[5], "    task 'neenee' panicked");
+        assert_eq!(lines[6], "        task panicked");
+        assert!(lines[8].starts_with("See "));
     }
 }
 

@@ -450,11 +450,11 @@ async fn register_provides(db_path: &Path, provides: &[FolioProvide]) -> Result<
     }
     let db = InstalledDb::open(db_path)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("open target database: {e}")))?;
+        .map_err(|e| WrightError::context("open target database", e))?;
     for p in provides {
         db.provide_part(&p.name, &p.version)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("assume {}: {}", p.name, e)))?;
+            .map_err(|e| WrightError::context(format!("assume {}", p.name), e))?;
     }
     Ok(())
 }

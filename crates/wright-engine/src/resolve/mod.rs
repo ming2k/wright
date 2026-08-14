@@ -161,11 +161,10 @@ pub fn plan_file_fingerprint(path: &Path) -> Result<String> {
     hasher.update(canonical.to_string_lossy().as_bytes());
     hasher.update(b"\n-- plan.toml --\n");
     let content = std::fs::read(path).map_err(|e| {
-        WrightError::ForgeError(format!(
-            "failed to read {} for plan fingerprint: {}",
-            path.display(),
-            e
-        ))
+        WrightError::context(
+            format!("failed to read {} for plan fingerprint", path.display()),
+            e,
+        )
     })?;
     hasher.update(&content);
 
@@ -173,11 +172,10 @@ pub fn plan_file_fingerprint(path: &Path) -> Result<String> {
     if mvp_path.exists() {
         hasher.update(b"\n-- mvp.toml --\n");
         let mvp_content = std::fs::read(&mvp_path).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to read {} for plan fingerprint: {}",
-                mvp_path.display(),
-                e
-            ))
+            WrightError::context(
+                format!("failed to read {} for plan fingerprint", mvp_path.display()),
+                e,
+            )
         })?;
         hasher.update(&mvp_content);
     }

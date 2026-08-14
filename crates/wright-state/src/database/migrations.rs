@@ -11,24 +11,15 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
 async fn run_migrator(pool: &SqlitePool, migrator: Migrator, label: &str) -> Result<()> {
     let mut conn = pool.acquire().await.map_err(|e| {
-        crate::error::WrightError::DatabaseError(format!(
-            "failed to acquire migration connection: {}",
-            e
-        ))
+        crate::error::WrightError::context("failed to acquire migration connection", e)
     })?;
 
-    conn.ensure_migrations_table().await.map_err(|e| {
-        crate::error::WrightError::DatabaseError(format!(
-            "failed to ensure migrations table: {}",
-            e
-        ))
-    })?;
+    conn.ensure_migrations_table()
+        .await
+        .map_err(|e| crate::error::WrightError::context("failed to ensure migrations table", e))?;
 
     let applied = conn.list_applied_migrations().await.map_err(|e| {
-        crate::error::WrightError::DatabaseError(format!(
-            "failed to inspect applied migrations: {}",
-            e
-        ))
+        crate::error::WrightError::context("failed to inspect applied migrations", e)
     })?;
 
     let pending = migrator
@@ -47,9 +38,10 @@ async fn run_migrator(pool: &SqlitePool, migrator: Migrator, label: &str) -> Res
         info!("updating {} ({} changes pending)", label, pending);
     }
 
-    migrator.run(pool).await.map_err(|e| {
-        crate::error::WrightError::DatabaseError(format!("failed to run migrations: {}", e))
-    })?;
+    migrator
+        .run(pool)
+        .await
+        .map_err(|e| crate::error::WrightError::context("failed to run migrations", e))?;
 
     Ok(())
 }

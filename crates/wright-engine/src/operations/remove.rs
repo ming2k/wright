@@ -40,7 +40,7 @@ pub async fn execute_remove(
     } else {
         transaction::order_removal_batch(db, &parts_owned)
             .await
-            .map_err(|e| WrightError::RemoveError(format!("failed to plan removal order: {}", e)))?
+            .map_err(|e| WrightError::context("failed to plan removal order", e))?
     };
 
     if dry_run {
@@ -51,10 +51,7 @@ pub async fn execute_remove(
         for name in &removal_order {
             if recursive {
                 let dependents = db.get_recursive_dependents(name).await.map_err(|e| {
-                    WrightError::DatabaseError(format!(
-                        "failed to resolve dependents of {}: {}",
-                        name, e
-                    ))
+                    WrightError::context(format!("failed to resolve dependents of {}", name), e)
                 })?;
                 planned.extend(dependents);
             }
@@ -63,10 +60,10 @@ pub async fn execute_remove(
                 let orphans = transaction::cascade_remove_list(db, name)
                     .await
                     .map_err(|e| {
-                        WrightError::RemoveError(format!(
-                            "failed to compute cascade list for {}: {}",
-                            name, e
-                        ))
+                        WrightError::context(
+                            format!("failed to compute cascade list for {}", name),
+                            e,
+                        )
                     })?;
                 planned.extend(orphans);
             }
@@ -95,10 +92,7 @@ pub async fn execute_remove(
     for name in &removal_order {
         if recursive {
             let dependents = db.get_recursive_dependents(name).await.map_err(|e| {
-                WrightError::DatabaseError(format!(
-                    "failed to resolve dependents of {}: {}",
-                    name, e
-                ))
+                WrightError::context(format!("failed to resolve dependents of {}", name), e)
             })?;
 
             if !dependents.is_empty() {
@@ -119,7 +113,7 @@ pub async fn execute_remove(
                     let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
                     let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                     tracing::error!(event = "remove.failed", part_name = %dep, error = %e, "Removal failed");
-                    return Err(WrightError::RemoveError(format!("remove {}: {}", dep, e)));
+                    return Err(WrightError::context(format!("remove {}", dep), e));
                 }
                 total_removed += 1;
             }
@@ -129,10 +123,7 @@ pub async fn execute_remove(
             let list = transaction::cascade_remove_list(db, name)
                 .await
                 .map_err(|e| {
-                    WrightError::RemoveError(format!(
-                        "failed to compute cascade list for {}: {}",
-                        name, e
-                    ))
+                    WrightError::context(format!("failed to compute cascade list for {}", name), e)
                 })?;
             if !list.is_empty() {
                 crate::cli_action!("Cascading", "orphans of {}: {}", name, list.join(", "));
@@ -166,7 +157,7 @@ pub async fn execute_remove(
             let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
             let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
             tracing::error!(event = "remove.failed", part_name = %name, error = %e, "Removal failed");
-            return Err(WrightError::RemoveError(format!("remove {}: {}", name, e)));
+            return Err(WrightError::context(format!("remove {}", name), e));
         }
         total_removed += 1;
 
@@ -178,10 +169,7 @@ pub async fn execute_remove(
                 let _ = wright_state::delivery::rollback_delivery(db, tx_id).await;
                 let _ = wright_state::delivery::cleanup_delivery(db, tx_id).await;
                 tracing::error!(event = "remove.failed", part_name = %orphan, error = %e, "Removal failed");
-                return Err(WrightError::RemoveError(format!(
-                    "remove {}: {}",
-                    orphan, e
-                )));
+                return Err(WrightError::context(format!("remove {}", orphan), e));
             }
             total_removed += 1;
         }

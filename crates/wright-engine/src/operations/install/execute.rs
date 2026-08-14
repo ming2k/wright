@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::error::{Result, WrightError};
+use crate::error::{BatchFailures, Result, TaskFailure, WrightError};
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tracing::{debug, info, trace, warn};
 
 use crate::foundry::{BuildOptions, Foundry};
@@ -41,7 +42,7 @@ async fn resolve_plan_part(
             manifest.metadata.epoch,
         )
         .await
-        .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", part_name, e)))
+        .map_err(|e| WrightError::context(format!("resolve part {}", part_name), e))
 }
 
 /// Verify that a CAS entry actually holds the part expected from this plan
@@ -164,7 +165,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     let build_set: Vec<String> = resolve_build_set(config, targets.clone(), resolve_opts.clone())
         .await
-        .map_err(|e| WrightError::ForgeError(format!("resolve_build_set: {}", e)))?
+        .map_err(|e| WrightError::context("failed to resolve build set", e))?
         .names;
 
     if build_set.is_empty() {
@@ -180,10 +181,10 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     let plan_dirs = resolve::plan_search_dirs(config);
     let explicit_plan_names = resolve_explicit_plan_names(&plan_dirs, &targets)
-        .map_err(|e| WrightError::ForgeError(format!("explicit plan names: {}", e)))?;
+        .map_err(|e| WrightError::context("explicit plan names", e))?;
 
     let plan = create_execution_plan(config, build_set, &build_opts, deps | rdeps)
-        .map_err(|e| WrightError::ForgeError(format!("create_execution_plan: {}", e)))?;
+        .map_err(|e| WrightError::context("create_execution_plan", e))?;
 
     let total_packages = plan.build_set().len();
     let total_batches = plan.batches().len();
@@ -286,7 +287,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     let db = InstalledDb::open(db_path)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
+        .map_err(|e| WrightError::context("open database", e))?;
 
     // ── Crash recovery ──────────────────────────────────────────────
     wright_state::delivery::recover_if_needed(&db).await?;
@@ -414,7 +415,13 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
         // 1. Forge all tasks in this batch in parallel.
         //    Skip tasks whose base has a CAS hit.
-        let mut build_handles = Vec::new();
+        //
+        //    Tasks within a batch have no inter-dependencies, so a failing
+        //    task never interrupts its siblings: each failure is announced
+        //    the moment it happens, every task runs to completion, and the
+        //    failures are settled together once no task is left running.
+        let mut join_set: JoinSet<(String, Result<()>)> = JoinSet::new();
+        let mut task_ids: HashMap<tokio::task::Id, String> = HashMap::new();
         for task in batch {
             let base = BuildExecutionPlan::task_base_name(task).to_string();
             if cas_hit_bases.contains(&base) {
@@ -431,100 +438,124 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
             let task = task.clone();
             let task_for_handle = task.clone();
 
-            let handle = tokio::spawn(async move {
-                let plan_path = plan.plan_path_for_task(&task_for_handle).ok_or_else(|| {
-                    WrightError::ForgeError(format!("no path for task {}", task_for_handle))
-                })?;
-                let base = BuildExecutionPlan::task_base_name(&task_for_handle);
-                let is_bootstrap = task_for_handle.ends_with(":bootstrap");
-                let bootstrap_excluded = plan.bootstrap_excluded_for(&task_for_handle).to_vec();
+            let abort_handle = join_set.spawn(async move {
+                let outcome: Result<()> = async {
+                    let plan_path = plan.plan_path_for_task(&task_for_handle).ok_or_else(|| {
+                        WrightError::ForgeError(format!("no path for task {}", task_for_handle))
+                    })?;
+                    let base = BuildExecutionPlan::task_base_name(&task_for_handle);
+                    let is_bootstrap = task_for_handle.ends_with(":bootstrap");
+                    let bootstrap_excluded = plan.bootstrap_excluded_for(&task_for_handle).to_vec();
 
-                let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
+                    let manifest = PlanManifest::from_file(plan_path)
+                        .map_err(|e| WrightError::context(format!("read plan {}", base), e))?;
 
-                let mut extra_env = HashMap::new();
-                if is_bootstrap || build_opts.mvp {
-                    extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
-                    for dep in &bootstrap_excluded {
-                        let key = format!(
-                            "WRIGHT_BOOTSTRAP_WITHOUT_{}",
-                            dep.to_uppercase().replace('-', "_")
-                        );
-                        extra_env.insert(key, "1".to_string());
+                    let mut extra_env = HashMap::new();
+                    if is_bootstrap || build_opts.mvp {
+                        extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "mvp".to_string());
+                        for dep in &bootstrap_excluded {
+                            let key = format!(
+                                "WRIGHT_BOOTSTRAP_WITHOUT_{}",
+                                dep.to_uppercase().replace('-', "_")
+                            );
+                            extra_env.insert(key, "1".to_string());
+                        }
+                    } else {
+                        extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
                     }
-                } else {
-                    extra_env.insert("WRIGHT_BUILD_PHASE".to_string(), "full".to_string());
+
+                    let force = if !is_bootstrap && plan.is_post_bootstrap_full(&task_for_handle) {
+                        true
+                    } else {
+                        build_opts.force
+                    };
+
+                    // Bootstrap phase: the foundry's hash-chain checkpoint system
+                    // handles stage invalidation internally.
+
+                    let plan_dir = plan_path
+                        .parent()
+                        .ok_or_else(|| WrightError::ForgeError("plan path has no parent".into()))?
+                        .to_path_buf();
+
+                    foundry
+                        .build(
+                            &manifest,
+                            &plan_dir,
+                            std::path::Path::new("/"),
+                            BuildOptions {
+                                stages: build_opts.stages.clone(),
+                                force_stage: build_opts.force_stage.clone(),
+                                until_stage: build_opts.until_stage.clone(),
+                                fetch_only: build_opts.fetch_only,
+                                skip_check: build_opts.skip_check,
+                                force,
+                                clean: build_opts.clean,
+                                extra_env,
+                                verbose: build_opts.verbose,
+                                nproc_per_isolation: config.build.nproc_per_isolation,
+                                configure_lock: Some(configure_lock),
+                                compile_lock: Some(compile_lock),
+                            },
+                        )
+                        .await
+                        .map(|_| ())
+                    // NB: no `forge {base}` context wrap here — batch
+                    // settlement attaches the task name to the failure
+                    // report itself.
                 }
-
-                let force = if !is_bootstrap && plan.is_post_bootstrap_full(&task_for_handle) {
-                    true
-                } else {
-                    build_opts.force
-                };
-
-                // Bootstrap phase: the foundry's hash-chain checkpoint system
-                // handles stage invalidation internally.
-
-                let plan_dir = plan_path
-                    .parent()
-                    .ok_or_else(|| WrightError::ForgeError("plan path has no parent".into()))?
-                    .to_path_buf();
-
-                foundry
-                    .build(
-                        &manifest,
-                        &plan_dir,
-                        std::path::Path::new("/"),
-                        BuildOptions {
-                            stages: build_opts.stages.clone(),
-                            force_stage: build_opts.force_stage.clone(),
-                            until_stage: build_opts.until_stage.clone(),
-                            fetch_only: build_opts.fetch_only,
-                            skip_check: build_opts.skip_check,
-                            force,
-                            clean: build_opts.clean,
-                            extra_env,
-                            verbose: build_opts.verbose,
-                            nproc_per_isolation: config.build.nproc_per_isolation,
-                            configure_lock: Some(configure_lock),
-                            compile_lock: Some(compile_lock),
-                        },
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| WrightError::ForgeError(format!("forge {}: {}", base, e)))
+                .await;
+                (task_for_handle, outcome)
             });
-            build_handles.push((task.clone(), handle));
+            task_ids.insert(abort_handle.id(), task.clone());
         }
 
-        for (task, handle) in build_handles {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
-                    let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
+        // Settle the batch in completion order so a failure is reported the
+        // moment it happens rather than when its predecessors finish.
+        let mut failures: Vec<TaskFailure> = Vec::new();
+        let mut cancelled = false;
+        while let Some(joined) = join_set.join_next().await {
+            match joined {
+                Ok((_task, Ok(()))) => {}
+                Ok((task, Err(error))) => {
                     // A build failing because we reaped it on Ctrl-C is a
-                    // cancellation, not a genuine build error — report it as one.
+                    // cancellation, not a genuine build error — swallow it
+                    // in favour of the single cancellation outcome below.
                     if *cancel_rx.borrow() {
-                        return Err(WrightError::ForgeError("cancelled by user".into()));
+                        cancelled = true;
+                        continue;
                     }
-                    return Err(WrightError::ForgeError(format!(
-                        "task '{}' failed: {}",
-                        task, e
-                    )));
+                    crate::util::logging::report_task_failure(&task, false, &error);
+                    failures.push(TaskFailure::failed(task, error));
                 }
-                Err(e) => {
-                    let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
-                    let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
+                Err(join_error) => {
                     if *cancel_rx.borrow() {
-                        return Err(WrightError::ForgeError("cancelled by user".into()));
+                        cancelled = true;
+                        continue;
                     }
-                    return Err(WrightError::ForgeError(format!(
-                        "task '{}' panicked: {}",
-                        task, e
-                    )));
+                    // A panicked task never produced its name pairing;
+                    // recover the name from the spawn registry.
+                    let task = task_ids
+                        .remove(&join_error.id())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    crate::util::logging::report_task_failure(&task, true, &join_error);
+                    failures.push(TaskFailure::panicked(
+                        task,
+                        WrightError::ForgeError(join_error.to_string()),
+                    ));
                 }
             }
+        }
+
+        // The batch is the unit of progression: any failure rolls the
+        // delivery transaction back and blocks the next batch.
+        if cancelled || !failures.is_empty() {
+            let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
+            let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
+            if cancelled {
+                return Err(WrightError::ForgeError("cancelled by user".into()));
+            }
+            BatchFailures::settle(batch_idx + 1, total_batches, failures)?;
         }
 
         forge_step.success();
@@ -571,11 +602,11 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                 .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)))
                 .ok_or_else(|| WrightError::ForgeError(format!("no plan path for {}", base)))?;
             let manifest = PlanManifest::from_file(plan_path)
-                .map_err(|e| WrightError::ForgeError(format!("parse plan {}: {}", base, e)))?;
+                .map_err(|e| WrightError::context(format!("parse plan {}", base), e))?;
 
             crate::seal::package_manifest(&manifest, config, false, force)
                 .await
-                .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", base, e)))?;
+                .map_err(|e| WrightError::context(format!("seal {}", base), e))?;
 
             // Store freshly-sealed parts in CAS.
             if let Some(fp) = plan_fps.get(base) {
@@ -678,17 +709,14 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                     .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)))
                     .ok_or_else(|| WrightError::ForgeError(format!("no plan path for {}", base)))?;
                 let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("parse plan {}: {}", base, e)))?;
+                    .map_err(|e| WrightError::context(format!("parse plan {}", base), e))?;
 
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
                     let resolved = resolve_plan_part(part_store, &manifest, pn)
                         .await
                         .map_err(|e| {
-                            WrightError::PartError(format!(
-                                "resolve part {} after packaging: {}",
-                                pn, e
-                            ))
+                            WrightError::context(format!("resolve part {} after packaging", pn), e)
                         })?
                         .ok_or_else(|| {
                             WrightError::PartNotFound(format!(
@@ -712,19 +740,18 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                         .ok_or_else(|| {
                             WrightError::ForgeError(format!("no plan path for {}", base))
                         })?;
-                    let manifest = PlanManifest::from_file(plan_path).map_err(|e| {
-                        WrightError::ForgeError(format!("parse plan {}: {}", base, e))
-                    })?;
+                    let manifest = PlanManifest::from_file(plan_path)
+                        .map_err(|e| WrightError::context(format!("parse plan {}", base), e))?;
 
                     let part_names = manifest_part_names(&manifest);
                     for pn in &part_names {
                         let resolved = resolve_plan_part(part_store, &manifest, pn)
                             .await
                             .map_err(|e| {
-                                WrightError::PartError(format!(
-                                    "resolve part {} after CAS restore: {}",
-                                    pn, e
-                                ))
+                                WrightError::context(
+                                    format!("resolve part {} after CAS restore", pn),
+                                    e,
+                                )
                             })?
                             .ok_or_else(|| {
                                 WrightError::PartNotFound(format!(
@@ -784,7 +811,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                     Err(e) => {
                         wright_state::delivery::rollback_delivery(&db, tx_id).await?;
                         let _ = wright_state::delivery::cleanup_delivery(&db, tx_id).await;
-                        return Err(WrightError::DeployError(format!("deploy batch: {}", e)));
+                        return Err(WrightError::context("deploy batch", e));
                     }
                 }
             }
@@ -807,18 +834,13 @@ async fn register_folio_assumptions(
         return Ok(());
     }
 
-    let db = InstalledDb::open(db_path).await.map_err(|e| {
-        WrightError::DatabaseError(format!(
-            "failed to open database for folio assumptions: {}",
-            e
-        ))
-    })?;
+    let db = InstalledDb::open(db_path)
+        .await
+        .map_err(|e| WrightError::context("failed to open database for folio assumptions", e))?;
     for provide in provides {
         db.provide_part(&provide.name, &provide.version)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to assume {}: {}", provide.name, e))
-            })?;
+            .map_err(|e| WrightError::context(format!("failed to assume {}", provide.name), e))?;
     }
     Ok(())
 }

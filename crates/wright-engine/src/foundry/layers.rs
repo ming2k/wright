@@ -20,7 +20,7 @@ pub async fn detach_stale_mounts(path: &Path) -> Result<()> {
         detach_mounts_under(&path);
     })
     .await
-    .map_err(|e| WrightError::ForgeError(format!("detach stale mounts join: {e}")))?;
+    .map_err(|e| WrightError::context("detach stale mounts join", e))?;
     Ok(())
 }
 
@@ -29,7 +29,7 @@ pub async fn force_clean_dir(path: &Path) -> Result<()> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || force_clean_dir_blocking(&path))
         .await
-        .map_err(|e| WrightError::ForgeError(format!("clean join: {e}")))?
+        .map_err(|e| WrightError::context("clean join", e))?
 }
 
 fn force_clean_dir_blocking(path: &Path) -> Result<()> {
@@ -57,10 +57,10 @@ fn force_clean_dir_blocking(path: &Path) -> Result<()> {
         }
     }
     let e = last_err.expect("loop only exits with last_err set on failure");
-    Err(WrightError::ForgeError(format!(
-        "failed to clean forge directory {}: {e}",
-        path.display(),
-    )))
+    Err(WrightError::context(
+        format!("failed to clean forge directory {}", path.display()),
+        e,
+    ))
 }
 
 pub(crate) fn detach_mounts_under(path: &Path) -> usize {
@@ -174,16 +174,16 @@ impl LayerManager {
         let base_manifest_path = build_root.join(BASE_MANIFEST_NAME);
 
         std::fs::create_dir_all(&layers_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create layers dir {}: {e}",
-                layers_dir.display()
-            ))
+            WrightError::context(
+                format!("failed to create layers dir {}", layers_dir.display()),
+                e,
+            )
         })?;
         std::fs::create_dir_all(&base_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create base dir {}: {e}",
-                base_dir.display()
-            ))
+            WrightError::context(
+                format!("failed to create base dir {}", base_dir.display()),
+                e,
+            )
         })?;
 
         // `target/` is a real directory (a symlink in pre-merged-base build
@@ -196,10 +196,10 @@ impl LayerManager {
             remove_path_if_exists(&target_dir)?;
         }
         std::fs::create_dir_all(&target_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create target dir {}: {e}",
-                target_dir.display()
-            ))
+            WrightError::context(
+                format!("failed to create target dir {}", target_dir.display()),
+                e,
+            )
         })?;
 
         Ok(Self {
@@ -227,11 +227,11 @@ impl LayerManager {
         if dir.exists() {
             debug!(event = "layer.clear", dir = %dir.display(), "Clearing existing layer directory");
             remove_tree_force(&dir).map_err(|e| {
-                WrightError::ForgeError(format!("failed to clear layer dir {}: {e}", dir.display()))
+                WrightError::context(format!("failed to clear layer dir {}", dir.display()), e)
             })?;
         }
         std::fs::create_dir_all(&dir).map_err(|e| {
-            WrightError::ForgeError(format!("failed to create layer dir {}: {e}", dir.display()))
+            WrightError::context(format!("failed to create layer dir {}", dir.display()), e)
         })?;
         Ok(dir)
     }
@@ -263,17 +263,17 @@ impl LayerManager {
         );
         if self.base_dir.exists() {
             remove_tree_force(&self.base_dir).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to clear base dir {}: {e}",
-                    self.base_dir.display()
-                ))
+                WrightError::context(
+                    format!("failed to clear base dir {}", self.base_dir.display()),
+                    e,
+                )
             })?;
         }
         std::fs::create_dir_all(&self.base_dir).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to create base dir {}: {e}",
-                self.base_dir.display()
-            ))
+            WrightError::context(
+                format!("failed to create base dir {}", self.base_dir.display()),
+                e,
+            )
         })?;
 
         if source_dir.exists() {
@@ -325,16 +325,19 @@ impl LayerManager {
     fn write_base_manifest(&self, contents: &str) -> Result<()> {
         let tmp = self.base_manifest_path.with_extension("tmp");
         std::fs::write(&tmp, contents).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to write base manifest {}: {e}",
-                tmp.display()
-            ))
+            WrightError::context(
+                format!("failed to write base manifest {}", tmp.display()),
+                e,
+            )
         })?;
         std::fs::rename(&tmp, &self.base_manifest_path).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to commit base manifest {}: {e}",
-                self.base_manifest_path.display()
-            ))
+            WrightError::context(
+                format!(
+                    "failed to commit base manifest {}",
+                    self.base_manifest_path.display()
+                ),
+                e,
+            )
         })?;
         Ok(())
     }
@@ -403,10 +406,10 @@ impl LayerManager {
             let _ = std::fs::remove_file(&tombstone);
         } else {
             std::fs::write(&tombstone, deletions.join("\n") + "\n").map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to write layer deletions {}: {e}",
-                    tombstone.display()
-                ))
+                WrightError::context(
+                    format!("failed to write layer deletions {}", tombstone.display()),
+                    e,
+                )
             })?;
         }
 
@@ -534,10 +537,10 @@ fn merge_layer_tree(layer_dir: &Path, base_dir: &Path) -> Result<()> {
             if meta.is_dir() {
                 if is_overlay_opaque(&path, &meta) && dest.exists() {
                     std::fs::remove_dir_all(&dest).map_err(|e| {
-                        WrightError::ForgeError(format!(
-                            "failed to replace opaque dir {}: {e}",
-                            dest.display()
-                        ))
+                        WrightError::context(
+                            format!("failed to replace opaque dir {}", dest.display()),
+                            e,
+                        )
                     })?;
                 }
                 ensure_dest_dir(&dest)?;
@@ -549,24 +552,17 @@ fn merge_layer_tree(layer_dir: &Path, base_dir: &Path) -> Result<()> {
             remove_dest_any(&dest)?;
             if meta.file_type().is_symlink() {
                 let target = std::fs::read_link(&path).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to read symlink {}: {e}",
-                        path.display()
-                    ))
+                    WrightError::context(format!("failed to read symlink {}", path.display()), e)
                 })?;
                 std::os::unix::fs::symlink(&target, &dest).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to create symlink {}: {e}",
-                        dest.display()
-                    ))
+                    WrightError::context(format!("failed to create symlink {}", dest.display()), e)
                 })?;
             } else {
                 share_file(&path, &dest).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to copy {} to {}: {e}",
-                        path.display(),
-                        dest.display()
-                    ))
+                    WrightError::context(
+                        format!("failed to copy {} to {}", path.display(), dest.display()),
+                        e,
+                    )
                 })?;
             }
         }
@@ -595,16 +591,16 @@ fn remove_dest_any(dest: &Path) -> Result<()> {
     match std::fs::symlink_metadata(dest) {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => remove_tree_force(dest)
             .map_err(|e| {
-                WrightError::ForgeError(format!("failed to remove dir {}: {e}", dest.display()))
+                WrightError::context(format!("failed to remove dir {}", dest.display()), e)
             }),
         Ok(_) => std::fs::remove_file(dest).map_err(|e| {
-            WrightError::ForgeError(format!("failed to remove file {}: {e}", dest.display()))
+            WrightError::context(format!("failed to remove file {}", dest.display()), e)
         }),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(WrightError::ForgeError(format!(
-            "failed to inspect {}: {e}",
-            dest.display()
-        ))),
+        Err(e) => Err(WrightError::context(
+            format!("failed to inspect {}", dest.display()),
+            e,
+        )),
     }
 }
 
@@ -613,10 +609,10 @@ fn ensure_dest_dir(dest: &Path) -> Result<()> {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => Ok(()),
         Ok(_) => {
             std::fs::remove_file(dest).map_err(|e| {
-                WrightError::ForgeError(format!("failed to replace file {}: {e}", dest.display()))
+                WrightError::context(format!("failed to replace file {}", dest.display()), e)
             })?;
             std::fs::create_dir(dest).map_err(|e| {
-                WrightError::ForgeError(format!("failed to create dir {}: {e}", dest.display()))
+                WrightError::context(format!("failed to create dir {}", dest.display()), e)
             })
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -624,13 +620,13 @@ fn ensure_dest_dir(dest: &Path) -> Result<()> {
                 std::fs::create_dir_all(parent).ok();
             }
             std::fs::create_dir(dest).map_err(|e| {
-                WrightError::ForgeError(format!("failed to create dir {}: {e}", dest.display()))
+                WrightError::context(format!("failed to create dir {}", dest.display()), e)
             })
         }
-        Err(e) => Err(WrightError::ForgeError(format!(
-            "failed to inspect {}: {e}",
-            dest.display()
-        ))),
+        Err(e) => Err(WrightError::context(
+            format!("failed to inspect {}", dest.display()),
+            e,
+        )),
     }
 }
 

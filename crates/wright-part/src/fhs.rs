@@ -21,11 +21,10 @@ use crate::error::{Result, WrightError};
 pub fn validate(part_dir: &Path, part_name: &str) -> Result<()> {
     for entry in WalkDir::new(part_dir) {
         let entry = entry.map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to walk part directory {}: {}",
-                part_dir.display(),
-                e
-            ))
+            WrightError::context(
+                format!("failed to walk part directory {}", part_dir.display()),
+                e,
+            )
         })?;
 
         let rel = entry.path().strip_prefix(part_dir).unwrap();

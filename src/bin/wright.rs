@@ -2,7 +2,10 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use wright::cli::Cli;
 use wright::config::GlobalConfig;
-use wright::util::logging::{format_error, format_failure_report, today_log_path};
+use wright::error::WrightError;
+use wright::util::logging::{
+    format_batch_failure_report, format_error, format_failure_report, today_log_path,
+};
 use wright::util::progress::MULTI;
 
 fn main() {
@@ -60,17 +63,27 @@ async fn run_cli() {
 
         // Structured event for the file log; ERROR-level but no `verb`,
         // and we'll suppress the CLI layer's `error: …` render by
-        // printing the multi-line block ourselves below.
+        // printing the multi-line block ourselves below. The error text is
+        // the fully-flattened chain so foreign errors whose Display omits
+        // their sources (gix) still log the root cause.
         tracing::error!(
             event = "command.failed",
-            error = %e,
+            error = %wright::util::logging::flatten_error_causes(&e),
             trace_id = %trace_id,
             "command failed"
         );
 
-        // Multi-line Cargo-style report on the terminal.
+        // Multi-line Cargo-style report on the terminal. A settled batch
+        // with several failed tasks gets its own aggregated report that
+        // re-lists every per-task failure.
         let log_path = today_log_path(&logs_dir);
-        for line in format_failure_report(&e, &log_path) {
+        let lines = match &e {
+            WrightError::BatchFailures(failures) => {
+                format_batch_failure_report(failures, &log_path)
+            }
+            _ => format_failure_report(&e, &log_path),
+        };
+        for line in lines {
             wright::util::progress::term_println(&line);
         }
 

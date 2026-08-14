@@ -49,10 +49,10 @@ pub fn compute_dir_manifest(dir: &Path) -> Result<String> {
     let mut entries: Vec<(String, std::fs::FileType)> = Vec::new();
     for entry in WalkDir::new(dir).sort_by_file_name().follow_links(false) {
         let entry = entry.map_err(|e| {
-            WrightError::ForgeError(format!(
-                "staging manifest walk failed at {}: {e}",
-                dir.display()
-            ))
+            WrightError::context(
+                format!("staging manifest walk failed at {}", dir.display()),
+                e,
+            )
         })?;
         let relative = entry.path().strip_prefix(dir).unwrap_or(entry.path());
         let relative_str = relative.to_string_lossy();
@@ -107,16 +107,16 @@ fn compute_file_hash(path: &Path) -> Result<String> {
     use std::io::Read;
     let mut hasher = Sha256::new();
     let mut f = std::fs::File::open(path).map_err(|e| {
-        WrightError::ForgeError(format!(
-            "failed to open {} for staging manifest: {e}",
-            path.display()
-        ))
+        WrightError::context(
+            format!("failed to open {} for staging manifest", path.display()),
+            e,
+        )
     })?;
     let mut buf = [0u8; 65536];
     loop {
         let n = f
             .read(&mut buf)
-            .map_err(|e| WrightError::ForgeError(format!("staging manifest read failed: {e}")))?;
+            .map_err(|e| WrightError::context("staging manifest read failed", e))?;
         if n == 0 {
             break;
         }
@@ -143,19 +143,19 @@ pub fn snapshot_tree(src: &Path, dst: &Path) -> Result<()> {
 
     let parent = dst.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| {
-        WrightError::ForgeError(format!(
-            "failed to create snapshot parent {}: {e}",
-            parent.display()
-        ))
+        WrightError::context(
+            format!("failed to create snapshot parent {}", parent.display()),
+            e,
+        )
     })?;
 
     let tmp_dst = dst.with_extension("snapshot.tmp");
     if tmp_dst.exists() {
         std::fs::remove_dir_all(&tmp_dst).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clear stale snapshot tmp {}: {e}",
-                tmp_dst.display()
-            ))
+            WrightError::context(
+                format!("failed to clear stale snapshot tmp {}", tmp_dst.display()),
+                e,
+            )
         })?;
     }
 
@@ -172,10 +172,10 @@ pub fn snapshot_tree(src: &Path, dst: &Path) -> Result<()> {
             Ok(()) => true,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&tmp_dst);
-                return Err(WrightError::ForgeError(format!(
-                    "failed to rotate old staging snapshot {}: {e}",
-                    dst.display()
-                )));
+                return Err(WrightError::context(
+                    format!("failed to rotate old staging snapshot {}", dst.display()),
+                    e,
+                ));
             }
         }
     } else {
@@ -187,11 +187,14 @@ pub fn snapshot_tree(src: &Path, dst: &Path) -> Result<()> {
         if had_backup {
             let _ = std::fs::rename(&backup, dst);
         }
-        return Err(WrightError::ForgeError(format!(
-            "failed to commit staging snapshot {} -> {}: {e}",
-            tmp_dst.display(),
-            dst.display()
-        )));
+        return Err(WrightError::context(
+            format!(
+                "failed to commit staging snapshot {} -> {}",
+                tmp_dst.display(),
+                dst.display()
+            ),
+            e,
+        ));
     }
 
     if had_backup {
@@ -214,17 +217,17 @@ pub fn restore_tree(src: &Path, dst: &Path) -> Result<()> {
     }
     if dst.exists() {
         std::fs::remove_dir_all(dst).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to clear restore target {}: {e}",
-                dst.display()
-            ))
+            WrightError::context(
+                format!("failed to clear restore target {}", dst.display()),
+                e,
+            )
         })?;
     }
     std::fs::create_dir_all(dst).map_err(|e| {
-        WrightError::ForgeError(format!(
-            "failed to create restore target {}: {e}",
-            dst.display()
-        ))
+        WrightError::context(
+            format!("failed to create restore target {}", dst.display()),
+            e,
+        )
     })?;
     link_tree(src, dst)
 }
@@ -235,7 +238,7 @@ pub fn restore_tree(src: &Path, dst: &Path) -> Result<()> {
 fn link_tree(src: &Path, dst: &Path) -> Result<()> {
     for entry in WalkDir::new(src).sort_by_file_name().follow_links(false) {
         let entry = entry.map_err(|e| {
-            WrightError::ForgeError(format!("tree walk failed at {}: {e}", src.display()))
+            WrightError::context(format!("tree walk failed at {}", src.display()), e)
         })?;
         let relative = entry.path().strip_prefix(src).unwrap_or(entry.path());
         let dest_path = dst.join(relative);
@@ -243,46 +246,46 @@ fn link_tree(src: &Path, dst: &Path) -> Result<()> {
         let ft = entry.file_type();
         if ft.is_dir() && !entry.path_is_symlink() {
             std::fs::create_dir_all(&dest_path).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to create dir {}: {e}",
-                    dest_path.display()
-                ))
+                WrightError::context(format!("failed to create dir {}", dest_path.display()), e)
             })?;
             continue;
         }
 
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to create parent for {}: {e}",
-                    dest_path.display()
-                ))
+                WrightError::context(
+                    format!("failed to create parent for {}", dest_path.display()),
+                    e,
+                )
             })?;
         }
 
         if ft.is_symlink() {
             let target = std::fs::read_link(entry.path()).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to read symlink {}: {e}",
-                    entry.path().display()
-                ))
+                WrightError::context(
+                    format!("failed to read symlink {}", entry.path().display()),
+                    e,
+                )
             })?;
             let _ = std::fs::remove_file(&dest_path);
             std::os::unix::fs::symlink(&target, &dest_path).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to recreate symlink {}: {e}",
-                    dest_path.display()
-                ))
+                WrightError::context(
+                    format!("failed to recreate symlink {}", dest_path.display()),
+                    e,
+                )
             })?;
         } else if ft.is_file() {
             let _ = std::fs::remove_file(&dest_path);
             if std::fs::hard_link(entry.path(), &dest_path).is_err() {
                 std::fs::copy(entry.path(), &dest_path).map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to copy {} -> {}: {e}",
-                        entry.path().display(),
-                        dest_path.display()
-                    ))
+                    WrightError::context(
+                        format!(
+                            "failed to copy {} -> {}",
+                            entry.path().display(),
+                            dest_path.display()
+                        ),
+                        e,
+                    )
                 })?;
             }
         }
@@ -295,10 +298,10 @@ pub fn remove_tree_if_exists(path: &Path) -> Result<()> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(WrightError::ForgeError(format!(
-            "failed to remove {}: {e}",
-            path.display()
-        ))),
+        Err(e) => Err(WrightError::context(
+            format!("failed to remove {}", path.display()),
+            e,
+        )),
     }
 }
 

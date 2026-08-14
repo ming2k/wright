@@ -67,9 +67,10 @@ impl Charge {
                         );
                         let snapshot = self.cache_dir.join(&snapshot_name);
                         compress::extract_part(&snapshot, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to extract git snapshot {snapshot_name}: {e}"
-                            ))
+                            WrightError::context(
+                                format!("failed to extract git snapshot {snapshot_name}"),
+                                e,
+                            )
                         })?;
                     }
                 }
@@ -98,9 +99,7 @@ impl Charge {
                             manifest.metadata.name
                         );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to extract source {filename}: {e}"
-                            ))
+                            WrightError::context(format!("failed to extract source {filename}"), e)
                         })?;
                     } else {
                         let dest_name = http
@@ -110,9 +109,7 @@ impl Charge {
                         let dest = final_dest.join(&dest_name);
                         claim_workdir_dest(&mut placed, &dest)?;
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to copy non-archive source {dest_name} to work directory: {e}"
-                            ))
+                            WrightError::context(format!("failed to copy non-archive source {dest_name} to work directory"), e)
                         })?;
                     }
                 }
@@ -141,9 +138,10 @@ impl Charge {
                             manifest.metadata.name
                         );
                         compress::extract_part(&cache_path, &final_dest).map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to extract local source {filename}: {e}"
-                            ))
+                            WrightError::context(
+                                format!("failed to extract local source {filename}"),
+                                e,
+                            )
                         })?;
                     } else {
                         let dest_name = local
@@ -153,9 +151,12 @@ impl Charge {
                         let dest = final_dest.join(&dest_name);
                         claim_workdir_dest(&mut placed, &dest)?;
                         tokio::fs::copy(&cache_path, &dest).await.map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to copy local source {dest_name} to work directory: {e}"
-                            ))
+                            WrightError::context(
+                                format!(
+                                    "failed to copy local source {dest_name} to work directory"
+                                ),
+                                e,
+                            )
                         })?;
                     }
                 }

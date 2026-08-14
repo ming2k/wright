@@ -119,10 +119,10 @@ fn parse_output_section(
                     toml::Value::Table(table)
                         .try_into()
                         .map_err(|e: toml::de::Error| {
-                            WrightError::ParseError(format!(
-                                "failed to parse [[output]] entry '{}': {}",
-                                name, e
-                            ))
+                            WrightError::context(
+                                format!("failed to parse [[output]] entry '{}'", name),
+                                e,
+                            )
                         })?;
                 if matches!(&sub.include, Some(v) if v.is_empty()) {
                     return Err(WrightError::ParseError(format!(
@@ -260,10 +260,7 @@ impl PlanManifest {
                 let mut entries = Vec::new();
                 for (i, val) in arr.into_iter().enumerate() {
                     let entry: Source = val.try_into().map_err(|e: toml::de::Error| {
-                        WrightError::ParseError(format!(
-                            "failed to parse [[sources]] entry {}: {}",
-                            i, e
-                        ))
+                        WrightError::context(format!("failed to parse [[sources]] entry {}", i), e)
                     })?;
                     entries.push(entry);
                 }
@@ -286,10 +283,7 @@ impl PlanManifest {
         if let Some(raw_pipeline) = raw_pipeline {
             for (key, value) in raw_pipeline {
                 let stage: PipelineStage = value.try_into().map_err(|e: toml::de::Error| {
-                    WrightError::ParseError(format!(
-                        "failed to parse pipeline stage '{}': {}",
-                        key, e
-                    ))
+                    WrightError::context(format!("failed to parse pipeline stage '{}'", key), e)
                 })?;
                 pipeline_stages.insert(key, stage);
             }
@@ -329,9 +323,8 @@ impl PlanManifest {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            WrightError::ParseError(format!("failed to read {}: {}", path.display(), e))
-        })?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| WrightError::context(format!("failed to read {}", path.display()), e))?;
         let mut manifest = Self::parse(&content).map_err(|e| match e {
             WrightError::ParseError(msg) => {
                 WrightError::ParseError(format!("{}: {}", path.display(), msg))
@@ -351,14 +344,10 @@ impl PlanManifest {
             let mvp_path = path.with_file_name("mvp.toml");
             if mvp_path.exists() {
                 let mvp_content = std::fs::read_to_string(&mvp_path).map_err(|e| {
-                    WrightError::ParseError(format!("failed to read {}: {}", mvp_path.display(), e))
+                    WrightError::context(format!("failed to read {}", mvp_path.display()), e)
                 })?;
                 let overlay: PhaseConfig = toml::from_str(&mvp_content).map_err(|e| {
-                    WrightError::ParseError(format!(
-                        "failed to parse {}: {}",
-                        mvp_path.display(),
-                        e
-                    ))
+                    WrightError::context(format!("failed to parse {}", mvp_path.display()), e)
                 })?;
                 manifest.mvp = Some(overlay);
             }

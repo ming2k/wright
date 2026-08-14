@@ -108,7 +108,7 @@ impl Charge {
                         download::download_file(&url, &dest_owned, timeout, &scope)
                     })
                     .await
-                    .map_err(|e| WrightError::ForgeError(format!("download join: {e}")))??;
+                    .map_err(|e| WrightError::context("download join", e))??;
                     if !skip_verify {
                         let actual_hash = checksum::sha256_file(&dest)?;
                         if actual_hash != http.sha256 {
@@ -130,11 +130,13 @@ impl Charge {
                 let label = progress::source_label(&processed_path);
                 let _span = crate::cli_span!("Fetching", "{} ({})", label, manifest.metadata.name);
                 tokio::fs::copy(&local_path, &dest).await.map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to copy local file {} to cache: {}",
-                        local_path.display(),
-                        e
-                    ))
+                    WrightError::context(
+                        format!(
+                            "failed to copy local file {} to cache",
+                            local_path.display()
+                        ),
+                        e,
+                    )
                 })?;
             }
         }

@@ -155,9 +155,10 @@ async fn write_dep_tree_inner(
         return Ok(());
     }
 
-    let deps = db.get_dependencies_by_name(name).await.map_err(|e| {
-        WrightError::DatabaseError(format!("failed to get dependencies for {}: {}", name, e))
-    })?;
+    let deps = db
+        .get_dependencies_by_name(name)
+        .await
+        .map_err(|e| WrightError::context(format!("failed to get dependencies for {}", name), e))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         deps.iter().filter(|d| d.name.contains(f)).collect()
@@ -348,9 +349,10 @@ async fn write_reverse_dep_tree_inner(
         return Ok(());
     }
 
-    let dependents = db.get_dependents(name).await.map_err(|e| {
-        WrightError::DatabaseError(format!("failed to get dependents of {}: {}", name, e))
-    })?;
+    let dependents = db
+        .get_dependents(name)
+        .await
+        .map_err(|e| WrightError::context(format!("failed to get dependents of {}", name), e))?;
 
     let children: Vec<_> = if let Some(f) = opts.filter {
         dependents.iter().filter(|n| n.contains(f)).collect()

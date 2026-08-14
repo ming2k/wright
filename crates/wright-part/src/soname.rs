@@ -218,6 +218,7 @@ pub fn lint_runtime_deps(
     let mtime = dir_mtime(output_dir)?;
     let meta = {
         let mut cache = elf_lint_cache().lock().map_err(|e| {
+            // PoisonError<MutexGuard> is not Send/Sync — flatten instead.
             crate::error::WrightError::PartError(format!("elf-lint cache poison: {}", e))
         })?;
         if let Some(cached) = cache.get(&(output_dir.to_path_buf(), mtime)) {

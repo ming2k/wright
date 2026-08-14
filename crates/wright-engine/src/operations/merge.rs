@@ -34,7 +34,7 @@ async fn resolve_store_archive(
             let candidates = part_store
                 .resolve_all_from_plan(output, plan)
                 .await
-                .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", output, e)))?;
+                .map_err(|e| WrightError::context(format!("resolve part {}", output), e))?;
             let latest = pick_latest(&candidates).ok_or_else(|| {
                 WrightError::PartNotFound(format!(
                     "no archive for '{}:{}' in the part store",
@@ -47,7 +47,7 @@ async fn resolve_store_archive(
             let all = part_store
                 .resolve_all(name)
                 .await
-                .map_err(|e| WrightError::PartError(format!("resolve part {}: {}", name, e)))?;
+                .map_err(|e| WrightError::context(format!("resolve part {}", name), e))?;
             if all.is_empty() {
                 return Ok(None);
             }
@@ -85,7 +85,7 @@ async fn resolve_plan_outputs(
     let plan_path = PathBuf::from(arg);
     let manifest = if plan_path.is_dir() {
         PlanManifest::from_file(&plan_path.join("plan.toml"))
-            .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", arg, e)))?
+            .map_err(|e| WrightError::context(format!("read plan {}", arg), e))?
     } else {
         let plan_dirs = plan_search_dirs(config);
         let index = wright_plan::discovery::PlanIndex::discover(&plan_dirs)?;
@@ -98,7 +98,7 @@ async fn resolve_plan_outputs(
         }
         let plan_path = resolved.into_iter().next().unwrap();
         PlanManifest::from_file(&plan_path)
-            .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", arg, e)))?
+            .map_err(|e| WrightError::context(format!("read plan {}", arg), e))?
     };
 
     let part_names = match manifest.outputs {
@@ -113,7 +113,7 @@ async fn resolve_plan_outputs(
             .resolve_all_from_plan(&pn, &manifest.metadata.name)
             .await
             .map_err(|e| {
-                WrightError::PartError(format!("resolve part {} from plan {}: {}", pn, arg, e))
+                WrightError::context(format!("resolve part {} from plan {}", pn, arg), e)
             })?;
         let resolved = pick_latest(&candidates).ok_or_else(|| {
             WrightError::PartNotFound(format!("part {} not found in parts_dir", pn))
@@ -172,7 +172,7 @@ pub async fn execute_merge(
 
     let db = InstalledDb::open(db_path)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
+        .map_err(|e| WrightError::context("open database", e))?;
 
     // ── Resolution phase (read-only) ────────────────────────────────
     // Turn every argument into a concrete archive path. `explicit` records
@@ -260,7 +260,7 @@ pub async fn execute_merge(
 
     if let Err(e) = result {
         let _ = wright_state::delivery::rollback_delivery(&db, tx_id).await;
-        return Err(WrightError::DeployError(format!("merge: {}", e)));
+        return Err(WrightError::context("merge", e));
     }
 
     wright_state::delivery::complete_delivery(&db, tx_id).await?;

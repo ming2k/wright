@@ -26,6 +26,32 @@ pub enum StateError {
 
     #[error("SQLite error: {0}")]
     SqliteError(#[from] sqlx::Error),
+
+    /// Structured context wrapper: keeps the underlying error as a real
+    /// `source()` so failure reports walk the actual chain instead of
+    /// re-parsing flattened text. Display still nests (`"{msg}: {source}"`),
+    /// so single-line logs keep the full chain. Construct via
+    /// [`StateError::context`].
+    #[error("{msg}: {source}")]
+    Context {
+        msg: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl StateError {
+    /// Wrap `source` with a context message, preserving the error chain
+    /// (unlike `Variant(format!("…: {}", e))`, which flattens it).
+    pub fn context(
+        msg: impl Into<String>,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self::Context {
+            msg: msg.into(),
+            source: source.into(),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, StateError>;

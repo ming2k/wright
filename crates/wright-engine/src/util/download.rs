@@ -48,7 +48,7 @@ pub fn download_file(url: &str, dest: &Path, timeout: u64, scope: &str) -> Resul
         .connect_timeout(std::time::Duration::from_secs(timeout))
         .timeout(std::time::Duration::from_secs(timeout))
         .build()
-        .map_err(|e| WrightError::NetworkError(format!("failed to create client: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to create client", e))?;
 
     let mut last_err: Option<WrightError> = None;
     for attempt in 1..=MAX_RETRIES {
@@ -84,10 +84,7 @@ fn try_download_http(
 ) -> std::result::Result<(), Attempt> {
     let mut response = client.get(url).send().map_err(|e| {
         // A failed send is a connection-level problem: usually transient.
-        Attempt::Transient(WrightError::NetworkError(format!(
-            "cannot reach {}: {}",
-            url, e
-        )))
+        Attempt::Transient(WrightError::context(format!("cannot reach {}", url), e))
     })?;
 
     let status = response.status();
@@ -139,10 +136,10 @@ fn try_download_http(
     loop {
         // A read failure mid-stream is a dropped connection: transient.
         let n = response.read(&mut buffer).map_err(|e| {
-            Attempt::Transient(WrightError::NetworkError(format!(
-                "connection interrupted while fetching {}: {}",
-                url, e
-            )))
+            Attempt::Transient(WrightError::context(
+                format!("connection interrupted while fetching {}", url),
+                e,
+            ))
         })?;
 
         if n == 0 {

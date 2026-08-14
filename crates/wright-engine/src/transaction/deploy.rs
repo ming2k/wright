@@ -491,7 +491,7 @@ pub async fn deploy_part_with_origin(
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
     let temp_dir = tempfile::tempdir_in(&staging_dir)
         .or_else(|_| tempfile::tempdir())
-        .map_err(|e| WrightError::DeployError(format!("failed to create temp dir: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to create temp dir", e))?;
 
     let (partinfo, part_hash) = archive::extract_part(part_path, temp_dir.path())?;
 
@@ -590,8 +590,8 @@ pub async fn deploy_part_with_origin(
     )
     .await?;
 
-    let backup_dir = tempfile::tempdir()
-        .map_err(|e| WrightError::DeployError(format!("failed to create backup dir: {}", e)))?;
+    let backup_dir =
+        tempfile::tempdir().map_err(|e| WrightError::context("failed to create backup dir", e))?;
 
     if run_hooks && let Some(ref script) = hooks.pre_install {
         log_running_hook(&partinfo.name, "pre_install");

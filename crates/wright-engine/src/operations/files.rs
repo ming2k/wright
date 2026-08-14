@@ -60,7 +60,7 @@ pub async fn execute_files(db: &InstalledDb, target: &str, json: bool) -> Result
 async fn get_files(db: &InstalledDb, part_id: i64) -> Result<Vec<FileEntry>> {
     db.get_files(part_id)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))
+        .map_err(|e| WrightError::context("failed to get files", e))
 }
 
 #[cfg(test)]

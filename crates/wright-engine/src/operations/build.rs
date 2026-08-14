@@ -41,7 +41,7 @@ pub async fn execute_build(
         wright_state::lock::LockIdentity::Command("build"),
         wright_state::lock::LockMode::Exclusive,
     )
-    .map_err(|e| WrightError::LockError(format!("failed to acquire build command lock: {}", e)))?;
+    .map_err(|e| WrightError::context("failed to acquire build command lock", e))?;
 
     let mut all_targets = request.targets;
     use std::io::IsTerminal;
@@ -72,7 +72,7 @@ pub async fn execute_build(
         let plan_path = std::path::Path::new(target);
         if plan_path.is_dir() {
             let manifest = PlanManifest::from_file(&plan_path.join("plan.toml"))
-                .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", target, e)))?;
+                .map_err(|e| WrightError::context(format!("read plan {}", target), e))?;
             let foundry = Foundry::new(config.clone());
             let mut extra_env = HashMap::new();
             if request.mvp {
@@ -102,7 +102,7 @@ pub async fn execute_build(
             if request.seal {
                 crate::seal::package_manifest(&manifest, config, true, request.force)
                     .await
-                    .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", target, e)))?;
+                    .map_err(|e| WrightError::context(format!("seal {}", target), e))?;
             }
             return Ok(());
         }
@@ -129,7 +129,7 @@ pub async fn execute_build(
         &options,
         DepDomain::BUILD | DepDomain::LINK,
     )
-    .map_err(|e| WrightError::ForgeError(format!("create execution plan: {}", e)))?;
+    .map_err(|e| WrightError::context("create execution plan", e))?;
 
     let plan = Arc::new(plan);
     let foundry = Arc::new(Foundry::new(config.clone()));
@@ -167,7 +167,7 @@ pub async fn execute_build(
                 let bootstrap_excluded = plan.bootstrap_excluded_for(&task).to_vec();
 
                 let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
+                    .map_err(|e| WrightError::context(format!("read plan {}", base), e))?;
 
                 let mut extra_env = HashMap::new();
                 if is_bootstrap || options.mvp {
@@ -236,7 +236,8 @@ pub async fn execute_build(
                     )
                     .await
                     .map(|_| ())
-                    .map_err(|e| WrightError::ForgeError(format!("build {}: {}", base, e)))
+                // NB: no `build {base}` context wrap here — batch settlement
+                // attaches the task name to the failure report itself.
             }
         },
         cancel_rx,
@@ -261,10 +262,10 @@ pub async fn execute_build(
                     .plan_path_for_task(task)
                     .ok_or_else(|| WrightError::ForgeError(format!("no plan path for {}", base)))?;
                 let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
+                    .map_err(|e| WrightError::context(format!("read plan {}", base), e))?;
                 crate::seal::package_manifest(&manifest, config, true, options.force)
                     .await
-                    .map_err(|e| WrightError::ForgeError(format!("seal {}: {}", base, e)))?;
+                    .map_err(|e| WrightError::context(format!("seal {}", base), e))?;
             }
         }
     }

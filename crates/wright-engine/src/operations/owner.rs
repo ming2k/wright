@@ -12,9 +12,10 @@ pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf], json: bool) -> R
         let resolved = normalize_path(input);
         let lookup = resolved.to_string_lossy();
 
-        let owners = db.find_all_owners(&lookup).await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to query owner of {}: {}", lookup, e))
-        })?;
+        let owners = db
+            .find_all_owners(&lookup)
+            .await
+            .map_err(|e| WrightError::context(format!("failed to query owner of {}", lookup), e))?;
 
         if owners.is_empty() {
             any_missing = true;

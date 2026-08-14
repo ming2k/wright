@@ -99,10 +99,13 @@ impl Foundry {
             .default_isolation
             .parse::<IsolationLevel>()
             .map_err(|error| {
-                WrightError::ConfigError(format!(
-                    "invalid build.default_isolation '{}': {error}",
-                    self.config.build.default_isolation
-                ))
+                WrightError::context(
+                    format!(
+                        "invalid build.default_isolation '{}'",
+                        self.config.build.default_isolation
+                    ),
+                    error,
+                )
             })
     }
 
@@ -182,7 +185,7 @@ impl Foundry {
             self.config.build.forge_dir.clone()
         } else {
             std::env::current_dir()
-                .map_err(|e| WrightError::ForgeError(format!("failed to get cwd: {e}")))?
+                .map_err(|e| WrightError::context("failed to get cwd", e))?
                 .join(&self.config.build.forge_dir)
         };
         let ver = manifest.metadata.version.as_deref().unwrap_or("");
@@ -383,7 +386,12 @@ impl Foundry {
             plan_name,
         );
         if let Err(e) = forge.run().await {
-            info!(event = "build.failed", plan_name = %plan_name, error = %e, "Forge failed");
+            info!(
+                event = "build.failed",
+                plan_name = %plan_name,
+                error = %crate::util::logging::flatten_error_causes(&e),
+                "Forge failed"
+            );
             return Err(e);
         }
         info!(
@@ -460,10 +468,10 @@ async fn ensure_clean_dir(dir: &Path) -> Result<()> {
         }
     }
     tokio::fs::create_dir_all(dir).await.map_err(|e| {
-        WrightError::ForgeError(format!(
-            "failed to create forge directory {}: {e}",
-            dir.display()
-        ))
+        WrightError::context(
+            format!("failed to create forge directory {}", dir.display()),
+            e,
+        )
     })
 }
 

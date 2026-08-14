@@ -33,7 +33,7 @@ impl PlanFingerprints {
                     .plan_path_for_task(task)
                     .ok_or_else(|| WrightError::ForgeError(format!("no path for task {}", task)))?;
                 let manifest = PlanManifest::from_file(plan_path)
-                    .map_err(|e| WrightError::ForgeError(format!("read plan {}: {}", base, e)))?;
+                    .map_err(|e| WrightError::context(format!("read plan {}", base), e))?;
 
                 let build_key = foundry.compute_build_key(&manifest)?;
 

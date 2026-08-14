@@ -82,8 +82,8 @@ pub async fn remove_part_with_ignored_dependents(
 
     // Create backup directory BEFORE transaction context so it outlives the tx
     // on the error/panic path (tx drops first and can still read backups).
-    let backup_dir = tempfile::tempdir()
-        .map_err(|e| WrightError::RemoveError(format!("failed to create backup dir: {}", e)))?;
+    let backup_dir =
+        tempfile::tempdir().map_err(|e| WrightError::context("failed to create backup dir", e))?;
 
     let mut tx = TransactionContext::begin(
         db,
@@ -173,11 +173,7 @@ pub async fn remove_part_with_ignored_dependents(
                 let metadata = tokio::fs::symlink_metadata(&full_path).await;
                 if metadata.is_ok() {
                     tokio::fs::remove_file(&full_path).await.map_err(|e| {
-                        WrightError::RemoveError(format!(
-                            "failed to remove {}: {}",
-                            full_path.display(),
-                            e
-                        ))
+                        WrightError::context(format!("failed to remove {}", full_path.display()), e)
                     })?;
                 }
             }

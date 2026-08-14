@@ -17,9 +17,7 @@ impl InstalledDb {
         .bind(&now)
         .execute(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to begin delivery transaction: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to begin delivery transaction", e))?;
         Ok(res.last_insert_rowid())
     }
 
@@ -32,9 +30,7 @@ impl InstalledDb {
             .bind(tx_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to update delivery status: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to update delivery status", e))?;
         Ok(())
     }
 
@@ -61,7 +57,7 @@ impl InstalledDb {
         .execute(&self.pool)
         .await
         .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to insert transaction op: {}", e))
+            WrightError::context("failed to insert transaction op", e)
         })?;
         Ok(res.last_insert_rowid())
     }
@@ -93,9 +89,7 @@ impl InstalledDb {
             .bind(op_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to update op status: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to update op status", e))?;
         Ok(())
     }
 
@@ -106,7 +100,7 @@ impl InstalledDb {
             .bind(op_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to set op failed: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to set op failed", e))?;
         Ok(())
     }
 
@@ -121,9 +115,7 @@ impl InstalledDb {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to query active delivery: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to query active delivery", e))?;
         Ok(result)
     }
 
@@ -138,7 +130,7 @@ impl InstalledDb {
         .bind(tx_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query delivery ops: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to query delivery ops", e))?;
         Ok(ops)
     }
 
@@ -148,7 +140,7 @@ impl InstalledDb {
             .bind(op_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to reset op: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to reset op", e))?;
         Ok(())
     }
 
@@ -160,15 +152,13 @@ impl InstalledDb {
             .bind(tx_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to cleanup ops: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to cleanup ops", e))?;
 
         query("DELETE FROM delivery_transactions WHERE id = ?")
             .bind(tx_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to cleanup delivery: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to cleanup delivery", e))?;
 
         Ok(())
     }

@@ -25,9 +25,8 @@ mod targets;
 /// Serialize `value` as pretty JSON to stdout — the shared `--json` output
 /// path for query commands.
 pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> crate::error::Result<()> {
-    let text = serde_json::to_string_pretty(value).map_err(|e| {
-        crate::error::WrightError::ForgeError(format!("serialize json output: {}", e))
-    })?;
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| crate::error::WrightError::context("serialize json output", e))?;
     crate::outln!("{}", text);
     Ok(())
 }

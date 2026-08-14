@@ -106,11 +106,10 @@ fn acquire_lock_path_with_timeout(
                 parent.display()
             )));
         }
-        return Err(WrightError::LockError(format!(
-            "failed to create lock directory {}: {}",
-            parent.display(),
-            e
-        )));
+        return Err(WrightError::context(
+            format!("failed to create lock directory {}", parent.display()),
+            e,
+        ));
     }
 
     let file = OpenOptions::new()
@@ -126,11 +125,10 @@ fn acquire_lock_path_with_timeout(
                     lock_path.display()
                 ))
             } else {
-                WrightError::LockError(format!(
-                    "failed to open lock file {}: {}",
-                    lock_path.display(),
-                    e
-                ))
+                WrightError::context(
+                    format!("failed to open lock file {}", lock_path.display()),
+                    e,
+                )
             }
         })?;
 

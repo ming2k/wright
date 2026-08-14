@@ -3,6 +3,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod integration {
+    mod batch_failure_test;
     mod build_test;
     mod diversion_test;
     mod force_test;

@@ -69,7 +69,7 @@ pub async fn execute_upgrade(
 
     let build_set = resolve_build_set(config, targets.clone(), resolve_opts)
         .await
-        .map_err(|e| WrightError::ForgeError(format!("resolve upgrade set: {}", e)))?;
+        .map_err(|e| WrightError::context("resolve upgrade set", e))?;
 
     if build_set.names.is_empty() {
         if !quiet {
@@ -218,7 +218,7 @@ async fn filter_outdated_targets(
 ) -> Result<Vec<String>> {
     let db = InstalledDb::open(db_path)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
+        .map_err(|e| WrightError::context("open database", e))?;
 
     let plan_dirs = plan_search_dirs(config);
     let index = PlanIndex::discover(&plan_dirs)?;
@@ -267,12 +267,12 @@ async fn filter_outdated_targets(
 async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Vec<String>> {
     let db = InstalledDb::open(db_path)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("open database: {}", e)))?;
+        .map_err(|e| WrightError::context("open database", e))?;
 
     let plans = db
         .list_plans()
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("list plans: {}", e)))?;
+        .map_err(|e| WrightError::context("list plans", e))?;
 
     let plan_dirs = plan_search_dirs(config);
     let index = PlanIndex::discover(&plan_dirs)?;

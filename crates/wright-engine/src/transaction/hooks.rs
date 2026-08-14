@@ -109,8 +109,8 @@ async fn join_hook_output(
     if let Some(handle) = handle {
         handle
             .await
-            .map_err(|e| WrightError::ScriptError(format!("hook output task failed: {}", e)))?
-            .map_err(|e| WrightError::ScriptError(format!("failed to read hook output: {}", e)))?;
+            .map_err(|e| WrightError::context("hook output task failed", e))?
+            .map_err(|e| WrightError::context("failed to read hook output", e))?;
     }
     Ok(())
 }
@@ -125,11 +125,10 @@ pub(super) async fn run_deploy_script(
     // `build/rootfs`) would resolve against `/` and chroot would exit 125.
     // Canonicalize before any directory change.
     let root_dir = root_dir.canonicalize().map_err(|e| {
-        WrightError::ScriptError(format!(
-            "cannot resolve deploy root {}: {}",
-            root_dir.display(),
-            e
-        ))
+        WrightError::context(
+            format!("cannot resolve deploy root {}", root_dir.display()),
+            e,
+        )
     })?;
     let root_dir = root_dir.as_path();
     let use_chroot = root_dir != Path::new("/") && nix::unistd::geteuid().is_root();
@@ -163,7 +162,7 @@ pub(super) async fn run_deploy_script(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| WrightError::ScriptError(format!("failed to execute script: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to execute script", e))?;
 
     let stdout_task = child.stdout.take().map(|stdout| {
         tokio::spawn(log_hook_output(
@@ -185,7 +184,7 @@ pub(super) async fn run_deploy_script(
     let status = child
         .wait()
         .await
-        .map_err(|e| WrightError::ScriptError(format!("failed to wait for script: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to wait for script", e))?;
 
     join_hook_output(stdout_task).await?;
     join_hook_output(stderr_task).await?;

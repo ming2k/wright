@@ -55,16 +55,16 @@ impl Checkpoint {
         let state_path = work_dir.join(".wright-checkpoint.json");
         let state = if state_path.exists() {
             let raw = std::fs::read_to_string(&state_path).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to read checkpoint state {}: {e}",
-                    state_path.display()
-                ))
+                WrightError::context(
+                    format!("failed to read checkpoint state {}", state_path.display()),
+                    e,
+                )
             })?;
             serde_json::from_str::<ForgeState>(&raw).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to parse checkpoint state {}: {e}",
-                    state_path.display()
-                ))
+                WrightError::context(
+                    format!("failed to parse checkpoint state {}", state_path.display()),
+                    e,
+                )
             })?
         } else {
             ForgeState {
@@ -83,29 +83,37 @@ impl Checkpoint {
     fn save(&self) -> Result<()> {
         if let Some(parent) = self.state_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to create parent dir for {}: {e}",
-                    self.state_path.display()
-                ))
+                WrightError::context(
+                    format!(
+                        "failed to create parent dir for {}",
+                        self.state_path.display()
+                    ),
+                    e,
+                )
             })?;
         }
-        let raw = serde_json::to_string_pretty(&self.state).map_err(|e| {
-            WrightError::ForgeError(format!("failed to serialize checkpoint state: {e}"))
-        })?;
+        let raw = serde_json::to_string_pretty(&self.state)
+            .map_err(|e| WrightError::context("failed to serialize checkpoint state", e))?;
 
         let tmp_path = self.state_path.with_extension("json.tmp");
         std::fs::write(&tmp_path, raw).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to write temporary checkpoint state {}: {e}",
-                tmp_path.display()
-            ))
+            WrightError::context(
+                format!(
+                    "failed to write temporary checkpoint state {}",
+                    tmp_path.display()
+                ),
+                e,
+            )
         })?;
 
         std::fs::rename(&tmp_path, &self.state_path).map_err(|e| {
-            WrightError::ForgeError(format!(
-                "failed to atomicity commit checkpoint state to {}: {e}",
-                self.state_path.display()
-            ))
+            WrightError::context(
+                format!(
+                    "failed to atomicity commit checkpoint state to {}",
+                    self.state_path.display()
+                ),
+                e,
+            )
         })?;
 
         Ok(())

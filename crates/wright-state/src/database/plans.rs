@@ -38,7 +38,7 @@ impl InstalledDb {
                     plan.name
                 ));
             }
-            WrightError::DatabaseError(format!("failed to insert plan: {}", e))
+            WrightError::context("failed to insert plan", e)
         })?;
 
         Ok(res.last_insert_rowid())
@@ -52,7 +52,7 @@ impl InstalledDb {
         .bind(name)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get plan: {}", e)))
+        .map_err(|e| WrightError::context("failed to get plan", e))
     }
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
@@ -63,7 +63,7 @@ impl InstalledDb {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get plan by id: {}", e)))
+        .map_err(|e| WrightError::context("failed to get plan by id", e))
     }
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
@@ -73,7 +73,7 @@ impl InstalledDb {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to list plans: {}", e)))
+        .map_err(|e| WrightError::context("failed to list plans", e))
     }
 
     pub async fn remove_plan(&self, name: &str) -> Result<()> {
@@ -81,7 +81,7 @@ impl InstalledDb {
             .bind(name)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to remove plan: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to remove plan", e))?;
 
         if res.rows_affected() == 0 {
             return Err(WrightError::DatabaseError(format!(
@@ -97,9 +97,7 @@ impl InstalledDb {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to remove plan by id: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to remove plan by id", e))?;
 
         if res.rows_affected() == 0 {
             return Err(WrightError::DatabaseError(format!(
@@ -120,9 +118,7 @@ impl InstalledDb {
             .bind(plan_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get parts by plan_id: {}", e))
-            })
+            .map_err(|e| WrightError::context("failed to get parts by plan_id", e))
     }
 
     pub async fn get_plan_id_by_name(&self, name: &str) -> Result<Option<i64>> {
@@ -130,7 +126,7 @@ impl InstalledDb {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to query plan id: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to query plan id", e))?;
 
         match row {
             Some(r) => {
@@ -157,7 +153,7 @@ impl InstalledDb {
                 .bind(existing.id)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| WrightError::DatabaseError(format!("failed to update plan: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to update plan", e))?;
 
             existing.id
         } else {
@@ -178,10 +174,8 @@ impl InstalledDb {
         plan_id: i64,
         provenance: NewPlanProvenance<'_>,
     ) -> Result<()> {
-        let source_checksums =
-            serde_json::to_string(&provenance.source_checksums).map_err(|e| {
-                WrightError::DatabaseError(format!("serialize source_checksums: {}", e))
-            })?;
+        let source_checksums = serde_json::to_string(&provenance.source_checksums)
+            .map_err(|e| WrightError::context("serialize source_checksums", e))?;
         query(
             "UPDATE plans SET plan_checksum = ?, source_checksums = ?,
                     wright_version = ?, isolation = ? WHERE id = ?",
@@ -193,7 +187,7 @@ impl InstalledDb {
         .bind(plan_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to set plan provenance: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to set plan provenance", e))?;
         Ok(())
     }
 
@@ -206,9 +200,7 @@ impl InstalledDb {
             .bind(source)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to insert plan snapshot: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to insert plan snapshot", e))?;
         Ok(())
     }
 
@@ -219,9 +211,7 @@ impl InstalledDb {
             .bind(checksum)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get plan snapshot: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to get plan snapshot", e))?;
         match row {
             Some(r) => {
                 use sqlx::Row;

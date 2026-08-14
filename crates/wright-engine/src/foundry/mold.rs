@@ -37,10 +37,13 @@ impl Mold {
         tokio::fs::create_dir_all(&default_output_dir)
             .await
             .map_err(|e| {
-                WrightError::ForgeError(format!(
-                    "failed to create default output directory {}: {e}",
-                    default_output_dir.display()
-                ))
+                WrightError::context(
+                    format!(
+                        "failed to create default output directory {}",
+                        default_output_dir.display()
+                    ),
+                    e,
+                )
             })?;
 
         let mut split_dirs = HashMap::new();
@@ -63,19 +66,23 @@ impl Mold {
                 tokio::fs::create_dir_all(&sub_output_dir)
                     .await
                     .map_err(|e| {
-                        WrightError::ForgeError(format!(
-                            "failed to create output directory {}: {e}",
-                            sub_output_dir.display()
-                        ))
+                        WrightError::context(
+                            format!(
+                                "failed to create output directory {}",
+                                sub_output_dir.display()
+                            ),
+                            e,
+                        )
                     })?;
                 let includes = incs
                     .iter()
                     .map(|pat| {
                         globset::Glob::new(pat)
                             .map_err(|e| {
-                                WrightError::ForgeError(format!(
-                                    "invalid include glob '{pat}' for {sub_name}: {e}"
-                                ))
+                                WrightError::context(
+                                    format!("invalid include glob '{pat}' for {sub_name}"),
+                                    e,
+                                )
                             })
                             .map(|g| g.compile_matcher())
                     })
@@ -88,9 +95,10 @@ impl Mold {
                     .map(|pat| {
                         globset::Glob::new(pat)
                             .map_err(|e| {
-                                WrightError::ForgeError(format!(
-                                    "invalid exclude glob '{pat}' for {sub_name}: {e}"
-                                ))
+                                WrightError::context(
+                                    format!("invalid exclude glob '{pat}' for {sub_name}"),
+                                    e,
+                                )
                             })
                             .map(|g| g.compile_matcher())
                     })
@@ -111,9 +119,10 @@ impl Mold {
                     .map(|pat| {
                         globset::Glob::new(pat)
                             .map_err(|e| {
-                                WrightError::ForgeError(format!(
-                                    "invalid discard include glob '{pat}': {e}"
-                                ))
+                                WrightError::context(
+                                    format!("invalid discard include glob '{pat}'"),
+                                    e,
+                                )
                             })
                             .map(|g| g.compile_matcher())
                     })
@@ -124,9 +133,10 @@ impl Mold {
                     .map(|pat| {
                         globset::Glob::new(pat)
                             .map_err(|e| {
-                                WrightError::ForgeError(format!(
-                                    "invalid discard exclude glob '{pat}': {e}"
-                                ))
+                                WrightError::context(
+                                    format!("invalid discard exclude glob '{pat}'"),
+                                    e,
+                                )
                             })
                             .map(|g| g.compile_matcher())
                     })
@@ -261,10 +271,10 @@ impl Mold {
                     }
                     if let Some(dest_path) = dest_path {
                         let target = tokio::fs::read_link(symlink_path).await.map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to read symlink {}: {e}",
-                                symlink_path.display()
-                            ))
+                            WrightError::context(
+                                format!("failed to read symlink {}", symlink_path.display()),
+                                e,
+                            )
                         })?;
                         symlink_actions.push((dest_path, target));
                     }
@@ -314,11 +324,14 @@ impl Mold {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
                 if let Err(e) = link_or_copy(&file_path, &dest_path).await {
-                    return Err(WrightError::ForgeError(format!(
-                        "failed to link {} to {}: {e}",
-                        file_path.display(),
-                        dest_path.display()
-                    )));
+                    return Err(WrightError::context(
+                        format!(
+                            "failed to link {} to {}",
+                            file_path.display(),
+                            dest_path.display()
+                        ),
+                        e,
+                    ));
                 }
             }
 
@@ -327,11 +340,14 @@ impl Mold {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
                 tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
-                    WrightError::ForgeError(format!(
-                        "failed to create symlink {} -> {}: {e}",
-                        dest_path.display(),
-                        target.display()
-                    ))
+                    WrightError::context(
+                        format!(
+                            "failed to create symlink {} -> {}",
+                            dest_path.display(),
+                            target.display()
+                        ),
+                        e,
+                    )
                 })?;
             }
         } else {
@@ -353,11 +369,11 @@ impl Mold {
 async fn ensure_clean_dir(dir: &Path) -> Result<()> {
     if tokio::fs::metadata(dir).await.is_ok() {
         tokio::fs::remove_dir_all(dir).await.map_err(|e| {
-            WrightError::ForgeError(format!("failed to clean directory {}: {e}", dir.display()))
+            WrightError::context(format!("failed to clean directory {}", dir.display()), e)
         })?;
     }
     tokio::fs::create_dir_all(dir).await.map_err(|e| {
-        WrightError::ForgeError(format!("failed to create directory {}: {e}", dir.display()))
+        WrightError::context(format!("failed to create directory {}", dir.display()), e)
     })
 }
 
@@ -383,17 +399,20 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                 match file_type {
                     Some(ft) if ft.is_symlink() => {
                         let target = tokio::fs::read_link(&path).await.map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to read symlink {}: {e}",
-                                path.display()
-                            ))
+                            WrightError::context(
+                                format!("failed to read symlink {}", path.display()),
+                                e,
+                            )
                         })?;
                         tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
-                            WrightError::ForgeError(format!(
-                                "failed to create symlink {} -> {}: {e}",
-                                dest_path.display(),
-                                target.display()
-                            ))
+                            WrightError::context(
+                                format!(
+                                    "failed to create symlink {} -> {}",
+                                    dest_path.display(),
+                                    target.display()
+                                ),
+                                e,
+                            )
                         })?;
                     }
                     Some(ft) if ft.is_dir() => {
@@ -401,11 +420,14 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                     }
                     _ => {
                         if let Err(e) = link_or_copy(&path, &dest_path).await {
-                            return Err(WrightError::ForgeError(format!(
-                                "failed to link {} to {}: {e}",
-                                path.display(),
-                                dest_path.display()
-                            )));
+                            return Err(WrightError::context(
+                                format!(
+                                    "failed to link {} to {}",
+                                    path.display(),
+                                    dest_path.display()
+                                ),
+                                e,
+                            ));
                         }
                     }
                 }

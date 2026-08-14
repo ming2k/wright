@@ -109,11 +109,11 @@ async fn resolve_bare(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
     let plan = db
         .get_plan(name)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query plan: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to query plan", e))?;
     let part = db
         .get_part_with_plan(name)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to query part", e))?;
 
     match (plan, part) {
         (Some(plan), Some(part)) => {
@@ -152,7 +152,7 @@ async fn resolve_plan(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
     let plan = db
         .get_plan(name)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query plan: {}", e)))?
+        .map_err(|e| WrightError::context("failed to query plan", e))?
         .ok_or_else(|| WrightError::PartNotFound(format!("plan '{}' is not deployed", name)))?;
     resolve_plan_parts(db, plan).await
 }
@@ -163,12 +163,12 @@ async fn resolve_output(db: &InstalledDb, plan: &str, output: &str) -> Result<Re
     let plan_record = db
         .get_plan(plan)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query plan: {}", e)))?
+        .map_err(|e| WrightError::context("failed to query plan", e))?
         .ok_or_else(|| WrightError::PartNotFound(format!("plan '{}' is not deployed", plan)))?;
     let part = db
         .get_part_with_plan(output)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))?
+        .map_err(|e| WrightError::context("failed to query part", e))?
         .ok_or_else(|| WrightError::PartNotFound(format!("output '{}' is not deployed", output)))?;
 
     if part.plan_id != plan_record.id {
@@ -184,7 +184,7 @@ async fn resolve_output(db: &InstalledDb, plan: &str, output: &str) -> Result<Re
 async fn plan_parts(db: &InstalledDb, plan: &PlanRecord) -> Result<Vec<PartWithPlan>> {
     db.get_parts_by_plan(&plan.name)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to query plan outputs: {}", e)))
+        .map_err(|e| WrightError::context("failed to query plan outputs", e))
 }
 
 /// Shared tail for plan-level resolution: a plan without deployed outputs

@@ -32,11 +32,10 @@ impl InstalledDb {
     pub async fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                WrightError::DatabaseError(format!(
-                    "failed to create database directory {}: {}",
-                    parent.display(),
-                    e
-                ))
+                WrightError::context(
+                    format!("failed to create database directory {}", parent.display()),
+                    e,
+                )
             })?;
         }
 
@@ -47,17 +46,15 @@ impl InstalledDb {
             .create_if_missing(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
-        let pool = SqlitePool::connect_with(options).await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to connect to database: {}", e))
-        })?;
+        let pool = SqlitePool::connect_with(options)
+            .await
+            .map_err(|e| WrightError::context("failed to connect to database", e))?;
 
         // Enable foreign key constraints (required for ON DELETE CASCADE)
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to enable foreign keys", e))?;
 
         schema::init_db(&pool).await?;
 
@@ -69,16 +66,14 @@ impl InstalledDb {
     }
 
     pub async fn open_in_memory() -> Result<Self> {
-        let pool = SqlitePool::connect("sqlite::memory:").await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to connect to in-memory database: {}", e))
-        })?;
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .map_err(|e| WrightError::context("failed to connect to in-memory database", e))?;
 
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to enable foreign keys: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to enable foreign keys", e))?;
 
         schema::init_db(&pool).await?;
 

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **Parallel batch failures now settle cargo-style instead of failing fast (ADR-0039).** Tasks within a build/install batch have no inter-dependencies, so a failing task no longer interrupts its siblings: each failure is announced immediately as a one-line `error: task '<name>' failed: <cause>` notice pointing at the stage log, every task runs to completion, and the batch then settles — a single failure keeps the existing terminal failure report unchanged, while multiple failures close with an aggregated `error: N tasks failed in batch i/j` report whose `Caused by:` list enumerates every failed task. A failed batch still blocks the next batch and rolls the delivery transaction back, but the rollback now runs only after no build task is left running. Ctrl-C semantics are unchanged: tasks reaped by the signal handler settle as a single "cancelled by user".
+
+### Fixed
+- **`wright install` no longer detaches still-running build tasks when a batchmate fails.** The fail-fast return dropped the remaining `JoinHandle`s, leaving sibling compiles running detached while the process printed its failure report and rolled the delivery transaction back underneath them.
+- **Terminal failure reports no longer shred error text into fake `Caused by:` entries.** The report now walks the real `std::error::Error::source()` chain instead of re-splitting Display text on `": "` — context is preserved structurally via `WrightError::context` rather than `format!("…: {e}")` flattening — so messages that themselves contain `": "` (stage `(see log: …)` suffixes, sqlx `(code: N)` details, multi-line TOML diagnostics) always render whole, and legacy string-flattened errors show as a single intact headline.
+
 ## [5.5.3] - 2026-08-14
 
 ### Added

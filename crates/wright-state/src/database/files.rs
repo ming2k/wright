@@ -20,14 +20,16 @@ impl InstalledDb {
             .bind(diverted_to)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to record shadowed file: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to record shadowed file", e))?;
         Ok(())
     }
 
     pub async fn insert_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            WrightError::DatabaseError(format!("failed to begin transaction: {}", e))
-        })?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| WrightError::context("failed to begin transaction", e))?;
 
         for chunk in files.chunks(999 / 7) {
             let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
@@ -45,14 +47,15 @@ impl InstalledDb {
             });
 
             let query = query_builder.build();
-            query.execute(&mut *tx).await.map_err(|e| {
-                WrightError::DatabaseError(format!("failed to insert files: {}", e))
-            })?;
+            query
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| WrightError::context("failed to insert files", e))?;
         }
 
         tx.commit()
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to commit files: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to commit files", e))?;
         Ok(())
     }
 
@@ -62,7 +65,7 @@ impl InstalledDb {
             .bind(current_part_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get other owners: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to get other owners", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -86,9 +89,7 @@ impl InstalledDb {
                 .bind(shadowed_by_id)
                 .fetch_optional(&self.pool)
                 .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to query diverted file: {}", e))
-                })?;
+                .map_err(|e| WrightError::context("failed to query diverted file", e))?;
 
         match row {
             Some(r) => {
@@ -108,7 +109,7 @@ impl InstalledDb {
             .bind(shadowed_by_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get all diverted files: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to get all diverted files", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -129,9 +130,7 @@ impl InstalledDb {
             .bind(shadowed_by_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to remove shadowed records: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to remove shadowed records", e))?;
         Ok(())
     }
 
@@ -140,9 +139,7 @@ impl InstalledDb {
             .bind(part_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to delete old files: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to delete old files", e))?;
 
         self.insert_files(part_id, files).await
     }
@@ -155,7 +152,7 @@ impl InstalledDb {
         .bind(part_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to get files: {}", e)))
+        .map_err(|e| WrightError::context("failed to get files", e))
     }
 
     pub async fn find_all_owners(&self, path: &str) -> Result<Vec<String>> {
@@ -168,7 +165,7 @@ impl InstalledDb {
         .bind(path)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to find owners: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to find owners", e))?;
 
         let mut result = Vec::with_capacity(rows.len());
         for row in rows {
@@ -198,9 +195,7 @@ impl InstalledDb {
                 .build()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!("failed to query find_owners_batch: {}", e))
-                })?;
+                .map_err(|e| WrightError::context("failed to query find_owners_batch", e))?;
 
             for row in rows {
                 use sqlx::Row;
@@ -239,12 +234,7 @@ impl InstalledDb {
                 .build()
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| {
-                    WrightError::DatabaseError(format!(
-                        "failed to query get_other_owners_batch: {}",
-                        e
-                    ))
-                })?;
+                .map_err(|e| WrightError::context("failed to query get_other_owners_batch", e))?;
 
             for row in rows {
                 use sqlx::Row;
@@ -270,9 +260,7 @@ impl InstalledDb {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to get ownership conflicts: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to get ownership conflicts", e))?;
 
         let mut result = Vec::new();
         for row in rows {

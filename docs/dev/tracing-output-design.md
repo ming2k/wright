@@ -204,21 +204,62 @@ Cargo / anyhow style — zero-indent, paragraph format, no verb-column alignment
 error: task 'bison' failed
 
 Caused by:
-    0: forge bison
-    1: failed to clean forge directory /var/tmp/wright/workshop/bison-3.8.2
-    2: Device or resource busy (os error 16)
+    failed to clean forge directory /var/tmp/wright/workshop/bison-3.8.2
+    Device or resource busy (os error 16)
 
 See /var/log/wright/wright.log.2026-05-15 for the full trace.
 ```
 
-The cause chain is recovered by `split_error_chain` — it splits the
-`WrightError` Display string on `": "` and drops `WrightError`-variant prefixes
-(`forge error`, `deploy error`, `database error`, …). Single-cause failures
-render their cause unnumbered; multi-cause use `0:`, `1:`, `2:` indices.
+The cause chain is the real `std::error::Error::source()` chain, walked by
+`error_chain_messages` — Display text is never re-parsed, so messages that
+themselves contain `": "` (the `(see log: …)` stage suffix, sqlx's
+`(code: N) …`, multi-line TOML diagnostics) survive as whole entries and
+multi-line entries keep their internal alignment. Transparent wrappers and
+bare variant labels (`forge error`, `database error`, …) carry no
+information and are dropped; a node's own text is recovered by stripping its
+source's Display off the end of its own (`"{msg}: {source}"` is the
+workspace's nesting format — see `WrightError::context`, which preserves the
+chain structurally where `format!("…: {e}")` used to flatten it). Legacy
+string-flattened errors have no `source()` nodes, so they render as a single
+intact headline with no invented causes. Cause entries are always unnumbered,
+4-space indented.
 
 The trailing `See <path>` line points at the rolling daily log file produced by
 `tracing_appender::rolling::daily` — the path includes today's `YYYY-MM-DD`
 suffix.
+
+### Batch Settlement
+
+Build and install run dependency levels as batches of parallel tasks. Tasks
+within a batch have no inter-dependencies, so a failing task never interrupts
+its siblings (see ADR-0039). The moment a task fails, `report_task_failure`
+emits a single zero-indent notice through the normal ERROR path — the failing
+stage's log path rides on the same line:
+
+```
+error: task 'intel-graphics-compiler' failed: stage 'compile' failed with exit code 1 (see log: /var/tmp/wright/workshop/intel-graphics-compiler-2.38.2/logs/compile.log)
+```
+
+The batch then runs to completion and settles: a single failure produces the
+terminal report above unchanged; more than one failure produces an aggregated
+report (`format_batch_failure_report`) that re-lists every failed task, so a
+notice that scrolled by during a long parallel run is not lost:
+
+```
+error: 2 tasks failed in batch 1/3
+
+Caused by:
+    task 'intel-graphics-compiler' failed
+        stage 'compile' failed with exit code 1 (see log: /var/tmp/wright/workshop/intel-graphics-compiler-2.38.2/logs/compile.log)
+    task 'neenee' failed
+        stage 'staging' failed with exit code 1 (see log: /var/tmp/wright/workshop/neenee-1.4.7/logs/staging.log)
+
+See /var/log/wright/wright.log.2026-08-14 for the full trace.
+```
+
+A settled batch with failures blocks the next batch. The immediate one-line
+notice flattens the chain with `flatten_error_causes`; the aggregated report
+nests each task's own `error_chain_messages` entries underneath its headline.
 
 ---
 
@@ -302,6 +343,8 @@ If you are touching CLI output:
    warnings should be user-actionable.
 4. **Adding an error?** `cli_error!` for non-terminal errors; `cli_failed!` only
    for the workflow's final failure line (it gets the multi-line Caused-by
-   treatment).
+   treatment). A task failing inside a parallel batch goes through
+   `report_task_failure` — never ad-hoc prints — so its notice stays
+   consistent with the batch settlement report.
 5. **Passing `ProgressBar` around?** Don't. Open a span instead. The legacy
    `progress: Option<ProgressBar>` plumbing was deleted; do not reintroduce it.

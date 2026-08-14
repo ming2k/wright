@@ -22,9 +22,7 @@ impl InstalledDb {
             .bind(part.name)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to clear external placeholder: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to clear external placeholder", e))?;
 
         let res = query(
             "INSERT INTO parts (name, plan_id, part_hash, deploy_scripts, origin)
@@ -43,7 +41,7 @@ impl InstalledDb {
             {
                 return WrightError::PartAlreadyInstalled(part.name.to_string());
             }
-            WrightError::DatabaseError(format!("failed to insert part: {}", e))
+            WrightError::context("failed to insert part", e)
         })?;
 
         Ok(res.last_insert_rowid())
@@ -70,9 +68,7 @@ impl InstalledDb {
                         .bind(id)
                         .fetch_one(&self.pool)
                         .await
-                        .map_err(|e| {
-                            WrightError::DatabaseError(format!("failed to count plan parts: {}", e))
-                        })?
+                        .map_err(|e| WrightError::context("failed to count plan parts", e))?
                         .try_get(0)
                         .map_err(|e| WrightError::DatabaseError(e.to_string()))?;
                 if deployed > 0 {
@@ -86,9 +82,7 @@ impl InstalledDb {
                     .bind(id)
                     .execute(&self.pool)
                     .await
-                    .map_err(|e| {
-                        WrightError::DatabaseError(format!("failed to update plan: {}", e))
-                    })?;
+                    .map_err(|e| WrightError::context("failed to update plan", e))?;
                 id
             }
             None => query(
@@ -99,7 +93,7 @@ impl InstalledDb {
             .bind(version)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to insert plan: {}", e)))?
+            .map_err(|e| WrightError::context("failed to insert plan", e))?
             .last_insert_rowid(),
         };
 
@@ -112,9 +106,7 @@ impl InstalledDb {
         .bind(plan_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to register external part: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to register external part", e))?;
         Ok(())
     }
 
@@ -130,7 +122,7 @@ impl InstalledDb {
         .bind(part.name)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to update part: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to update part", e))?;
 
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(part.name.to_string()));
@@ -148,7 +140,7 @@ impl InstalledDb {
             .bind(name)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to remove part: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to remove part", e))?;
 
         if res.rows_affected() == 0 {
             return Err(WrightError::PartNotFound(name.to_string()));
@@ -177,7 +169,7 @@ impl InstalledDb {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to query part: {}", e)))
+            .map_err(|e| WrightError::context("failed to query part", e))
     }
 
     pub async fn get_part_with_plan(&self, name: &str) -> Result<Option<PartWithPlan>> {
@@ -186,9 +178,7 @@ impl InstalledDb {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to query part with plan: {}", e))
-            })
+            .map_err(|e| WrightError::context("failed to query part with plan", e))
     }
 
     pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {
@@ -196,7 +186,7 @@ impl InstalledDb {
         query_as::<_, PartWithPlan>(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to list parts: {}", e)))
+            .map_err(|e| WrightError::context("failed to list parts", e))
     }
 
     pub async fn get_root_parts(&self) -> Result<Vec<PartWithPlan>> {
@@ -207,7 +197,7 @@ impl InstalledDb {
         query_as::<_, PartWithPlan>(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get root parts: {}", e)))
+            .map_err(|e| WrightError::context("failed to get root parts", e))
     }
 
     pub async fn set_origin(&self, name: &str, new_origin: Origin) -> Result<()> {
@@ -225,7 +215,7 @@ impl InstalledDb {
             .bind(name)
             .execute(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to set origin: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to set origin", e))?;
         Ok(())
     }
 
@@ -239,7 +229,7 @@ impl InstalledDb {
         query_as::<_, PartWithPlan>(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get orphan parts: {}", e)))
+            .map_err(|e| WrightError::context("failed to get orphan parts", e))
     }
 
     pub async fn get_provided_parts(&self) -> Result<Vec<PartWithPlan>> {
@@ -250,7 +240,7 @@ impl InstalledDb {
         query_as::<_, PartWithPlan>(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get provided parts: {}", e)))
+            .map_err(|e| WrightError::context("failed to get provided parts", e))
     }
 
     pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<PartWithPlan>> {
@@ -259,7 +249,7 @@ impl InstalledDb {
             .bind(plan_name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed to get parts by plan: {}", e)))
+            .map_err(|e| WrightError::context("failed to get parts by plan", e))
     }
 
     pub async fn remove_parts_by_plan(&self, plan_name: &str) -> Result<u64> {
@@ -270,7 +260,7 @@ impl InstalledDb {
         .bind(plan_name)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to count parts by plan: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to count parts by plan", e))?;
 
         use sqlx::Row;
         let count: i64 = count_row
@@ -281,9 +271,7 @@ impl InstalledDb {
             .bind(plan_name)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to remove parts by plan: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to remove parts by plan", e))?;
 
         Ok(count as u64)
     }

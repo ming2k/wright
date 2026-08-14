@@ -23,7 +23,7 @@ fn is_elf_magic(bytes: &[u8]) -> bool {
 /// records that this file imposes no runtime requirements.
 pub fn read_dt_needed(path: &Path) -> Result<Option<Vec<String>>> {
     let bytes = std::fs::read(path)
-        .map_err(|e| WrightError::PartError(format!("read {}: {}", path.display(), e)))?;
+        .map_err(|e| WrightError::context(format!("read {}", path.display()), e))?;
 
     if !is_elf_magic(&bytes) {
         return Ok(None);
@@ -45,7 +45,7 @@ pub fn read_dt_needed(path: &Path) -> Result<Option<Vec<String>>> {
 /// treated as "not an ELF" rather than propagated, mirroring `read_dt_needed`.
 pub fn read_dt_soname(path: &Path) -> Result<Option<String>> {
     let bytes = std::fs::read(path)
-        .map_err(|e| WrightError::PartError(format!("read {}: {}", path.display(), e)))?;
+        .map_err(|e| WrightError::context(format!("read {}", path.display()), e))?;
 
     if !is_elf_magic(&bytes) {
         return Ok(None);

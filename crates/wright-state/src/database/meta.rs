@@ -14,7 +14,7 @@ impl InstalledDb {
         let rows = query("PRAGMA integrity_check")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| WrightError::DatabaseError(format!("failed integrity check: {}", e)))?;
+            .map_err(|e| WrightError::context("failed integrity check", e))?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -41,9 +41,7 @@ impl InstalledDb {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            WrightError::DatabaseError(format!("failed to get shadowed conflicts: {}", e))
-        })?;
+        .map_err(|e| WrightError::context("failed to get shadowed conflicts", e))?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -93,7 +91,7 @@ impl InstalledDb {
             .bind(details)
         .execute(&self.pool)
         .await
-        .map_err(|e| WrightError::DatabaseError(format!("failed to record history: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to record history", e))?;
 
         Ok(res.last_insert_rowid())
     }
@@ -108,7 +106,7 @@ impl InstalledDb {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get history: {}", e))
+                WrightError::context("failed to get history", e)
             })
         } else {
             query_as::<_, HistoryRecord>(
@@ -118,7 +116,7 @@ impl InstalledDb {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to get history: {}", e))
+                WrightError::context("failed to get history", e)
             })
         }
     }
@@ -129,9 +127,7 @@ impl InstalledDb {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                WrightError::DatabaseError(format!("failed to update history status: {}", e))
-            })?;
+            .map_err(|e| WrightError::context("failed to update history status", e))?;
         Ok(())
     }
 }

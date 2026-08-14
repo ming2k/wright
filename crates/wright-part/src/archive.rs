@@ -149,20 +149,20 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
 
     let result = (|| {
         std::fs::write(&partinfo_path, &partinfo)
-            .map_err(|e| WrightError::PartError(format!("failed to write .PARTINFO: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to write .PARTINFO", e))?;
 
         std::fs::write(&filelist_path, &filelist)
-            .map_err(|e| WrightError::PartError(format!("failed to write .FILELIST: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to write .FILELIST", e))?;
 
         let hooks_content = generate_hooks_toml(&spec.hooks);
         if !hooks_content.is_empty() {
             std::fs::write(&hooks_path, &hooks_content)
-                .map_err(|e| WrightError::PartError(format!("failed to write .HOOKS: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to write .HOOKS", e))?;
         }
 
         if let Some(ref plan_source) = spec.plan_source {
             std::fs::write(&plansrc_path, plan_source)
-                .map_err(|e| WrightError::PartError(format!("failed to write .PLANSRC: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to write .PLANSRC", e))?;
         }
 
         let part_path = output_path.join(&spec.archive_name);
@@ -214,11 +214,10 @@ pub struct ArchiveMeta {
 /// pass. .FILELIST entries are returned verbatim (one path per non-empty
 /// line, leading/trailing whitespace trimmed).
 pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
-    let file = std::fs::File::open(part_path).map_err(|e| {
-        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
-    })?;
+    let file = std::fs::File::open(part_path)
+        .map_err(|e| WrightError::context(format!("failed to open {}", part_path.display()), e))?;
     let decoder = zstd::Decoder::new(file)
-        .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
+        .map_err(|e| WrightError::context("zstd decoder init failed", e))?;
     let mut archive = tar::Archive::new(decoder);
 
     let mut partinfo: Option<PartInfo> = None;
@@ -226,20 +225,19 @@ pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
 
     for entry in archive
         .entries()
-        .map_err(|e| WrightError::PartError(format!("failed to read archive entries: {}", e)))?
+        .map_err(|e| WrightError::context("failed to read archive entries", e))?
     {
-        let mut entry =
-            entry.map_err(|e| WrightError::PartError(format!("failed to read entry: {}", e)))?;
+        let mut entry = entry.map_err(|e| WrightError::context("failed to read entry", e))?;
         let path = entry
             .path()
-            .map_err(|e| WrightError::PartError(format!("failed to read entry path: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to read entry path", e))?;
         let path_str = path.to_string_lossy().into_owned();
 
         if path_str.ends_with(".PARTINFO") && partinfo.is_none() {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
-                .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to read .PARTINFO", e))?;
             partinfo = Some(parse_partinfo_str(
                 &content,
                 &part_path.display().to_string(),
@@ -248,7 +246,7 @@ pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
-                .map_err(|e| WrightError::PartError(format!("failed to read .FILELIST: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to read .FILELIST", e))?;
             files = Some(
                 content
                     .lines()
@@ -278,32 +276,30 @@ pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
 
 /// Read .PARTINFO from an archive without full extraction.
 pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
-    let file = std::fs::File::open(part_path).map_err(|e| {
-        WrightError::PartError(format!("failed to open {}: {}", part_path.display(), e))
-    })?;
+    let file = std::fs::File::open(part_path)
+        .map_err(|e| WrightError::context(format!("failed to open {}", part_path.display()), e))?;
 
     let decoder = zstd::Decoder::new(file)
-        .map_err(|e| WrightError::PartError(format!("zstd decoder init failed: {}", e)))?;
+        .map_err(|e| WrightError::context("zstd decoder init failed", e))?;
 
     let mut archive = tar::Archive::new(decoder);
 
     for entry in archive
         .entries()
-        .map_err(|e| WrightError::PartError(format!("failed to read archive entries: {}", e)))?
+        .map_err(|e| WrightError::context("failed to read archive entries", e))?
     {
-        let mut entry =
-            entry.map_err(|e| WrightError::PartError(format!("failed to read entry: {}", e)))?;
+        let mut entry = entry.map_err(|e| WrightError::context("failed to read entry", e))?;
 
         let path = entry
             .path()
-            .map_err(|e| WrightError::PartError(format!("failed to read entry path: {}", e)))?;
+            .map_err(|e| WrightError::context("failed to read entry path", e))?;
 
         let path_str = path.to_string_lossy();
         if path_str.ends_with(".PARTINFO") {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
-                .map_err(|e| WrightError::PartError(format!("failed to read .PARTINFO: {}", e)))?;
+                .map_err(|e| WrightError::context("failed to read .PARTINFO", e))?;
             return parse_partinfo_str(&content, &part_path.display().to_string());
         }
     }
@@ -420,8 +416,7 @@ fn generate_provenance_toml(provenance: &Provenance) -> String {
 fn generate_filelist(part_dir: &Path) -> Result<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(part_dir).sort_by_file_name() {
-        let entry = entry
-            .map_err(|e| WrightError::PartError(format!("failed to walk directory: {}", e)))?;
+        let entry = entry.map_err(|e| WrightError::context("failed to walk directory", e))?;
         let relative = entry.path().strip_prefix(part_dir).unwrap_or(entry.path());
         let relative_str = relative.to_string_lossy();
         // Skip metadata files and root
@@ -483,11 +478,7 @@ fn generate_hooks_toml(scripts: &PartHooks) -> String {
 
 fn parse_partinfo(path: &Path) -> Result<PartInfo> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        WrightError::PartError(format!(
-            "{}: failed to read .PARTINFO: {}",
-            path.display(),
-            e
-        ))
+        WrightError::context(format!("{}: failed to read .PARTINFO", path.display()), e)
     })?;
     parse_partinfo_str(&content, &path.display().to_string())
 }
@@ -552,9 +543,8 @@ fn parse_partinfo_str(content: &str, source: &str) -> Result<PartInfo> {
         files: Vec<String>,
     }
 
-    let parsed: PartInfoToml = toml::from_str(content).map_err(|e| {
-        WrightError::PartError(format!("{}: failed to parse .PARTINFO: {}", source, e))
-    })?;
+    let parsed: PartInfoToml = toml::from_str(content)
+        .map_err(|e| WrightError::context(format!("{}: failed to parse .PARTINFO", source), e))?;
 
     let relations = parsed.relations.unwrap_or_default();
     let plan_section = parsed.plan.ok_or_else(|| {

@@ -68,14 +68,17 @@ pub enum HookStage {
 impl FolioManifest {
     /// Read and parse a folio manifest from disk.
     pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path)
-            .map_err(|e| err(format!("read {}: {}", path.display(), e)))?;
-        Self::parse(&raw).map_err(|e| err(format!("{}: {}", path.display(), e)))
+        let raw = std::fs::read_to_string(path).map_err(|e| {
+            WrightError::context(format!("failed to read folio {}", path.display()), e)
+        })?;
+        Self::parse(&raw).map_err(|e| {
+            WrightError::context(format!("invalid folio manifest in {}", path.display()), e)
+        })
     }
 
     /// Parse a folio manifest from a string.
     pub fn parse(content: &str) -> Result<Self> {
-        toml::from_str(content).map_err(|e| err(format!("invalid folio manifest: {e}")))
+        toml::from_str(content).map_err(|e| WrightError::context("invalid folio manifest", e))
     }
 }
 

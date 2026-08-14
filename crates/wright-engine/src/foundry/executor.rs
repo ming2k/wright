@@ -75,10 +75,13 @@ pub(crate) fn resolve_isolation(
     };
 
     raw.parse::<IsolationLevel>().map_err(|error| {
-        WrightError::ForgeError(format!(
-            "stage '{stage_name}' has invalid effective isolation '{raw}' for executor '{}': {error}",
-            executor.name
-        ))
+        WrightError::context(
+            format!(
+                "stage '{stage_name}' has invalid effective isolation '{raw}' for executor '{}'",
+                executor.name
+            ),
+            error,
+        )
     })
 }
 
@@ -136,12 +139,15 @@ impl ExecutorRegistry {
                         .default_isolation
                         .parse::<IsolationLevel>()
                         .map_err(|error| {
-                            WrightError::ConfigError(format!(
-                                "executor '{}' in {} has invalid default_isolation '{}': {error}",
-                                config.executor.name,
-                                path.display(),
-                                config.executor.default_isolation
-                            ))
+                            WrightError::context(
+                                format!(
+                                    "executor '{}' in {} has invalid default_isolation '{}'",
+                                    config.executor.name,
+                                    path.display(),
+                                    config.executor.default_isolation
+                                ),
+                                error,
+                            )
                         })?;
                 }
                 debug!(
@@ -213,7 +219,7 @@ pub async fn execute_script(
     let script_path = script_dir.join(&script_name);
     tokio::fs::write(&script_path, &expanded)
         .await
-        .map_err(|e| WrightError::ForgeError(format!("failed to write forge script: {}", e)))?;
+        .map_err(|e| WrightError::context("failed to write forge script", e))?;
 
     // Defensive sync: on some kernels/fs configs, a file written via async I/O
     // may briefly appear busy to execve.  Ensure the script is fully persisted
@@ -308,7 +314,7 @@ pub async fn execute_script(
     let mut output =
         tokio::task::spawn_blocking(move || run_in_isolation(&mut config, &command, &args))
             .await
-            .map_err(|e| WrightError::ForgeError(format!("spawn_blocking failed: {}", e)))??;
+            .map_err(|e| WrightError::context("spawn_blocking failed", e))??;
 
     if output.status.code() != Some(0) {
         let mut remapped_stderr = output.stderr.tail.clone();

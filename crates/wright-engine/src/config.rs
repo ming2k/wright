@@ -284,16 +284,19 @@ impl GlobalConfig {
 
         let config: Self = figment
             .extract()
-            .map_err(|e| WrightError::ConfigError(format!("Failed to load config: {}", e)))?;
+            .map_err(|e| WrightError::context("Failed to load config", e))?;
         config
             .build
             .default_isolation
             .parse::<wright_model::isolation::IsolationLevel>()
             .map_err(|error| {
-                WrightError::ConfigError(format!(
-                    "invalid build.default_isolation '{}': {error}",
-                    config.build.default_isolation
-                ))
+                WrightError::context(
+                    format!(
+                        "invalid build.default_isolation '{}'",
+                        config.build.default_isolation
+                    ),
+                    error,
+                )
             })?;
         Ok(config)
     }

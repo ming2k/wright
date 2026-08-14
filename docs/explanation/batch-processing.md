@@ -102,17 +102,21 @@ By sealing and deploying only after every task in the batch has finished compili
 
 ### Build Failure
 
-If any task in a batch fails, the entire `wright install` aborts immediately:
+A failing task never interrupts its siblings: tasks within a batch have no
+dependencies on each other, so every task runs to completion — or to its
+own failure — on its own.  Each failure is announced as it happens with a
+single `error:` line pointing at the task's stage log.  Once no task is
+left running, the batch **settles**: all failures are reported together in
+the terminal report, the current batch is not deployed, and the workflow
+aborts before the next batch.  See
+[ADR-0039: Batch failure settlement](../adr/0039-batch-failure-settlement.md).
 
-```rust
-Ok(Err(e)) => {
-    let _ = crate::delivery::rollback_delivery(&db, tx_id).await;
-    let _ = crate::delivery::cleanup_delivery(&db, tx_id).await;
-    return Err(...);
-}
-```
-
-The current batch is not deployed.  Earlier batches that were already deployed **remain** on the system.  This is intentional: `wright install` advances the system as far as safely possible, rather than demanding all-or-nothing across the entire tree.
+The current batch is not deployed.  Earlier batches that were already
+deployed **remain** on the system.  This is intentional: `wright install`
+advances the system as far as safely possible, rather than demanding
+all-or-nothing across the entire tree.  Work completed by the surviving
+tasks is not wasted either — forge checkpoints and the CAS let the rerun
+skip straight back to the failed task.
 
 ### Deploy Failure
 
