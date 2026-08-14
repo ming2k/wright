@@ -83,6 +83,13 @@ pub fn create_part_with_isolation(
             isolation: isolation.to_string(),
         },
         plan_source: plan.plan_source.clone(),
+        // Probe the sealing host so the archive carries the platform facts
+        // needed to diagnose "installed but doesn't run" reports (CPU
+        // microarchitecture mismatch, kernel too old, wrong machine).
+        build_info: Some(archive::BuildInfo {
+            wright_version: env!("CARGO_PKG_VERSION").to_string(),
+            host: wright_part::platform::HostInfo::probe(true),
+        }),
         hooks,
     };
     // Seal into the per-plan subdirectory of parts_dir (Debian pool style):
@@ -344,6 +351,41 @@ script = "true"
             Some("name = \"demo\"\nrelease = 1\n")
         );
         assert!(!staging.path().join(".PLANSRC").exists());
+    }
+
+    #[test]
+    fn sealing_embeds_build_host_audit() {
+        let manifest = PlanManifest::parse(
+            r#"
+name = "demo"
+version = "1.2.3"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#,
+        )
+        .unwrap();
+
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "payload").unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let path = create_part(staging.path(), &manifest, output.path(), None).unwrap();
+        let extract = tempfile::tempdir().unwrap();
+        let _ = archive::extract_part(&path, extract.path()).unwrap();
+        let info = archive::read_build_info(extract.path()).expect("sealed .BUILDINFO");
+        assert_eq!(info.host.os, "Linux");
+        assert!(!info.host.cpu_model.is_empty());
+        assert!(info.host.cpu_cores >= 1);
+        assert!(info.host.memory_bytes > 0);
+        assert!(!staging.path().join(".BUILDINFO").exists());
     }
 
     #[test]

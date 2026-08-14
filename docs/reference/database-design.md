@@ -11,6 +11,7 @@
 | Artifact | Default path | Lookup method | Role |
 |----------|--------------|---------------|------|
 | Part archives | `/var/lib/wright/parts/*.wright.tar.zst` | scan `parts_dir` and read `.PARTINFO` | Local archive inventory for install, upgrade, merge |
+| Ledger | `/var/lib/wright/ledger/` | plain files per plan (ADR-0041) | build-cost records (`<plan>/builds.jsonl`) and plan-source snapshots (`<plan>/snapshots/`) |
 
 ## Migration System
 
@@ -27,7 +28,6 @@
 | Table | Contents |
 |-------|----------|
 | `plans` | plan identity metadata (name, version, release, epoch, arch) plus seal-time provenance (plan_checksum, source_checksums, wright_version, isolation; NULL for parts sealed before ADR-0023) |
-| `plan_snapshots` | raw `plan.toml` text captured at seal time, keyed by its SHA-256 (ADR-0033); every distinct version ever deployed is retained |
 | `parts` | installed part metadata: origin, plan association, archive hash |
 | `files` | installed file paths, types, checksums, ownership |
 | `dependencies` | advisory runtime dependency edges per part (soft TEXT pointer; not enforced) |
@@ -66,12 +66,6 @@ erDiagram
         TEXT source_checksums
         TEXT wright_version
         TEXT isolation
-    }
-
-    plan_snapshots {
-        TEXT checksum PK
-        TEXT source
-        DATETIME recorded_at
     }
 
     parts {
@@ -175,7 +169,7 @@ erDiagram
 | `dependencies.depends_on` | `parts.name` (or `replaces.name`) | Advisory runtime-dependency target, keyed by the bare output (part) name — `plan:output` declarations are normalized at registration and existing rows were rewritten by migration V19. Soft pointer — target may be unresolved (treated as "unsatisfied" rather than an error). |
 | `history.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
 | `history.session_id` | `delivery_transactions.id` (legacy) | Logical grouping for history records |
-| `plans.plan_checksum` | `plan_snapshots.checksum` | Seal-time provenance hash; the snapshot row holds the matching raw plan source when a deployed part carried `.PLANSRC`. Soft pointer — no FK, NULL or unmatched is valid. |
+| `plans.plan_checksum` | ledger snapshot file `<plan>/snapshots/*-<checksum>.toml` | Seal-time provenance hash; the ledger file holds the matching raw plan source when a deployed part carried `.PLANSRC` (ADR-0041). Soft pointer — NULL or a missing file is valid. |
 
 ## Removed Databases
 
@@ -183,3 +177,4 @@ erDiagram
 |------------------|---------------------|
 | `archives.db` | direct `parts_dir` scan plus `.PARTINFO` reads |
 | `installed.db` default name | `/var/lib/wright/wright.db` |
+| `plan_snapshots` table | ledger snapshot files (`<ledger_dir>/<plan>/snapshots/`), exported on open before migration V20 drops the table (ADR-0041) |

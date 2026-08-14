@@ -76,9 +76,12 @@ pub struct Context<'a> {
 #[cfg(with_handlers)]
 impl<'a> Context<'a> {
     pub async fn open_db(&self) -> Result<InstalledDb> {
-        InstalledDb::open(&self.db_path)
-            .await
-            .map_err(|e| WrightError::context("failed to open database", e))
+        InstalledDb::open(
+            &self.db_path,
+            Some(&crate::ledger::dir(self.config, Some(&self.db_path))),
+        )
+        .await
+        .map_err(|e| WrightError::context("failed to open database", e))
     }
 
     pub fn ensure_lock_and_part_store(&self) -> Result<(LocalPartStore, ProcessLock)> {
@@ -94,8 +97,9 @@ impl<'a> Context<'a> {
 }
 
 #[cfg(with_handlers)]
-pub(crate) async fn crash_recover(db_path: &Path) {
-    if let Ok(db) = InstalledDb::open(db_path).await {
+pub(crate) async fn crash_recover(db_path: &Path, config: &GlobalConfig) {
+    let export_dir = crate::ledger::dir(config, Some(db_path));
+    if let Ok(db) = InstalledDb::open(db_path, Some(&export_dir)).await {
         let _ = crate::delivery::recover_if_needed(&db).await;
     }
 }

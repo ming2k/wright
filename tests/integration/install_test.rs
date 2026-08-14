@@ -195,6 +195,7 @@ async fn test_end_to_end_install_query_remove() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -266,6 +267,7 @@ async fn test_install_accepts_same_revision_split_outputs() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -318,7 +320,7 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         match_policies: vec![],
         depth: None,
         force: false,
-        clean: false,
+        fresh: false,
         dry_run: false,
         root: None,
     };
@@ -334,7 +336,7 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
     assert!(root.join("usr/bin/x").exists());
     assert!(root.join("usr/bin/y").exists());
 
-    let db = InstalledDb::open(&db_path).await.unwrap();
+    let db = InstalledDb::open(&db_path, None).await.unwrap();
     assert!(db.get_part("x").await.unwrap().is_some());
     assert!(db.get_part("y").await.unwrap().is_some());
 }
@@ -359,6 +361,7 @@ async fn test_install_rejects_mixed_split_plan_revisions() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap_err();
@@ -390,6 +393,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -406,6 +410,7 @@ async fn test_install_rejects_revision_change_that_leaves_installed_outputs() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap_err();
@@ -424,7 +429,7 @@ async fn test_successful_install_removes_rollback_journal() {
     let state = tempfile::tempdir().unwrap();
     let db_path = state.path().join("wright.db");
     let journal_path = db_path.with_extension("journal");
-    let db = InstalledDb::open(&db_path).await.unwrap();
+    let db = InstalledDb::open(&db_path, None).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let archive = build_hello_archive().await;
 
@@ -437,6 +442,7 @@ async fn test_successful_install_removes_rollback_journal() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -466,11 +472,13 @@ async fn test_file_conflict_detection() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
 
     // Try to deploy again — should fail because the part is already installed
+    let ledger = tempfile::tempdir().unwrap();
     let result = transaction::deploy_part(
         &db,
         &archive,
@@ -480,6 +488,7 @@ async fn test_file_conflict_detection() {
             id: "test".into(),
             command: "test".into(),
         },
+        ledger.path(),
     );
     assert!(result.await.is_err());
 
@@ -501,6 +510,7 @@ async fn test_verify_detects_modification() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -532,6 +542,7 @@ async fn test_verify_detects_missing_file() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -563,6 +574,7 @@ async fn test_list_installed_parts() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();

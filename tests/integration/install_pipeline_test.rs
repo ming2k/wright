@@ -75,7 +75,7 @@ runtime_deps = ["wayland"]
         match_policies: vec![MatchPolicyArg::Missing],
         depth: Some(0),
         force: false,
-        clean: false,
+        fresh: false,
         dry_run: true,
         root: None,
     };

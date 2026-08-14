@@ -6,8 +6,8 @@ use crate::foundry::variables;
 use crate::util::{checksum, download, progress};
 use wright_plan::manifest::{PlanManifest, Source};
 
+use super::Charge;
 use super::git::git_snapshot_filename;
-use super::{Charge, source_cache_filename};
 
 impl Charge {
     // ------------------------------------------------------------------
@@ -69,10 +69,13 @@ impl Charge {
             }
             Source::Http(http) => {
                 let processed_url = variables::process_uri(&http.url, manifest);
-                let filename = http.r#as.clone().unwrap_or_else(|| {
-                    source_cache_filename(&manifest.metadata.name, &processed_url)
-                });
-                let dest = self.cache_dir.join(&filename);
+                let dest = self
+                    .cache_path_for(manifest, source)
+                    .expect("http sources are always cached");
+                let filename = dest
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 let skip_verify = http.sha256 == "SKIP";
                 let mut needs_download = true;
 
@@ -123,10 +126,9 @@ impl Charge {
             Source::Local(local) => {
                 let processed_path = variables::process_uri(&local.path, manifest);
                 let local_path = validate_local_path(plan_dir, &processed_path)?;
-                let filename = local.r#as.clone().unwrap_or_else(|| {
-                    source_cache_filename(&manifest.metadata.name, &processed_path)
-                });
-                let dest = self.cache_dir.join(&filename);
+                let dest = self
+                    .cache_path_for(manifest, source)
+                    .expect("local sources are always cached");
                 let label = progress::source_label(&processed_path);
                 let _span = crate::cli_span!("Fetching", "{} ({})", label, manifest.metadata.name);
                 tokio::fs::copy(&local_path, &dest).await.map_err(|e| {

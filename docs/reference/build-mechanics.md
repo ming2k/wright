@@ -145,7 +145,7 @@ path.
 | Full build (key mismatch) | recreated | recreated | recreated | recreated | cleared |
 | `--stage=<s>` | preserved | recreated | recreated | recreated | ignored |
 | `--force` build | reuse if key matches | recreated | recreated | recreated | **ignored** |
-| `--clean` then build | deleted first | recreated | recreated | recreated | cleared |
+| `--fresh` then build | deleted first | recreated | recreated | recreated | cleared |
 
 On a build-cache hit, Wright recreates the working directories first, then
 extracts the cached snapshot into `build_root`. Because `work/` is not part of
@@ -257,14 +257,14 @@ directory is left intact for inspection after the build completes.
 |------|:---:|:---:|:---:|:---:|:---:|
 | (default) | reuse | skip if exists | reuse if key matches | recreated | **honored** |
 | `--force` | reuse | overwrite | reuse if key matches | recreated | **ignored** |
-| `--clean` | reuse | skip if exists | **deleted** | recreated | cleared |
-| `--clean --force` | reuse | overwrite | **deleted** | recreated | cleared |
+| `--fresh` | reuse | skip if exists | **deleted** | recreated | cleared |
+| `--fresh --force` | reuse | overwrite | **deleted** | recreated | cleared |
 | `--stage=<s>` | reuse | skip | preserved | recreated | ignored |
 
-`--clean` and `--force` address orthogonal concerns and compose naturally:
-- `--clean` — force a clean `layers/` re-extraction; clears all stage checkpoints
+`--fresh` and `--force` address orthogonal concerns and compose naturally:
+- `--fresh` — force a clean `layers/` re-extraction; clears all stage checkpoints
 - `--force` — bypass the output part skip check (always produce a new part) **and** re-run all pipeline stages even when their checkpoints exist
-- `--clean --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
+- `--fresh --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
 
 ### Incremental builds
 
@@ -279,5 +279,5 @@ When the build key changes — because the version, sources, or pipeline scripts
 were modified — `layers/` is automatically cleaned and sources are
 re-extracted. All checkpoint records in `.wright-pipeline.json` are cleared.
 
-To force a clean re-extraction without changing the plan, use `--clean`.
+To force a clean re-extraction without changing the plan, use `--fresh`.
 To re-run all pipeline stages while keeping `layers/` intact, use `--force`.

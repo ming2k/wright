@@ -197,6 +197,60 @@ runtime_deps = ["batch-slow"]
     );
 }
 
+/// A task that fails as the only (last-running) task of its batch is
+/// reported exactly once: no mid-run notice duplicates the terminal
+/// report, and the deferred step-timing table closes the failure block.
+#[test]
+fn single_failure_reports_once_and_closes_with_timing() {
+    let ws = BatchWorkspace::new();
+    ws.write_plan("solo-fail", "", "exit 3");
+
+    let output = ws.wright(&["install", "--root", ws.root.to_str().unwrap(), "solo-fail"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        stderr.matches("task 'solo-fail' failed").count(),
+        1,
+        "a failure that empties its batch must be reported exactly once; stderr: {stderr}"
+    );
+    // The timing table closes the failure block, after the log hint.
+    let see = stderr.find("for the full trace").unwrap_or(usize::MAX);
+    let timing = stderr.find("install step timing:");
+    assert!(
+        timing.is_some_and(|t| t > see),
+        "timing report must follow the failure report; stderr: {stderr}"
+    );
+    // The header stays unmarked on failure — the report above it already
+    // carries the failure signal; the failed step row keeps its marker.
+    assert!(
+        !stderr.contains("install step timing (failed):"),
+        "header must not repeat the failure signal; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("forge") && stderr.contains("(failed)"),
+        "the failed step row keeps its marker; stderr: {stderr}"
+    );
+}
+
+/// The direct `build` path (drive.rs) follows the same rule: a failure
+/// that empties its batch appears in the terminal report only.
+#[test]
+fn build_single_failure_reports_once() {
+    let ws = BatchWorkspace::new();
+    ws.write_plan("solo-build-fail", "", "exit 3");
+
+    let output = ws.wright(&["build", "solo-build-fail"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        stderr.matches("task 'solo-build-fail' failed").count(),
+        1,
+        "a failure that empties its batch must be reported exactly once; stderr: {stderr}"
+    );
+}
+
 /// Two failures in one batch settle into a single aggregated report that
 /// lists every failed task.
 #[test]

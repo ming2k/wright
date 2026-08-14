@@ -6,6 +6,7 @@ pub mod elf;
 pub mod error;
 pub mod fhs;
 pub mod folio;
+pub mod platform;
 pub mod soname;
 pub mod store;
 

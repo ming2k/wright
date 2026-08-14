@@ -5,6 +5,7 @@ use tracing::debug;
 
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
+use crate::foundry::variables;
 use wright_part::store::sanitize_cache_filename;
 use wright_plan::manifest::{PlanManifest, Source};
 
@@ -143,6 +144,58 @@ impl Charge {
             }
         }
         format!("{:x}", hasher.finalize())
+    }
+
+    /// Total size of the plan's cached source archives — the download cost
+    /// input for build-cost ledger records. Sources that are never cached
+    /// (git clones carrying metadata) and cache misses contribute nothing.
+    pub fn sources_bytes(&self, manifest: &PlanManifest) -> u64 {
+        manifest
+            .sources
+            .entries
+            .iter()
+            .filter_map(|source| self.cache_path_for(manifest, source))
+            .filter_map(|path| std::fs::metadata(&path).ok())
+            .map(|meta| meta.len())
+            .sum()
+    }
+
+    /// The cache file a source occupies (or would occupy) under
+    /// `cache_dir`. `None` for sources that are never cached.
+    pub(super) fn cache_path_for(
+        &self,
+        manifest: &PlanManifest,
+        source: &Source,
+    ) -> Option<PathBuf> {
+        let filename = match source {
+            Source::Git(git) => {
+                if git.git_metadata {
+                    // Cloned straight into the work directory at extract
+                    // time; nothing is cached.
+                    return None;
+                }
+                let processed_url = variables::process_uri(&git.url, manifest);
+                let processed_ref = git
+                    .r#ref
+                    .as_deref()
+                    .map(|r| variables::process_uri(r, manifest))
+                    .unwrap_or_else(|| "HEAD".to_string());
+                git::git_snapshot_filename(&processed_url, &processed_ref)
+            }
+            Source::Http(http) => {
+                let processed_url = variables::process_uri(&http.url, manifest);
+                http.r#as.clone().unwrap_or_else(|| {
+                    source_cache_filename(&manifest.metadata.name, &processed_url)
+                })
+            }
+            Source::Local(local) => {
+                let processed_path = variables::process_uri(&local.path, manifest);
+                local.r#as.clone().unwrap_or_else(|| {
+                    source_cache_filename(&manifest.metadata.name, &processed_path)
+                })
+            }
+        };
+        Some(self.cache_dir.join(filename))
     }
 }
 

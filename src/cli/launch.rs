@@ -50,6 +50,13 @@ pub struct LaunchArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
+    /// Wipe the forge workspace (source and working trees) before building,
+    /// so plans that need forging are built from scratch. Unlike `--force`,
+    /// this does not redeploy parts that are already present. Composable
+    /// with `--force`.
+    #[arg(long, short = 'c', alias = "clean")]
+    pub fresh: bool,
+
     /// Target root directory to fill (required, e.g. /mnt/new; pass '/' explicitly for the live system).
     #[arg(long, required = true, value_name = "DIR")]
     pub root: Option<PathBuf>,
@@ -73,6 +80,7 @@ pub async fn run(args: LaunchArgs, ctx: &Context<'_>) -> Result<()> {
             source,
             dry_run: args.dry_run,
             force: args.force,
+            fresh: args.fresh,
         },
         ctx.config,
         &ctx.db_path,

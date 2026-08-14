@@ -24,6 +24,8 @@ pub struct LaunchRequest {
     pub source: LaunchSource,
     pub dry_run: bool,
     pub force: bool,
+    /// Wipe forge workspaces before building; `force` implies it.
+    pub fresh: bool,
 }
 
 /// Where the launch's plan list comes from.
@@ -82,7 +84,7 @@ pub async fn execute_launch(
 
     sync_sources(&plan, &launch_config, root_dir)?;
     write_target_wright_toml(root_dir, &launch_config)?;
-    register_provides(db_path, &plan.provides).await?;
+    register_provides(&launch_config, db_path, &plan.provides).await?;
 
     let part_store = crate::resolve::setup_part_store(&launch_config)?;
     execute_install(InstallRequest {
@@ -93,7 +95,7 @@ pub async fn execute_launch(
         match_policies: Vec::new(),
         depth: None,
         force: request.force,
-        clean: request.force,
+        clean: request.force || request.fresh,
         config: &launch_config,
         db_path,
         root_dir,
@@ -245,6 +247,7 @@ fn redirect_for_target(config: &GlobalConfig, root_dir: &Path) -> GlobalConfig {
     out.general.store_dir = root_dir.join("var/lib/wright/store");
     out.general.source_dir = root_dir.join("var/lib/wright/sources");
     out.general.logs_dir = root_dir.join("var/log/wright");
+    out.general.ledger_dir = root_dir.join("var/lib/wright/ledger");
     out.build.forge_dir = root_dir.join("var/tmp/wright/workshop");
     out
 }
@@ -431,6 +434,7 @@ store_dir     = "/var/lib/wright/store"
 source_dir    = "/var/lib/wright/sources"
 db_path       = "/var/lib/wright/wright.db"
 logs_dir      = "/var/log/wright"
+ledger_dir    = "/var/lib/wright/ledger"
 executors_dir = "/etc/wright/executors"
 
 [build]
@@ -444,11 +448,15 @@ default_isolation = "{isolation}"
     Ok(())
 }
 
-async fn register_provides(db_path: &Path, provides: &[FolioProvide]) -> Result<()> {
+async fn register_provides(
+    config: &GlobalConfig,
+    db_path: &Path,
+    provides: &[FolioProvide],
+) -> Result<()> {
     if provides.is_empty() {
         return Ok(());
     }
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("open target database", e))?;
     for p in provides {

@@ -44,6 +44,9 @@ pub struct ForgeContext<'a> {
     pub compile_cpu_count: Option<u32>,
     pub compile_lock: Option<Arc<Semaphore>>,
     pub build_key: String,
+    /// Shared step-timing registry: each executed stage records its
+    /// duration here so the build ledger can report per-stage costs.
+    pub timing: crate::util::timing::WorkflowTiming,
 }
 
 pub struct Forge<'a> {
@@ -70,6 +73,7 @@ pub struct Forge<'a> {
     layers: LayerManager,
     work_dir: PathBuf,
     build_phase: Option<String>,
+    timing: crate::util::timing::WorkflowTiming,
 }
 
 impl<'a> Forge<'a> {
@@ -106,6 +110,7 @@ impl<'a> Forge<'a> {
             layers,
             work_dir,
             build_phase,
+            timing: ctx.timing,
         })
     }
 
@@ -127,7 +132,12 @@ impl<'a> Forge<'a> {
             }
             for stage_name in &order {
                 if self.stages.contains(stage_name) {
-                    self.run_ordered_stage(stage_name).await?;
+                    let guard = self.timing.step(stage_name.clone());
+                    let result = self.run_ordered_stage(stage_name).await;
+                    if result.is_ok() {
+                        guard.success();
+                    }
+                    result?;
                 }
             }
             return Ok(());
@@ -319,7 +329,11 @@ impl<'a> Forge<'a> {
             self.layers.prepare_upper_layer(stage_name)?;
             self.layers.populate_target()?;
 
+            let guard = self.timing.step(stage_name.clone());
             let result = self.run_ordered_stage_in_target(stage_name).await;
+            if result.is_ok() {
+                guard.success();
+            }
 
             match result {
                 Ok(()) => {

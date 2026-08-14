@@ -5,30 +5,24 @@ use crate::cli::common::Context;
 #[cfg(with_handlers)]
 use crate::error::Result;
 
-const WRIGHT_PRUNE_AFTER_HELP: &str = "\
-Examples:
-  wright prune           # Show older archive versions that can be removed
-  wright prune --apply   # Remove older archives, retaining the latest version";
-
+/// Deprecated alias for `wright clean --stale`, kept for one release.
+/// `--apply` maps to execution; without it the command stays a dry run,
+/// matching the historical prune default.
 #[derive(Args)]
-#[command(
-    long_about = "Remove older local archive versions while retaining the latest version of each part. The default is a dry run; pass --apply to actually delete.",
-    after_help = WRIGHT_PRUNE_AFTER_HELP
-)]
+#[command(hide = true)]
 pub struct PruneArgs {
-    /// Keep only the latest archive version for each part name (currently the only mode)
-    #[arg(long)]
+    /// Accepted for backward compatibility; stale-retention is the only mode
+    #[arg(long, hide = true)]
     pub latest: bool,
 
-    /// Actually apply file deletions (default is dry-run)
+    /// Actually delete the selected archives (default is a dry run)
     #[arg(long)]
     pub apply: bool,
 }
 
 #[cfg(with_handlers)]
 pub async fn run(args: PruneArgs, ctx: &Context<'_>) -> Result<()> {
-    // --latest is accepted for forward compatibility with future prune modes;
-    // latest-retention is currently the only behavior.
     let _ = args.latest;
-    crate::operations::prune::execute_prune(args.apply, ctx.config).await
+    crate::cli_warn!("`wright prune` is deprecated; use `wright clean --stale` instead");
+    crate::operations::clean::execute_clean(&[], false, true, false, !args.apply, ctx.config).await
 }

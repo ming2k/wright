@@ -22,7 +22,7 @@ All four global options may appear before or after the subcommand. `-v` and
 own `--root <PATH>` option.
 
 Short flags are allocated globally, so the same letter means the same thing on
-every command: `-f` = `--force`, `-n` = `--dry-run`, `-c` = `--clean`,
+every command: `-f` = `--force`, `-n` = `--dry-run`, `-c` = `--fresh`,
 `-d` = `--deps`, `-r` = `--rdeps`, `-t` = `--tree`, `-l` = `--long`,
 `-o` = `--orphans`, `-p` = `--print-parts`.
 
@@ -70,7 +70,7 @@ match policy.
 ```bash
 wright install zlib
 wright install zlib openssl
-wright install zlib --clean
+wright install zlib --fresh
 wright install @core
 wright install gcc --match=all
 ```
@@ -81,7 +81,7 @@ wright install gcc --match=all
 | `-r`, `--rdeps [link\|runtime\|build\|all]` | Additionally rebuild deployed reverse dependents; a bare `--rdeps` means `link`, and omitting the flag skips reverse expansion |
 | `--match <missing\|outdated\|installed\|all>` | Which dependency state triggers inclusion; requires a value, may be repeated, and defaults to `outdated` |
 | `--depth <N>` | Maximum expansion depth |
-| `-c`, `--clean` | Clear forge state before building plans that need an update; does not redeploy up-to-date plans |
+| `-c`, `--fresh` | Wipe the forge workspace before building plans that need an update, so they forge from scratch; does not redeploy up-to-date plans |
 | `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
 | `-n`, `--dry-run` | Fully resolve the wave plan and print it (`[dry-run] install -> <root>`, then one `batch N:` line per batch) without forging or deploying |
 | `--root <PATH>` | Operate on this target root instead of `/` |
@@ -102,6 +102,7 @@ wright upgrade zlib --force
 | Flag | Description |
 |------|-------------|
 | `-f`, `--force` | Force reforge and redeploy even if the plan version matches |
+| `-c`, `--fresh` | Wipe the forge workspace before building plans that need an upgrade, so they forge from scratch; does not redeploy up-to-date plans |
 | `-n`, `--dry-run` | Resolve the upgrade set (including reverse-dependency expansion) and print it without building anything |
 | `--depth <N>` | Maximum depth for reverse dependency expansion |
 | `--root <PATH>` | Operate on this target root instead of `/` |
@@ -337,13 +338,13 @@ Build (forge) plans into staging and output directories under `forge_dir`.
 
 ```bash
 wright build zlib
-wright build zlib --force --clean
+wright build zlib --force --fresh
 wright build freetype --until-stage=staging
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-c`, `--clean` | Clear the forge workspace before building |
+| `-c`, `--fresh` | Wipe the forge workspace (sources, intermediates, stage checkpoints) before building, so the forge starts from scratch |
 | `-f`, `--force` | Reforge from scratch: bypass stage checkpoints and re-run all pipeline stages |
 | `--stage <NAME>` | Run only the specified pipeline stages; may be repeated |
 | `--force-stage <NAME>` | Force re-run of a specific stage even if its checkpoint is valid |
@@ -412,29 +413,35 @@ wright launch --root /mnt/new --plans ./plans @core
 | `--folios <DIR>` | Source path: resolve `@folio` references from this directory. |
 | `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
 | `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
+| `-c`, `--fresh` | Wipe forge workspaces before building plans that need forging; does not redeploy parts already present. |
 
 ## Cache & Maintenance
 
 ### `wright clean [TARGET...]`
 
-Remove build workspaces for selected plans, or all plan workspaces when no
-plan is given. Archive and command-log cleanup are explicit options.
+Reclaim disk space by deleting build workspaces, built part archives, and
+command logs. With no flags, only build workspaces are removed — all of
+them, or those of the named plans. Deletions execute immediately; pass
+`-n`/`--dry-run` to preview the exact removal set first.
+
+```bash
+wright clean
+wright clean hello --archives
+wright clean --stale
+```
 
 | Flag | Description |
 |------|-------------|
-| `--parts` | Also remove part archives sealed by the named plans (matched by archive plan metadata) |
+| `--archives` | Also remove part archives sealed by the named plans (matched by archive plan metadata) |
+| `--stale` | Remove only superseded (non-latest) archive versions of each (plan, output) pair; skips workspace cleanup |
 | `--logs` | Also remove Wright command logs |
+| `-n`, `--dry-run` | Preview what would be deleted without removing anything |
 
 ### `wright prune`
 
-Remove older archive versions while retaining the latest version of each
-(plan, output) pair. Bare `wright prune` is a dry run; pass `--apply` to
-actually delete.
-
-| Flag | Description |
-|------|-------------|
-| `--latest` | Keep only the latest archive version of each part (currently the only mode; accepted for forward compatibility) |
-| `--apply` | Actually delete the selected archives |
+Deprecated hidden alias for `wright clean --stale`, kept for one release.
+Unlike the canonical spelling, it stays a dry run unless `--apply` is
+passed, matching its historical default.
 
 ## Common Pipelines
 

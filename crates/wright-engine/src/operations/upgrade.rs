@@ -15,6 +15,7 @@ use wright_state::database::{InstalledDb, PlanRecord};
 pub async fn execute_upgrade(
     targets: Vec<String>,
     force: bool,
+    fresh: bool,
     dry_run: bool,
     depth: Option<usize>,
     config: &GlobalConfig,
@@ -146,7 +147,7 @@ pub async fn execute_upgrade(
         match_policies: vec![],
         depth,
         force,
-        clean: force,
+        clean: force || fresh,
         config,
         db_path,
         root_dir,
@@ -216,7 +217,7 @@ async fn filter_outdated_targets(
     config: &GlobalConfig,
     db_path: &Path,
 ) -> Result<Vec<String>> {
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("open database", e))?;
 
@@ -265,7 +266,7 @@ async fn filter_outdated_targets(
 /// Scan every installed plan, compare the deployed record with the current
 /// plan manifest, and return the names of plans that are outdated.
 async fn find_outdated_plans(config: &GlobalConfig, db_path: &Path) -> Result<Vec<String>> {
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("open database", e))?;
 
@@ -351,7 +352,7 @@ include = ["/usr/include/**"]
         .unwrap();
 
         let db_path = temp.path().join("wright.db");
-        let db = InstalledDb::open(&db_path).await.unwrap();
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
         let plan_id = db
             .insert_plan(NewPlan {
                 name: "split-plan",
@@ -416,7 +417,7 @@ include = ["/usr/include/**"]
         .unwrap();
 
         let db_path = temp.path().join("wright.db");
-        let db = InstalledDb::open(&db_path).await.unwrap();
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
         let plan_id = db
             .insert_plan(NewPlan {
                 name: "split-plan",
@@ -468,7 +469,7 @@ arch = "x86_64"
         .unwrap();
 
         let db_path = temp.path().join("wright.db");
-        let db = InstalledDb::open(&db_path).await.unwrap();
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
         let plan_id = db
             .insert_plan(NewPlan {
                 name: "solo",
@@ -536,7 +537,7 @@ arch = "x86_64"
             .unwrap();
 
         let db_path = temp.path().join("wright.db");
-        let db = InstalledDb::open(&db_path).await.unwrap();
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
         let plan_id = db
             .insert_plan(NewPlan {
                 name: "solo",

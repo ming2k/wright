@@ -21,6 +21,7 @@ pub async fn upgrade_part(
     force: bool,
     run_hooks: bool,
     session: SessionContext,
+    ledger_dir: &Path,
 ) -> Result<()> {
     let staging_dir = root_dir.join("var/lib/wright/staging");
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
@@ -293,7 +294,7 @@ pub async fn upgrade_part(
     }
 
     let plan_source = archive::read_plan_source(temp_dir.path());
-    let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref()).await?;
+    let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref(), ledger_dir).await?;
     db.update_part(NewPart {
         name: &partinfo.name,
         plan_id,

@@ -170,7 +170,7 @@ pub async fn execute_merge(
         }
     }
 
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(_config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("open database", e))?;
 
@@ -229,6 +229,7 @@ pub async fn execute_merge(
         ),
         command: command_str,
     };
+    let ledger_dir = crate::ledger::dir(_config, Some(db_path));
 
     let result = if path {
         crate::transaction::deploy_parts(
@@ -240,6 +241,7 @@ pub async fn execute_merge(
             nodeps,
             true,
             session.clone(),
+            &ledger_dir,
         )
         .await
     } else {
@@ -254,6 +256,7 @@ pub async fn execute_merge(
             None,
             true,
             session.clone(),
+            &ledger_dir,
         )
         .await
     };
@@ -303,6 +306,7 @@ mod tests {
                 isolation: "strict".to_string(),
             },
             plan_source: None,
+            build_info: None,
             hooks: PartHooks::default(),
         };
         write_part(staging.path(), &spec, &output_dir).unwrap()

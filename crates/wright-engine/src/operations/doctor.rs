@@ -142,6 +142,7 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
         return Ok(0);
     }
 
+    let ledger_dir = crate::ledger::dir(config, db.db_path());
     let plan_dirs = crate::resolve::plan_search_dirs(config);
     let index = match wright_plan::discovery::PlanIndex::discover(&plan_dirs) {
         Ok(index) => index,
@@ -167,7 +168,7 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
                     &recorded[..12.min(recorded.len())],
                     &current[..12]
                 );
-                let diff = plan_drift_diff(db, recorded, path).await;
+                let diff = plan_drift_diff(&ledger_dir, &plan.name, recorded, path);
                 drifted.push((detail, diff));
             }
             Ok(_) => {}
@@ -194,12 +195,17 @@ async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usi
 }
 
 /// Unified diff between the plan-source snapshot recorded at seal time and
-/// the current source on disk (ADR-0033). `None` when no snapshot exists
-/// (parts sealed before snapshots) or the current source cannot be read —
-/// drift reporting is advisory, so diff problems degrade to the checksum
-/// line alone.
-async fn plan_drift_diff(db: &InstalledDb, recorded: &str, current_path: &Path) -> Option<String> {
-    let snapshot = db.get_plan_snapshot(recorded).await.ok()??;
+/// the current source on disk (ADR-0033, ledger layout ADR-0041). `None`
+/// when no snapshot exists (parts sealed before snapshots) or the current
+/// source cannot be read — drift reporting is advisory, so diff problems
+/// degrade to the checksum line alone.
+fn plan_drift_diff(
+    ledger_dir: &Path,
+    plan_name: &str,
+    recorded: &str,
+    current_path: &Path,
+) -> Option<String> {
+    let snapshot = wright_state::ledger::plan_snapshot_source(ledger_dir, plan_name, recorded)?;
     let current = std::fs::read_to_string(current_path).ok()?;
     let diff = similar::TextDiff::from_lines(&snapshot, &current)
         .unified_diff()
@@ -239,7 +245,12 @@ mod tests {
     use super::*;
     use wright_state::database::{NewPlan, NewPlanProvenance, RegisterPlan};
 
-    async fn register_plan_with_snapshot(db: &InstalledDb, checksum: &str, source: &str) {
+    async fn register_plan_with_snapshot(
+        db: &InstalledDb,
+        ledger_dir: &Path,
+        checksum: &str,
+        source: &str,
+    ) {
         db.ensure_plan_registered(RegisterPlan {
             plan: NewPlan {
                 name: "demo",
@@ -257,20 +268,21 @@ mod tests {
         })
         .await
         .unwrap();
-        db.insert_plan_snapshot(checksum, source).await.unwrap();
+        wright_state::ledger::record_plan_snapshot(ledger_dir, "demo", checksum, source, None)
+            .unwrap();
     }
 
     #[tokio::test]
     async fn drift_diff_shows_snapshot_against_current_source() {
         let db = InstalledDb::open_in_memory().await.unwrap();
-        register_plan_with_snapshot(&db, "deadbeefcafe", "release = 1\n").await;
+        let ledger = tempfile::tempdir().unwrap();
+        register_plan_with_snapshot(&db, ledger.path(), "deadbeefcafe", "release = 1\n").await;
 
         let dir = tempfile::tempdir().unwrap();
         let plan_path = dir.path().join("plan.toml");
         std::fs::write(&plan_path, "release = 2\n").unwrap();
 
-        let diff = plan_drift_diff(&db, "deadbeefcafe", &plan_path)
-            .await
+        let diff = plan_drift_diff(ledger.path(), "demo", "deadbeefcafe", &plan_path)
             .expect("snapshot exists, diff expected");
         assert!(diff.contains("-release = 1"), "diff was: {}", diff);
         assert!(diff.contains("+release = 2"), "diff was: {}", diff);
@@ -283,15 +295,11 @@ mod tests {
 
     #[tokio::test]
     async fn drift_diff_degrades_without_snapshot() {
-        let db = InstalledDb::open_in_memory().await.unwrap();
+        let ledger = tempfile::tempdir().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let plan_path = dir.path().join("plan.toml");
         std::fs::write(&plan_path, "release = 2\n").unwrap();
 
-        assert!(
-            plan_drift_diff(&db, "nosuchchecksum", &plan_path)
-                .await
-                .is_none()
-        );
+        assert!(plan_drift_diff(ledger.path(), "demo", "nosuchchecksum", &plan_path).is_none());
     }
 }

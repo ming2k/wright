@@ -12,6 +12,7 @@ Examples:
   wright upgrade zlib openssl
   wright upgrade all
   wright upgrade all --dry-run
+  wright upgrade all --fresh
   wright upgrade all --force";
 
 #[derive(Args)]
@@ -27,6 +28,13 @@ pub struct UpgradeArgs {
     /// Force rebuild and redeploy even if the plan version matches
     #[arg(long, short = 'f')]
     pub force: bool,
+
+    /// Wipe the forge workspace (source and working trees) before building,
+    /// so plans that need an upgrade are forged from scratch. Unlike
+    /// `--force`, this does not redeploy plans that are already up to date.
+    /// Composable with `--force`.
+    #[arg(long, short = 'c', alias = "clean")]
+    pub fresh: bool,
 
     /// Preview what would be rebuilt and deployed without making any changes
     #[arg(long, short = 'n')]
@@ -47,6 +55,7 @@ pub async fn run(args: UpgradeArgs, ctx: &Context<'_>) -> Result<()> {
     crate::operations::upgrade::execute_upgrade(
         args.targets,
         args.force,
+        args.fresh,
         args.dry_run,
         args.depth,
         ctx.config,

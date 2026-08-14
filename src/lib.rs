@@ -5,7 +5,8 @@ pub use wright_engine::{
     outln,
 };
 pub use wright_engine::{
-    config, error, foundry, identify, isolation, operations, query, resolve, seal, transaction,
+    config, error, foundry, identify, isolation, ledger, operations, query, resolve, seal,
+    transaction,
 };
 
 /// Compatibility facade for plan parsing and discovery.
@@ -43,7 +44,7 @@ pub mod part {
 pub mod util {
     pub use wright_engine::util::{
         checksum, compact_path, display, download, logging, output, progress, sanitize_filename,
-        stdin,
+        stdin, timing,
     };
 
     pub mod compress {

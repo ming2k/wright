@@ -77,12 +77,19 @@ async fn run_cli() {
         // with several failed tasks gets its own aggregated report that
         // re-lists every per-task failure.
         let log_path = today_log_path(&logs_dir);
-        let lines = match &e {
+        let mut lines = match &e {
             WrightError::BatchFailures(failures) => {
                 format_batch_failure_report(failures, &log_path)
             }
             _ => format_failure_report(&e, &log_path),
         };
+        // A failed workflow defers its step-timing report so it closes the
+        // failure block here instead of splitting the error output mid-run
+        // (see util::timing::WorkflowTiming::log_report).
+        if let Some(timing_lines) = wright::util::timing::emit_deferred_failure() {
+            lines.push(String::new());
+            lines.extend(timing_lines);
+        }
         for line in lines {
             wright::util::progress::term_println(&line);
         }

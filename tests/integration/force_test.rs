@@ -7,7 +7,7 @@ async fn test_apply_force_always_includes_explicit_targets() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("wright").join("wright.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let db = InstalledDb::open(&db_path).await.unwrap();
+    let db = InstalledDb::open(&db_path, None).await.unwrap();
 
     // 1. Register a plan for 'a'
     let plan_id = db

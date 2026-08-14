@@ -10,6 +10,7 @@ bzip2 = { version = "0.5", features = ["static"] }
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1.0"
 goblin = { version = "0.10", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
+libc = "0.2"
 lzma-rust = { version = "0.16", package = "lzma-rust2" }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
@@ -25,6 +26,7 @@ zip = "2"
 zstd = "0.13"
 
 [dev-dependencies]
+serde_json = "1"
 tempfile = "3"
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
 

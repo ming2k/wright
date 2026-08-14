@@ -63,6 +63,7 @@ pub async fn deploy_parts(
     nodeps: bool,
     run_hooks: bool,
     session: SessionContext,
+    ledger_dir: &Path,
 ) -> Result<()> {
     let explicit_targets: HashSet<String> = parts
         .iter()
@@ -82,6 +83,7 @@ pub async fn deploy_parts(
         None,
         run_hooks,
         session,
+        ledger_dir,
     )
     .await
 }
@@ -97,6 +99,7 @@ pub async fn deploy_parts_with_explicit_targets(
     upcoming_outputs: Option<&HashSet<String>>,
     run_hooks: bool,
     session: SessionContext,
+    ledger_dir: &Path,
 ) -> Result<()> {
     let candidates = read_install_candidates(parts)?;
     validate_plan_output_batches(db, &candidates).await?;
@@ -176,7 +179,16 @@ pub async fn deploy_parts_with_explicit_targets(
                     name,
                     part.version,
                 );
-                upgrade_part(db, &part.path, root_dir, true, true, session.clone()).await?;
+                upgrade_part(
+                    db,
+                    &part.path,
+                    root_dir,
+                    true,
+                    true,
+                    session.clone(),
+                    ledger_dir,
+                )
+                .await?;
             }
             continue;
         }
@@ -211,6 +223,7 @@ pub async fn deploy_parts_with_explicit_targets(
             origin,
             run_hooks,
             session.clone(),
+            ledger_dir,
         )
         .await?;
     }
@@ -465,6 +478,7 @@ pub async fn deploy_part(
     root_dir: &Path,
     force: bool,
     session: SessionContext,
+    ledger_dir: &Path,
 ) -> Result<()> {
     deploy_part_with_origin(
         db,
@@ -474,6 +488,7 @@ pub async fn deploy_part(
         Origin::Manual,
         true,
         session,
+        ledger_dir,
     )
     .await
 }
@@ -486,6 +501,7 @@ pub async fn deploy_part_with_origin(
     origin: Origin,
     run_hooks: bool,
     session: SessionContext,
+    ledger_dir: &Path,
 ) -> Result<()> {
     let staging_dir = root_dir.join("var/lib/wright/staging");
     let _ = tokio::fs::create_dir_all(&staging_dir).await;
@@ -537,7 +553,16 @@ pub async fn deploy_part_with_origin(
                 "Part already deployed, attempting upgrade/redeploy"
             );
             guard_plan_reparent(db, &partinfo, force).await?;
-            return upgrade_part(db, part_path, root_dir, true, run_hooks, session.clone()).await;
+            return upgrade_part(
+                db,
+                part_path,
+                root_dir,
+                true,
+                run_hooks,
+                session.clone(),
+                ledger_dir,
+            )
+            .await;
         }
         return Err(WrightError::PartAlreadyInstalled(partinfo.name.clone()));
     }
@@ -620,7 +645,7 @@ pub async fn deploy_part_with_origin(
     }
 
     let plan_source = archive::read_plan_source(temp_dir.path());
-    let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref()).await?;
+    let plan_id = ensure_plan_registered(db, &partinfo, plan_source.as_deref(), ledger_dir).await?;
     let part_id = db
         .insert_part(NewPart {
             name: &partinfo.name,

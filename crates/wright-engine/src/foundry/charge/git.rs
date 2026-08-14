@@ -295,7 +295,7 @@ fn write_tree_entries(
                 let blob = repo
                     .find_blob(entry.oid().to_owned())
                     .map_err(|e| WrightError::context("failed to load git blob", e))?;
-                let mut header = tar::Header::new_gnu();
+                let mut header = tar::Header::new_old();
                 header.set_entry_type(tar::EntryType::Regular);
                 header.set_mode(if entry.mode().kind() == EntryKind::BlobExecutable {
                     0o755
@@ -304,19 +304,15 @@ fn write_tree_entries(
                 });
                 header.set_size(blob.data.len() as u64);
                 header.set_mtime(0);
-                header
-                    .set_path(&path)
-                    .map_err(|e| WrightError::context("tar set path failed", e))?;
-                header.set_cksum();
                 builder
-                    .append(&header, &blob.data[..])
+                    .append_data(&mut header, &path, &blob.data[..])
                     .map_err(|e| WrightError::context("tar append failed", e))?;
             }
             EntryKind::Link => {
                 let target = repo
                     .find_blob(entry.oid().to_owned())
                     .map_err(|e| WrightError::context("failed to load git blob", e))?;
-                let mut header = tar::Header::new_gnu();
+                let mut header = tar::Header::new_old();
                 header.set_entry_type(tar::EntryType::Symlink);
                 header.set_mode(0o777);
                 header.set_size(0);
@@ -330,17 +326,13 @@ fn write_tree_entries(
                     .map_err(|e| WrightError::context("tar append link failed", e))?;
             }
             EntryKind::Tree => {
-                let mut header = tar::Header::new_gnu();
+                let mut header = tar::Header::new_old();
                 header.set_entry_type(tar::EntryType::Directory);
                 header.set_mode(0o755);
                 header.set_size(0);
                 header.set_mtime(0);
-                header
-                    .set_path(&path)
-                    .map_err(|e| WrightError::context("tar set path failed", e))?;
-                header.set_cksum();
                 builder
-                    .append(&header, std::io::empty())
+                    .append_data(&mut header, &path, std::io::empty())
                     .map_err(|e| WrightError::context("tar append dir failed", e))?;
                 write_tree_entries(repo, entry.oid().to_owned(), &path, builder)?;
             }
@@ -664,5 +656,66 @@ mod tests {
             "one\n"
         );
         assert!(dest.join(".git").exists(), "clone keeps git metadata");
+    }
+
+    #[test]
+    fn snapshot_handles_deeply_nested_long_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let upstream = root.path().join("upstream");
+        let mut repo = gix::init(&upstream).unwrap();
+        {
+            let mut config = repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::User::NAME, "Wright Test")
+                .unwrap();
+            config
+                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
+                .unwrap();
+        }
+        let blob_id = repo.write_blob(b"hello long path\n").unwrap().detach();
+        let leaf_tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: "deep_file.txt".into(),
+                oid: blob_id,
+            }],
+        };
+        let leaf_tree_id = repo.write_object(&leaf_tree).unwrap().detach();
+
+        let long_dir_name = "this_is_a_very_long_directory_name_that_exceeds_ordinary_tar_header_limits_and_causes_issues";
+        let sub_tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Tree.into(),
+                filename: long_dir_name.into(),
+                oid: leaf_tree_id,
+            }],
+        };
+        let sub_tree_id = repo.write_object(&sub_tree).unwrap().detach();
+
+        let root_tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Tree.into(),
+                filename: "third-party/tbb/doc/main/reference/fg_resource_limiting".into(),
+                oid: sub_tree_id,
+            }],
+        };
+        let root_tree_id = repo.write_object(&root_tree).unwrap().detach();
+
+        let _commit_id = repo
+            .commit(
+                "HEAD",
+                "add deep tree",
+                root_tree_id,
+                Vec::<gix::ObjectId>::new(),
+            )
+            .unwrap();
+
+        let snapshot_file = root.path().join("test_snapshot.tar.zst");
+        write_tree_snapshot(&repo, root_tree_id, &snapshot_file).unwrap();
+
+        let entries = read_snapshot(&snapshot_file);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].0.contains("deep_file.txt"));
+        assert_eq!(entries[0].1, "hello long path\n");
     }
 }

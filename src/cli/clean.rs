@@ -7,14 +7,16 @@ use crate::error::Result;
 
 const WRIGHT_CLEAN_AFTER_HELP: &str = "\
 Examples:
-  wright clean                  # Clean build staging trees for all plans
-  wright clean hello            # Clean build staging tree for plan 'hello'
-  wright clean hello --parts    # Clean build workspace and built package archives for 'hello'
-  wright clean --logs           # Also remove Wright command logs";
+  wright clean                    # Clean build workspaces for all plans
+  wright clean hello              # Clean the build workspace for plan 'hello'
+  wright clean hello --archives   # Also delete built part archives for 'hello'
+  wright clean --stale            # Delete only superseded archive versions
+  wright clean --logs             # Also remove Wright command logs
+  wright clean -n                 # Preview what would be deleted";
 
 #[derive(Args)]
 #[command(
-    long_about = "Clean plan build workspaces, staging trees, intermediate objects, and logs.",
+    long_about = "Reclaim disk space by deleting build workspaces, built part archives, and command logs.\n\nBy default only build workspaces are removed: all of them, or those of the named plans. `--stale` selects archive-retention mode instead: it removes only superseded (non-latest) archive versions of each (plan, output) pair and leaves workspaces alone.",
     after_help = WRIGHT_CLEAN_AFTER_HELP
 )]
 pub struct CleanArgs {
@@ -22,16 +24,34 @@ pub struct CleanArgs {
     #[arg(value_name = "TARGET")]
     pub plans: Vec<String>,
 
-    /// Clean built package archives (.wright.tar.zst) as well
-    #[arg(long)]
-    pub parts: bool,
+    /// Also delete built part archives (.wright.tar.zst) sealed by the named
+    /// plans (matched by archive plan metadata)
+    #[arg(long, alias = "parts")]
+    pub archives: bool,
 
-    /// Clean Wright command log files
+    /// Delete only superseded (non-latest) archive versions of each
+    /// (plan, output) pair; skips workspace cleanup
+    #[arg(long, conflicts_with = "archives")]
+    pub stale: bool,
+
+    /// Also remove Wright command log files
     #[arg(long)]
     pub logs: bool,
+
+    /// Preview what would be deleted without removing anything
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
 }
 
 #[cfg(with_handlers)]
 pub async fn run(args: CleanArgs, ctx: &Context<'_>) -> Result<()> {
-    crate::operations::clean::execute_clean(&args.plans, args.parts, args.logs, ctx.config).await
+    crate::operations::clean::execute_clean(
+        &args.plans,
+        args.archives,
+        args.stale,
+        args.logs,
+        args.dry_run,
+        ctx.config,
+    )
+    .await
 }

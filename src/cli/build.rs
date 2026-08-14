@@ -8,7 +8,7 @@ use crate::error::Result;
 pub const BUILD_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
-  wright build zlib --force --clean
+  wright build zlib --force --fresh
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
   wright resolve openssl --rdeps | wright build
@@ -45,11 +45,12 @@ pub struct BuildArgs {
     #[arg(long, conflicts_with = "stage")]
     pub skip_check: bool,
 
-    /// Clear the forge cache, source tree, and working directory before
-    /// starting. Without --clean, work/ is preserved for incremental forges
-    /// when the forge key is unchanged. Composable with --force.
-    #[arg(long, short = 'c')]
-    pub clean: bool,
+    /// Wipe the forge workspace — source tree, intermediates, and stage
+    /// checkpoints — before building, so the forge starts from scratch.
+    /// Without --fresh, work/ is preserved for incremental forges when the
+    /// forge key is unchanged. Composable with --force.
+    #[arg(long, short = 'c', alias = "clean")]
+    pub fresh: bool,
 
     /// Reforge from scratch: bypass stage checkpoints and re-run all
     /// pipeline stages. Use this when you have modified a plan's forge
@@ -85,7 +86,7 @@ pub async fn run(args: BuildArgs, ctx: &Context<'_>) -> Result<()> {
         force_stages: args.force_stage,
         until_stage: args.until_stage,
         skip_check: args.skip_check,
-        clean: args.clean,
+        clean: args.fresh,
         force: args.force,
         mvp: args.mvp,
         fetch_only: args.fetch,

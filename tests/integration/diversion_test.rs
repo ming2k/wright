@@ -81,6 +81,7 @@ async fn test_file_diversion_and_restoration() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();
@@ -97,6 +98,7 @@ async fn test_file_diversion_and_restoration() {
             id: "test".into(),
             command: "test".into(),
         },
+        tempfile::tempdir().unwrap().path(),
     )
     .await
     .unwrap();

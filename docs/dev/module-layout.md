@@ -12,11 +12,12 @@
 │   │       ├── isolation/             # sandbox execution
 │   │       ├── seal/                  # output sealing
 │   │       ├── transaction/           # deploy, upgrade, and remove
+│   │       ├── ledger/                # build-cost records, ledger paths
 │   │       ├── query/                 # system analysis
 │   │       └── util/                  # application utilities
-│   ├── wright-state/                  # SQLite, WAL/CAS, and locks
+│   ├── wright-state/                  # SQLite, WAL/CAS, locks, snapshot ledger
 │   │   └── migrations/                # immutable schema migrations
-│   ├── wright-part/                   # archives, stores, FHS, and ELF
+│   ├── wright-part/                   # archives, stores, FHS, ELF, host probe
 │   ├── wright-plan/                   # plan parsing and discovery
 │   └── wright-model/                  # dependency-free domain values
 └── src/
@@ -71,7 +72,7 @@ Apply these rules when adding or moving code:
 ## Naming and Visibility
 
 - Name domain modules with nouns such as `plan`, `part`, and `state`. Name
-  use-case modules after the command verb, such as `install/` or `prune.rs`.
+  use-case modules after the command verb, such as `install/` or `clean.rs`.
 - Use `lib.rs` only as a crate facade. Use `mod.rs` to define a multi-file
   subsystem, not as a home for unrelated behavior.
 - Keep modules and symbols private by default. Re-export only the stable entry

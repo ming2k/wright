@@ -50,6 +50,20 @@ pub struct PartHooks {
     pub post_remove: Option<String>,
 }
 
+/// Build-host audit data serialized into an archive's `.BUILDINFO` file.
+///
+/// Unlike `.PARTINFO` (install-time metadata), `.BUILDINFO` is pure
+/// forensics: when a part misbehaves after deployment, it answers "what
+/// machine produced this?" — CPU model and flags expose microarchitecture
+/// mismatches, kernel/hostname tie the artifact to a build environment.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BuildInfo {
+    /// Version of the `wright` binary that sealed the part (duplicated from
+    /// `.PARTINFO` provenance so this file is self-contained forensics).
+    pub wright_version: String,
+    pub host: crate::platform::HostInfo,
+}
+
 /// Archive-format input used when sealing a part.
 ///
 /// Callers project their source manifest into this type before crossing the
@@ -69,6 +83,10 @@ pub struct PartSpec {
     /// (ADR-0033). `None` seals no snapshot — readers must treat the member
     /// as optional, like pre-ADR-0023 provenance.
     pub plan_source: Option<String>,
+    /// Build-host audit data to embed as the archive's `.BUILDINFO` member.
+    /// Optional like `plan_source`: archives sealed before it existed simply
+    /// lack the member.
+    pub build_info: Option<BuildInfo>,
     pub hooks: PartHooks,
 }
 
@@ -122,12 +140,14 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let filelist_path = part_dir.join(".FILELIST");
     let hooks_path = part_dir.join(".HOOKS");
     let plansrc_path = part_dir.join(".PLANSRC");
+    let buildinfo_path = part_dir.join(".BUILDINFO");
     // A previously interrupted seal must not leak stale metadata into the
     // next archive.
     let _ = std::fs::remove_file(&partinfo_path);
     let _ = std::fs::remove_file(&filelist_path);
     let _ = std::fs::remove_file(&hooks_path);
     let _ = std::fs::remove_file(&plansrc_path);
+    let _ = std::fs::remove_file(&buildinfo_path);
 
     // Generate .PARTINFO
     let partinfo = generate_partinfo(spec);
@@ -165,6 +185,13 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
                 .map_err(|e| WrightError::context("failed to write .PLANSRC", e))?;
         }
 
+        if let Some(ref build_info) = spec.build_info {
+            let content = toml::to_string(build_info)
+                .map_err(|e| WrightError::context("failed to serialize .BUILDINFO", e))?;
+            std::fs::write(&buildinfo_path, content)
+                .map_err(|e| WrightError::context("failed to write .BUILDINFO", e))?;
+        }
+
         let part_path = output_path.join(&spec.archive_name);
         crate::compression::create_tar_zst(part_dir, &part_path)?;
         Ok(part_path)
@@ -176,6 +203,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let _ = std::fs::remove_file(filelist_path);
     let _ = std::fs::remove_file(hooks_path);
     let _ = std::fs::remove_file(plansrc_path);
+    let _ = std::fs::remove_file(buildinfo_path);
 
     result
 }
@@ -200,6 +228,14 @@ pub fn extract_part(part_path: &Path, dest_dir: &Path) -> Result<(PartInfo, Stri
 /// loaded from a file); the member is optional by contract.
 pub fn read_plan_source(extract_dir: &Path) -> Option<String> {
     std::fs::read_to_string(extract_dir.join(".PLANSRC")).ok()
+}
+
+/// Read the `.BUILDINFO` audit data from an already-extracted archive
+/// directory. Returns `None` for archives sealed before `.BUILDINFO`
+/// existed; the member is optional by contract, like `.PLANSRC`.
+pub fn read_build_info(extract_dir: &Path) -> Option<BuildInfo> {
+    let content = std::fs::read_to_string(extract_dir.join(".BUILDINFO")).ok()?;
+    toml::from_str(&content).ok()
 }
 
 /// Light summary of an archive's metadata + file list, used by the
@@ -425,6 +461,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
             || relative_str.starts_with(".FILELIST")
             || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".PLANSRC")
+            || relative_str.starts_with(".BUILDINFO")
         {
             continue;
         }
@@ -608,6 +645,7 @@ mod tests {
                 isolation: isolation.to_string(),
             },
             plan_source: None,
+            build_info: None,
             hooks: PartHooks::default(),
         }
     }
@@ -682,6 +720,50 @@ mod tests {
         let extract = tempfile::tempdir().unwrap();
         let _ = super::extract_part(&part, extract.path()).unwrap();
         assert!(super::read_plan_source(extract.path()).is_none());
+    }
+
+    #[test]
+    fn build_info_seals_as_buildinfo_member() {
+        let mut spec = part_spec("strict");
+        spec.build_info = Some(super::BuildInfo {
+            wright_version: env!("CARGO_PKG_VERSION").to_string(),
+            host: crate::platform::HostInfo::probe(true),
+        });
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
+
+        // The audit data round-trips through the archive, stays out of
+        // .FILELIST, and is cleaned from the staging tree after sealing.
+        let extract = tempfile::tempdir().unwrap();
+        let _ = super::extract_part(&part, extract.path()).unwrap();
+        let info = super::read_build_info(extract.path()).expect("embedded .BUILDINFO");
+        assert!(!info.host.cpu_model.is_empty());
+        assert!(info.host.cpu_cores >= 1);
+        let meta = super::read_archive_meta(&part).unwrap();
+        assert!(
+            !meta.files.iter().any(|f| f.contains(".BUILDINFO")),
+            ".BUILDINFO must not appear in .FILELIST: {:?}",
+            meta.files
+        );
+        assert!(!staging.path().join(".BUILDINFO").exists());
+    }
+
+    #[test]
+    fn build_info_absent_means_no_buildinfo_member() {
+        let spec = part_spec("strict"); // build_info: None
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
+        let extract = tempfile::tempdir().unwrap();
+        let _ = super::extract_part(&part, extract.path()).unwrap();
+        assert!(super::read_build_info(extract.path()).is_none());
     }
 
     #[test]

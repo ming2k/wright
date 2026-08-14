@@ -16,3 +16,4 @@ Task-oriented guides for specific problems.
 - [Maintain OS parts](maintain-os-parts.md)
 - [Rebuild reverse dependencies](rebuild-reverse-dependencies.md)
 - [Rebuild core system plans](rebuild-core-system-plans.md)
+- [Estimate build costs](estimate-build-costs.md)

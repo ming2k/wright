@@ -116,9 +116,12 @@ pub fn flatten_error_causes(err: &(dyn std::error::Error + 'static)) -> String {
     error_chain_messages(err).join(": ")
 }
 
-/// Emit the immediate one-line notice for a task that failed mid-batch.
-/// Cargo-style: the failing task's siblings keep running, and every failure
-/// is settled together once the batch completes (see [`BatchFailures`]).
+/// Emit the immediate one-line notice for a task that failed while batch
+/// siblings are still running. Cargo-style: the failing task's siblings
+/// keep running, and every failure is settled together once the batch
+/// completes (see [`BatchFailures`]). Callers skip this notice for the
+/// failure that empties a batch — the terminal failure report follows
+/// immediately and would print the same failure twice.
 pub fn report_task_failure(task: &str, panicked: bool, error: &(dyn std::error::Error + 'static)) {
     let causes = flatten_error_causes(error);
     let outcome = if panicked { "panicked" } else { "failed" };
@@ -403,10 +406,11 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        // The headline carries ANSI styling when colors are on; compare the
-        // body verbatim and the headline by content.
-        assert_eq!(lines.len(), expected.len(), "lines: {lines:?}");
-        assert!(lines[0].contains("error: failed to parse plan file"));
+        assert!(
+            lines[0].contains("error:") && lines[0].contains("failed to parse plan file"),
+            "headline: {}",
+            lines[0]
+        );
         assert_eq!(&lines[1..], &expected[1..]);
     }
 

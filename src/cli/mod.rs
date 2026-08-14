@@ -151,12 +151,12 @@ pub enum BuildCommands {
 
 #[derive(Subcommand)]
 pub enum MaintenanceCommands {
-    /// Clean plan build workspaces, staging trees, and logs
+    /// Reclaim disk space: build workspaces, part archives, and logs
     #[command(display_order = 30)]
     Clean(clean::CleanArgs),
 
-    /// Remove obsolete local part archives
-    #[command(display_order = 31)]
+    /// Deprecated alias for `clean --stale`
+    #[command(display_order = 31, hide = true)]
     Prune(prune::PruneArgs),
 }
 
@@ -173,7 +173,7 @@ async fn ctx_with_root<'a>(
 ) -> Context<'a> {
     let root_dir = root.unwrap_or_else(|| PathBuf::from("/"));
     let db_path = resolve_db(Some(&root_dir), top_db, config);
-    crash_recover(&db_path).await;
+    crash_recover(&db_path, config).await;
     Context {
         config,
         db_path,
@@ -192,7 +192,7 @@ async fn ctx_default<'a>(
     quiet: bool,
 ) -> Context<'a> {
     let db_path = top_db.unwrap_or_else(|| config.general.db_path.clone());
-    crash_recover(&db_path).await;
+    crash_recover(&db_path, config).await;
     Context {
         config,
         db_path,
@@ -299,23 +299,88 @@ mod tests {
 
     #[test]
     fn clean_command_parses_arguments() {
-        let cli = Cli::try_parse_from(["wright", "clean", "hello", "--parts", "--logs"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["wright", "clean", "hello", "--archives", "--logs"]).unwrap();
         let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
             panic!("expected clean command");
         };
         assert_eq!(args.plans, vec!["hello"]);
-        assert!(args.parts);
+        assert!(args.archives);
+        assert!(!args.stale);
         assert!(args.logs);
+        assert!(!args.dry_run);
     }
 
     #[test]
-    fn install_accepts_clean() {
+    fn clean_accepts_legacy_parts_spelling() {
+        let cli = Cli::try_parse_from(["wright", "clean", "--parts"]).unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
+            panic!("expected clean command");
+        };
+        assert!(args.archives);
+    }
+
+    #[test]
+    fn clean_stale_conflicts_with_archives() {
+        assert!(Cli::try_parse_from(["wright", "clean", "--stale", "--archives"]).is_err());
+        let cli = Cli::try_parse_from(["wright", "clean", "--stale", "-n"]).unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
+            panic!("expected clean command");
+        };
+        assert!(args.stale);
+        assert!(args.dry_run);
+    }
+
+    #[test]
+    fn prune_alias_still_parses() {
+        let cli = Cli::try_parse_from(["wright", "prune", "--apply"]).unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Prune(args)) = cli.command else {
+            panic!("expected prune command");
+        };
+        assert!(args.apply);
+    }
+
+    #[test]
+    fn install_accepts_fresh() {
+        let cli = Cli::try_parse_from(["wright", "install", "zlib", "--fresh"]).unwrap();
+
+        let Commands::System(SystemCommands::Install(args)) = cli.command else {
+            panic!("expected install command");
+        };
+        assert!(args.fresh);
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn install_accepts_legacy_clean_spelling() {
         let cli = Cli::try_parse_from(["wright", "install", "zlib", "--clean"]).unwrap();
 
         let Commands::System(SystemCommands::Install(args)) = cli.command else {
             panic!("expected install command");
         };
-        assert!(args.clean);
+        assert!(args.fresh);
+    }
+
+    #[test]
+    fn upgrade_accepts_fresh() {
+        let cli = Cli::try_parse_from(["wright", "upgrade", "all", "--fresh"]).unwrap();
+
+        let Commands::System(SystemCommands::Upgrade(args)) = cli.command else {
+            panic!("expected upgrade command");
+        };
+        assert!(args.fresh);
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn launch_accepts_fresh() {
+        let cli =
+            Cli::try_parse_from(["wright", "launch", "--root", "/mnt/new", "--fresh"]).unwrap();
+
+        let Commands::Build(crate::cli::BuildCommands::Launch(args)) = cli.command else {
+            panic!("expected launch command");
+        };
+        assert!(args.fresh);
         assert!(!args.force);
     }
 }

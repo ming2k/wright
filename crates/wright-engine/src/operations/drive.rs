@@ -6,9 +6,11 @@
 //!
 //! Failure semantics are cargo-style: tasks within one batch have no
 //! inter-dependencies, so a failing task never interrupts its siblings.
-//! Each failure is announced the moment it happens, every task runs to
-//! completion, and the failures are settled together once no task is left
-//! running — a failed batch then blocks the next one.
+//! A failure is announced the moment it happens while siblings are still
+//! running (the failure that empties a batch is left to the terminal
+//! failure report), every task runs to completion, and the failures are
+//! settled together once no task is left running — a failed batch then
+//! blocks the next one.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -91,12 +93,14 @@ where
 
 /// Run one batch to completion and settle its failures.
 ///
-/// `buffer_unordered` yields results in completion order, so each failure
-/// is announced the moment it happens rather than when its predecessors
-/// finish. The stream is always drained — a failing task never cancels its
-/// siblings — then the batch settles: cancellation wins over failure, a
-/// single failure keeps the legacy terminal report, and multiple failures
-/// aggregate into [`BatchFailures`].
+/// `buffer_unordered` yields results in completion order, so a failure
+/// while siblings are still running is announced the moment it happens
+/// rather than when its predecessors finish; the failure that empties the
+/// batch skips the notice, since the terminal failure report follows
+/// immediately and would repeat it. The stream is always drained — a
+/// failing task never cancels its siblings — then the batch settles:
+/// cancellation wins over failure, a single failure keeps the legacy
+/// terminal report, and multiple failures aggregate into [`BatchFailures`].
 pub(crate) async fn settle_batch<F, Fut>(
     batch: &[String],
     batch_num: usize,
@@ -134,8 +138,10 @@ where
 
     let mut failures: Vec<TaskFailure> = Vec::new();
     let mut cancelled = false;
+    let mut pending = batch.len();
 
     while let Some((task, result)) = stream.next().await {
+        pending -= 1;
         match result {
             Ok(()) => {}
             Err(error) => {
@@ -146,7 +152,13 @@ where
                     cancelled = true;
                     continue;
                 }
-                report_task_failure(&task, false, &error);
+                // Announce immediately only while siblings are still
+                // running; the failure that empties the batch is carried
+                // by the terminal failure report alone — announcing both
+                // would print the same failure twice.
+                if pending > 0 {
+                    report_task_failure(&task, false, &error);
+                }
                 failures.push(TaskFailure::failed(task, error));
             }
         }

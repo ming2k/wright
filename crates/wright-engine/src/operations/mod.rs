@@ -15,7 +15,6 @@ pub mod owner;
 pub mod package;
 pub mod plan;
 pub mod provide;
-pub mod prune;
 pub mod remove;
 pub mod resolve;
 pub mod upgrade;

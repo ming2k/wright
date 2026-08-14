@@ -35,7 +35,7 @@ package, merge — in one command:
 
 ```bash
 wright install hello
-wright prune --apply
+wright clean --stale
 wright list
 ```
 

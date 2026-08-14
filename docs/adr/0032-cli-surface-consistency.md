@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (short-flag `-c` row and dry-run inversion superseded by ADR-0040)
 
 ## Context
 

@@ -84,12 +84,12 @@ wright doctor
 
 ## Clean Up Old Archives
 
-`wright prune` keeps only the latest archive of each part. It is a dry run by
-default; pass `--apply` to actually delete:
+`wright clean --stale` keeps only the latest archive of each part and removes
+the superseded ones. Preview the removal set with `-n` first:
 
 ```bash
-wright prune
-wright prune --apply
+wright clean --stale -n
+wright clean --stale
 ```
 
 ## Typical Workflows

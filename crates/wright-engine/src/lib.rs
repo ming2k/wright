@@ -10,6 +10,7 @@ pub mod error;
 pub mod foundry;
 pub mod identify;
 pub mod isolation;
+pub mod ledger;
 pub mod operations;
 pub mod query;
 pub mod resolve;

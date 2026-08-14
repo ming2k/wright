@@ -6,10 +6,15 @@
 //! called, otherwise as failed. A step that bails early via `?` therefore
 //! still has its duration counted; a failed step never loses its timing.
 //!
-//! At the end of the run — success or failure — the aggregated per-step
-//! durations plus the wall-clock total are rendered as a Cargo-style
-//! block and emitted through tracing, so the report lands on the CLI and
-//! in the daily log file alike.
+//! At the end of a successful run the aggregated per-step durations plus
+//! the wall-clock total are rendered as a Cargo-style block and emitted
+//! through tracing, so the report lands on the CLI and in the daily log
+//! file alike. A failed run instead defers its report
+//! ([`WorkflowTiming::log_report`] stashes it) for the process-exit
+//! failure path to drain ([`emit_deferred_failure`]): the timing table
+//! then closes the terminal failure report as one contiguous block
+//! instead of splitting the error output, and its structured event
+//! reaches the file log only.
 //!
 //! The registry is `Arc`-shared and cheap to clone: future extensions
 //! (e.g. per-pipeline forge timing recorded from spawned build tasks)
@@ -21,8 +26,9 @@ use std::time::{Duration, Instant};
 
 use crate::util::logging::VERB_WIDTH;
 
-/// Compact human-readable duration: `<1s` → `Nms`, `<60s` → `1.2s`,
-/// otherwise `1m23s`.
+/// Compact human-readable duration: `<1s` → `Nms` (`96ms`), `<60s` →
+/// seconds with one decimal (`1.1s`), otherwise minutes plus seconds
+/// (`2m 4s`, or `2m 4.6s` when the sub-second fraction is nonzero).
 pub fn format_duration(d: Duration) -> String {
     let secs = d.as_secs_f64();
     if secs < 1.0 {
@@ -30,8 +36,16 @@ pub fn format_duration(d: Duration) -> String {
     } else if secs < 60.0 {
         format!("{secs:.1}s")
     } else {
-        let total = secs.round() as u64;
-        format!("{}m{:02}s", total / 60, total % 60)
+        // Round to tenths of a second up front so the seconds component
+        // can never render as 60.
+        let tenths = (secs * 10.0).round() as u64;
+        let mins = tenths / 600;
+        let rem = tenths % 600;
+        if rem.is_multiple_of(10) {
+            format!("{mins}m {}s", rem / 10)
+        } else {
+            format!("{mins}m {}.{}s", rem / 10, rem % 10)
+        }
     }
 }
 
@@ -129,18 +143,25 @@ impl WorkflowTiming {
         }
     }
 
-    /// Emit the end-of-run timing report through tracing: a Cargo-style
-    /// `Timing` block on the CLI plus structured fields for the file log.
+    /// Close the run with the end-of-run timing report.
     ///
-    /// Success renders at INFO (suppressed under `--quiet`, matching the
-    /// `Finished` line); failure renders at WARN so it is always shown.
+    /// Success emits the Cargo-style `Timing` block through tracing at
+    /// INFO (suppressed under `--quiet`, matching the `Finished` line),
+    /// landing on the CLI and in the file log alike.
+    ///
+    /// Failure defers the report instead: the rendered block and its
+    /// structured fields are stashed for [`emit_deferred_failure`], which
+    /// the process-exit failure path drains after the terminal failure
+    /// report. The timing table therefore closes the run instead of
+    /// splitting the error output, and the structured event reaches the
+    /// file log only — the CLI layer is already suppressed by then.
     pub fn log_report(&self, workflow: &str, ok: bool, quiet: bool) {
         let summary = self.summary();
-        let block = summary.render(workflow, !ok);
-        let total_secs = summary.total.as_secs_f64();
-        let steps = summary.compact();
+        let block = summary.render(workflow);
         if ok {
             if !quiet {
+                let total_secs = summary.total.as_secs_f64();
+                let steps = summary.compact();
                 tracing::info!(
                     verb = "Timing",
                     event = "workflow.timing",
@@ -153,16 +174,7 @@ impl WorkflowTiming {
                 );
             }
         } else {
-            tracing::warn!(
-                verb = "Timing",
-                event = "workflow.timing",
-                workflow = %workflow,
-                ok = false,
-                total_secs,
-                steps = %steps,
-                "{}",
-                block,
-            );
+            defer_failure(workflow, &summary, block);
         }
     }
 
@@ -170,6 +182,67 @@ impl WorkflowTiming {
         // A poisoned timing mutex must never crash the exit path.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The deferred failure-path report: stashed by
+/// [`WorkflowTiming::log_report`], drained once by
+/// [`emit_deferred_failure`]. A command run fails at most once, so a
+/// single slot suffices.
+static DEFERRED_FAILURE: Mutex<Option<DeferredFailure>> = Mutex::new(None);
+
+/// A failed run's timing report, rendered and ready to close the terminal
+/// failure report.
+struct DeferredFailure {
+    workflow: String,
+    total_secs: f64,
+    compact: String,
+    block: String,
+}
+
+fn defer_failure(workflow: &str, summary: &TimingSummary, block: String) {
+    let deferred = DeferredFailure {
+        workflow: workflow.to_string(),
+        total_secs: summary.total.as_secs_f64(),
+        compact: summary.compact(),
+        block,
+    };
+    // A poisoned timing mutex must never crash the exit path.
+    *DEFERRED_FAILURE.lock().unwrap_or_else(|e| e.into_inner()) = Some(deferred);
+}
+
+/// Drain the failed run's deferred timing report. Called once from the
+/// process-exit failure path, after CLI output is suppressed: emits the
+/// structured `workflow.timing` event (file log only — the CLI layer is
+/// suppressed) and returns the block as print-ready lines, the first
+/// carrying the `Timing` verb column. `None` when no run deferred.
+pub fn emit_deferred_failure() -> Option<Vec<String>> {
+    let deferred = DEFERRED_FAILURE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()?;
+    tracing::warn!(
+        verb = "Timing",
+        event = "workflow.timing",
+        workflow = %deferred.workflow,
+        ok = false,
+        total_secs = deferred.total_secs,
+        steps = %deferred.compact,
+        "{}",
+        deferred.block,
+    );
+    let lines = deferred
+        .block
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == 0 {
+                crate::util::logging::format_action("Timing", line)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    Some(lines)
 }
 
 /// RAII step measurement. Records into the parent registry on drop.
@@ -235,14 +308,12 @@ impl TimingSummary {
     /// the verb column by the CLI layer) followed by one row per step and
     /// a `total` row, each continuation line indented to sit under the
     /// header. Failed steps keep their duration and carry a `(failed)`
-    /// marker; a failed run marks the header with `(failed)` too.
-    pub fn render(&self, workflow: &str, failed: bool) -> String {
+    /// marker. The header itself stays unmarked: on failure the block
+    /// closes the terminal failure report, which already carries the
+    /// failure signal.
+    pub fn render(&self, workflow: &str) -> String {
         let mut out = String::new();
-        if failed {
-            let _ = write!(out, "{workflow} step timing (failed):");
-        } else {
-            let _ = write!(out, "{workflow} step timing:");
-        }
+        let _ = write!(out, "{workflow} step timing:");
 
         let rows: Vec<(String, String, bool)> = self
             .steps
@@ -305,9 +376,13 @@ mod tests {
 
     #[test]
     fn format_duration_chooses_unit() {
-        assert_eq!(format_duration(Duration::from_millis(50)), "50ms");
+        assert_eq!(format_duration(Duration::from_millis(96)), "96ms");
+        assert_eq!(format_duration(Duration::from_secs_f64(1.1)), "1.1s");
         assert_eq!(format_duration(Duration::from_secs_f64(4.6)), "4.6s");
-        assert_eq!(format_duration(Duration::from_secs(124)), "2m04s");
+        assert_eq!(format_duration(Duration::from_secs(124)), "2m 4s");
+        assert_eq!(format_duration(Duration::from_secs_f64(74.56)), "1m 14.6s");
+        // Rounding must never render a 60-second component.
+        assert_eq!(format_duration(Duration::from_secs_f64(119.96)), "2m 0s");
     }
 
     #[test]
@@ -348,8 +423,10 @@ mod tests {
         let timing = WorkflowTiming::new();
         timing.record("resolve", Duration::from_millis(400), true);
         timing.record("forge", Duration::from_millis(12200), false);
-        let block = timing.summary().render("install", true);
-        assert!(block.starts_with("install step timing (failed):"));
+        let block = timing.summary().render("install");
+        // The failed row keeps its marker; the header stays unmarked — the
+        // surrounding failure report already carries the failure signal.
+        assert!(block.starts_with("install step timing:"));
         assert!(block.contains("resolve"));
         assert!(block.contains("12.2s (failed)"));
         assert!(block.contains("total"));
@@ -360,9 +437,26 @@ mod tests {
         let timing = WorkflowTiming::new();
         timing.record("forge", Duration::from_secs(1), true);
         timing.record("forge", Duration::from_secs(1), true);
-        let block = timing.summary().render("install", false);
+        let block = timing.summary().render("install");
         assert!(block.contains("forge ×2"));
         assert!(block.starts_with("install step timing:"));
+    }
+
+    #[test]
+    fn failed_log_report_defers_and_exit_path_drains_once() {
+        let timing = WorkflowTiming::new();
+        timing.record("resolve", Duration::from_millis(854), true);
+        timing.record("forge", Duration::from_millis(12100), false);
+        timing.log_report("install", false, false);
+
+        let lines = emit_deferred_failure().expect("a failed run defers its report");
+        assert!(lines[0].contains("Timing"));
+        assert!(lines[0].contains("install step timing:"));
+        assert!(lines.iter().any(|l| l.contains("12.1s (failed)")));
+        assert!(
+            emit_deferred_failure().is_none(),
+            "the deferred report drains exactly once"
+        );
     }
 
     #[test]

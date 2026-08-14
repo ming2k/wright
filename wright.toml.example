@@ -15,7 +15,14 @@ store_dir     = "/var/lib/wright/store"
 source_dir    = "/var/lib/wright/sources"
 db_path       = "/var/lib/wright/wright.db"
 logs_dir      = "/var/log/wright"
+ledger_dir    = "/var/lib/wright/ledger"
 executors_dir = "/etc/wright/executors"
+
+# ledger_dir holds per-plan audit data as plain files, append-only:
+#   <ledger_dir>/<plan>/builds.jsonl                  build-cost records
+#   <ledger_dir>/<plan>/snapshots/<ts>-<checksum>.toml  plan-source history
+# A database redirected via --root/--db keeps its ledger beside itself
+# (<db dir>/ledger) instead of using this path.
 
 # Extra plan source dirs consulted after plans_dir.
 # extra_plans_dirs = ["/opt/my-plans", "./plans"]

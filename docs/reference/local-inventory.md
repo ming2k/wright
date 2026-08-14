@@ -35,6 +35,7 @@ Every `.wright.tar.zst` carries metadata files at the archive root:
 | `.FILELIST` | one absolute installed path per line |
 | `.HOOKS` | deploy hooks in TOML (optional; only when the plan declares hooks) |
 | `.PLANSRC` | exact `plan.toml` text the part was sealed from (optional; absent on parts sealed before ADR-0033 or from string-parsed manifests) |
+| `.BUILDINFO` | sealing-host platform audit in TOML: `wright_version` plus `hostname`, `os`, `kernel`, `arch`, `cpu_model`, `cpu_cores`, `memory_bytes`, full `cpu_flags` (optional; absent on parts sealed before ADR-0041) |
 
 ### `.PARTINFO` sections
 
@@ -61,11 +62,33 @@ source. See [ADR-0023](../adr/0023-parts-as-maintenance-ledger.md).
 
 The `.PLANSRC` snapshot complements `plan_checksum`: the checksum says
 *that* the plan changed, the snapshot preserves *what it was*. Deploy and
-upgrade registration persist it into the `plan_snapshots` table (see
-[Database Design](database-design.md)); `wright doctor` diffs the snapshot
-against the current source on drift, and `wright plan <TARGET>` prints the
-recorded source. Neither member nor table is consulted by deploy, resolve,
-or remove. See [ADR-0033](../adr/0033-plan-source-snapshots.md).
+upgrade registration record it as a ledger file
+(`<ledger_dir>/<plan>/snapshots/<timestamp>-<checksum>.toml`, ADR-0041);
+`wright doctor` diffs the snapshot against the current source on drift,
+and `wright plan <TARGET>` prints the recorded source. Neither the archive
+member nor the ledger file is consulted by deploy, resolve, or remove. See
+[ADR-0033](../adr/0033-plan-source-snapshots.md).
+
+The `.BUILDINFO` member answers a different question — "what machine
+produced this archive?" — for diagnosing parts that fail after deployment
+(microarchitecture or kernel mismatch, wrong build host). Read it with
+`tar -xOf <part>.wright.tar.zst .BUILDINFO`.
+
+## The Ledger
+
+Per-plan audit data lives as plain files under `ledger_dir` (default
+`/var/lib/wright/ledger`), append-only and never consulted by state-changing
+operations (ADR-0041):
+
+| Path | Contents |
+|------|----------|
+| `<ledger_dir>/<plan>/builds.jsonl` | one JSON record per build attempt, success or failure: per-step and total durations, host summary, cached-source bytes, staging-tree bytes and file count, error on failure. Partial runs (`--stage`, `--fetch-only`, `--until-stage`) are marked `full: false`. |
+| `<ledger_dir>/<plan>/snapshots/` | plan-source history; a new `<timestamp>-<checksum>.toml` is written only when the checksum changes |
+
+The builds ledger answers "what will the next upgrade of this plan cost?"
+from local history — e.g. `tail -n 5 /var/lib/wright/ledger/curl/builds.jsonl | jq .duration_secs`.
+A database redirected via `--root`/`--db` keeps its ledger beside itself
+(`<db dir>/ledger`).
 
 ## Low-Level Pipeline
 

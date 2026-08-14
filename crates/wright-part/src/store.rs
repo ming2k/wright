@@ -274,6 +274,7 @@ mod tests {
                 isolation: "strict".to_string(),
             },
             plan_source: None,
+            build_info: None,
             hooks: PartHooks::default(),
         };
         write_part(&staging, &spec, &output_dir).unwrap()

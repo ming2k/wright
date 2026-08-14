@@ -56,13 +56,13 @@ Every event with a `verb` field renders as a Cargo-style action line:
      Staging linux-lts
      Sealing linux-lts
    Deploying 1 part
-    Finished install in 2m45s
+    Finished install in 2m 45s
       Timing install step timing:
-                resolve     0.2s
-                forge      2m31s
-                seal        0.9s
-                deploy     12.9s
-                total      2m45s
+                resolve    0.2s
+                forge    2m 31s
+                seal      0.9s
+                deploy    12.9s
+                total    2m 45s
 ```
 
 - **12-character right-aligned verb column**, single space, then the target.
@@ -93,11 +93,14 @@ heads the end-of-run step-timing report, a single event whose message is a
 multi-line block — one row per workflow step (`resolve`, `prepare`, `forge`,
 `seal`, `deploy`, aggregated as `name ×N` across batches) plus a wall-clock
 `total` row, continuation lines aligned under the message column. The report
-closes every run, success or failure; on failure it renders at WARN so it is
-always shown, the header reads `install step timing (failed):`, and the step
-that was in flight when the error hit keeps its elapsed time with a `(failed)`
-marker. Timings are recorded by RAII guards (`util::timing::WorkflowTiming`),
-so an early `?` return can never lose a step's duration.
+closes every run. On success it renders at INFO. On failure it is deferred
+and appended to the terminal failure report (see [Failure Reporting]
+(#3-failure-reporting)), so the error output reads as one contiguous block;
+the step in flight when the error hit keeps its elapsed time with a
+`(failed)` row marker, while the header stays unmarked — the failure report
+above it already carries the signal. Timings are recorded by RAII guards
+(`util::timing::WorkflowTiming`), so an early `?` return can never lose a
+step's duration.
 
 When a stage name is custom (user-defined in a plan), `forge::logging::stage_verb`
 maps the stage to its gerund; unknown stages fall back to `Running`.
@@ -193,7 +196,12 @@ Terminal failures use the `cli_failed!` macro, which fires a
 2. `suppress_cli_output()` blocks any in-flight cleanup events from racing past.
 3. `tracing::error!` records the structured event (file log).
 4. `format_failure_report(&err, &log_path)` builds the multi-line block.
-5. Each line is printed through `MULTI.println` so it serializes with any
+5. `util::timing::emit_deferred_failure()` drains the deferred step-timing
+   report: its structured `workflow.timing` event reaches the file log only
+   (the CLI layer is suppressed by step 2), and the rendered block — first
+   line prefixed with the `Timing` verb — is appended after the `See …`
+   log hint so it closes the failure block instead of splitting it.
+6. Each line is printed through `MULTI.println` so it serializes with any
    surviving progress bars.
 
 ### Layout
@@ -208,6 +216,11 @@ Caused by:
     Device or resource busy (os error 16)
 
 See /var/log/wright/wright.log.2026-05-15 for the full trace.
+
+      Timing install step timing:
+                resolve   0.2s
+                forge    41.8s (failed)
+                total    42.0s
 ```
 
 The cause chain is the real `std::error::Error::source()` chain, walked by
@@ -228,22 +241,29 @@ The trailing `See <path>` line points at the rolling daily log file produced by
 `tracing_appender::rolling::daily` — the path includes today's `YYYY-MM-DD`
 suffix.
 
+The deferred step-timing report then closes the block, keeping its usual
+verb-column layout. The header carries no failure marker of its own — the
+report above it already does — while the step in flight when the error hit
+keeps its `(failed)` row marker.
+
 ### Batch Settlement
 
 Build and install run dependency levels as batches of parallel tasks. Tasks
 within a batch have no inter-dependencies, so a failing task never interrupts
-its siblings (see ADR-0039). The moment a task fails, `report_task_failure`
-emits a single zero-indent notice through the normal ERROR path — the failing
-stage's log path rides on the same line:
+its siblings (see ADR-0039). While siblings are still running, the moment a
+task fails `report_task_failure` emits a single zero-indent notice through
+the normal ERROR path — the failing stage's log path rides on the same line:
 
 ```
 error: task 'intel-graphics-compiler' failed: stage 'compile' failed with exit code 1 (see log: /var/tmp/wright/workshop/intel-graphics-compiler-2.38.2/logs/compile.log)
 ```
 
-The batch then runs to completion and settles: a single failure produces the
-terminal report above unchanged; more than one failure produces an aggregated
-report (`format_batch_failure_report`) that re-lists every failed task, so a
-notice that scrolled by during a long parallel run is not lost:
+The batch then runs to completion and settles. A failure that empties its
+batch skips the immediate notice — the terminal report follows at once and
+would print the same failure twice. A single failure produces the terminal
+report above unchanged; more than one failure produces an aggregated report
+(`format_batch_failure_report`) that re-lists every failed task, so a notice
+that scrolled by during a long parallel run is not lost:
 
 ```
 error: 2 tasks failed in batch 1/3

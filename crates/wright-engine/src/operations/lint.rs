@@ -19,9 +19,12 @@ pub async fn execute_lint(
 async fn execute_verify_installed(config: &GlobalConfig) -> Result<()> {
     let t0 = WorkflowTiming::new();
     let db_path = config.general.db_path.clone();
-    let db = wright_state::database::InstalledDb::open(&db_path)
-        .await
-        .map_err(|e| crate::error::WrightError::context("failed to open database", e))?;
+    let db = wright_state::database::InstalledDb::open(
+        &db_path,
+        Some(&crate::ledger::dir(config, Some(&db_path))),
+    )
+    .await
+    .map_err(|e| crate::error::WrightError::context("failed to open database", e))?;
     let root_dir = std::path::PathBuf::from("/");
 
     let parts = db.list_parts().await?;

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::config::GlobalConfig;
 use crate::error::{BatchFailures, Result, TaskFailure, WrightError};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -61,10 +62,11 @@ fn cas_entry_matches_manifest(cas_path: &Path, manifest: &PlanManifest, part_nam
     }
 }
 
-/// Run the install workflow and close every run — success or failure —
-/// with the terminal `Finished` line plus the per-step timing report. The
-/// step in flight when an error hit keeps its elapsed time and is marked
-/// failed in the report; see [`WorkflowTiming`].
+/// Run the install workflow and close every run with the per-step timing
+/// report — emitted directly on success, deferred into the process-exit
+/// failure report on error (see [`WorkflowTiming::log_report`]). The step
+/// in flight when an error hit keeps its elapsed time and is marked failed
+/// in the report; see [`WorkflowTiming`].
 pub async fn execute_install(request: InstallRequest<'_>) -> Result<()> {
     let quiet = request.quiet;
     let timing = WorkflowTiming::new();
@@ -139,7 +141,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
     }
     let targets = expansion.plans;
 
-    register_folio_assumptions(db_path, &expansion.provides).await?;
+    register_folio_assumptions(config, db_path, &expansion.provides).await?;
 
     let resolve_opts = ResolveOptions {
         deps,
@@ -285,9 +287,10 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
     let configure_lock = Arc::new(Semaphore::new(1));
     let compile_lock = Arc::new(Semaphore::new(resources.total_cpus));
 
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("open database", e))?;
+    let ledger_dir = crate::ledger::dir(config, Some(db_path));
 
     // ── Crash recovery ──────────────────────────────────────────────
     wright_state::delivery::recover_if_needed(&db).await?;
@@ -525,7 +528,13 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                         cancelled = true;
                         continue;
                     }
-                    crate::util::logging::report_task_failure(&task, false, &error);
+                    // Announce immediately only while siblings are still
+                    // running; when this failure empties the batch the
+                    // terminal failure report follows at once, so a notice
+                    // would print the same failure twice.
+                    if !join_set.is_empty() {
+                        crate::util::logging::report_task_failure(&task, false, &error);
+                    }
                     failures.push(TaskFailure::failed(task, error));
                 }
                 Err(join_error) => {
@@ -538,7 +547,9 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                     let task = task_ids
                         .remove(&join_error.id())
                         .unwrap_or_else(|| "<unknown>".to_string());
-                    crate::util::logging::report_task_failure(&task, true, &join_error);
+                    if !join_set.is_empty() {
+                        crate::util::logging::report_task_failure(&task, true, &join_error);
+                    }
                     failures.push(TaskFailure::panicked(
                         task,
                         WrightError::ForgeError(join_error.to_string()),
@@ -803,6 +814,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                     Some(&all_upcoming_outputs),
                     run_hooks,
                     session.clone(),
+                    &ledger_dir,
                 )
                 .await;
 
@@ -827,6 +839,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 }
 
 async fn register_folio_assumptions(
+    config: &GlobalConfig,
     db_path: &Path,
     provides: &[folio::FolioProvide],
 ) -> Result<()> {
@@ -834,7 +847,7 @@ async fn register_folio_assumptions(
         return Ok(());
     }
 
-    let db = InstalledDb::open(db_path)
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
         .await
         .map_err(|e| WrightError::context("failed to open database for folio assumptions", e))?;
     for provide in provides {

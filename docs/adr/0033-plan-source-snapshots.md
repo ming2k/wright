@@ -4,6 +4,11 @@
 
 Accepted
 
+Amended by [ADR-0041](0041-file-backed-ledger.md): the `plan_snapshots`
+table described under **Persist** is replaced by snapshot files in the
+ledger directory. Capture (`.PLANSRC`) and the read surfaces (`wright
+doctor`, `wright plan`) are unchanged.
+
 ## Context
 
 [ADR-0023](0023-parts-as-maintenance-ledger.md) gave every part descriptive

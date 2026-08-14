@@ -42,7 +42,7 @@ async fn installed_db_open_handles_preseeded_v1_schema_without_sqlx_metadata() {
 
     seed_schema_without_sqlx_migrations(&db_path, INSTALLED_SCHEMA).await;
 
-    let db = InstalledDb::open(&db_path).await;
+    let db = InstalledDb::open(&db_path, None).await;
     assert!(db.is_ok(), "InstalledDb::open failed: {:?}", db.err());
     drop(db);
 

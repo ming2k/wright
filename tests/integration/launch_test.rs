@@ -99,6 +99,7 @@ fn folio_req(path: PathBuf, dry_run: bool, force: bool) -> LaunchRequest {
         source: LaunchSource::Folio(path),
         dry_run,
         force,
+        fresh: false,
     }
 }
 
@@ -117,6 +118,7 @@ fn targets_req(
         },
         dry_run,
         force,
+        fresh: false,
     }
 }
 
@@ -405,7 +407,7 @@ async fn registers_provides() {
     .await
     .unwrap();
 
-    let db = InstalledDb::open(&db_path).await.unwrap();
+    let db = InstalledDb::open(&db_path, None).await.unwrap();
     let linux = db.get_part("linux").await.unwrap().expect("linux part");
     assert_eq!(linux.origin, wright::database::Origin::External);
     assert_eq!(
@@ -723,6 +725,10 @@ async fn target_wright_toml_loads_clean() {
     assert_eq!(
         loaded.general.db_path,
         PathBuf::from("/var/lib/wright/wright.db")
+    );
+    assert_eq!(
+        loaded.general.ledger_dir,
+        PathBuf::from("/var/lib/wright/ledger")
     );
     assert_eq!(
         loaded.build.forge_dir,

@@ -217,6 +217,91 @@ impl Foundry {
         base_root: &Path,
         opts: BuildOptions,
     ) -> Result<FoundryResult> {
+        let timing = crate::util::timing::WorkflowTiming::new();
+        let full = opts.stages.is_empty() && !opts.fetch_only && opts.until_stage.is_none();
+        let result = self
+            .build_inner(manifest, plan_dir, base_root, opts, timing.clone())
+            .await;
+        self.record_build_ledger(manifest, &timing, full, &result);
+        result
+    }
+
+    /// Append the attempt's cost record to the plan ledger. Advisory:
+    /// failures (read-only ledger for non-root builders, missing dirs) are
+    /// logged and dropped — audit data must never fail a build.
+    fn record_build_ledger(
+        &self,
+        manifest: &PlanManifest,
+        timing: &crate::util::timing::WorkflowTiming,
+        full: bool,
+        result: &Result<FoundryResult>,
+    ) {
+        let summary = timing.summary();
+        if summary.steps.is_empty() {
+            // The attempt bailed before any work ran (argument validation);
+            // a zero-work record would only add noise.
+            return;
+        }
+        let staging_dir = self
+            .build_root(manifest)
+            .map(|root| root.join("staging"))
+            .ok();
+        let (staging_bytes, staging_files) = staging_dir
+            .as_deref()
+            .filter(|dir| dir.is_dir())
+            .map(crate::ledger::dir_stats)
+            .map(|(bytes, files)| (Some(bytes), Some(files)))
+            .unwrap_or((None, None));
+        let source_bytes =
+            Charge::new(&self.config, self.network_pool.clone()).sources_bytes(manifest);
+        let record = crate::ledger::BuildRecord {
+            ts: chrono::Utc::now().to_rfc3339(),
+            kind: "build",
+            plan: manifest.metadata.name.clone(),
+            version: manifest.metadata.version.clone().unwrap_or_default(),
+            release: manifest.metadata.release,
+            plan_checksum: manifest.plan_checksum.clone(),
+            host: wright_part::platform::HostInfo::probe(false),
+            wright_version: env!("CARGO_PKG_VERSION").to_string(),
+            success: result.is_ok(),
+            error: result
+                .as_ref()
+                .err()
+                .map(|e| crate::util::logging::flatten_error_causes(e)),
+            full,
+            duration_secs: summary.total.as_secs_f64(),
+            stages: summary
+                .steps
+                .iter()
+                .map(|s| crate::ledger::StageTiming {
+                    name: s.name.clone(),
+                    secs: s.elapsed.as_secs_f64(),
+                    ok: s.ok,
+                })
+                .collect(),
+            source_bytes: Some(source_bytes),
+            staging_bytes,
+            staging_files,
+        };
+        let ledger_dir = self.config.general.ledger_dir.clone();
+        if let Err(e) = crate::ledger::append_build_record(&ledger_dir, &record) {
+            tracing::warn!(
+                event = "ledger.record_failed",
+                plan_name = %manifest.metadata.name,
+                error = %e,
+                "could not append build record to ledger"
+            );
+        }
+    }
+
+    async fn build_inner(
+        &self,
+        manifest: &PlanManifest,
+        plan_dir: &Path,
+        base_root: &Path,
+        opts: BuildOptions,
+        timing: crate::util::timing::WorkflowTiming,
+    ) -> Result<FoundryResult> {
         let build_phase = opts.extra_env.get("WRIGHT_BUILD_PHASE").map(String::as_str);
         let default_isolation = self.default_isolation()?;
         let effective_isolation = crate::foundry::forge::effective_manifest_isolation(
@@ -280,7 +365,9 @@ impl Foundry {
         // 1. Charge — source preparation
         // ------------------------------------------------------------------
         let charge = Charge::new(&self.config, self.network_pool.clone());
+        let charge_guard = timing.step("charge");
         let charge_result = charge.prepare(manifest, plan_dir, &build_root).await?;
+        charge_guard.success();
 
         if opts.fetch_only {
             return Ok(FoundryResult {
@@ -375,6 +462,7 @@ impl Foundry {
             compile_cpu_count: Some(total_cpus),
             compile_lock: opts.compile_lock,
             build_key,
+            timing: timing.clone(),
         })?;
 
         let plan_name = &manifest.metadata.name;
@@ -419,7 +507,10 @@ impl Foundry {
         // 3. Mold — output slicing
         // ------------------------------------------------------------------
         let mold_result = if !partial {
-            Mold::slice(manifest, &build_root).await?
+            let mold_guard = timing.step("slice");
+            let result = Mold::slice(manifest, &build_root).await?;
+            mold_guard.success();
+            result
         } else {
             MoldResult {
                 default_dir: build_root.join("outputs").join("default"),

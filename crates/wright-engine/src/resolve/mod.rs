@@ -240,7 +240,7 @@ pub async fn resolve_build_set(
 
     {
         let db_path = config.general.db_path.clone();
-        let db = InstalledDb::open(&db_path)
+        let db = InstalledDb::open(&db_path, Some(&crate::ledger::dir(config, Some(&db_path))))
             .await
             .context("failed to open database for dependency resolution")?;
 

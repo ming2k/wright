@@ -26,6 +26,7 @@ pub(super) fn collect_file_entries(
                 && !s.starts_with(".FILELIST")
                 && !s.starts_with(".HOOKS")
                 && !s.starts_with(".PLANSRC")
+                && !s.starts_with(".BUILDINFO")
         })
         .collect();
 

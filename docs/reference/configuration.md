@@ -25,6 +25,7 @@ store_dir = "/var/lib/wright/store"
 source_dir = "/var/lib/wright/sources"
 db_path = "/var/lib/wright/wright.db"
 logs_dir = "/var/log/wright"
+ledger_dir = "/var/lib/wright/ledger"
 executors_dir = "/etc/wright/executors"
 
 [build]
@@ -56,6 +57,7 @@ max_concurrent_downloads = 8
 | `source_dir` | `/var/lib/wright/sources` | source cache (downloads and git source snapshots) |
 | `db_path` | `/var/lib/wright/wright.db` | system state database |
 | `logs_dir` | `/var/log/wright` | reserved operation log directory |
+| `ledger_dir` | `/var/lib/wright/ledger` | per-plan audit ledger: build-cost records and plan-source snapshots (ADR-0041) |
 | `executors_dir` | `/etc/wright/executors` | custom executor directory |
 | `forge_dir` | `/var/tmp/wright/workshop` | build workspace root |
 | `default_isolation` | `strict` | fallback isolation after stage and executor defaults |
@@ -81,6 +83,7 @@ max_concurrent_downloads = 8
 - `parts_dir` is the local stock of built archives.
 - `db_path` tracks the authoritative state of installed parts, files, dependencies, and build sessions.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
+- `ledger_dir` holds append-only audit data as plain files: `<plan>/builds.jsonl` (per-build cost records) and `<plan>/snapshots/` (plan-source history). Writes are advisory and never fail a build or deploy. A database redirected via `--root`/`--db` uses `<db dir>/ledger` instead of this path.
 - `source_dir` caches downloaded sources and git source snapshots.
 - `forge_dir` has a default and normally does not need to be declared.
   Override it only when build workspaces must live on another filesystem or

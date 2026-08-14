@@ -19,7 +19,7 @@ const WRIGHT_INSTALL_AFTER_HELP_FULL: &str = "\
 Examples:
   wright install zlib
   wright install zlib openssl
-  wright install zlib --clean
+  wright install zlib --fresh
   wright install ./plans/bash
   wright install @core
   wright install gcc --match=all";
@@ -70,17 +70,17 @@ pub struct InstallArgs {
     #[arg(long)]
     pub depth: Option<usize>,
 
-    /// Force a clean rebuild and redeploy even if matching parts already exist.
-    /// Implies `--clean`.
+    /// Force a from-scratch rebuild and redeploy even if matching parts
+    /// already exist. Implies `--fresh`.
     #[arg(long, short = 'f')]
     pub force: bool,
 
-    /// Clear the forge workspace, including source and working trees, before
-    /// building. Unlike `--force`, this does not redeploy parts that are
-    /// already up to date — it only forces a from-scratch forge of the parts
-    /// that actually need building. Composable with `--force`.
-    #[arg(long, short = 'c')]
-    pub clean: bool,
+    /// Wipe the forge workspace (source and working trees) before building,
+    /// so parts that need building are forged from scratch. Unlike `--force`,
+    /// this does not redeploy parts that are already up to date. Composable
+    /// with `--force`.
+    #[arg(long, short = 'c', alias = "clean")]
+    pub fresh: bool,
 
     /// Preview what would be forged and deployed without making any changes
     #[arg(long, short = 'n')]
@@ -126,7 +126,7 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
             .collect(),
         depth: args.depth,
         force: args.force,
-        clean: args.clean,
+        clean: args.fresh,
         config: ctx.config,
         db_path: &ctx.db_path,
         root_dir: &ctx.root_dir,

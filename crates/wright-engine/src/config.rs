@@ -41,6 +41,15 @@ pub struct GeneralConfig {
     pub db_path: PathBuf,
     #[serde(default = "default_logs_dir")]
     pub logs_dir: PathBuf,
+    /// Machine-local audit ledger: per-plan build-cost records
+    /// (`<plan>/builds.jsonl`) and plan-source snapshots
+    /// (`<plan>/snapshots/`). Deliberately NOT under `plans_dir`: the ledger
+    /// records facts about this machine, while plans are portable source.
+    /// Defaults to the system location even for non-root users so builds and
+    /// deploys across privilege boundaries share one ledger (same stance as
+    /// `db_path`); writes are best-effort and never fail a build or deploy.
+    #[serde(default = "default_ledger_dir")]
+    pub ledger_dir: PathBuf,
     #[serde(default = "default_executors_dir")]
     pub executors_dir: PathBuf,
 }
@@ -116,6 +125,7 @@ fn default_general() -> GeneralConfig {
         } else {
             default_logs_dir()
         },
+        ledger_dir: default_ledger_dir(),
         executors_dir: default_executors_dir(),
     }
 }
@@ -184,6 +194,9 @@ fn default_db_path() -> PathBuf {
 }
 fn default_logs_dir() -> PathBuf {
     PathBuf::from("/var/log/wright")
+}
+fn default_ledger_dir() -> PathBuf {
+    PathBuf::from("/var/lib/wright/ledger")
 }
 fn default_executors_dir() -> PathBuf {
     PathBuf::from("/etc/wright/executors")

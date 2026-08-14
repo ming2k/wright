@@ -44,12 +44,13 @@ pub(super) async fn self_replace_relations(
 /// The mapping belongs to the engine: archive and persistence types remain
 /// independent sibling boundaries. `plan_source` is the raw `.PLANSRC`
 /// member read back from the extracted archive (ADR-0033); when both it and
-/// a plan checksum are present, the snapshot is recorded so the exact plan
-/// content survives later source edits.
+/// a plan checksum are present, the snapshot is recorded into the file
+/// ledger (ADR-0041) so the exact plan content survives later source edits.
 pub(super) async fn ensure_plan_registered(
     db: &InstalledDb,
     partinfo: &PartInfo,
     plan_source: Option<&str>,
+    ledger_dir: &std::path::Path,
 ) -> Result<i64> {
     let provenance =
         partinfo
@@ -82,7 +83,22 @@ pub(super) async fn ensure_plan_registered(
             .and_then(|p| p.plan_checksum.as_deref()),
         plan_source,
     ) {
-        db.insert_plan_snapshot(checksum, source).await?;
+        // Advisory like the rest of the ledger: a deploy must not fail
+        // because an audit file could not be written.
+        if let Err(e) = wright_state::ledger::record_plan_snapshot(
+            ledger_dir,
+            &partinfo.plan.name,
+            checksum,
+            source,
+            None,
+        ) {
+            tracing::warn!(
+                event = "ledger.snapshot_failed",
+                plan_name = %partinfo.plan.name,
+                error = %e,
+                "could not record plan-source snapshot"
+            );
+        }
     }
 
     Ok(plan_id)

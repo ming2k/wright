@@ -1,11 +1,19 @@
+use std::path::Path;
+
 use crate::error::{Result, WrightError};
 use wright_state::database::InstalledDb;
 
 /// Print the plan-source snapshot recorded when the plan's parts were
-/// sealed (ADR-0033). Text mode emits the exact plan.toml bytes so the
-/// output can round-trip onto disk (`wright plan zlib > plan.toml`).
-pub async fn execute_plan(db: &InstalledDb, name: &str, json: bool) -> Result<()> {
-    let (checksum, source) = plan_snapshot(db, name).await?;
+/// sealed (ADR-0033, ledger layout ADR-0041). Text mode emits the exact
+/// plan.toml bytes so the output can round-trip onto disk
+/// (`wright plan zlib > plan.toml`).
+pub async fn execute_plan(
+    db: &InstalledDb,
+    ledger_dir: &Path,
+    name: &str,
+    json: bool,
+) -> Result<()> {
+    let (checksum, source) = plan_snapshot(db, ledger_dir, name).await?;
 
     if json {
         #[derive(serde::Serialize)]
@@ -27,7 +35,11 @@ pub async fn execute_plan(db: &InstalledDb, name: &str, json: bool) -> Result<()
 
 /// Look up the recorded plan-source snapshot for an installed plan.
 /// Returns `(plan_checksum, plan_source)`.
-async fn plan_snapshot(db: &InstalledDb, name: &str) -> Result<(String, String)> {
+async fn plan_snapshot(
+    db: &InstalledDb,
+    ledger_dir: &Path,
+    name: &str,
+) -> Result<(String, String)> {
     let plan = db
         .get_plan(name)
         .await?
@@ -41,13 +53,14 @@ async fn plan_snapshot(db: &InstalledDb, name: &str) -> Result<(String, String)>
         ))
     })?;
 
-    let source = db.get_plan_snapshot(&checksum).await?.ok_or_else(|| {
-        WrightError::ValidationError(format!(
-            "no plan-source snapshot recorded for '{}' (parts sealed before ADR-0033); \
-             rebuild and re-deploy to record one",
-            name
-        ))
-    })?;
+    let source = wright_state::ledger::plan_snapshot_source(ledger_dir, name, &checksum)
+        .ok_or_else(|| {
+            WrightError::ValidationError(format!(
+                "no plan-source snapshot recorded for '{}' (parts sealed before ADR-0033); \
+                 rebuild and re-deploy to record one",
+                name
+            ))
+        })?;
 
     Ok((checksum, source))
 }
@@ -59,6 +72,7 @@ mod tests {
 
     async fn register_plan(
         db: &InstalledDb,
+        ledger_dir: &Path,
         name: &str,
         checksum: Option<&str>,
         snapshot: Option<&str>,
@@ -81,16 +95,25 @@ mod tests {
         .await
         .unwrap();
         if let (Some(sum), Some(source)) = (checksum, snapshot) {
-            db.insert_plan_snapshot(sum, source).await.unwrap();
+            wright_state::ledger::record_plan_snapshot(ledger_dir, name, sum, source, None)
+                .unwrap();
         }
     }
 
     #[tokio::test]
     async fn snapshot_returns_recorded_source() {
         let db = InstalledDb::open_in_memory().await.unwrap();
-        register_plan(&db, "demo", Some("deadbeef"), Some("release = 1\n")).await;
+        let ledger = tempfile::tempdir().unwrap();
+        register_plan(
+            &db,
+            ledger.path(),
+            "demo",
+            Some("deadbeef"),
+            Some("release = 1\n"),
+        )
+        .await;
 
-        let (checksum, source) = plan_snapshot(&db, "demo").await.unwrap();
+        let (checksum, source) = plan_snapshot(&db, ledger.path(), "demo").await.unwrap();
         assert_eq!(checksum, "deadbeef");
         assert_eq!(source, "release = 1\n");
     }
@@ -98,23 +121,31 @@ mod tests {
     #[tokio::test]
     async fn unknown_plan_is_not_found() {
         let db = InstalledDb::open_in_memory().await.unwrap();
-        let err = plan_snapshot(&db, "ghost").await.unwrap_err();
+        let ledger = tempfile::tempdir().unwrap();
+        let err = plan_snapshot(&db, ledger.path(), "ghost")
+            .await
+            .unwrap_err();
         assert!(matches!(err, WrightError::PartNotFound(_)), "got: {}", err);
     }
 
     #[tokio::test]
     async fn missing_checksum_or_snapshot_is_a_clear_error() {
         let db = InstalledDb::open_in_memory().await.unwrap();
-        register_plan(&db, "ancient", None, None).await;
-        let err = plan_snapshot(&db, "ancient").await.unwrap_err();
+        let ledger = tempfile::tempdir().unwrap();
+        register_plan(&db, ledger.path(), "ancient", None, None).await;
+        let err = plan_snapshot(&db, ledger.path(), "ancient")
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, WrightError::ValidationError(_)),
             "got: {}",
             err
         );
 
-        register_plan(&db, "pre-snapshot", Some("deadbeef"), None).await;
-        let err = plan_snapshot(&db, "pre-snapshot").await.unwrap_err();
+        register_plan(&db, ledger.path(), "pre-snapshot", Some("deadbeef"), None).await;
+        let err = plan_snapshot(&db, ledger.path(), "pre-snapshot")
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, WrightError::ValidationError(_)),
             "got: {}",

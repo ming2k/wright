@@ -29,7 +29,14 @@ fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
 }
 
 impl InstalledDb {
-    pub async fn open(path: &Path) -> Result<Self> {
+    /// Open the installed-state database, running pending migrations.
+    ///
+    /// `snapshot_export_dir`: when the pre-migration schema still holds the
+    /// legacy `plan_snapshots` table, its rows are exported into this
+    /// directory (ADR-0041 layout) before the dropping migration runs.
+    /// Export failures abort the open — proceeding would drop the table and
+    /// lose the snapshots. Pass `None` (tests, in-memory) to skip.
+    pub async fn open(path: &Path, snapshot_export_dir: Option<&Path>) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 WrightError::context(
@@ -55,6 +62,10 @@ impl InstalledDb {
             .execute(&pool)
             .await
             .map_err(|e| WrightError::context("failed to enable foreign keys", e))?;
+
+        if let Some(dir) = snapshot_export_dir {
+            crate::ledger::export_legacy_plan_snapshots(&pool, dir).await?;
+        }
 
         schema::init_db(&pool).await?;
 

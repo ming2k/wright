@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use wright::database::{InstalledDb, SessionContext};
 use wright::part::archive;
 use wright::plan::manifest::PlanManifest;
-use wright::transaction;
+use wright::{ledger, transaction};
 
 fn session() -> SessionContext {
     SessionContext {
@@ -73,15 +73,37 @@ async fn sealed_plan_source_survives_source_edit_and_deletion() {
         Some(expected_source.as_str())
     );
 
-    // Deploy registers the snapshot in the ledger, keyed by plan checksum.
+    // Deploy records the snapshot in the file ledger, keyed by plan checksum.
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    transaction::deploy_part(&db, &archive_path, root.path(), false, session())
-        .await
-        .unwrap();
+    let ledger_dir = tempfile::tempdir().unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive_path,
+        root.path(),
+        false,
+        session(),
+        ledger_dir.path(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        db.get_plan_snapshot(&checksum).await.unwrap().as_deref(),
+        ledger::plan_snapshot_source(ledger_dir.path(), "snap", &checksum).as_deref(),
         Some(expected_source.as_str())
+    );
+
+    // The snapshot file lives under the plan's ledger directory, named by
+    // recording time and checksum.
+    let snapshots_dir = ledger_dir.path().join("snap/snapshots");
+    let names: Vec<String> = std::fs::read_dir(&snapshots_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 1);
+    assert!(
+        names[0].ends_with(&format!("-{}.toml", checksum)),
+        "unexpected snapshot filename: {}",
+        names[0]
     );
 
     // The snapshot member is metadata, not payload: it never lands on disk.
@@ -94,7 +116,7 @@ async fn sealed_plan_source_survives_source_edit_and_deletion() {
     std::fs::write(&plan_path, "release = 99\n").unwrap();
     std::fs::remove_file(&plan_path).unwrap();
     assert_eq!(
-        db.get_plan_snapshot(&checksum).await.unwrap().as_deref(),
+        ledger::plan_snapshot_source(ledger_dir.path(), "snap", &checksum).as_deref(),
         Some(expected_source.as_str())
     );
 }
@@ -109,9 +131,17 @@ async fn upgrade_registers_new_snapshot_and_retains_old() {
 
     let db = InstalledDb::open_in_memory().await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    transaction::deploy_part(&db, &archive_v1, root.path(), false, session())
-        .await
-        .unwrap();
+    let ledger_dir = tempfile::tempdir().unwrap();
+    transaction::deploy_part(
+        &db,
+        &archive_v1,
+        root.path(),
+        false,
+        session(),
+        ledger_dir.path(),
+    )
+    .await
+    .unwrap();
 
     // Bump the release and re-seal; the plan text changed, so the checksum
     // and snapshot must change with it.
@@ -120,20 +150,28 @@ async fn upgrade_registers_new_snapshot_and_retains_old() {
     let source_v2 = std::fs::read_to_string(&plan_path).unwrap();
     let archive_v2 = seal_archive(&manifest_v2);
 
-    transaction::upgrade_part(&db, &archive_v2, root.path(), false, false, session())
-        .await
-        .unwrap();
+    transaction::upgrade_part(
+        &db,
+        &archive_v2,
+        root.path(),
+        false,
+        false,
+        session(),
+        ledger_dir.path(),
+    )
+    .await
+    .unwrap();
 
     let checksum_v1 = manifest_v1.plan_checksum.as_deref().unwrap();
     let checksum_v2 = manifest_v2.plan_checksum.as_deref().unwrap();
     assert_ne!(checksum_v1, checksum_v2);
     assert_eq!(
-        db.get_plan_snapshot(checksum_v2).await.unwrap().as_deref(),
+        ledger::plan_snapshot_source(ledger_dir.path(), "snap", checksum_v2).as_deref(),
         Some(source_v2.as_str())
     );
     // The ledger keeps history: the superseded snapshot stays retrievable.
     assert_eq!(
-        db.get_plan_snapshot(checksum_v1).await.unwrap().as_deref(),
+        ledger::plan_snapshot_source(ledger_dir.path(), "snap", checksum_v1).as_deref(),
         Some(source_v1.as_str())
     );
 

@@ -411,8 +411,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        let _db1 = InstalledDb::open(&db_path).await.unwrap();
-        let result = InstalledDb::open(&db_path).await;
+        let _db1 = InstalledDb::open(&db_path, None).await.unwrap();
+        let result = InstalledDb::open(&db_path, None).await;
         match result {
             Err(ref e) => {
                 let err_msg = format!("{}", e);
@@ -617,31 +617,6 @@ mod tests {
         assert_eq!(stored.name, "provenance-plan");
         assert_eq!(stored.version, "1.2.3");
         assert_eq!(stored.plan_checksum.as_deref(), Some("deadbeef"));
-    }
-
-    #[tokio::test]
-    async fn test_plan_snapshot_roundtrip_and_dedup() {
-        let db = test_db().await;
-
-        assert!(db.get_plan_snapshot("deadbeef").await.unwrap().is_none());
-
-        db.insert_plan_snapshot("deadbeef", "name = \"demo\"\n")
-            .await
-            .unwrap();
-        assert_eq!(
-            db.get_plan_snapshot("deadbeef").await.unwrap().as_deref(),
-            Some("name = \"demo\"\n")
-        );
-
-        // Re-sealing an unchanged plan must not fail or duplicate: the
-        // checksum primary key ignores the redundant insert.
-        db.insert_plan_snapshot("deadbeef", "name = \"demo\"\n")
-            .await
-            .unwrap();
-        assert_eq!(
-            db.get_plan_snapshot("deadbeef").await.unwrap().as_deref(),
-            Some("name = \"demo\"\n")
-        );
     }
 
     #[tokio::test]

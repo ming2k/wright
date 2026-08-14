@@ -33,11 +33,13 @@
 | [ADR-0029](0029-engine-owned-boundary-mapping.md) | Engine-owned mapping between sibling workspace crates | Accepted |
 | [ADR-0030](0030-single-database.md) | Single database for system state | Accepted |
 | [ADR-0031](0031-folio-manifest-amendments.md) | Folio manifest amendments (hooks, `<name>.toml`, no `[config]`/`arch`) | Accepted |
-| [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted |
-| [ADR-0033](0033-plan-source-snapshots.md) | Plan-source snapshots in parts and the registry | Accepted |
+| [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted (`-c` row and dry-run inversion superseded by ADR-0040) |
+| [ADR-0033](0033-plan-source-snapshots.md) | Plan-source snapshots in parts and the registry | Accepted (persistence amended by ADR-0041) |
 | [ADR-0034](0034-plan-output-namespaces-and-part-layout.md) | Plan/output namespaces and plan-qualified part layout | Accepted |
 | [ADR-0035](0035-git-fetch-via-gitoxide.md) | Git source fetching via gitoxide (gix) | Accepted |
 | [ADR-0036](0036-merged-base-stage-overlays.md) | Merged-base stage layers with sandbox-mounted stage overlays | Superseded by ADR-0037 |
 | [ADR-0037](0037-real-directory-stage-trees.md) | Real directory stage working trees instead of stage overlays | Accepted |
 | [ADR-0038](0038-git-source-snapshots.md) | Git sources cached as tree snapshots | Accepted |
 | [ADR-0039](0039-batch-failure-settlement.md) | Batch failure settlement instead of fail-fast | Accepted |
+| [ADR-0040](0040-clean-prune-consolidation-and-fresh-flag.md) | Consolidate maintenance deletion into `clean`; rename the from-scratch forge flag to `--fresh` | Accepted |
+| [ADR-0041](0041-file-backed-ledger.md) | File-backed ledger: build records, snapshot files, and `.BUILDINFO` | Accepted |
