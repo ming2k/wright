@@ -296,6 +296,12 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
                     {
                         die(e);
                     }
+                    if Path::new("/opt").exists()
+                        && newroot.join("opt").metadata().is_err()
+                        && let Err(e) = bind(Path::new("/opt"), Path::new("/opt"), true)
+                    {
+                        die(e);
+                    }
                     // Extra binds.
                     for (host, dest, ro) in &config.extra_binds {
                         if let Err(e) = bind(host, dest, *ro) {

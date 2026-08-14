@@ -4,6 +4,7 @@ pub mod clean;
 pub mod common;
 pub mod doctor;
 pub mod files;
+pub mod graph;
 pub mod history;
 pub mod install;
 pub mod launch;
@@ -124,6 +125,10 @@ pub enum QueryCommands {
     /// Print the plan source recorded when a plan's parts were sealed
     #[command(display_order = 16)]
     Plan(plan::PlanArgs),
+
+    /// Show the global plan relationship graph (terminal or --web)
+    #[command(display_order = 17)]
+    Graph(graph::GraphArgs),
 }
 
 #[derive(Subcommand)]
@@ -260,6 +265,10 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
             let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
             plan::run(args, &ctx).await
         }
+        Commands::Query(QueryCommands::Graph(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            graph::run(args, &ctx).await
+        }
 
         // ── Build & Packaging ───────────────────────────────────────
         Commands::Build(BuildCommands::Resolve(args)) => {
@@ -338,6 +347,30 @@ mod tests {
             panic!("expected prune command");
         };
         assert!(args.apply);
+    }
+
+    #[test]
+    fn graph_command_parses_arguments() {
+        let cli = Cli::try_parse_from(["wright", "graph"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Graph(args)) = cli.command else {
+            panic!("expected graph command");
+        };
+        assert!(!args.web);
+        assert_eq!(args.port, 8642);
+        assert!(!args.no_open);
+
+        let cli =
+            Cli::try_parse_from(["wright", "graph", "--web", "--port", "0", "--no-open"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Graph(args)) = cli.command else {
+            panic!("expected graph command");
+        };
+        assert!(args.web);
+        assert_eq!(args.port, 0);
+        assert!(args.no_open);
+
+        // --port and --no-open only make sense with --web.
+        assert!(Cli::try_parse_from(["wright", "graph", "--port", "9000"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "graph", "--no-open"]).is_err());
     }
 
     #[test]

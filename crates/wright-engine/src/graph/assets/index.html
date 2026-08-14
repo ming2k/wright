@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wright plan graph</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="toolbar">
+    <span class="brand">wright plan graph</span>
+
+    <div class="group" id="domain-filters" role="group" aria-label="filter edges by domain">
+      <span class="group-label">domains</span>
+      <label class="dm-build-text"><input type="checkbox" value="build" checked> build</label>
+      <label class="dm-link-text"><input type="checkbox" value="link" checked> link</label>
+      <label class="dm-runtime-text"><input type="checkbox" value="runtime" checked> runtime</label>
+    </div>
+
+    <div class="group" id="state-filters" role="group" aria-label="filter nodes by state">
+      <span class="group-label">states</span>
+      <label class="st-installed-text"><input type="checkbox" value="installed" checked> installed</label>
+      <label class="st-outdated-text"><input type="checkbox" value="outdated" checked> outdated</label>
+      <label class="st-missing-text"><input type="checkbox" value="missing" checked> missing</label>
+      <label class="st-external-text"><input type="checkbox" value="external" checked> external</label>
+    </div>
+
+    <label class="search-label" for="search">search
+      <input id="search" type="search" placeholder="node name…" autocomplete="off">
+    </label>
+
+    <button id="refresh" type="button">refresh</button>
+
+    <div id="legend" aria-label="legend">
+      <span class="lg-item"><i class="sw st-installed"></i>installed</span>
+      <span class="lg-item"><i class="sw st-outdated"></i>outdated</span>
+      <span class="lg-item"><i class="sw st-missing"></i>missing</span>
+      <span class="lg-item"><i class="sw st-external"></i>external</span>
+      <span class="lg-item"><i class="sw-line dm-build"></i>build</span>
+      <span class="lg-item"><i class="sw-line dm-link"></i>link</span>
+      <span class="lg-item"><i class="sw-line dm-runtime"></i>runtime</span>
+    </div>
+
+    <span id="stats" aria-live="polite"></span>
+  </header>
+
+  <div id="error-banner" role="alert" hidden></div>
+
+  <main id="main">
+    <div id="canvas-wrap">
+      <svg id="graph" role="img" aria-label="plan dependency graph"></svg>
+      <div id="loading">Loading graph…</div>
+      <div id="empty" hidden>No plans discovered.</div>
+      <div id="toast" role="status" hidden></div>
+    </div>
+    <aside id="detail" hidden>
+      <button id="detail-close" type="button" aria-label="close details">×</button>
+      <div id="detail-body"></div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

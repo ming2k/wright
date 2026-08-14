@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **New `wright graph` command showing the relationship graph across every discovered plan, deployed or not.** Each plan node carries a state (`installed`, `outdated`, `missing`; names outside the plan set appear as `external`) and each edge a dependency domain (`build`, `link`, `runtime`). The default output is a terminal adjacency list; `wright graph --web` instead serves an interactive read-only page from a loopback-only HTTP server (`--port`, default 8642, `0` for a random port; `--no-open` to skip launching the browser) with domain/state filters, search, and a per-plan detail panel, plus a machine-readable `/api/graph` JSON endpoint rebuilt per request.
+
+### Fixed
+- **`git submodule update` output no longer tears the live `Submodules` spinner row.** The command inherited the terminal, so git's raw `Submodule '…' registered for path '…'` / `Cloning into …` chatter wrote straight past the progress display. Its stdout/stderr are now piped and forwarded line-by-line as structured `git.submodule` events (file log only, like other non-verb INFO events), leaving the spinner intact; on failure the error message carries the stderr tail (last 10 lines) instead of a bare exit code.
+
 ## [5.5.5] - 2026-08-14
 
 ### Added

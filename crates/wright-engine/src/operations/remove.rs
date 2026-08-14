@@ -98,9 +98,10 @@ pub async fn execute_remove(
             if !dependents.is_empty() {
                 crate::cli_action!(
                     "Cascading",
-                    "{} depends on {}: {}",
+                    "{} dependents of {}:\n{}{}",
                     dependents.len(),
                     name,
+                    crate::util::logging::continuation_indent(),
                     dependents.join(", ")
                 );
             }
@@ -126,7 +127,14 @@ pub async fn execute_remove(
                     WrightError::context(format!("failed to compute cascade list for {}", name), e)
                 })?;
             if !list.is_empty() {
-                crate::cli_action!("Cascading", "orphans of {}: {}", name, list.join(", "));
+                crate::cli_action!(
+                    "Cascading",
+                    "{} orphans of {}:\n{}{}",
+                    list.len(),
+                    name,
+                    crate::util::logging::continuation_indent(),
+                    list.join(", ")
+                );
             }
             list
         } else {

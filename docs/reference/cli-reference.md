@@ -291,6 +291,33 @@ rebuild and re-deploy to record one.
 | `--json` | Emit machine-readable JSON instead of raw plan source |
 | `--root <PATH>` | Query this target root instead of `/` |
 
+### `wright graph`
+
+Show the relationship graph across every discovered plan, whether or not it
+is deployed. Each plan carries a state — `installed`, `outdated` (deployed
+record diverges from the plan), or `missing` — and each edge carries a
+dependency domain (`build`, `link`, or `runtime`). Dependency names outside
+the plan set (virtual names, system libraries) appear as `external` nodes.
+
+By default the graph prints to the terminal as a per-plan adjacency list
+with a summary line. With `--web` it is served as an interactive page
+instead: wright binds a loopback-only HTTP server, opens the browser
+(unless `--no-open`), and serves until Ctrl-C. The page offers domain and
+state filters, search, and a per-plan detail panel; it is read-only. The
+server also exposes the graph as JSON at `/api/graph`, rebuilt per request.
+
+```bash
+wright graph
+wright graph --web
+wright graph --web --port 0 --no-open
+```
+
+| Flag | Description |
+|------|-------------|
+| `--web` | Serve the interactive web UI instead of terminal output |
+| `--port <PORT>` | Port for `--web`; `0` picks a random free port (default `8642`) |
+| `--no-open` | Do not open the browser automatically |
+
 ### JSON Output
 
 `list`, `files`, `owner`, `history`, `plan`, and `check` accept `--json`. Empty

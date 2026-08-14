@@ -154,6 +154,11 @@ pub struct GitSource {
     /// update --init`). Such sources bypass the source cache entirely.
     #[serde(default)]
     pub git_metadata: bool,
+    /// Automatically clone and recursively fetch all git submodules during
+    /// the source fetching phase. Submodules are bundled into the snapshot
+    /// cache for reproducible, offline builds.
+    #[serde(default)]
+    pub submodules: bool,
     /// Optional subdirectory under WORKDIR to extract/copy this source into.
     pub extract_to: Option<String>,
 }

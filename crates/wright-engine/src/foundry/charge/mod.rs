@@ -180,7 +180,7 @@ impl Charge {
                     .as_deref()
                     .map(|r| variables::process_uri(r, manifest))
                     .unwrap_or_else(|| "HEAD".to_string());
-                git::git_snapshot_filename(&processed_url, &processed_ref)
+                git::git_snapshot_filename(&processed_url, &processed_ref, git.submodules)
             }
             Source::Http(http) => {
                 let processed_url = variables::process_uri(&http.url, manifest);

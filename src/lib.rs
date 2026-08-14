@@ -5,7 +5,7 @@ pub use wright_engine::{
     outln,
 };
 pub use wright_engine::{
-    config, error, foundry, identify, isolation, ledger, operations, query, resolve, seal,
+    config, error, foundry, graph, identify, isolation, ledger, operations, query, resolve, seal,
     transaction,
 };
 

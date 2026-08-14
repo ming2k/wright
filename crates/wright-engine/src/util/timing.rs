@@ -24,7 +24,7 @@ use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::util::logging::VERB_WIDTH;
+use crate::util::logging::continuation_indent;
 
 /// Compact human-readable duration: `<1s` → `Nms` (`96ms`), `<60s` →
 /// seconds with one decimal (`1.1s`), otherwise minutes plus seconds
@@ -335,9 +335,7 @@ impl TimingSummary {
             .unwrap_or(0)
             .max(total_dur.len());
 
-        // Continuation lines align under the message column, i.e. past the
-        // right-aligned verb column plus its separating space.
-        let indent = " ".repeat(VERB_WIDTH + 1);
+        let indent = continuation_indent();
         for (label, dur, ok) in &rows {
             let marker = if *ok { "" } else { " (failed)" };
             let _ = write!(

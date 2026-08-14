@@ -49,7 +49,8 @@ impl Charge {
                     // time; nothing is cached.
                     return Ok(());
                 }
-                let filename = git_snapshot_filename(&processed_url, &processed_ref);
+                let filename =
+                    git_snapshot_filename(&processed_url, &processed_ref, git.submodules);
                 let dest = self.cache_dir.join(&filename);
                 if tokio::fs::metadata(&dest).await.is_err() {
                     let _permit = self
@@ -62,6 +63,7 @@ impl Charge {
                         Some(processed_ref.as_str()),
                         &dest,
                         &manifest.metadata.name,
+                        git.submodules,
                     )? {
                         debug!("Fetched Git commit: {} for {}", commit_id, filename);
                     }

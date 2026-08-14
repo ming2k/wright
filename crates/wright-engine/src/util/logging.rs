@@ -25,6 +25,14 @@ pub static USE_COLOR: LazyLock<bool> =
 /// Width of the right-aligned verb column. Matches Cargo (12).
 pub const VERB_WIDTH: usize = 12;
 
+/// Indentation for continuation lines under a verb header's message column:
+/// the right-aligned verb column plus its separating space. Multi-line
+/// reports (`Timing`, `Cascading`) prefix their rows with it so the body
+/// aligns with the header message regardless of verb length.
+pub fn continuation_indent() -> String {
+    " ".repeat(VERB_WIDTH + 1)
+}
+
 /// Render a Cargo-style action line: `{verb:>12} {msg}`.
 /// Standard verbs are bold green; the terminal failure verbs
 /// `Failed` and `Aborted` are bold red.

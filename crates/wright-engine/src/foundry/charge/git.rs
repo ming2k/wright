@@ -26,6 +26,7 @@ impl Charge {
         git_ref: Option<&str>,
         dest: &Path,
         scope: &str,
+        submodules: bool,
     ) -> Result<Option<String>> {
         let actual_ref = git_ref.unwrap_or("HEAD");
         if dest.exists() {
@@ -40,6 +41,17 @@ impl Charge {
         let label = progress::source_label(git_url);
         // Stage the clone next to the cache so the final rename is atomic.
         let tmp = tempfile::tempdir_in(&self.cache_dir).map_err(WrightError::IoError)?;
+
+        if submodules {
+            let checkout_dir = tmp.path().join("checkout");
+            std::fs::create_dir_all(&checkout_dir).map_err(WrightError::IoError)?;
+            self.clone_git_source(git_url, actual_ref, &checkout_dir, scope, true)?;
+            let snapshot_tmp = tmp.path().join("snapshot");
+            write_directory_snapshot(&checkout_dir, &snapshot_tmp)?;
+            std::fs::rename(&snapshot_tmp, dest).map_err(WrightError::IoError)?;
+            return Ok(None);
+        }
+
         let repo = gix::init_bare(tmp.path().join("repo"))
             .map_err(|e| WrightError::context("git init failed", e))?;
 
@@ -118,6 +130,7 @@ impl Charge {
         git_ref: &str,
         dest: &Path,
         scope: &str,
+        submodules: bool,
     ) -> Result<()> {
         let label = progress::source_label(git_url);
         // Commit hashes cannot be fetched shallow everywhere, so they get a
@@ -137,11 +150,6 @@ impl Charge {
         // pack was already received.
         repo.committer_or_set_generic_fallback()
             .map_err(|e| WrightError::context("git identity setup failed", e))?;
-        // A mirror fetch writes refs/heads/*, which triggers reflog writes in
-        // the non-bare worktree repo. Reflog entries need a committer identity,
-        // and there usually is none configured when running under sudo —
-        // without a fallback the fetch aborts its ref transaction after the
-        // pack was already received.
         let (refspecs, tags, depth) = if uses_private_ref {
             (
                 vec![format!("+{git_ref}:{checkout_ref}")],
@@ -201,8 +209,78 @@ impl Charge {
             deref: false,
         })
         .map_err(|e| WrightError::context("failed to update HEAD", e))?;
+
+        if submodules {
+            let _span = crate::cli_span!("Submodules", "{} ({})", label, scope);
+            run_git_submodule_update(dest, scope)?;
+        }
         Ok(())
     }
+}
+
+/// Run `git submodule update --init --recursive` inside `dest`.
+///
+/// The child's stdout/stderr are piped and forwarded line-by-line into the
+/// structured log instead of the terminal, so git's raw "Cloning into …" /
+/// "registered for path …" chatter never tears the live spinner row. When
+/// the command fails, the stderr tail rides along in the error message so
+/// the cause stays visible without a log-file dive.
+fn run_git_submodule_update(dest: &Path, scope: &str) -> Result<()> {
+    let mut child = std::process::Command::new("git")
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(dest)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| WrightError::context("failed to execute git submodule update", e))?;
+
+    let stdout = forward_output_lines(child.stdout.take(), scope);
+    let stderr = forward_output_lines(child.stderr.take(), scope);
+    let status = child
+        .wait()
+        .map_err(|e| WrightError::context("failed to wait for git submodule update", e))?;
+    let _ = stdout.join();
+    let stderr_lines = stderr.join().unwrap_or_default();
+
+    if !status.success() {
+        let code = status.code().unwrap_or(1);
+        let start = stderr_lines.len().saturating_sub(10);
+        let detail = stderr_lines[start..].join("\n");
+        return Err(WrightError::ForgeError(if detail.is_empty() {
+            format!("git submodule update failed with exit code {code}")
+        } else {
+            format!("git submodule update failed with exit code {code}:\n{detail}")
+        }));
+    }
+    Ok(())
+}
+
+/// Drain a piped child stream on its own thread, forwarding each line to
+/// the file log — INFO events without a `verb` field never reach the CLI
+/// (see `util::logging::CliOutputLayer`). Returns the captured lines.
+fn forward_output_lines(
+    stream: Option<impl std::io::Read + Send + 'static>,
+    scope: &str,
+) -> std::thread::JoinHandle<Vec<String>> {
+    use std::io::BufRead;
+
+    let scope = scope.to_string();
+    std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        let Some(stream) = stream else {
+            return captured;
+        };
+        for line in std::io::BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            let line = line.trim_end().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            tracing::info!(event = "git.submodule", scope = %scope, "{line}");
+            captured.push(line);
+        }
+        captured
+    })
 }
 
 /// Fetch the given refspecs from `git_url` into `repo`.
@@ -344,6 +422,79 @@ fn write_tree_entries(
     Ok(())
 }
 
+fn write_directory_snapshot(src_dir: &Path, out_tar_zst: &Path) -> Result<()> {
+    let file = std::fs::File::create(out_tar_zst).map_err(WrightError::IoError)?;
+    let encoder = zstd::stream::write::Encoder::new(file, 3).map_err(WrightError::IoError)?;
+    let mut builder = tar::Builder::new(encoder);
+
+    fn append_dir_recursive(
+        base: &Path,
+        current: &Path,
+        builder: &mut tar::Builder<impl std::io::Write>,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(current).map_err(WrightError::IoError)? {
+            let entry = entry.map_err(WrightError::IoError)?;
+            let path = entry.path();
+            let file_name = entry.file_name();
+            if file_name == ".git" {
+                continue;
+            }
+            let rel_path = path
+                .strip_prefix(base)
+                .map_err(|e| WrightError::context("strip prefix failed", e))?;
+            let metadata = std::fs::symlink_metadata(&path).map_err(WrightError::IoError)?;
+            if metadata.is_symlink() {
+                let target = std::fs::read_link(&path).map_err(WrightError::IoError)?;
+                let mut header = tar::Header::new_old();
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_mode(0o777);
+                header.set_size(0);
+                header.set_mtime(0);
+                builder
+                    .append_link(&mut header, rel_path, &target)
+                    .map_err(|e| WrightError::context("tar append link failed", e))?;
+            } else if metadata.is_dir() {
+                let mut header = tar::Header::new_old();
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_mode(0o755);
+                header.set_size(0);
+                header.set_mtime(0);
+                builder
+                    .append_data(&mut header, rel_path, std::io::empty())
+                    .map_err(|e| WrightError::context("tar append dir failed", e))?;
+                append_dir_recursive(base, &path, builder)?;
+            } else {
+                let mut file = std::fs::File::open(&path).map_err(WrightError::IoError)?;
+                let mut header = tar::Header::new_old();
+                header.set_entry_type(tar::EntryType::Regular);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = metadata.permissions().mode();
+                    header.set_mode(if mode & 0o111 != 0 { 0o755 } else { 0o644 });
+                }
+                #[cfg(not(unix))]
+                header.set_mode(0o644);
+                header.set_size(metadata.len());
+                header.set_mtime(0);
+                builder
+                    .append_data(&mut header, rel_path, &mut file)
+                    .map_err(|e| WrightError::context("tar append file failed", e))?;
+            }
+        }
+        Ok(())
+    }
+
+    append_dir_recursive(src_dir, src_dir, &mut builder)?;
+    let encoder = builder
+        .into_inner()
+        .map_err(|e| WrightError::context("tar finish failed", e))?;
+    encoder
+        .finish()
+        .map_err(|e| WrightError::context("zstd finish failed", e))?;
+    Ok(())
+}
+
 #[cfg(unix)]
 fn os_str_from_bytes(bytes: &[u8]) -> &std::ffi::OsStr {
     std::os::unix::ffi::OsStrExt::from_bytes(bytes)
@@ -358,12 +509,15 @@ fn mirror_refspecs() -> Vec<String> {
 
 /// Filename of the snapshot tarball caching one pinned git source tree,
 /// derived from the repository URL and the requested ref.
-pub(super) fn git_snapshot_filename(git_url: &str, git_ref: &str) -> String {
+pub(super) fn git_snapshot_filename(git_url: &str, git_ref: &str, submodules: bool) -> String {
     use sha2::{Digest, Sha256};
     let last_segment = git_url.split('/').next_back().unwrap_or("repo");
     let stem = sanitize_cache_filename(last_segment.strip_suffix(".git").unwrap_or(last_segment));
     let mut h = Sha256::new();
     h.update(git_url.as_bytes());
+    if submodules {
+        h.update(b":submodules");
+    }
     let hash = format!("{:x}", h.finalize());
     format!(
         "{}-{}-{}.tar.zst",
@@ -576,9 +730,9 @@ mod tests {
         let charge = test_charge(sources_dir.clone());
 
         let url = upstream.to_str().unwrap();
-        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0"));
+        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0", false));
         let commit = charge
-            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test", false)
             .unwrap()
             .expect("fresh fetch reports the commit");
         assert_eq!(commit, first);
@@ -600,9 +754,9 @@ mod tests {
         let charge = test_charge(sources_dir.clone());
 
         let url = upstream.to_str().unwrap();
-        let dest = sources_dir.join(git_snapshot_filename(url, &first));
+        let dest = sources_dir.join(git_snapshot_filename(url, &first, false));
         let commit = charge
-            .fetch_git_snapshot(url, Some(&first), &dest, "test")
+            .fetch_git_snapshot(url, Some(&first), &dest, "test", false)
             .unwrap()
             .expect("fresh fetch reports the commit");
         assert_eq!(commit, first);
@@ -624,15 +778,15 @@ mod tests {
         let charge = test_charge(sources_dir.clone());
 
         let url = upstream.to_str().unwrap();
-        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0"));
+        let dest = sources_dir.join(git_snapshot_filename(url, "v1.0.0", false));
         charge
-            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test", false)
             .unwrap();
 
         // The upstream is gone; a cached snapshot must still be usable.
         std::fs::remove_dir_all(&upstream).unwrap();
         let commit = charge
-            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test")
+            .fetch_git_snapshot(url, Some("v1.0.0"), &dest, "test", false)
             .unwrap();
         assert!(commit.is_none(), "cached snapshot skips the fetch");
     }
@@ -648,7 +802,7 @@ mod tests {
         let dest = root.path().join("work");
         std::fs::create_dir_all(&dest).unwrap();
         charge
-            .clone_git_source(upstream.to_str().unwrap(), "v1.0.0", &dest, "test")
+            .clone_git_source(upstream.to_str().unwrap(), "v1.0.0", &dest, "test", false)
             .unwrap();
 
         assert_eq!(
@@ -656,6 +810,163 @@ mod tests {
             "one\n"
         );
         assert!(dest.join(".git").exists(), "clone keeps git metadata");
+    }
+
+    /// One commit with one file in a fresh repository under `root`; returns
+    /// the repo, its default branch name, and the commit id.
+    fn make_single_commit_repo(
+        root: &Path,
+        dir: &str,
+        name: &str,
+        contents: &str,
+    ) -> (gix::Repository, String, gix::ObjectId) {
+        let mut repo = gix::init(root.join(dir)).unwrap();
+        {
+            let mut config = repo.config_snapshot_mut();
+            config
+                .set_value(&gix::config::tree::User::NAME, "Wright Test")
+                .unwrap();
+            config
+                .set_value(&gix::config::tree::User::EMAIL, "wright@example.invalid")
+                .unwrap();
+        }
+        let blob_id = repo.write_blob(contents.as_bytes()).unwrap().detach();
+        let tree = gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: name.into(),
+                oid: blob_id,
+            }],
+        };
+        let tree_id = repo.write_object(&tree).unwrap().detach();
+        let commit_id = repo
+            .commit(
+                "HEAD",
+                format!("add {name}"),
+                tree_id,
+                Vec::<gix::ObjectId>::new(),
+            )
+            .unwrap()
+            .detach();
+        let branch = repo
+            .head_name()
+            .unwrap()
+            .expect("born")
+            .shorten()
+            .to_string();
+        (repo, branch, commit_id)
+    }
+
+    #[test]
+    fn clone_git_source_with_submodules_checks_out_submodule_content() {
+        let root = tempfile::tempdir().unwrap();
+        let (sub_repo, _sub_branch, sub_commit) =
+            make_single_commit_repo(root.path(), "sub-upstream", "inner.txt", "sub file\n");
+
+        // Main upstream: `.gitmodules` plus a gitlink pinning the submodule
+        // commit.
+        let (repo, branch, first_commit) =
+            make_single_commit_repo(root.path(), "upstream", "a.txt", "one\n");
+        let gitmodules = format!(
+            "[submodule \"sub\"]\n\tpath = sub\n\turl = {}\n",
+            sub_repo.workdir().unwrap().display()
+        );
+        let gitmodules_id = repo.write_blob(gitmodules.as_bytes()).unwrap().detach();
+        let tree = gix::objs::Tree {
+            entries: vec![
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: ".gitmodules".into(),
+                    oid: gitmodules_id,
+                },
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Commit.into(),
+                    filename: "sub".into(),
+                    oid: sub_commit,
+                },
+            ],
+        };
+        let tree_id = repo.write_object(&tree).unwrap().detach();
+        repo.commit("HEAD", "add submodule", tree_id, vec![first_commit])
+            .unwrap();
+
+        // git refuses the file protocol for submodule clones by default;
+        // permit it for this local fixture.
+        unsafe { std::env::set_var("GIT_ALLOW_PROTOCOL", "file") };
+
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir);
+        let dest = root.path().join("work");
+        std::fs::create_dir_all(&dest).unwrap();
+        charge
+            .clone_git_source(
+                repo.workdir().unwrap().to_str().unwrap(),
+                &branch,
+                &dest,
+                "test",
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("sub/inner.txt")).unwrap(),
+            "sub file\n"
+        );
+    }
+
+    #[test]
+    fn clone_git_source_with_submodules_reports_stderr_on_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let (repo, branch, first_commit) =
+            make_single_commit_repo(root.path(), "upstream", "a.txt", "one\n");
+        // The submodule URL does not exist: the update must fail, and the
+        // error must carry git's own words, not just an exit code.
+        let gitmodules =
+            "[submodule \"sub\"]\n\tpath = sub\n\turl = /nonexistent/wright-test-sub\n";
+        let gitmodules_id = repo.write_blob(gitmodules.as_bytes()).unwrap().detach();
+        let tree = gix::objs::Tree {
+            entries: vec![
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: ".gitmodules".into(),
+                    oid: gitmodules_id,
+                },
+                gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Commit.into(),
+                    filename: "sub".into(),
+                    oid: gix::ObjectId::null(gix::hash::Kind::Sha1),
+                },
+            ],
+        };
+        let tree_id = repo.write_object(&tree).unwrap().detach();
+        repo.commit("HEAD", "add submodule", tree_id, vec![first_commit])
+            .unwrap();
+
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+        let charge = test_charge(sources_dir);
+        let dest = root.path().join("work");
+        std::fs::create_dir_all(&dest).unwrap();
+        let err = charge
+            .clone_git_source(
+                repo.workdir().unwrap().to_str().unwrap(),
+                &branch,
+                &dest,
+                "test",
+                true,
+            )
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("git submodule update failed with exit code"),
+            "unexpected error: {msg}"
+        );
+        assert!(
+            msg.contains("fatal:"),
+            "stderr tail should ride along in the error: {msg}"
+        );
     }
 
     #[test]

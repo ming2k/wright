@@ -32,7 +32,8 @@ impl Charge {
                         .as_deref()
                         .map(|r| variables::process_uri(r, manifest))
                         .unwrap_or_else(|| "HEAD".to_string());
-                    let snapshot_name = git_snapshot_filename(&processed_url, &git_ref);
+                    let snapshot_name =
+                        git_snapshot_filename(&processed_url, &git_ref, git.submodules);
                     let final_dest = if let Some(ref sub) = git.extract_to {
                         let sub = variables::process_uri(sub, manifest);
                         dest_dir.join(&sub)
@@ -51,6 +52,7 @@ impl Charge {
                             &git_ref,
                             &final_dest,
                             &manifest.metadata.name,
+                            git.submodules,
                         )?;
                     } else {
                         debug!(
@@ -252,9 +254,9 @@ mod tests {
         let charge = Charge::new(&config, Arc::new(Semaphore::new(1)));
 
         // Populate the source cache the way the fetch stage does.
-        let snapshot = sources_dir.join(git_snapshot_filename(source_url, "v1.0.0"));
+        let snapshot = sources_dir.join(git_snapshot_filename(source_url, "v1.0.0", false));
         charge
-            .fetch_git_snapshot(source_url, Some("v1.0.0"), &snapshot, "test")
+            .fetch_git_snapshot(source_url, Some("v1.0.0"), &snapshot, "test", false)
             .unwrap();
 
         let manifest = PlanManifest::parse(&format!(

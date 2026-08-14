@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::config::GlobalConfig;
@@ -95,7 +96,7 @@ pub async fn execute_upgrade(
         .filter(|n| !target_set.contains(n))
         .collect();
     extras.sort_unstable();
-    if !extras.is_empty() && !quiet {
+    if !extras.is_empty() {
         let mut groups: std::collections::BTreeMap<&str, Vec<&str>> =
             std::collections::BTreeMap::new();
         for extra in &extras {
@@ -107,20 +108,27 @@ pub async fn execute_upgrade(
             groups.entry(trigger).or_default().push(extra);
         }
 
-        crate::cli_action!(
-            "Cascading",
-            "rdeps of {} ({} packages affected):",
-            targets.join(", "),
-            extras.len()
-        );
-        for (trigger, pkgs) in groups {
-            let label = if target_set.contains(trigger) {
-                format!("via {} (direct)", trigger)
-            } else {
-                format!("via {}", trigger)
-            };
-            crate::outln!("    {:<24} {}", label, pkgs.join(", "));
+        // One multi-line event in the `Timing` report's shape: the verb
+        // header carries counts only, then one continuation row per trigger
+        // aligned under the message column, labels padded to the widest.
+        let rows: Vec<(String, String)> = groups
+            .iter()
+            .map(|(trigger, pkgs)| {
+                let label = if target_set.contains(trigger) {
+                    format!("via {} (direct)", trigger)
+                } else {
+                    format!("via {}", trigger)
+                };
+                (label, pkgs.join(", "))
+            })
+            .collect();
+        let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+        let indent = crate::util::logging::continuation_indent();
+        let mut block = format!("{} rdeps of {} plan(s):", extras.len(), targets.len());
+        for (label, pkgs) in &rows {
+            let _ = write!(block, "\n{indent}{label:<label_width$}  {pkgs}");
         }
+        crate::cli_action!("Cascading", "{}", block);
     }
 
     if dry_run {
