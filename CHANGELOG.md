@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.5.4] - 2026-08-14
+
 ### Changed
 - **Parallel batch failures now settle cargo-style instead of failing fast (ADR-0039).** Tasks within a build/install batch have no inter-dependencies, so a failing task no longer interrupts its siblings: each failure is announced immediately as a one-line `error: task '<name>' failed: <cause>` notice pointing at the stage log, every task runs to completion, and the batch then settles — a single failure keeps the existing terminal failure report unchanged, while multiple failures close with an aggregated `error: N tasks failed in batch i/j` report whose `Caused by:` list enumerates every failed task. A failed batch still blocks the next batch and rolls the delivery transaction back, but the rollback now runs only after no build task is left running. Ctrl-C semantics are unchanged: tasks reaped by the signal handler settle as a single "cancelled by user".
 
