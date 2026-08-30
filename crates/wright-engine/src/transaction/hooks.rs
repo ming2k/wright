@@ -83,7 +83,11 @@ where
             continue;
         }
         if stderr {
-            tracing::warn!(
+            // Hook stderr is routine chatter, not a warning: tools like
+            // ldconfig report their normal work there, and the user can
+            // rarely act on it. Keep it out of the CLI warning stream
+            // (and the run's warning count); it stays in the file log.
+            tracing::info!(
                 event = "hooks.stderr",
                 hook_name,
                 part_name,

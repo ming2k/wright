@@ -15,6 +15,7 @@ struct BatchWorkspace {
     root: PathBuf,
     config_path: PathBuf,
     plans: PathBuf,
+    logs: PathBuf,
 }
 
 impl BatchWorkspace {
@@ -70,6 +71,7 @@ retry_count = 3
             root,
             config_path,
             plans,
+            logs,
         }
     }
 
@@ -199,9 +201,10 @@ runtime_deps = ["batch-slow"]
 
 /// A task that fails as the only (last-running) task of its batch is
 /// reported exactly once: no mid-run notice duplicates the terminal
-/// report, and the deferred step-timing table closes the failure block.
+/// report, and the terminal output cleanly ends at the log hint without
+/// dumping verbose timing tables.
 #[test]
-fn single_failure_reports_once_and_closes_with_timing() {
+fn single_failure_reports_once_and_terminal_is_clean() {
     let ws = BatchWorkspace::new();
     ws.write_plan("solo-fail", "", "exit 3");
 
@@ -214,22 +217,25 @@ fn single_failure_reports_once_and_closes_with_timing() {
         1,
         "a failure that empties its batch must be reported exactly once; stderr: {stderr}"
     );
-    // The timing table closes the failure block, after the log hint.
-    let see = stderr.find("for the full trace").unwrap_or(usize::MAX);
-    let timing = stderr.find("install step timing:");
     assert!(
-        timing.is_some_and(|t| t > see),
-        "timing report must follow the failure report; stderr: {stderr}"
-    );
-    // The header stays unmarked on failure — the report above it already
-    // carries the failure signal; the failed step row keeps its marker.
-    assert!(
-        !stderr.contains("install step timing (failed):"),
-        "header must not repeat the failure signal; stderr: {stderr}"
+        stderr.contains("for the full trace"),
+        "failure report must end with log hint; stderr: {stderr}"
     );
     assert!(
-        stderr.contains("forge") && stderr.contains("(failed)"),
-        "the failed step row keeps its marker; stderr: {stderr}"
+        !stderr.contains("install step timing:"),
+        "terminal failure output must not dump timing tables; stderr: {stderr}"
+    );
+
+    // Verify structured timing telemetry was persisted to the daily log file.
+    let log_files: Vec<_> = fs::read_dir(&ws.logs)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    assert!(!log_files.is_empty(), "a log file must be created");
+    let log_content = fs::read_to_string(&log_files[0]).unwrap();
+    assert!(
+        log_content.contains("workflow.timing"),
+        "log file must contain structured timing event; log: {log_content}"
     );
 }
 

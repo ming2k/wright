@@ -6,15 +6,10 @@
 //! called, otherwise as failed. A step that bails early via `?` therefore
 //! still has its duration counted; a failed step never loses its timing.
 //!
-//! At the end of a successful run the aggregated per-step durations plus
-//! the wall-clock total are rendered as a Cargo-style block and emitted
-//! through tracing, so the report lands on the CLI and in the daily log
-//! file alike. A failed run instead defers its report
-//! ([`WorkflowTiming::log_report`] stashes it) for the process-exit
-//! failure path to drain ([`emit_deferred_failure`]): the timing table
-//! then closes the terminal failure report as one contiguous block
-//! instead of splitting the error output, and its structured event
-//! reaches the file log only.
+//! At the end of a run, [`WorkflowTiming::log_report`] writes the structured
+//! `workflow.timing` event to the persistent file log for telemetry and
+//! performance tracing. The human CLI output stays clean and unpolluted
+//! (no verbose step-timing tables dumped to stdout/stderr).
 //!
 //! The registry is `Arc`-shared and cheap to clone: future extensions
 //! (e.g. per-pipeline forge timing recorded from spawned build tasks)
@@ -143,106 +138,31 @@ impl WorkflowTiming {
         }
     }
 
-    /// Close the run with the end-of-run timing report.
+    /// Record the end-of-run timing report to the structured file log.
     ///
-    /// Success emits the Cargo-style `Timing` block through tracing at
-    /// INFO (suppressed under `--quiet`, matching the `Finished` line),
-    /// landing on the CLI and in the file log alike.
-    ///
-    /// Failure defers the report instead: the rendered block and its
-    /// structured fields are stashed for [`emit_deferred_failure`], which
-    /// the process-exit failure path drains after the terminal failure
-    /// report. The timing table therefore closes the run instead of
-    /// splitting the error output, and the structured event reaches the
-    /// file log only — the CLI layer is already suppressed by then.
-    pub fn log_report(&self, workflow: &str, ok: bool, quiet: bool) {
+    /// The event is emitted at INFO without a `verb` field so that it lands
+    /// in the persistent daily file log only and never pollutes the human
+    /// CLI output.
+    pub fn log_report(&self, workflow: &str, ok: bool, _quiet: bool) {
         let summary = self.summary();
+        let total_secs = summary.total.as_secs_f64();
+        let steps = summary.compact();
         let block = summary.render(workflow);
-        if ok {
-            if !quiet {
-                let total_secs = summary.total.as_secs_f64();
-                let steps = summary.compact();
-                tracing::info!(
-                    verb = "Timing",
-                    event = "workflow.timing",
-                    workflow = %workflow,
-                    ok = true,
-                    total_secs,
-                    steps = %steps,
-                    "{}",
-                    block,
-                );
-            }
-        } else {
-            defer_failure(workflow, &summary, block);
-        }
+        tracing::info!(
+            event = "workflow.timing",
+            workflow = %workflow,
+            ok = ok,
+            total_secs,
+            steps = %steps,
+            "{}",
+            block,
+        );
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // A poisoned timing mutex must never crash the exit path.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
-}
-
-/// The deferred failure-path report: stashed by
-/// [`WorkflowTiming::log_report`], drained once by
-/// [`emit_deferred_failure`]. A command run fails at most once, so a
-/// single slot suffices.
-static DEFERRED_FAILURE: Mutex<Option<DeferredFailure>> = Mutex::new(None);
-
-/// A failed run's timing report, rendered and ready to close the terminal
-/// failure report.
-struct DeferredFailure {
-    workflow: String,
-    total_secs: f64,
-    compact: String,
-    block: String,
-}
-
-fn defer_failure(workflow: &str, summary: &TimingSummary, block: String) {
-    let deferred = DeferredFailure {
-        workflow: workflow.to_string(),
-        total_secs: summary.total.as_secs_f64(),
-        compact: summary.compact(),
-        block,
-    };
-    // A poisoned timing mutex must never crash the exit path.
-    *DEFERRED_FAILURE.lock().unwrap_or_else(|e| e.into_inner()) = Some(deferred);
-}
-
-/// Drain the failed run's deferred timing report. Called once from the
-/// process-exit failure path, after CLI output is suppressed: emits the
-/// structured `workflow.timing` event (file log only — the CLI layer is
-/// suppressed) and returns the block as print-ready lines, the first
-/// carrying the `Timing` verb column. `None` when no run deferred.
-pub fn emit_deferred_failure() -> Option<Vec<String>> {
-    let deferred = DEFERRED_FAILURE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take()?;
-    tracing::warn!(
-        verb = "Timing",
-        event = "workflow.timing",
-        workflow = %deferred.workflow,
-        ok = false,
-        total_secs = deferred.total_secs,
-        steps = %deferred.compact,
-        "{}",
-        deferred.block,
-    );
-    let lines = deferred
-        .block
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            if i == 0 {
-                crate::util::logging::format_action("Timing", line)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect();
-    Some(lines)
 }
 
 /// RAII step measurement. Records into the parent registry on drop.
@@ -441,20 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn failed_log_report_defers_and_exit_path_drains_once() {
+    fn log_report_summarizes_steps() {
         let timing = WorkflowTiming::new();
         timing.record("resolve", Duration::from_millis(854), true);
         timing.record("forge", Duration::from_millis(12100), false);
-        timing.log_report("install", false, false);
-
-        let lines = emit_deferred_failure().expect("a failed run defers its report");
-        assert!(lines[0].contains("Timing"));
-        assert!(lines[0].contains("install step timing:"));
-        assert!(lines.iter().any(|l| l.contains("12.1s (failed)")));
-        assert!(
-            emit_deferred_failure().is_none(),
-            "the deferred report drains exactly once"
-        );
+        let summary = timing.summary();
+        assert_eq!(summary.steps.len(), 2);
+        assert!(!summary.steps[1].ok);
+        assert_eq!(summary.compact(), "resolve=854ms,forge=12.1s(!)");
     }
 
     #[test]
