@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [5.6.1] - 2026-08-30
+
+### Changed
+- **Streamlined workflow timing output: terminal output is kept clean while full telemetry is persisted to daily log files.** The end-of-run `Timing:` block is no longer printed to stdout/stderr (on success or failure), keeping human CLI interaction clean and avoiding clutter in multi-project batch builds. Full step timing and telemetry are recorded directly in the persistent daily log files as structured `workflow.timing` events.
+- **Package install and upgrade hook stderr output is recorded at INFO level** in the file log instead of triggering CLI warning counts for routine hook output (e.g. from `ldconfig`).
+
 ## [5.6.0] - 2026-08-14
 
 ### Added
