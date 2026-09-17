@@ -9,6 +9,14 @@ use wright::util::logging::{
 use wright::util::progress::MULTI;
 
 fn main() {
+    // Disable interactive git terminal prompts in CLI to prevent hanging on credentials for private repos.
+    if std::env::var_os("GIT_TERMINAL_PROMPT").is_none() {
+        // SAFETY: Called at the very beginning of main before Tokio creates any worker threads.
+        unsafe {
+            std::env::set_var("GIT_TERMINAL_PROMPT", "0");
+        }
+    }
+
     // Isolation setup must begin before Tokio creates worker threads. The
     // helper then owns every fork/unshare/mount operation in a fresh,
     // single-threaded process.

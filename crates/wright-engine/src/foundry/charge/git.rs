@@ -39,6 +39,7 @@ impl Charge {
         }
 
         let label = progress::source_label(git_url);
+        std::fs::create_dir_all(&self.cache_dir).map_err(WrightError::IoError)?;
         // Stage the clone next to the cache so the final rename is atomic.
         let tmp = tempfile::tempdir_in(&self.cache_dir).map_err(WrightError::IoError)?;
 
@@ -52,8 +53,9 @@ impl Charge {
             return Ok(None);
         }
 
-        let repo = gix::init_bare(tmp.path().join("repo"))
+        let mut repo = gix::init_bare(tmp.path().join("repo"))
             .map_err(|e| WrightError::context("git init failed", e))?;
+        apply_repo_non_interactive_defaults(&mut repo);
 
         let resolve_target = if is_commit_hash(actual_ref) {
             let local_ref = local_fetch_ref(actual_ref);
@@ -65,8 +67,12 @@ impl Charge {
                 gix::remote::fetch::Tags::None,
                 &label,
                 scope,
+                self.download_timeout,
             );
             if let Err(e) = shallow {
+                if is_terminal_fetch_error(&e) {
+                    return Err(e);
+                }
                 debug!(
                     "[{}] shallow fetch by commit hash failed ({}); falling back to full mirror",
                     scope, e
@@ -79,6 +85,7 @@ impl Charge {
                     gix::remote::fetch::Tags::All,
                     &label,
                     scope,
+                    self.download_timeout,
                 )?;
             }
             actual_ref.to_string()
@@ -92,6 +99,7 @@ impl Charge {
                 gix::remote::fetch::Tags::None,
                 &label,
                 scope,
+                self.download_timeout,
             )?;
             local_ref
         };
@@ -143,6 +151,7 @@ impl Charge {
         };
         let mut repo =
             gix::init(dest).map_err(|e| WrightError::context("local git init failed", e))?;
+        apply_repo_non_interactive_defaults(&mut repo);
         // A mirror fetch writes refs/heads/*, which triggers reflog writes in
         // the non-bare worktree repo. Reflog entries need a committer identity,
         // and there usually is none configured when running under sudo —
@@ -161,7 +170,16 @@ impl Charge {
             // arbitrary commit hashes all resolve locally.
             (mirror_refspecs(), gix::remote::fetch::Tags::All, None)
         };
-        fetch_refs(&repo, git_url, &refspecs, depth, tags, &label, scope)?;
+        fetch_refs(
+            &repo,
+            git_url,
+            &refspecs,
+            depth,
+            tags,
+            &label,
+            scope,
+            self.download_timeout,
+        )?;
 
         let id = repo
             .rev_parse_single(checkout_ref.as_str())
@@ -212,7 +230,7 @@ impl Charge {
 
         if submodules {
             let _span = crate::cli_span!("Submodules", "{} ({})", label, scope);
-            run_git_submodule_update(dest, scope)?;
+            run_git_submodule_update(dest, scope, self.download_timeout)?;
         }
         Ok(())
     }
@@ -225,20 +243,54 @@ impl Charge {
 /// "registered for path …" chatter never tears the live spinner row. When
 /// the command fails, the stderr tail rides along in the error message so
 /// the cause stays visible without a log-file dive.
-fn run_git_submodule_update(dest: &Path, scope: &str) -> Result<()> {
-    let mut child = std::process::Command::new("git")
-        .args(["submodule", "update", "--init", "--recursive"])
+fn run_git_submodule_update(dest: &Path, scope: &str, timeout_secs: u64) -> Result<()> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["submodule", "update", "--init", "--recursive"])
         .current_dir(dest)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if std::env::var_os("GIT_TERMINAL_PROMPT").is_none() {
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+    }
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| WrightError::context("failed to execute git submodule update", e))?;
 
     let stdout = forward_output_lines(child.stdout.take(), scope);
     let stderr = forward_output_lines(child.stderr.take(), scope);
-    let status = child
-        .wait()
-        .map_err(|e| WrightError::context("failed to wait for git submodule update", e))?;
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs.max(1));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout.join();
+                    let _ = stderr.join();
+                    return Err(WrightError::NetworkError(format!(
+                        "git submodule update timed out after {timeout_secs}s\n  \
+                         If a submodule is a private repository requiring authentication, verify your credentials and network connection."
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = stdout.join();
+                let _ = stderr.join();
+                return Err(WrightError::context(
+                    "failed to wait for git submodule update",
+                    e,
+                ));
+            }
+        }
+    };
     let _ = stdout.join();
     let stderr_lines = stderr.join().unwrap_or_default();
 
@@ -246,10 +298,20 @@ fn run_git_submodule_update(dest: &Path, scope: &str) -> Result<()> {
         let code = status.code().unwrap_or(1);
         let start = stderr_lines.len().saturating_sub(10);
         let detail = stderr_lines[start..].join("\n");
-        return Err(WrightError::ForgeError(if detail.is_empty() {
-            format!("git submodule update failed with exit code {code}")
+        let is_auth = detail.contains("Permission denied")
+            || detail.contains("Authentication failed")
+            || detail.contains("terminal prompts disabled")
+            || detail.contains("could not read Username")
+            || detail.contains("Repository not found");
+        let hint = if is_auth {
+            "\nHint: If submodules include private repositories, ensure credentials or SSH keys with ssh-agent are configured."
         } else {
-            format!("git submodule update failed with exit code {code}:\n{detail}")
+            ""
+        };
+        return Err(WrightError::ForgeError(if detail.is_empty() {
+            format!("git submodule update failed with exit code {code}{hint}")
+        } else {
+            format!("git submodule update failed with exit code {code}:\n{detail}{hint}")
         }));
     }
     Ok(())
@@ -283,6 +345,85 @@ fn forward_output_lines(
     })
 }
 
+/// Configure the repository to run non-interactively so fetching never blocks
+/// waiting for credentials or host confirmation on `/dev/tty`.
+fn apply_repo_non_interactive_defaults(repo: &mut gix::Repository) {
+    let mut config = repo.config_snapshot_mut();
+    let _ = config.set_value(
+        &gix::config::tree::gitoxide::Credentials::TERMINAL_PROMPT,
+        "false",
+    );
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        let _ = config.set_value(
+            &gix::config::tree::Core::SSH_COMMAND,
+            "ssh -o BatchMode=yes",
+        );
+    }
+}
+
+/// Check if a git error is an authentication failure, private repository 404,
+/// or timeout so that fallback full-mirror fetches can be skipped immediately.
+fn is_terminal_fetch_error(err: &WrightError) -> bool {
+    let msg = err.to_string();
+    msg.contains("authentication required")
+        || msg.contains("repository not found")
+        || msg.contains("timed out")
+}
+
+/// Flatten an error and all its sources into a single descriptive string.
+fn full_error_text(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = Vec::new();
+    let mut cur = Some(err);
+    while let Some(node) = cur {
+        let s = node.to_string();
+        if !s.is_empty() {
+            parts.push(s);
+        }
+        cur = node.source();
+    }
+    parts.join(": ")
+}
+
+/// Map low-level git fetch errors to clear, actionable WrightErrors with
+/// guidance for private repositories.
+fn map_git_error(
+    err: &(dyn std::error::Error + 'static),
+    git_url: &str,
+    action: &str,
+) -> WrightError {
+    let err_str = full_error_text(err);
+    let is_auth = err_str.contains("401")
+        || err_str.contains("403")
+        || err_str.contains("IdentityMissing")
+        || err_str.contains("Failed to obtain credentials")
+        || err_str.contains("Permission denied")
+        || err_str.contains("permission denied")
+        || err_str.contains("publickey")
+        || err_str.contains("Host key verification failed")
+        || err_str.contains("Authentication failed")
+        || err_str.contains("authentication failed")
+        || err_str.contains("terminal prompts disabled");
+
+    if is_auth {
+        WrightError::ForgeError(format!(
+            "failed to {action} git repository '{git_url}': authentication required or access denied\n  \
+             If this is a private repository, ensure valid credentials or SSH keys are configured:\n    \
+             • For HTTPS: configure git credential helpers or use a token (e.g. https://<token>@host/...)\n    \
+             • For SSH: ensure your SSH key is added to ssh-agent ('ssh-add') and authorized on the remote host"
+        ))
+    } else if err_str.contains("404") {
+        WrightError::ForgeError(format!(
+            "failed to {action} git repository '{git_url}': repository not found (HTTP 404)\n  \
+             Note: If this is a private repository, the server may return 404 when unauthenticated. Ensure valid credentials or SSH keys are configured."
+        ))
+    } else {
+        WrightError::context(
+            format!("failed to {action} git repository '{git_url}'"),
+            err_str,
+        )
+    }
+}
+
 /// Fetch the given refspecs from `git_url` into `repo`.
 fn fetch_refs(
     repo: &gix::Repository,
@@ -292,6 +433,7 @@ fn fetch_refs(
     tags: gix::remote::fetch::Tags,
     label: &str,
     scope: &str,
+    timeout_secs: u64,
 ) -> Result<()> {
     // An anonymous remote is enough: the fetch is driven by explicit
     // refspecs, nothing is persisted in the repo config.
@@ -310,19 +452,65 @@ fn fetch_refs(
 
     let git_span = crate::cli_span!("Fetching", "{} ({})", label, scope);
     let mut fetch_progress = FetchProgress::new(git_span.clone());
-    let interrupt = AtomicBool::new(false);
-    let connection = remote
-        .connect(gix::remote::Direction::Fetch)
-        .map_err(|e| WrightError::context("git fetch failed", e))?;
-    let mut prepare = connection
-        .prepare_fetch(
-            &mut fetch_progress,
-            gix::remote::ref_map::Options {
-                extra_refspecs,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| WrightError::context("git fetch failed", e))?;
+    let interrupt = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+
+    let interrupt_watchdog = interrupt.clone();
+    let done_watchdog = done.clone();
+    let timeout_duration = std::time::Duration::from_secs(timeout_secs.max(1));
+    let watchdog = std::thread::Builder::new()
+        .name("git-fetch-watchdog".into())
+        .spawn(move || {
+            let start = std::time::Instant::now();
+            while !done_watchdog.load(Ordering::Relaxed) {
+                if start.elapsed() >= timeout_duration {
+                    interrupt_watchdog.store(true, Ordering::Relaxed);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+
+    let connection = match remote.connect(gix::remote::Direction::Fetch) {
+        Ok(c) => c,
+        Err(e) => {
+            done.store(true, Ordering::Relaxed);
+            if let Ok(handle) = watchdog {
+                let _ = handle.join();
+            }
+            if interrupt.load(Ordering::Relaxed) {
+                return Err(WrightError::NetworkError(format!(
+                    "timed out after {timeout_secs}s while fetching git repository '{git_url}'\n  \
+                     If this is a private repository requiring authentication, verify your credentials and network connection."
+                )));
+            }
+            return Err(map_git_error(&e, git_url, "connect to"));
+        }
+    };
+
+    let mut prepare = match connection.prepare_fetch(
+        &mut fetch_progress,
+        gix::remote::ref_map::Options {
+            extra_refspecs,
+            ..Default::default()
+        },
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            done.store(true, Ordering::Relaxed);
+            if let Ok(handle) = watchdog {
+                let _ = handle.join();
+            }
+            if interrupt.load(Ordering::Relaxed) {
+                return Err(WrightError::NetworkError(format!(
+                    "timed out after {timeout_secs}s while fetching git repository '{git_url}'\n  \
+                     If this is a private repository requiring authentication, verify your credentials and network connection."
+                )));
+            }
+            return Err(map_git_error(&e, git_url, "prepare fetch for"));
+        }
+    };
+
     if let Some(d) = depth
         && d > 0
         && let Some(depth) = NonZeroU32::new(d)
@@ -331,7 +519,20 @@ fn fetch_refs(
     }
     let fetch_result = prepare.receive(&mut fetch_progress, &interrupt);
     drop(git_span);
-    fetch_result.map_err(|e| WrightError::context(format!("git fetch failed for {git_url}"), e))?;
+
+    done.store(true, Ordering::Relaxed);
+    if let Ok(handle) = watchdog {
+        let _ = handle.join();
+    }
+
+    if interrupt.load(Ordering::Relaxed) {
+        return Err(WrightError::NetworkError(format!(
+            "timed out after {timeout_secs}s while fetching git repository '{git_url}'\n  \
+             If this is a private repository requiring authentication, verify your credentials and network connection."
+        )));
+    }
+
+    fetch_result.map_err(|e| map_git_error(&e, git_url, "fetch from"))?;
     Ok(())
 }
 
@@ -1028,5 +1229,141 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(entries[0].0.contains("deep_file.txt"));
         assert_eq!(entries[0].1, "hello long path\n");
+    }
+
+    #[tokio::test]
+    async fn test_private_repo_http_401_fails_with_clear_auth_error_immediately() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(mut stream) = stream {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let resp = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Git\"\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        let dest = root.path().join("snapshot.tar.zst");
+        let charge = test_charge(sources_dir);
+
+        let url = format!("http://127.0.0.1:{port}/org/private-repo.git");
+        let start = std::time::Instant::now();
+        let result = charge.fetch_git_snapshot(&url, Some("main"), &dest, "test", false);
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "expected fetch to fail for 401");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("authentication required or access denied"),
+            "unexpected error message: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("private repository"),
+            "expected hint about private repository: {err_msg}"
+        );
+        // Ensure it failed immediately and did not hang
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "fetch took too long ({:?}), possible hang",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_private_repo_http_404_explains_private_repo_note() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(mut stream) = stream {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        let dest = root.path().join("snapshot.tar.zst");
+        let charge = test_charge(sources_dir);
+
+        let url = format!("http://127.0.0.1:{port}/org/not-found-or-private.git");
+        let result = charge.fetch_git_snapshot(&url, Some("main"), &dest, "test", false);
+
+        assert!(result.is_err(), "expected fetch to fail for 404");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("HTTP 404"),
+            "expected HTTP 404 mention: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("private repository"),
+            "expected hint about private repository: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_git_fetch_timeout() {
+        use std::net::TcpListener;
+
+        // Listener that accepts connections but never responds
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(_stream) = stream {
+                    // Hold the connection open without sending any data
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        });
+
+        let root = tempfile::tempdir().unwrap();
+        let sources_dir = root.path().join("sources");
+        let dest = root.path().join("snapshot.tar.zst");
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = sources_dir;
+        config.network.download_timeout = 1; // 1 second timeout
+        let pool = Arc::new(Semaphore::new(1));
+        let charge = Charge::new(&config, pool);
+
+        let url = format!("http://127.0.0.1:{port}/stalled-repo.git");
+        let start = std::time::Instant::now();
+        let result = charge.fetch_git_snapshot(&url, Some("main"), &dest, "test", false);
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "expected fetch to time out");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("timed out"),
+            "expected timeout error message, got: {err_msg}"
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_secs(1),
+            "timeout occurred too quickly: {:?}",
+            elapsed
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "timeout took too long: {:?}",
+            elapsed
+        );
     }
 }

@@ -47,13 +47,29 @@ impl Charge {
                         // The build expects a working git repository (e.g. for
                         // `git submodule update --init`): clone from upstream
                         // straight into the work directory.
-                        self.clone_git_source(
-                            &processed_url,
-                            &git_ref,
-                            &final_dest,
-                            &manifest.metadata.name,
-                            git.submodules,
-                        )?;
+                        let charge = self.clone();
+                        let url = processed_url.clone();
+                        let gref = git_ref.clone();
+                        let dest = final_dest.clone();
+                        let scope = manifest.metadata.name.clone();
+                        let submodules = git.submodules;
+                        let timeout_secs = self.download_timeout;
+                        let timeout_dur = std::time::Duration::from_secs(timeout_secs.max(1));
+                        let join = tokio::task::spawn_blocking(move || {
+                            charge.clone_git_source(&url, &gref, &dest, &scope, submodules)
+                        });
+                        match tokio::time::timeout(timeout_dur, join).await {
+                            Ok(join_res) => {
+                                join_res
+                                    .map_err(|e| WrightError::context("git clone join", e))??;
+                            }
+                            Err(_) => {
+                                return Err(WrightError::NetworkError(format!(
+                                    "timed out after {timeout_secs}s while cloning git repository '{processed_url}'\n  \
+                                     If this is a private repository requiring authentication, verify your credentials and network connection."
+                                )));
+                            }
+                        }
                     } else {
                         debug!(
                             "Extracting git snapshot {} to {} ...",

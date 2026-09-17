@@ -32,6 +32,7 @@ pub struct ChargeResult {
 ///
 /// Charge owns the first three stages of a build: `fetch`, `verify`, `extract`.
 /// These are built-in stages; they do not run user-defined scripts.
+#[derive(Clone)]
 pub struct Charge {
     cache_dir: PathBuf,
     network_pool: Arc<Semaphore>,
