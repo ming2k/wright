@@ -25,7 +25,7 @@ pub enum StateError {
     PartAlreadyInstalled(String),
 
     #[error("SQLite error: {0}")]
-    SqliteError(#[from] sqlx::Error),
+    SqliteError(#[from] rusqlite::Error),
 
     /// Structured context wrapper: keeps the underlying error as a real
     /// `source()` so failure reports walk the actual chain instead of

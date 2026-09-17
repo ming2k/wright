@@ -2,36 +2,37 @@
 
 use crate::database::{DeliveryStatus, DeliveryTransaction, InstalledDb, OpStatus, TransactionOp};
 use crate::error::{Result, WrightError};
-use sqlx::{query, query_as};
+use rusqlite::params;
 
 impl InstalledDb {
     /// Begin a new delivery transaction in PLANNING state.
     pub async fn begin_delivery(&self, command: &str) -> Result<i64> {
         let now = chrono::Utc::now().to_rfc3339();
-        let res = query(
-            "INSERT INTO delivery_transactions (command, status, created_at, updated_at)
-             VALUES (?, 'planning', ?, ?)",
-        )
-        .bind(command)
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.pool)
+        let command = command.to_string();
+        self.write(move |conn| {
+            conn.execute(
+                "INSERT INTO delivery_transactions (command, status, created_at, updated_at)
+                 VALUES (?1, 'planning', ?2, ?3)",
+                params![command, now, now],
+            )
+            .map_err(|e| WrightError::context("failed to begin delivery transaction", e))?;
+            Ok(conn.last_insert_rowid())
+        })
         .await
-        .map_err(|e| WrightError::context("failed to begin delivery transaction", e))?;
-        Ok(res.last_insert_rowid())
     }
 
     /// Transition a delivery transaction to a new status.
     pub async fn set_delivery_status(&self, tx_id: i64, status: DeliveryStatus) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        query("UPDATE delivery_transactions SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(status)
-            .bind(&now)
-            .bind(tx_id)
-            .execute(&self.pool)
-            .await
+        self.write(move |conn| {
+            conn.execute(
+                "UPDATE delivery_transactions SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![status, now, tx_id],
+            )
             .map_err(|e| WrightError::context("failed to update delivery status", e))?;
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Insert a single operation into the transaction ops table.
@@ -44,22 +45,21 @@ impl InstalledDb {
         execution_order: i64,
         old_hash: Option<&str>,
     ) -> Result<i64> {
-        let res = query(
-            "INSERT INTO transaction_ops (transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-        )
-        .bind(tx_id)
-        .bind(part_name)
-        .bind(part_hash)
-        .bind(action_type)
-        .bind(execution_order)
-        .bind(old_hash)
-        .execute(&self.pool)
+        let part_name = part_name.to_string();
+        let part_hash = part_hash.to_string();
+        let action_type = action_type.to_string();
+        let old_hash = old_hash.map(|s| s.to_string());
+
+        self.write(move |conn| {
+            conn.execute(
+                "INSERT INTO transaction_ops (transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+                params![tx_id, part_name, part_hash, action_type, execution_order, old_hash],
+            )
+            .map_err(|e| WrightError::context("failed to insert transaction op", e))?;
+            Ok(conn.last_insert_rowid())
+        })
         .await
-        .map_err(|e| {
-            WrightError::context("failed to insert transaction op", e)
-        })?;
-        Ok(res.last_insert_rowid())
     }
 
     /// Insert multiple operations in a batch.
@@ -68,98 +68,118 @@ impl InstalledDb {
         tx_id: i64,
         ops: &[(String, String, String, i64, Option<String>)],
     ) -> Result<()> {
-        for (part_name, part_hash, action_type, execution_order, old_hash) in ops {
-            self.insert_transaction_op(
-                tx_id,
-                part_name,
-                part_hash,
-                action_type,
-                *execution_order,
-                old_hash.as_deref(),
-            )
-            .await?;
-        }
-        Ok(())
+        let ops = ops.to_vec();
+        self.write(move |conn| {
+            let mut stmt = conn.prepare(
+                "INSERT INTO transaction_ops (transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+            )?;
+            for (part_name, part_hash, action_type, execution_order, old_hash) in &ops {
+                stmt.execute(params![
+                    tx_id,
+                    part_name,
+                    part_hash,
+                    action_type,
+                    execution_order,
+                    old_hash,
+                ])
+                .map_err(|e| WrightError::context("failed to insert transaction op", e))?;
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Update a single operation's status.
     pub async fn set_op_status(&self, op_id: i64, status: OpStatus) -> Result<()> {
-        query("UPDATE transaction_ops SET status = ? WHERE id = ?")
-            .bind(status)
-            .bind(op_id)
-            .execute(&self.pool)
-            .await
+        self.write(move |conn| {
+            conn.execute(
+                "UPDATE transaction_ops SET status = ?1 WHERE id = ?2",
+                params![status, op_id],
+            )
             .map_err(|e| WrightError::context("failed to update op status", e))?;
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Update an operation's status and error message.
     pub async fn set_op_failed(&self, op_id: i64, error_msg: &str) -> Result<()> {
-        query("UPDATE transaction_ops SET status = 'failed', error_msg = ? WHERE id = ?")
-            .bind(error_msg)
-            .bind(op_id)
-            .execute(&self.pool)
-            .await
+        let error_msg = error_msg.to_string();
+        self.write(move |conn| {
+            conn.execute(
+                "UPDATE transaction_ops SET status = 'failed', error_msg = ?1 WHERE id = ?2",
+                params![error_msg, op_id],
+            )
             .map_err(|e| WrightError::context("failed to set op failed", e))?;
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Find any delivery transaction that is not yet complete (leftover from a crash).
     pub async fn get_active_delivery(&self) -> Result<Option<DeliveryTransaction>> {
-        let result: Option<DeliveryTransaction> = query_as(
-            "SELECT id, command, status, created_at, updated_at
-             FROM delivery_transactions
-             WHERE status IN ('planning', 'ready', 'applying')
-             ORDER BY id DESC
-             LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
+        self.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, command, status, created_at, updated_at
+                 FROM delivery_transactions
+                 WHERE status IN ('planning', 'ready', 'applying')
+                 ORDER BY id DESC
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(DeliveryTransaction::from_row(row)?))
+            } else {
+                Ok(None)
+            }
+        })
         .await
-        .map_err(|e| WrightError::context("failed to query active delivery", e))?;
-        Ok(result)
     }
 
     /// Get all operations for a delivery transaction, ordered by execution_order.
     pub async fn get_ops_for_delivery(&self, tx_id: i64) -> Result<Vec<TransactionOp>> {
-        let ops: Vec<TransactionOp> = query_as(
-            "SELECT id, transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash, error_msg
-             FROM transaction_ops
-             WHERE transaction_id = ?
-             ORDER BY execution_order",
-        )
-        .bind(tx_id)
-        .fetch_all(&self.pool)
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash, error_msg
+                 FROM transaction_ops
+                 WHERE transaction_id = ?1
+                 ORDER BY execution_order",
+            )?;
+            let rows = stmt.query_map(params![tx_id], TransactionOp::from_row)?;
+            let mut ops = Vec::new();
+            for r in rows {
+                ops.push(r?);
+            }
+            Ok(ops)
+        })
         .await
-        .map_err(|e| WrightError::context("failed to query delivery ops", e))?;
-        Ok(ops)
     }
 
     /// Reset an operation back to PENDING status (during crash recovery).
     pub async fn reset_op_to_pending(&self, op_id: i64) -> Result<()> {
-        query("UPDATE transaction_ops SET status = 'pending', error_msg = NULL WHERE id = ?")
-            .bind(op_id)
-            .execute(&self.pool)
-            .await
+        self.write(move |conn| {
+            conn.execute(
+                "UPDATE transaction_ops SET status = 'pending', error_msg = NULL WHERE id = ?1",
+                params![op_id],
+            )
             .map_err(|e| WrightError::context("failed to reset op", e))?;
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     /// Delete a delivery transaction and all its operations (called after successful completion or rollback).
     pub async fn cleanup_delivery(&self, tx_id: i64) -> Result<()> {
-        // transaction_ops has a foreign key with ON DELETE CASCADE?
-        // Let's check migration 015.
-        query("DELETE FROM transaction_ops WHERE transaction_id = ?")
-            .bind(tx_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::context("failed to cleanup ops", e))?;
+        self.write(move |conn| {
+            conn.execute("DELETE FROM transaction_ops WHERE transaction_id = ?1", params![tx_id])
+                .map_err(|e| WrightError::context("failed to cleanup ops", e))?;
 
-        query("DELETE FROM delivery_transactions WHERE id = ?")
-            .bind(tx_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| WrightError::context("failed to cleanup delivery", e))?;
+            conn.execute("DELETE FROM delivery_transactions WHERE id = ?1", params![tx_id])
+                .map_err(|e| WrightError::context("failed to cleanup delivery", e))?;
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 }

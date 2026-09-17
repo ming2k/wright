@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- **Replaced `sqlx` with `rusqlite` via a Single-Writer Actor and Concurrent Readers architecture (ADR-0042).** `crates/wright-state` now operates a dedicated background OS thread (`wright-db-writer`) holding the exclusive SQLite writer connection, eliminating write lock contention and `SQLITE_BUSY` errors entirely by serializing write transactions in memory via a Tokio MPSC channel with panic isolation (`catch_unwind`). Concurrent read operations execute without queuing behind writes via snapshot-isolated read-only SQLite connections (`PRAGMA query_only = ON`) bounded by a semaphore.
+- **Calibrated hardware-conscious zero-churn WAL configuration.** SQLite connections now configure 16MB WAL ring-buffer recycling (`PRAGMA journal_size_limit = 16777216`), RAM-backed temporary tables and sorting (`PRAGMA temp_store = MEMORY`), and smoothed checkpoints (`PRAGMA wal_autocheckpoint = 1000`), protecting SSD lifespan and preventing filesystem inode thrashing during high-volume package deployments.
+- **Native SQLite schema migration tracking via `PRAGMA user_version`.** Schema versions (001 through 020) are compiled into the binary as an immutable sequence. Pending migrations run inside an immediate transaction and stamp `PRAGMA user_version`, seamlessly upgrading legacy databases from their existing metadata without creating legacy tables on new installations.
+
 ## [5.6.1] - 2026-08-30
 
 ### Changed

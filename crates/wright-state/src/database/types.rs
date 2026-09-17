@@ -1,13 +1,13 @@
 //! Persistent state value types shared by queries and transactions.
 
 use crate::error::{Result, WrightError};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
+use rusqlite::Row;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
     File,
     Symlink,
-    #[sqlx(rename = "dir")]
     Directory,
 }
 
@@ -37,14 +37,26 @@ impl TryFrom<&str> for FileType {
     }
 }
 
+impl ToSql for FileType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for FileType {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
 /// How a part entered the system.
 ///
 /// Variant order determines the upgrade priority used by `set_origin`:
 /// higher variants are never silently downgraded to lower ones.
 /// `External` sits above `Manual` so that `set_origin(name, Manual)` is
 /// always a no-op for externally provided parts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, sqlx::Type)]
-#[sqlx(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Origin {
     Dependency,
     Forge,
@@ -90,8 +102,20 @@ impl TryFrom<&str> for Origin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "snake_case")]
+impl ToSql for Origin {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for Origin {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryAction {
     Install,
     Upgrade,
@@ -99,19 +123,54 @@ pub enum HistoryAction {
     Rollback,
 }
 
-impl std::fmt::Display for HistoryAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl HistoryAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
             Self::Install => "install",
             Self::Upgrade => "upgrade",
             Self::Remove => "remove",
             Self::Rollback => "rollback",
-        })
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "snake_case")]
+impl std::fmt::Display for HistoryAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for HistoryAction {
+    type Error = WrightError;
+
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "install" => Ok(Self::Install),
+            "upgrade" => Ok(Self::Upgrade),
+            "remove" => Ok(Self::Remove),
+            "rollback" => Ok(Self::Rollback),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown history action: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl ToSql for HistoryAction {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for HistoryAction {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStatus {
     Pending,
     Completed,
@@ -119,9 +178,55 @@ pub enum HistoryStatus {
     RolledBack,
 }
 
+impl HistoryStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::RolledBack => "rolled_back",
+        }
+    }
+}
+
+impl std::fmt::Display for HistoryStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for HistoryStatus {
+    type Error = WrightError;
+
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "rolled_back" => Ok(Self::RolledBack),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown history status: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl ToSql for HistoryStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for HistoryStatus {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
 /// Macro-level delivery transaction state (one per user command).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryStatus {
     Planning,
     Ready,
@@ -130,9 +235,51 @@ pub enum DeliveryStatus {
     RolledBack,
 }
 
+impl DeliveryStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Planning => "planning",
+            Self::Ready => "ready",
+            Self::Applying => "applying",
+            Self::Completed => "completed",
+            Self::RolledBack => "rolled_back",
+        }
+    }
+}
+
+impl TryFrom<&str> for DeliveryStatus {
+    type Error = WrightError;
+
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "planning" => Ok(Self::Planning),
+            "ready" => Ok(Self::Ready),
+            "applying" => Ok(Self::Applying),
+            "completed" => Ok(Self::Completed),
+            "rolled_back" => Ok(Self::RolledBack),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown delivery status: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl ToSql for DeliveryStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for DeliveryStatus {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
 /// Per-operation state within a delivery transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
-#[sqlx(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpStatus {
     Pending,
     Extracting,
@@ -141,7 +288,50 @@ pub enum OpStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+impl OpStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Extracting => "extracting",
+            Self::HooksRunning => "hooks_running",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl TryFrom<&str> for OpStatus {
+    type Error = WrightError;
+
+    fn try_from(s: &str) -> Result<Self> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "extracting" => Ok(Self::Extracting),
+            "hooks_running" => Ok(Self::HooksRunning),
+            "done" => Ok(Self::Done),
+            "failed" => Ok(Self::Failed),
+            _ => Err(WrightError::DatabaseError(format!(
+                "unknown op status: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl ToSql for OpStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl FromSql for OpStatus {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        Self::try_from(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DeliveryTransaction {
     pub id: i64,
     pub command: String,
@@ -150,7 +340,19 @@ pub struct DeliveryTransaction {
     pub updated_at: Option<String>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+impl DeliveryTransaction {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            command: row.get(1)?,
+            status: row.get(2)?,
+            created_at: row.get(3)?,
+            updated_at: row.get(4)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TransactionOp {
     pub id: i64,
     pub transaction_id: i64,
@@ -163,18 +365,23 @@ pub struct TransactionOp {
     pub error_msg: Option<String>,
 }
 
-impl std::fmt::Display for HistoryStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Pending => "pending",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::RolledBack => "rolled_back",
+impl TransactionOp {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            transaction_id: row.get(1)?,
+            part_name: row.get(2)?,
+            part_hash: row.get(3)?,
+            action_type: row.get(4)?,
+            execution_order: row.get(5)?,
+            status: row.get(6)?,
+            old_hash: row.get(7)?,
+            error_msg: row.get(8)?,
         })
     }
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct InstalledPart {
     pub id: i64,
     pub name: String,
@@ -185,8 +392,22 @@ pub struct InstalledPart {
     pub origin: Origin,
 }
 
+impl InstalledPart {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            plan_id: row.get(2)?,
+            installed_at: row.get(3)?,
+            part_hash: row.get(4)?,
+            deploy_scripts: row.get(5)?,
+            origin: row.get(6)?,
+        })
+    }
+}
+
 /// Part combined with its plan metadata for display queries.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct PartWithPlan {
     pub id: i64,
     pub name: String,
@@ -202,7 +423,26 @@ pub struct PartWithPlan {
     pub arch: String,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+impl PartWithPlan {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            plan_id: row.get(2)?,
+            installed_at: row.get(3)?,
+            part_hash: row.get(4)?,
+            deploy_scripts: row.get(5)?,
+            origin: row.get(6)?,
+            plan_name: row.get(7)?,
+            version: row.get(8)?,
+            release: row.get(9)?,
+            epoch: row.get(10)?,
+            arch: row.get(11)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FileEntry {
     pub path: String,
     pub file_hash: Option<String>,
@@ -210,6 +450,19 @@ pub struct FileEntry {
     pub file_mode: Option<i64>,
     pub file_size: Option<i64>,
     pub is_config: bool,
+}
+
+impl FileEntry {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            path: row.get(0)?,
+            file_hash: row.get(1)?,
+            file_type: row.get(2)?,
+            file_mode: row.get(3)?,
+            file_size: row.get(4)?,
+            is_config: row.get(5)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -261,11 +514,19 @@ pub struct RegisterPlan<'a> {
     pub provenance: Option<NewPlanProvenance<'a>>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct Dependency {
-    #[sqlx(rename = "depends_on")]
     pub name: String,
     pub version_constraint: Option<String>,
+}
+
+impl Dependency {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            name: row.get(0)?,
+            version_constraint: row.get(1)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -274,7 +535,7 @@ pub struct SessionContext {
     pub command: String,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct HistoryRecord {
     pub timestamp: Option<String>,
     pub session_id: String,
@@ -287,4 +548,22 @@ pub struct HistoryRecord {
     pub new_hash: Option<String>,
     pub status: HistoryStatus,
     pub details: Option<String>,
+}
+
+impl HistoryRecord {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            timestamp: row.get(0)?,
+            session_id: row.get(1)?,
+            command: row.get(2)?,
+            part_name: row.get(3)?,
+            action: row.get(4)?,
+            old_version: row.get(5)?,
+            new_version: row.get(6)?,
+            old_hash: row.get(7)?,
+            new_hash: row.get(8)?,
+            status: row.get(9)?,
+            details: row.get(10)?,
+        })
+    }
 }

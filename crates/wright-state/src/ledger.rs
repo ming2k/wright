@@ -113,19 +113,17 @@ fn snapshot_timestamp(recorded_at: Option<&str>) -> String {
 /// files are kept (same checksum = same content), so a partially completed
 /// export simply resumes on the next open. Returns the number of rows
 /// found; zero when the table never existed.
-pub(crate) async fn export_legacy_plan_snapshots(
-    pool: &sqlx::SqlitePool,
+pub(crate) fn export_legacy_plan_snapshots(
+    conn: &rusqlite::Connection,
     ledger_dir: &Path,
 ) -> Result<usize> {
-    use sqlx::Row;
-
-    let exists: bool = sqlx::query(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'plan_snapshots'",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| WrightError::context("failed to inspect legacy snapshot table", e))?
-    .get::<i64, _>(0)
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'plan_snapshots'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(|e| WrightError::context("failed to inspect legacy snapshot table", e))?
         > 0;
     if !exists {
         return Ok(0);
@@ -133,47 +131,49 @@ pub(crate) async fn export_legacy_plan_snapshots(
 
     // Snapshots outlive their plan row by design (the table was a retained
     // ledger), hence the LEFT JOIN: nameless rows export into `_detached/`.
-    let rows = sqlx::query(
-        "SELECT ps.checksum, ps.source, ps.recorded_at, pl.name AS plan_name
-         FROM plan_snapshots ps
-         LEFT JOIN plans pl ON pl.plan_checksum = ps.checksum",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| WrightError::context("failed to read legacy plan snapshots", e))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT ps.checksum, ps.source, ps.recorded_at, pl.name AS plan_name
+             FROM plan_snapshots ps
+             LEFT JOIN plans pl ON pl.plan_checksum = ps.checksum",
+        )
+        .map_err(|e| WrightError::context("failed to prepare legacy snapshot query", e))?;
 
-    for row in &rows {
-        let checksum: &str = row
-            .try_get("checksum")
-            .map_err(|e| WrightError::context("malformed legacy snapshot row", e))?;
-        let source: &str = row
-            .try_get("source")
-            .map_err(|e| WrightError::context("malformed legacy snapshot row", e))?;
-        let recorded_at: Option<String> = row
-            .try_get("recorded_at")
-            .map_err(|e| WrightError::context("malformed legacy snapshot row", e))?;
-        let plan_name: Option<String> = row
-            .try_get("plan_name")
-            .map_err(|e| WrightError::context("malformed legacy snapshot row", e))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| WrightError::context("failed to read legacy plan snapshots", e))?;
+
+    let mut count = 0;
+    for row in rows {
+        let (checksum, source, recorded_at, plan_name) =
+            row.map_err(|e| WrightError::context("malformed legacy snapshot row", e))?;
 
         match plan_name {
             Some(name) => {
-                record_plan_snapshot(ledger_dir, &name, checksum, source, recorded_at.as_deref())?;
+                record_plan_snapshot(ledger_dir, &name, &checksum, &source, recorded_at.as_deref())?;
             }
             None => {
-                record_detached_snapshot(ledger_dir, checksum, source, recorded_at.as_deref())?;
+                record_detached_snapshot(ledger_dir, &checksum, &source, recorded_at.as_deref())?;
             }
         }
+        count += 1;
     }
 
-    if !rows.is_empty() {
+    if count > 0 {
         tracing::info!(
             "exported {} legacy plan snapshot(s) into {}",
-            rows.len(),
+            count,
             ledger_dir.display()
         );
     }
-    Ok(rows.len())
+    Ok(count)
 }
 
 fn record_detached_snapshot(
@@ -269,34 +269,19 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn export_moves_legacy_rows_to_files() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE plans (id INTEGER PRIMARY KEY, name TEXT, plan_checksum TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "CREATE TABLE plan_snapshots (checksum TEXT PRIMARY KEY, source TEXT NOT NULL, recorded_at DATETIME)",
+    #[test]
+    fn export_moves_legacy_rows_to_files() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE plans (id INTEGER PRIMARY KEY, name TEXT, plan_checksum TEXT);
+             CREATE TABLE plan_snapshots (checksum TEXT PRIMARY KEY, source TEXT NOT NULL, recorded_at DATETIME);
+             INSERT INTO plans (id, name, plan_checksum) VALUES (1, 'demo', 'aaa');
+             INSERT INTO plan_snapshots VALUES ('aaa', 'name = \"demo\"', '2025-01-02 03:04:05'), ('zzz', 'orphan source', '2025-03-04 05:06:07');",
         )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO plans (id, name, plan_checksum) VALUES (1, 'demo', 'aaa')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO plan_snapshots VALUES ('aaa', 'name = \"demo\"', '2025-01-02 03:04:05'), ('zzz', 'orphan source', '2025-03-04 05:06:07')",
-        )
-        .execute(&pool)
-        .await
         .unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let exported = export_legacy_plan_snapshots(&pool, dir.path())
-            .await
-            .unwrap();
+        let exported = export_legacy_plan_snapshots(&conn, dir.path()).unwrap();
         assert_eq!(exported, 2);
 
         // Named rows land under their plan; the orphan lands in _detached.
@@ -312,18 +297,14 @@ mod tests {
         assert_eq!(names, vec!["20250304T050607Z-zzz.toml"]);
 
         // Idempotent: a second export finds the same rows but writes nothing new.
-        let again = export_legacy_plan_snapshots(&pool, dir.path())
-            .await
-            .unwrap();
+        let again = export_legacy_plan_snapshots(&conn, dir.path()).unwrap();
         assert_eq!(again, 2);
         assert_eq!(std::fs::read_dir(&detached).unwrap().count(), 1);
 
         // A database that never had the table exports nothing.
-        let fresh = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let fresh = rusqlite::Connection::open_in_memory().unwrap();
         assert_eq!(
-            export_legacy_plan_snapshots(&fresh, dir.path())
-                .await
-                .unwrap(),
+            export_legacy_plan_snapshots(&fresh, dir.path()).unwrap(),
             0
         );
     }

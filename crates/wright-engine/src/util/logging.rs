@@ -75,7 +75,7 @@ pub fn format_error(msg: &str) -> String {
 ///
 /// The report is driven by the real error chain (`std::error::Error::source`),
 /// never by re-parsing Display output: every chain node contributes at most
-/// one entry, so messages that themselves contain `": "` (sqlx's
+/// one entry, so messages that themselves contain `": "` (database error
 /// `(code: 8) …`, TOML parse errors, `(see log: …)` suffixes) can no longer
 /// be shredded into fake, numbered "causes".
 ///
@@ -280,7 +280,7 @@ mod tests {
     use super::*;
     use crate::error::WrightError;
 
-    // Stand-ins for sqlx-style foreign errors whose Display nests the
+    // Stand-ins for database-style foreign errors whose Display nests the
     // source's text: "error returned from database: (code: 8) …".
     #[derive(Debug, thiserror::Error)]
     enum DbError {
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn failure_report_layers_structured_chain_without_numbers() {
-        // The readonly-database scenario: a `": "`-carrying sqlx message
+        // The readonly-database scenario: a `": "`-carrying database error message
         // must survive as whole entries, never split into fake causes.
         let err = context(
             "failed to begin delivery transaction",

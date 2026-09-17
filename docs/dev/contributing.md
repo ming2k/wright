@@ -92,7 +92,7 @@ as `docs:`.
 2. CI runs three jobs in parallel: `rustfmt`, `clippy`, `build & test`.
    All three must be green.
 3. If the PR touches code with a corresponding documentation surface
-   (see [Update Checklist](documentation/update-checklist.md)), state in
+   (see [Update Checklist](../governance/documentation/core/workflow.md#part-1-code-to-doc-trigger-matrix)), state in
    the PR description whether the documentation was updated or why not.
 4. Squash-merge on approval; the commit title becomes the changelog
    source for release notes.
@@ -102,15 +102,15 @@ as `docs:`.
 Wright follows the Diátaxis framework with strict routing. Before
 writing or moving any documentation:
 
-1. Read [Documentation Governance](documentation/index.md).
-2. Route the content with [Routing](documentation/routing.md).
-3. Match voice and formatting with the [Writing Style](documentation/style-guide.md).
+1. Read [Documentation Governance](../governance/documentation/core/index.md).
+2. Route the content with [Taxonomy](../governance/documentation/core/taxonomy.md).
+3. Match voice and formatting with the [Style Guide](../governance/documentation/core/style.md).
 
 Hard rules to keep in mind:
 
 - `docs/adr/` records are immutable. To change a decision, write a new
   ADR and mark the old one `Superseded by ADR-NNNN`. See
-  [ADR Workflow](documentation/adr-workflow.md).
+  [ADR Architecture Profile](../governance/documentation/profiles/architecture/adr.md).
 - `CHANGELOG.md` entries are append-only. Do not edit released history;
   add under `Unreleased`.
 - `crates/wright-state/migrations/*.sql` are immutable. To change schema,

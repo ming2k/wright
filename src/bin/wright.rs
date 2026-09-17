@@ -95,6 +95,11 @@ async fn run_cli() {
             wright::util::progress::term_println(&line);
         }
 
+        // Explicitly drop spans and the tracing worker guard to flush
+        // all buffered log entries before exiting the process.
+        drop(_guard);
+        drop(_log_guard);
+
         std::process::exit(1);
     }
 }

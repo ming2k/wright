@@ -9,10 +9,11 @@ description = "Persistent state and delivery recovery for Wright"
 chrono = "0.4"
 futures-util = "0.3.32"
 libc = "0.2"
+rusqlite = { version = "0.31", features = ["bundled"] }
 serde_json = "1"
 sha2 = "0.10"
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate"] }
 thiserror = "2"
+tokio = { version = "1.52.1", features = ["sync", "rt", "macros"] }
 tracing = "0.1"
 
 [dev-dependencies]

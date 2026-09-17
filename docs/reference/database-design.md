@@ -18,9 +18,9 @@
 | Item | Value |
 |------|-------|
 | Migration files | `crates/wright-state/migrations/*.sql` |
-| Migration tracker | SQLx `_sqlx_migrations` table |
-| Initialization | automatic on database open |
-| Upgrade | pending migrations run automatically |
+| Migration tracker | SQLite `PRAGMA user_version` (with legacy `_sqlx_migrations` upgrade detection, ADR-0042) |
+| Initialization | automatic on database open via Single-Writer Actor |
+| Upgrade | pending migrations run automatically inside an immediate transaction |
 | Immutable history | never edit files under `crates/wright-state/migrations/` |
 
 ## Tables

@@ -46,7 +46,7 @@ wright-plan = { path = "crates/wright-plan" }
 wright-state = { path = "crates/wright-state" }
 
 [dev-dependencies]
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio-rustls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3"
 
 [build-dependencies]

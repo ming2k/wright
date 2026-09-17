@@ -16,6 +16,14 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  governance:
+    name: documentation governance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify documentation governance
+        run: ./tools/verify.sh .
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest

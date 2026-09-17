@@ -43,3 +43,4 @@
 | [ADR-0039](0039-batch-failure-settlement.md) | Batch failure settlement instead of fail-fast | Accepted |
 | [ADR-0040](0040-clean-prune-consolidation-and-fresh-flag.md) | Consolidate maintenance deletion into `clean`; rename the from-scratch forge flag to `--fresh` | Accepted |
 | [ADR-0041](0041-file-backed-ledger.md) | File-backed ledger: build records, snapshot files, and `.BUILDINFO` | Accepted |
+| [ADR-0042](0042-single-writer-actor-rusqlite.md) | Single-Writer Actor and Concurrent Readers via rusqlite (replacing sqlx) | Accepted |
