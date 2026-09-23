@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.7.0] - 2026-09-23
+
 ### Added
 - **New `wright storage` command reporting disk usage for every location Wright owns (ADR-0043).** A read-only table of byte size, file count, and reclamation rule for build workspaces, part archives, the CAS store, the source cache, command logs, the audit ledger, and the database file plus its WAL sidecar, plus the deployed footprint recorded in the registry (the "computed on demand" figure migration V6 promised when it dropped `parts.install_size`). The registry is read best-effort: when it cannot be opened the filesystem rows still print and the deployed-footprint row is omitted with a warning. `--json` for machine output.
 - **Unified health inspection, drift audit, and registry repair in `wright doctor` (ADR-0043).**
