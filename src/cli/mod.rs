@@ -15,12 +15,14 @@ pub mod owner;
 pub mod package;
 pub mod plan;
 pub mod provide;
-pub mod prune;
 pub mod remove;
 pub mod resolve;
+pub mod storage;
 pub mod upgrade;
 
 use clap::{ArgAction, Parser, Subcommand};
+#[cfg(with_handlers)]
+use std::path::Path;
 use std::path::PathBuf;
 
 #[cfg(with_handlers)]
@@ -156,18 +158,20 @@ pub enum BuildCommands {
 
 #[derive(Subcommand)]
 pub enum MaintenanceCommands {
+    /// Report disk usage for every location Wright owns, and how to reclaim it
+    #[command(display_order = 29)]
+    Storage(storage::StorageArgs),
+
     /// Reclaim disk space: build workspaces, part archives, and logs
     #[command(display_order = 30)]
     Clean(clean::CleanArgs),
-
-    /// Deprecated alias for `clean --stale`
-    #[command(display_order = 31, hide = true)]
-    Prune(prune::PruneArgs),
 }
 
 /// Build a Context for a command that has a `--root` option.
-/// The `root` argument is consumed from the command's args; `top_db` overrides
-/// the default db path. Crash recovery runs against the resulting db path.
+///
+/// `recover` runs crash recovery, which mutates the database. It is `true`
+/// only for System-class commands; Read- and Local-class commands pass
+/// `false` (ADR-0044, `[INV-PRIV-03]`).
 #[cfg(with_handlers)]
 async fn ctx_with_root<'a>(
     root: Option<PathBuf>,
@@ -175,10 +179,13 @@ async fn ctx_with_root<'a>(
     config: &'a GlobalConfig,
     verbose: u8,
     quiet: bool,
+    recover: bool,
 ) -> Context<'a> {
     let root_dir = root.unwrap_or_else(|| PathBuf::from("/"));
     let db_path = resolve_db(Some(&root_dir), top_db, config);
-    crash_recover(&db_path, config).await;
+    if recover {
+        crash_recover(&db_path, config, &root_dir).await;
+    }
     Context {
         config,
         db_path,
@@ -189,15 +196,21 @@ async fn ctx_with_root<'a>(
 }
 
 /// Build a Context for a command that operates against the default root.
+///
+/// `recover` has the same meaning as in [`ctx_with_root`]: `true` only for
+/// System-class commands.
 #[cfg(with_handlers)]
 async fn ctx_default<'a>(
     top_db: Option<PathBuf>,
     config: &'a GlobalConfig,
     verbose: u8,
     quiet: bool,
+    recover: bool,
 ) -> Context<'a> {
     let db_path = top_db.unwrap_or_else(|| config.general.db_path.clone());
-    crash_recover(&db_path, config).await;
+    if recover {
+        crash_recover(&db_path, config, Path::new("/")).await;
+    }
     Context {
         config,
         db_path,
@@ -216,87 +229,96 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
     match cli.command {
         // ── System Management ───────────────────────────────────────
         Commands::System(SystemCommands::Install(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             install::run(args, &ctx).await
         }
         Commands::System(SystemCommands::Upgrade(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             upgrade::run(args, &ctx).await
         }
         Commands::System(SystemCommands::Remove(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             remove::run(args, &ctx).await
         }
         Commands::System(SystemCommands::Merge(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             merge::run(args, &ctx).await
         }
         Commands::System(SystemCommands::Provide(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             provide::run(args, &ctx).await
         }
 
-        // ── Query & Inspection ─────────────────────────────────────
+        // ── Query & Inspection (Read class: no recovery, read-only DB) ──
         Commands::Query(QueryCommands::List(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             list::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Files(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             files::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Owner(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             owner::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Check(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             check::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Doctor(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let is_mutating = args.repair || args.restore.is_some() || args.snapshot.is_some();
+            let ctx = ctx_with_root(
+                args.root.take(),
+                top_db,
+                config,
+                verbose,
+                quiet,
+                is_mutating,
+            )
+            .await;
             doctor::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::History(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             history::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Plan(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, false).await;
             plan::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Graph(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
             graph::run(args, &ctx).await
         }
 
-        // ── Build & Packaging ───────────────────────────────────────
+        // ── Build & Packaging (Local class: no recovery) ────────────
         Commands::Build(BuildCommands::Resolve(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
             resolve::run(args, &ctx).await
         }
         Commands::Build(BuildCommands::Build(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
             build::run(args, &ctx).await
         }
         Commands::Build(BuildCommands::Package(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
             package::run(args, &ctx).await
         }
         Commands::Build(BuildCommands::Launch(mut args)) => {
-            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet).await;
+            let ctx = ctx_with_root(args.root.take(), top_db, config, verbose, quiet, true).await;
             launch::run(args, &ctx).await
         }
         Commands::Build(BuildCommands::Lint(args)) => lint::run(args, config).await,
 
         // ── Cache & Maintenance ─────────────────────────────────────
-        Commands::Maintenance(MaintenanceCommands::Clean(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
-            clean::run(args, &ctx).await
+        Commands::Maintenance(MaintenanceCommands::Storage(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
+            storage::run(args, &ctx).await
         }
-        Commands::Maintenance(MaintenanceCommands::Prune(args)) => {
-            let ctx = ctx_default(top_db, config, verbose, quiet).await;
-            prune::run(args, &ctx).await
+        Commands::Maintenance(MaintenanceCommands::Clean(args)) => {
+            let ctx = ctx_default(top_db, config, verbose, quiet, false).await;
+            clean::run(args, &ctx).await
         }
     }
 }
@@ -321,15 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn clean_accepts_legacy_parts_spelling() {
-        let cli = Cli::try_parse_from(["wright", "clean", "--parts"]).unwrap();
-        let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
-            panic!("expected clean command");
-        };
-        assert!(args.archives);
-    }
-
-    #[test]
     fn clean_stale_conflicts_with_archives() {
         assert!(Cli::try_parse_from(["wright", "clean", "--stale", "--archives"]).is_err());
         let cli = Cli::try_parse_from(["wright", "clean", "--stale", "-n"]).unwrap();
@@ -341,12 +354,120 @@ mod tests {
     }
 
     #[test]
-    fn prune_alias_still_parses() {
-        let cli = Cli::try_parse_from(["wright", "prune", "--apply"]).unwrap();
-        let Commands::Maintenance(MaintenanceCommands::Prune(args)) = cli.command else {
-            panic!("expected prune command");
+    fn clean_accepts_store_sources_and_ledger() {
+        let cli = Cli::try_parse_from([
+            "wright",
+            "clean",
+            "--store",
+            "--sources",
+            "--older-than-days",
+            "30",
+            "--ledger",
+            "--keep-builds",
+            "5",
+            "--keep-snapshots",
+            "3",
+        ])
+        .unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Clean(args)) = cli.command else {
+            panic!("expected clean command");
         };
-        assert!(args.apply);
+        assert!(args.store);
+        assert!(args.sources);
+        assert_eq!(args.older_than_days, Some(30));
+        assert!(args.ledger);
+        assert_eq!(args.keep_builds, 5);
+        assert_eq!(args.keep_snapshots, 3);
+    }
+
+    #[test]
+    fn clean_older_than_days_requires_sources() {
+        assert!(Cli::try_parse_from(["wright", "clean", "--older-than-days", "7"]).is_err());
+    }
+
+    #[test]
+    fn clean_keep_builds_requires_ledger() {
+        assert!(Cli::try_parse_from(["wright", "clean", "--keep-builds", "5"]).is_err());
+    }
+
+    #[test]
+    fn legacy_prune_command_is_gone() {
+        // ADR-0040 promised removal after one release; ADR-0043 completes it.
+        assert!(Cli::try_parse_from(["wright", "prune"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "prune", "--apply"]).is_err());
+    }
+
+    #[test]
+    fn legacy_parts_alias_is_gone() {
+        assert!(Cli::try_parse_from(["wright", "clean", "--parts"]).is_err());
+    }
+
+    #[test]
+    fn legacy_clean_alias_is_gone() {
+        assert!(Cli::try_parse_from(["wright", "install", "zlib", "--clean"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "upgrade", "all", "--clean"]).is_err());
+    }
+
+    #[test]
+    fn storage_command_parses() {
+        let cli = Cli::try_parse_from(["wright", "storage", "--json"]).unwrap();
+        let Commands::Maintenance(MaintenanceCommands::Storage(args)) = cli.command else {
+            panic!("expected storage command");
+        };
+        assert!(args.json);
+    }
+
+    #[test]
+    fn legacy_usage_audit_db_commands_are_gone() {
+        assert!(Cli::try_parse_from(["wright", "usage"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "audit"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "db"]).is_err());
+        assert!(Cli::try_parse_from(["wright", "db", "backup"]).is_err());
+    }
+
+    #[test]
+    fn doctor_flags_parse() {
+        // Drift / audit
+        let cli = Cli::try_parse_from(["wright", "doctor", "--drift", "--json"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Doctor(args)) = cli.command else {
+            panic!("expected doctor");
+        };
+        assert!(args.drift);
+        assert!(args.json);
+
+        // Alias --audit for --drift
+        let cli = Cli::try_parse_from(["wright", "doctor", "--audit"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Doctor(args)) = cli.command else {
+            panic!("expected doctor");
+        };
+        assert!(args.drift);
+
+        // Repair
+        let cli =
+            Cli::try_parse_from(["wright", "doctor", "--repair", "--from-store", "-n"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Doctor(args)) = cli.command else {
+            panic!("expected doctor");
+        };
+        assert!(args.repair);
+        assert!(args.from_store);
+        assert!(args.dry_run);
+
+        // Restore
+        let cli = Cli::try_parse_from(["wright", "doctor", "--restore", "/tmp/x.bak"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Doctor(args)) = cli.command else {
+            panic!("expected doctor");
+        };
+        assert_eq!(args.restore, Some(std::path::PathBuf::from("/tmp/x.bak")));
+
+        // Snapshot
+        let cli = Cli::try_parse_from(["wright", "doctor", "--snapshot", "/tmp/x.bak"]).unwrap();
+        let Commands::Query(crate::cli::QueryCommands::Doctor(args)) = cli.command else {
+            panic!("expected doctor");
+        };
+        assert_eq!(
+            args.snapshot,
+            Some(Some(std::path::PathBuf::from("/tmp/x.bak")))
+        );
     }
 
     #[test]
@@ -382,16 +503,6 @@ mod tests {
         };
         assert!(args.fresh);
         assert!(!args.force);
-    }
-
-    #[test]
-    fn install_accepts_legacy_clean_spelling() {
-        let cli = Cli::try_parse_from(["wright", "install", "zlib", "--clean"]).unwrap();
-
-        let Commands::System(SystemCommands::Install(args)) = cli.command else {
-            panic!("expected install command");
-        };
-        assert!(args.fresh);
     }
 
     #[test]

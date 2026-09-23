@@ -34,6 +34,6 @@ pub struct FilesArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: FilesArgs, ctx: &Context<'_>) -> Result<()> {
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     crate::operations::files::execute_files(&db, &args.target, args.json).await
 }

@@ -1,64 +1,23 @@
 //! Dependency, conflict, replacement, and orphan queries.
 
-use super::{Dependency, InstalledDb};
+use super::{Dependency, InstalledDb, ReadOnlyDb};
 use crate::error::{Result, WrightError};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use rusqlite::params;
 use std::collections::HashSet;
 
-impl InstalledDb {
-    pub async fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
-        let deps = deps.to_vec();
-        self.write(move |conn| {
-            let mut stmt = conn.prepare(
-                "INSERT INTO dependencies (part_id, depends_on, version_constraint) VALUES (?1, ?2, ?3)",
-            )?;
-            for dep in deps {
-                stmt.execute(params![part_id, dep.name, dep.version_constraint])
-                    .map_err(|e| WrightError::context("failed to insert dependency", e))?;
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn replace_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
-        let deps = deps.to_vec();
-        self.write(move |conn| {
-            let tx = conn
-                .transaction()
-                .map_err(|e| WrightError::context("failed to begin replace dependencies tx", e))?;
-
-            tx.execute("DELETE FROM dependencies WHERE part_id = ?1", params![part_id])
-                .map_err(|e| WrightError::context("failed to delete old dependencies", e))?;
-
-            {
-                let mut stmt = tx.prepare(
-                    "INSERT INTO dependencies (part_id, depends_on, version_constraint) VALUES (?1, ?2, ?3)",
-                )?;
-                for dep in deps {
-                    stmt.execute(params![part_id, dep.name, dep.version_constraint])
-                        .map_err(|e| WrightError::context("failed to insert dependency", e))?;
-                }
-            }
-
-            tx.commit()
-                .map_err(|e| WrightError::context("failed to commit replaced dependencies", e))?;
-            Ok(())
-        })
-        .await
-    }
-
+impl ReadOnlyDb {
     pub async fn check_dependency(&self, name: &str) -> Result<bool> {
         let name = name.to_string();
         self.read(move |conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM parts WHERE name = ?1",
-                params![name],
-                |r| r.get(0),
-            )
-            .map_err(|e| WrightError::context("failed to check part dependency", e))?;
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM parts WHERE name = ?1",
+                    params![name],
+                    |r| r.get(0),
+                )
+                .map_err(|e| WrightError::context("failed to check part dependency", e))?;
             Ok(count > 0)
         })
         .await
@@ -173,47 +132,10 @@ impl InstalledDb {
         .await
     }
 
-    pub async fn insert_conflicts(&self, part_id: i64, names: &[String]) -> Result<()> {
-        let names = names.to_vec();
-        self.write(move |conn| {
-            let mut stmt = conn.prepare("INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)")?;
-            for name in names {
-                stmt.execute(params![part_id, name])
-                    .map_err(|e| WrightError::context("failed to insert conflicts", e))?;
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn replace_conflicts(&self, part_id: i64, names: &[String]) -> Result<()> {
-        let names = names.to_vec();
-        self.write(move |conn| {
-            let tx = conn
-                .transaction()
-                .map_err(|e| WrightError::context("failed to begin replace conflicts tx", e))?;
-
-            tx.execute("DELETE FROM conflicts WHERE part_id = ?1", params![part_id])
-                .map_err(|e| WrightError::context("failed to delete old conflicts", e))?;
-
-            {
-                let mut stmt = tx.prepare("INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)")?;
-                for name in names {
-                    stmt.execute(params![part_id, name])
-                        .map_err(|e| WrightError::context("failed to insert conflicts", e))?;
-                }
-            }
-
-            tx.commit()
-                .map_err(|e| WrightError::context("failed to commit replaced conflicts", e))?;
-            Ok(())
-        })
-        .await
-    }
-
     pub async fn get_conflicts(&self, part_id: i64) -> Result<Vec<String>> {
         self.read(move |conn| {
-            let mut stmt = conn.prepare("SELECT name FROM conflicts WHERE part_id = ?1 ORDER BY name")?;
+            let mut stmt =
+                conn.prepare("SELECT name FROM conflicts WHERE part_id = ?1 ORDER BY name")?;
             let rows = stmt.query_map(params![part_id], |r| r.get(0))?;
             let mut result = Vec::new();
             for r in rows {
@@ -242,6 +164,103 @@ impl InstalledDb {
         .await
     }
 
+    pub async fn get_replaces(&self, part_id: i64) -> Result<Vec<String>> {
+        self.read(move |conn| {
+            let mut stmt =
+                conn.prepare("SELECT name FROM replaces WHERE part_id = ?1 ORDER BY name")?;
+            let rows = stmt.query_map(params![part_id], |r| r.get(0))?;
+            let mut result = Vec::new();
+            for r in rows {
+                result.push(r?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+}
+
+impl InstalledDb {
+    pub async fn insert_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
+        let deps = deps.to_vec();
+        self.write(move |conn| {
+            let mut stmt = conn.prepare(
+                "INSERT INTO dependencies (part_id, depends_on, version_constraint) VALUES (?1, ?2, ?3)",
+            )?;
+            for dep in deps {
+                stmt.execute(params![part_id, dep.name, dep.version_constraint])
+                    .map_err(|e| WrightError::context("failed to insert dependency", e))?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn replace_dependencies(&self, part_id: i64, deps: &[Dependency]) -> Result<()> {
+        let deps = deps.to_vec();
+        self.write(move |conn| {
+            let tx = conn
+                .transaction()
+                .map_err(|e| WrightError::context("failed to begin replace dependencies tx", e))?;
+
+            tx.execute("DELETE FROM dependencies WHERE part_id = ?1", params![part_id])
+                .map_err(|e| WrightError::context("failed to delete old dependencies", e))?;
+
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO dependencies (part_id, depends_on, version_constraint) VALUES (?1, ?2, ?3)",
+                )?;
+                for dep in deps {
+                    stmt.execute(params![part_id, dep.name, dep.version_constraint])
+                        .map_err(|e| WrightError::context("failed to insert dependency", e))?;
+                }
+            }
+
+            tx.commit()
+                .map_err(|e| WrightError::context("failed to commit replaced dependencies", e))?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn insert_conflicts(&self, part_id: i64, names: &[String]) -> Result<()> {
+        let names = names.to_vec();
+        self.write(move |conn| {
+            let mut stmt = conn.prepare("INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)")?;
+            for name in names {
+                stmt.execute(params![part_id, name])
+                    .map_err(|e| WrightError::context("failed to insert conflicts", e))?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn replace_conflicts(&self, part_id: i64, names: &[String]) -> Result<()> {
+        let names = names.to_vec();
+        self.write(move |conn| {
+            let tx = conn
+                .transaction()
+                .map_err(|e| WrightError::context("failed to begin replace conflicts tx", e))?;
+
+            tx.execute("DELETE FROM conflicts WHERE part_id = ?1", params![part_id])
+                .map_err(|e| WrightError::context("failed to delete old conflicts", e))?;
+
+            {
+                let mut stmt =
+                    tx.prepare("INSERT INTO conflicts (part_id, name) VALUES (?1, ?2)")?;
+                for name in names {
+                    stmt.execute(params![part_id, name])
+                        .map_err(|e| WrightError::context("failed to insert conflicts", e))?;
+                }
+            }
+
+            tx.commit()
+                .map_err(|e| WrightError::context("failed to commit replaced conflicts", e))?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn insert_replaces(&self, part_id: i64, names: &[String]) -> Result<()> {
         let names = names.to_vec();
         self.write(move |conn| {
@@ -266,7 +285,8 @@ impl InstalledDb {
                 .map_err(|e| WrightError::context("failed to delete old replaces", e))?;
 
             {
-                let mut stmt = tx.prepare("INSERT INTO replaces (part_id, name) VALUES (?1, ?2)")?;
+                let mut stmt =
+                    tx.prepare("INSERT INTO replaces (part_id, name) VALUES (?1, ?2)")?;
                 for name in names {
                     stmt.execute(params![part_id, name])
                         .map_err(|e| WrightError::context("failed to insert replaces", e))?;
@@ -276,19 +296,6 @@ impl InstalledDb {
             tx.commit()
                 .map_err(|e| WrightError::context("failed to commit replaced replaces", e))?;
             Ok(())
-        })
-        .await
-    }
-
-    pub async fn get_replaces(&self, part_id: i64) -> Result<Vec<String>> {
-        self.read(move |conn| {
-            let mut stmt = conn.prepare("SELECT name FROM replaces WHERE part_id = ?1 ORDER BY name")?;
-            let rows = stmt.query_map(params![part_id], |r| r.get(0))?;
-            let mut result = Vec::new();
-            for r in rows {
-                result.push(r?);
-            }
-            Ok(result)
         })
         .await
     }

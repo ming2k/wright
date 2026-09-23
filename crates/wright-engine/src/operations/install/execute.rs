@@ -294,6 +294,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     // ── Crash recovery ──────────────────────────────────────────────
     wright_state::delivery::recover_if_needed(&db).await?;
+    crate::transaction::recover_transactions(root_dir, &db).await?;
 
     // ── Signal handling ─────────────────────────────────────────────
     // First Ctrl-C / SIGTERM reaps the build subprocess tree and flips the

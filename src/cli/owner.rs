@@ -34,6 +34,6 @@ pub struct OwnerArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: OwnerArgs, ctx: &Context<'_>) -> Result<()> {
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     crate::operations::owner::execute_owner(&db, &args.paths, args.json).await
 }

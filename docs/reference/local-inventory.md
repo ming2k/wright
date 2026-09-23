@@ -12,6 +12,13 @@ Wright stores built parts as `.wright.tar.zst` archives in `parts_dir` (default:
 - `wright merge` rejects plan revision changes that would leave installed outputs from the old revision
 - `wright install` performs the full lifecycle: resolve, forge, seal, and merge in one command
 
+The inventory is the source of truth for what exists. The registry
+(`wright.db`) is a **derived index** over it: part identity, file ownership,
+dependencies, conflicts, and replaces are all reconstructible from the
+archives' `.PARTINFO`/`.FILELIST`. When the registry is damaged,
+`wright doctor --repair` rebuilds it from this directory without
+rebuilding anything (ADR-0043).
+
 ## Quick Start
 
 ```bash
@@ -89,6 +96,11 @@ The builds ledger answers "what will the next upgrade of this plan cost?"
 from local history — e.g. `tail -n 5 /var/lib/wright/ledger/curl/builds.jsonl | jq .duration_secs`.
 A database redirected via `--root`/`--db` keeps its ledger beside itself
 (`<db dir>/ledger`).
+
+The ledger is append-only until retention is opted into explicitly:
+`wright clean --ledger` keeps the newest N build records and N snapshots per
+plan (`--keep-builds`, `--keep-snapshots`). `wright storage` reports the ledger's
+byte footprint alongside every other location Wright owns.
 
 ## Low-Level Pipeline
 

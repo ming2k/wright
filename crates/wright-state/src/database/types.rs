@@ -1,8 +1,8 @@
 //! Persistent state value types shared by queries and transactions.
 
 use crate::error::{Result, WrightError};
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::Row;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {

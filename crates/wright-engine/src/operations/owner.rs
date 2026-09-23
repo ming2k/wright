@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WrightError};
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
-pub async fn execute_owner(db: &InstalledDb, paths: &[PathBuf], json: bool) -> Result<()> {
+pub async fn execute_owner(db: &ReadOnlyDb, paths: &[PathBuf], json: bool) -> Result<()> {
     let multi = paths.len() > 1;
     let mut any_missing = false;
     let mut results: Vec<serde_json::Value> = Vec::new();

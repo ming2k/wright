@@ -4,14 +4,14 @@ Top-level governance charter, decision hierarchy, review gates, and documentatio
 
 | Section | Purpose |
 |---------|---------|
-| [Documentation Governance](documentation/core/index.md) | Clean-Break Architecture (Protocol v5.0.0): 4D spatial coordinate tensor, codified invariants constitution, operational lifecycle, and presentation syntax |
+| [Documentation Governance](documentation/core/index.md) | Zero-Vendoring & Flat Topology Architecture (Protocol v6.0.0): 4D spatial coordinate tensor, bifurcated invariants constitution (INV-LINT / INV-AGENT), operational lifecycle, and presentation syntax |
 
 ## Core Meta-Governance
 - [Taxonomy](documentation/core/taxonomy.md): 4D spatial coordinate tensor (Temperature x Lifecycle x Audience x Mode).
-- [Invariants](documentation/core/invariants.md): Codified constitution of numbered system invariants (`INV-*`).
-- [Workflow](documentation/core/workflow.md): Code-to-doc trigger matrix, PR review gates, standard intake SOP, and adoption.
+- [Invariants](documentation/core/invariants.md): Codified constitution of bifurcated system invariants (`[INV-LINT-*]` and `[INV-AGENT-*]`).
+- [Workflow](documentation/core/workflow.md): Code-to-doc trigger matrix, PR review gates, standard intake SOP, and zero-vendoring adoption.
 - [Style Guide](documentation/core/style.md): Technical voice, structural syntax, link contracts.
-- [Repository Contracts](documentation/contracts.md): Active profiles and directory layout bindings.
+- [Repository Contracts](documentation/contracts.md): Active profiles, declarative `.docgov.yml` schema, and directory layout bindings.
 
 ## Active Domain Profiles
 - **Architecture**: [Architecture Profile](documentation/profiles/architecture/index.md) (`adr.md`, `living-snapshot.md`, `rfc.md`).

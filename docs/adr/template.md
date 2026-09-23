@@ -1,24 +1,53 @@
-# ADR-NNNN: Decision Title
+---
+id: ADR-NNNN
+title: "[Title of Decision]"
+status: draft # [draft | accepted | superseded | rejected | deprecated]
+date: YYYY-MM-DD
+scope: [e.g., core/engine, storage/ledger, cli]
+superseded_by: null # e.g., ADR-0042
+negative_knowledge: true
+---
 
-## Status
+# NNNN. [Title of Decision]
 
-Proposed
+- Status: Draft | Accepted | Rejected | Deprecated | Superseded by [ADR-NNNN](NNNN-slug.md)
+- Date: YYYY-MM-DD
+- Deciders: [Names / GitHub handles]
+- Consulted: [Names / GitHub handles]
+- Informed: [Names / GitHub handles]
 
-## Context
+---
 
-Describe the forces, constraints, and problem that require a durable
-decision.
+## Context and Problem Statement
 
-## Decision
+Describe the forces, constraints, and problem that require a durable architectural decision.
 
-State the decision in present tense. Include the boundaries that future
-changes must preserve.
+## Decision Drivers
 
-## Alternatives
+- [Driver 1, e.g., deterministic execution]
+- [Driver 2, e.g., cross-crate dependency boundaries]
 
-Describe the credible alternatives and why they were not selected.
+## Considered Options
 
-## Consequences
+- [Option 1: e.g., Proposed approach]
+- [Option 2: e.g., Alternative approach]
 
-List the positive and negative consequences, including migration or
-maintenance costs.
+## Decision Outcome
+
+Chosen option: "[Option 1]", because [justification, e.g., fulfills latency budget and guarantees fail-closed isolation].
+
+### Positive Consequences
+
+- [Positive consequence 1]
+- [Positive consequence 2]
+
+### Negative Consequences
+
+- [Trade-off or operational cost 1]
+- [Trade-off or operational cost 2]
+
+## Rejected Alternatives & Negative Knowledge
+
+### Why [Option 2] Was Discarded
+
+Detail why alternative solutions were evaluated and rejected, documenting explicit failure modes to prevent regressive re-exploration.

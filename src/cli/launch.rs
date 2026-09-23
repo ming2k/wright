@@ -54,7 +54,7 @@ pub struct LaunchArgs {
     /// so plans that need forging are built from scratch. Unlike `--force`,
     /// this does not redeploy parts that are already present. Composable
     /// with `--force`.
-    #[arg(long, short = 'c', alias = "clean")]
+    #[arg(long, short = 'c')]
     pub fresh: bool,
 
     /// Target root directory to fill (required, e.g. /mnt/new; pass '/' explicitly for the live system).

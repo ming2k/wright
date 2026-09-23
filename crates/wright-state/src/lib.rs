@@ -7,5 +7,5 @@ pub mod error;
 pub mod ledger;
 pub mod lock;
 
-pub use database::InstalledDb;
+pub use database::{InstalledDb, ReadOnlyDb};
 pub use error::{Result, StateError};

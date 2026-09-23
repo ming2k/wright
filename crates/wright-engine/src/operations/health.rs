@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::error::{Result, WrightError};
 use crate::query;
 use wright_part::elf;
-use wright_state::database::{FileType, InstalledDb, InstalledPart, Origin};
+use wright_state::database::{FileType, InstalledPart, Origin, ReadOnlyDb};
 
 /// A single structured finding from the standard checks. Serialized as an
 /// element of the `issues` array in `wright check --json` output; the `check`
@@ -50,7 +50,7 @@ pub(super) struct CheckOutcome {
 /// Run the standard suite of system health checks. Callers format their own
 /// final messages (e.g. `check` vs `doctor` branding).
 pub(super) async fn run_standard_checks(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     root_dir: &Path,
     only_parts: Option<&[String]>,
     deep: bool,
@@ -131,7 +131,7 @@ where
 
 // ── integrity ───────────────────────────────────────────────────────────
 
-async fn integrity_check(db: &InstalledDb) -> Result<(usize, Vec<CheckIssue>)> {
+async fn integrity_check(db: &ReadOnlyDb) -> Result<(usize, Vec<CheckIssue>)> {
     let mut issues = 0usize;
     let mut found = Vec::new();
 
@@ -183,7 +183,7 @@ async fn integrity_check(db: &InstalledDb) -> Result<(usize, Vec<CheckIssue>)> {
 // ── registry deps ───────────────────────────────────────────────────────
 
 async fn registry_check(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     only_parts: Option<&[String]>,
 ) -> Result<Vec<query::BrokenDep>> {
     crate::cli_action!("Checking", "registry dependencies");
@@ -230,7 +230,7 @@ struct DeepMissing {
 }
 
 async fn elf_check(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     root_dir: &Path,
     only_parts: Option<&[String]>,
 ) -> Result<DeepReport> {
@@ -297,7 +297,7 @@ async fn elf_check(
     Ok(report)
 }
 
-async fn resolve_soname_owner(db: &InstalledDb, soname: &str) -> Result<Option<String>> {
+async fn resolve_soname_owner(db: &ReadOnlyDb, soname: &str) -> Result<Option<String>> {
     let parts = db.list_parts().await?;
     for p in parts {
         let files = db.get_files(p.id).await?;
@@ -350,7 +350,7 @@ struct MissingPath {
 }
 
 async fn files_check(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     root_dir: &Path,
     only_parts: Option<&[String]>,
 ) -> Result<(usize, Vec<CheckIssue>)> {

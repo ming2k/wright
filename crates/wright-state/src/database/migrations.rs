@@ -2,7 +2,8 @@
 
 use crate::error::{Result, WrightError};
 use rusqlite::{Connection, TransactionBehavior};
-use tracing::info;
+use std::path::{Path, PathBuf};
+use tracing::{info, warn};
 
 pub struct Migration {
     pub version: u32,
@@ -135,7 +136,13 @@ pub fn configure_connection(conn: &mut Connection) -> Result<()> {
 }
 
 /// Run pending migrations up to `CURRENT_DB_VERSION`.
-pub fn run_migrations(conn: &mut Connection) -> Result<()> {
+///
+/// When `db_path` is supplied and there is work to do, a `VACUUM INTO`
+/// snapshot of the pre-migration database is written beside it before the
+/// first migration runs (ADR-0043). A destructive migration then costs a
+/// restore instead of a system. `None` skips snapshotting (in-memory and
+/// test databases).
+pub fn run_migrations(conn: &mut Connection, db_path: Option<&Path>) -> Result<()> {
     let mut current_version: u32 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| WrightError::context("failed to read user_version", e))?;
@@ -153,14 +160,18 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
         if has_sqlx {
             let max_v: Option<i64> = conn
-                .query_row("SELECT MAX(version) FROM _sqlx_migrations", [], |r| r.get(0))
+                .query_row("SELECT MAX(version) FROM _sqlx_migrations", [], |r| {
+                    r.get(0)
+                })
                 .unwrap_or(None);
             if let Some(v) = max_v
                 && v > 0
             {
                 current_version = v as u32;
                 conn.pragma_update(None, "user_version", current_version)
-                    .map_err(|e| WrightError::context("failed to stamp user_version from legacy table", e))?;
+                    .map_err(|e| {
+                        WrightError::context("failed to stamp user_version from legacy table", e)
+                    })?;
             }
         }
     }
@@ -180,6 +191,21 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         return Ok(());
     }
 
+    let target_version = pending.last().map(|m| m.version).unwrap_or(current_version);
+
+    // Snapshot the pre-migration database before touching it. A failure to
+    // snapshot is fatal: proceeding would apply a destructive migration with
+    // no way back, which is the exact scenario this guards against.
+    let snapshot = match db_path {
+        Some(path) => Some(snapshot_before_migration(
+            conn,
+            path,
+            current_version,
+            target_version,
+        )?),
+        None => None,
+    };
+
     info!(
         "updating database schema ({} changes pending, current v{})",
         pending.len(),
@@ -188,7 +214,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
     // Disable foreign keys during schema restructuring migrations
     conn.pragma_update(None, "foreign_keys", "OFF")
-        .map_err(|e| WrightError::context("failed to temporarily disable foreign keys for migration", e))?;
+        .map_err(|e| {
+            WrightError::context(
+                "failed to temporarily disable foreign keys for migration",
+                e,
+            )
+        })?;
 
     let outcome = (|| -> Result<()> {
         let tx = conn
@@ -196,11 +227,24 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
             .map_err(|e| WrightError::context("failed to begin migration transaction", e))?;
 
         for m in pending {
-            tx.execute_batch(m.sql)
-                .map_err(|e| WrightError::context(format!("failed executing migration {}", m.name), e))?;
+            tx.execute_batch(m.sql).map_err(|e| {
+                let recovery = match &snapshot {
+                    Some(path) => format!(
+                        "; restore with `wright doctor --restore {}` or rebuild with `wright doctor --repair`",
+                        path.display()
+                    ),
+                    None => "; rebuild with `wright doctor --repair`".to_string(),
+                };
+                WrightError::context(
+                    format!("failed executing migration {}{}", m.name, recovery),
+                    e,
+                )
+            })?;
 
             tx.pragma_update(None, "user_version", m.version)
-                .map_err(|e| WrightError::context(format!("failed to update user_version for {}", m.name), e))?;
+                .map_err(|e| {
+                    WrightError::context(format!("failed to update user_version for {}", m.name), e)
+                })?;
         }
 
         tx.commit()
@@ -216,5 +260,105 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     outcome?;
     restore?;
 
+    if let Some(path) = &snapshot {
+        info!(
+            event = "db.migrated",
+            from_version = current_version,
+            to_version = target_version,
+            snapshot = %path.display(),
+            "database schema migrated; pre-migration snapshot retained"
+        );
+    }
+
     Ok(())
+}
+
+/// How many pre-migration snapshots to keep beside the database.
+const SNAPSHOT_RETENTION: usize = 3;
+
+/// Write a `VACUUM INTO` snapshot of the current database beside it, and prune
+/// older snapshots.
+///
+/// `VACUUM INTO` produces a single, consistent, standalone file and is
+/// therefore immune to the WAL hazard that makes hand-copying `wright.db`
+/// unsafe: under `journal_mode = WAL` the `-wal` sidecar can hold committed
+/// pages that have not been checkpointed into the main file, so a plain file
+/// copy can miss recent writes or capture a torn state.
+fn snapshot_before_migration(
+    conn: &Connection,
+    db_path: &Path,
+    from_version: u32,
+    to_version: u32,
+) -> Result<PathBuf> {
+    let base = db_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wright.db".to_string());
+    let snapshot = db_path.with_file_name(format!(
+        "{base}.pre-migrate-v{from_version}-to-v{to_version}.bak"
+    ));
+
+    // VACUUM INTO refuses an existing target; a rerun after a failed migration
+    // must be able to overwrite the previous attempt's snapshot.
+    let _ = std::fs::remove_file(&snapshot);
+
+    conn.execute("VACUUM INTO ?1", [snapshot.to_string_lossy().as_ref()])
+        .map_err(|e| {
+            WrightError::context(
+                format!(
+                    "failed to snapshot database to {} before migrating v{} -> v{}",
+                    snapshot.display(),
+                    from_version,
+                    to_version
+                ),
+                e,
+            )
+        })?;
+
+    prune_snapshots(db_path, SNAPSHOT_RETENTION);
+    Ok(snapshot)
+}
+
+/// Keep only the `keep` most recent `*.pre-migrate-*.bak` snapshots beside the
+/// database, so the recovery mechanism cannot itself grow without bound.
+fn prune_snapshots(db_path: &Path, keep: usize) {
+    let Some(dir) = db_path.parent() else {
+        return;
+    };
+    let base = db_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let prefix = format!("{base}.pre-migrate-");
+
+    let mut snapshots: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(&prefix) || !name.ends_with(".bak") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        snapshots.push((modified, entry.path()));
+    }
+
+    if snapshots.len() <= keep {
+        return;
+    }
+    snapshots.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, path) in snapshots.into_iter().skip(keep) {
+        if let Err(e) = std::fs::remove_file(&path) {
+            warn!(
+                event = "db.snapshot_prune_failed",
+                path = %path.display(),
+                error = %e,
+                "failed to prune an old pre-migration snapshot"
+            );
+        }
+    }
 }

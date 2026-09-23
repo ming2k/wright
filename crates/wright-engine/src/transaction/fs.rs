@@ -1,5 +1,5 @@
 use crate::error::{Result, WrightError};
-use crate::transaction::rollback::RollbackState;
+use crate::transaction::fs_tx::FsTransaction;
 use crate::util::checksum;
 use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
@@ -110,12 +110,17 @@ async fn move_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Install `entries` into `root_dir`, journaling every mutation through the
+/// unified [`FsTransaction`] so the whole operation can be undone.
+///
+/// Overwritten content is backed up via `fs.back_up` (a same-inode move into
+/// the transaction's backup store under the root) rather than copied into a
+/// temporary directory, so a crashed install's data survives a reboot.
 pub(super) async fn copy_entries_to_root(
     entries: &[FileEntry],
     extract_dir: &Path,
     root_dir: &Path,
-    rollback: &mut RollbackState,
-    backup_dir: Option<&Path>,
+    tx: &mut FsTransaction,
     config_paths: &HashSet<String>,
     divert_paths: &HashSet<String>,
 ) -> Result<Vec<String>> {
@@ -133,7 +138,7 @@ pub(super) async fn copy_entries_to_root(
                     e,
                 )
             })?;
-            rollback.record_dir_created(dest_path);
+            tx.record_created(dest_path, true)?;
         }
     }
 
@@ -166,21 +171,13 @@ pub(super) async fn copy_entries_to_root(
             if let Ok(existing_meta) = tokio::fs::symlink_metadata(&dest_path).await {
                 if existing_meta.file_type().is_symlink() {
                     if let Ok(target) = tokio::fs::read_link(&dest_path).await {
-                        rollback.record_symlink_backup(
+                        tx.record_symlink_replaced(
                             dest_path.clone(),
                             target.to_string_lossy().into_owned(),
-                        );
+                        )?;
                     }
-                } else if existing_meta.is_file()
-                    && let Some(bdir) = backup_dir
-                {
-                    let backup_path = bdir.join(relative);
-                    if let Some(parent) = backup_path.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    if tokio::fs::copy(&dest_path, &backup_path).await.is_ok() {
-                        rollback.record_backup(dest_path.clone(), backup_path);
-                    }
+                } else if existing_meta.is_file() {
+                    tx.back_up(&dest_path).await?;
                 }
 
                 let remove_result = if existing_meta.file_type().is_dir() {
@@ -206,12 +203,15 @@ pub(super) async fn copy_entries_to_root(
                     e,
                 ));
             }
-            rollback.record_file_created(dest_path);
+            tx.record_created(dest_path, false)?;
         } else {
             // Regular file
             if config_paths.contains(&entry.path)
                 && tokio::fs::symlink_metadata(&dest_path).await.is_ok()
             {
+                // A config file already on disk is preserved: the new version is
+                // written alongside as `<name>.wnew` and the existing file is
+                // left untouched.
                 let mut new_name = dest_path.as_os_str().to_owned();
                 new_name.push(".wnew");
                 let side_path = PathBuf::from(new_name);
@@ -225,7 +225,7 @@ pub(super) async fn copy_entries_to_root(
                     )
                     .await;
                 }
-                rollback.record_file_created(side_path);
+                tx.record_created(side_path, false)?;
                 preserved_configs.push(entry.path.clone());
             } else if divert_paths.contains(&entry.path) {
                 let mut divert_name = dest_path.as_os_str().to_owned();
@@ -235,17 +235,7 @@ pub(super) async fn copy_entries_to_root(
                 if tokio::fs::metadata(&dest_path).await.is_ok()
                     || tokio::fs::symlink_metadata(&dest_path).await.is_ok()
                 {
-                    move_or_copy(&dest_path, &divert_path).await.map_err(|e| {
-                        WrightError::context(
-                            format!(
-                                "failed to divert {} to {}",
-                                dest_path.display(),
-                                divert_path.display()
-                            ),
-                            e,
-                        )
-                    })?;
-                    rollback.record_backup(dest_path.clone(), divert_path);
+                    tx.move_aside(&dest_path, &divert_path).await?;
                 }
 
                 move_or_copy(&src_path, &dest_path).await.map_err(|e| {
@@ -265,24 +255,16 @@ pub(super) async fn copy_entries_to_root(
                     )
                     .await;
                 }
-                rollback.record_file_created(dest_path);
+                tx.record_created(dest_path, false)?;
             } else {
-                if let Some(bdir) = backup_dir {
-                    if let Ok(existing_meta) = tokio::fs::symlink_metadata(&dest_path).await {
-                        if existing_meta.is_file() {
-                            let backup_path = bdir.join(relative);
-                            if let Some(parent) = backup_path.parent() {
-                                let _ = tokio::fs::create_dir_all(parent).await;
-                            }
-                            if tokio::fs::copy(&dest_path, &backup_path).await.is_ok() {
-                                rollback.record_backup(dest_path.clone(), backup_path);
-                            }
-                        } else if existing_meta.file_type().is_symlink() {
-                            let _ = tokio::fs::remove_file(&dest_path).await;
-                        }
+                if let Ok(existing_meta) = tokio::fs::symlink_metadata(&dest_path).await {
+                    if existing_meta.is_file() {
+                        tx.back_up(&dest_path).await?;
+                    } else if existing_meta.file_type().is_symlink() {
+                        let _ = tokio::fs::remove_file(&dest_path).await;
+                    } else if existing_meta.is_dir() {
+                        let _ = tokio::fs::remove_dir_all(&dest_path).await;
                     }
-                } else if tokio::fs::metadata(&dest_path).await.is_ok() {
-                    let _ = tokio::fs::remove_file(&dest_path).await;
                 }
 
                 move_or_copy(&src_path, &dest_path).await.map_err(|e| {
@@ -302,7 +284,7 @@ pub(super) async fn copy_entries_to_root(
                     )
                     .await;
                 }
-                rollback.record_file_created(dest_path);
+                tx.record_created(dest_path, false)?;
             }
         }
     }

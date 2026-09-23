@@ -5,17 +5,13 @@ use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use wright_model::version::{self, DepRef};
 use wright_part::archive::read_archive_meta;
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
 /// Run comprehensive system health checks.
 ///
 /// Delegates to `health::run_standard_checks` (integrity + files + deps + ELF)
 /// and additionally verifies the dependency closure of archives in parts_dir.
-pub async fn execute_doctor(
-    db: &InstalledDb,
-    root_dir: &Path,
-    config: &GlobalConfig,
-) -> Result<()> {
+pub async fn execute_doctor(db: &ReadOnlyDb, root_dir: &Path, config: &GlobalConfig) -> Result<()> {
     let t0 = crate::util::timing::WorkflowTiming::new();
     crate::cli_action!("Checking", "system health");
 
@@ -49,6 +45,38 @@ pub async fn execute_doctor(
             total_issues
         )))
     }
+}
+
+/// Run the checks that do not need the registry, when the registry cannot be
+/// opened at all (ADR-0043).
+///
+/// `doctor` is the command an operator reaches for *because* something is
+/// wrong, so it must not be the first casualty of a damaged database. The
+/// archive-closure check reads `parts_dir` directly and still runs; the
+/// registry-dependent checks are skipped and reported as skipped, and the
+/// command exits non-zero so a CI gate still catches the damage.
+pub async fn execute_doctor_degraded(config: &GlobalConfig, reason: &str) -> Result<()> {
+    let t0 = crate::util::timing::WorkflowTiming::new();
+    crate::cli_action!("Checking", "system health (registry unavailable)");
+    crate::cli_warn!("registry is unreadable: {reason}");
+    crate::cli_output!(
+        "             Skipping registry checks (files, dependencies, ELF). \
+         Run `wright doctor --repair` to rebuild it, or \
+         `wright doctor --restore <snapshot>` to restore a pre-migration snapshot."
+    );
+
+    let closure_issues = check_parts_dir_closure(config).await?;
+
+    crate::cli_action!(
+        "Finished",
+        "degraded doctor in {}: {} archive-closure issue(s)",
+        crate::util::timing::format_duration(t0.elapsed()),
+        closure_issues
+    );
+
+    Err(WrightError::DatabaseError(format!(
+        "registry unreadable ({reason}); run `wright doctor --repair` or `wright doctor --restore <snapshot>`"
+    )))
 }
 
 /// Scan parts_dir and verify that every archive's runtime_deps can be
@@ -136,7 +164,7 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
 /// Compare each registered plan's recorded provenance checksum against the
 /// current plan source on disk. A mismatch means the plan changed since its
 /// parts were sealed — the installed state no longer reflects plan source.
-async fn check_plan_drift(db: &InstalledDb, config: &GlobalConfig) -> Result<usize> {
+async fn check_plan_drift(db: &ReadOnlyDb, config: &GlobalConfig) -> Result<usize> {
     let plans = db.list_plans().await?;
     if plans.iter().all(|p| p.plan_checksum.is_none()) {
         return Ok(0);
@@ -243,7 +271,7 @@ fn resolve_dep_target(dep: &str) -> Option<DepTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::{NewPlan, NewPlanProvenance, RegisterPlan};
+    use wright_state::database::{InstalledDb, NewPlan, NewPlanProvenance, RegisterPlan};
 
     async fn register_plan_with_snapshot(
         db: &InstalledDb,

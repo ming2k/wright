@@ -157,7 +157,13 @@ pub(crate) fn export_legacy_plan_snapshots(
 
         match plan_name {
             Some(name) => {
-                record_plan_snapshot(ledger_dir, &name, &checksum, &source, recorded_at.as_deref())?;
+                record_plan_snapshot(
+                    ledger_dir,
+                    &name,
+                    &checksum,
+                    &source,
+                    recorded_at.as_deref(),
+                )?;
             }
             None => {
                 record_detached_snapshot(ledger_dir, &checksum, &source, recorded_at.as_deref())?;
@@ -303,9 +309,6 @@ mod tests {
 
         // A database that never had the table exports nothing.
         let fresh = rusqlite::Connection::open_in_memory().unwrap();
-        assert_eq!(
-            export_legacy_plan_snapshots(&fresh, dir.path()).unwrap(),
-            0
-        );
+        assert_eq!(export_legacy_plan_snapshots(&fresh, dir.path()).unwrap(), 0);
     }
 }

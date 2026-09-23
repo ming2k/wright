@@ -20,7 +20,7 @@ use crate::resolve::plan_search_dirs;
 use wright_model::version;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::{OutputConfig, PlanManifest};
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
 /// Serializable graph document served at `/api/graph` and rendered by the
 /// terminal view. Field order and element order are deterministic.
@@ -98,7 +98,7 @@ impl EdgeDomain {
 ///
 /// Output order is deterministic: nodes sort by name, edges by
 /// `(from, to, domain)`.
-pub async fn build_graph(config: &GlobalConfig, db: &InstalledDb) -> Result<GraphDoc> {
+pub async fn build_graph(config: &GlobalConfig, db: &ReadOnlyDb) -> Result<GraphDoc> {
     let plan_dirs = plan_search_dirs(config);
     let index = PlanIndex::discover(&plan_dirs).context("failed to discover plans")?;
     let mut manifests = index.load_all().context("failed to load plans")?;
@@ -177,7 +177,7 @@ fn dep_plan_name(dep_raw: &str) -> String {
 /// `resolve::graph::dependency_plan_differs`: epoch, version (absent
 /// manifest version reads as ""), and release must all match the registered
 /// record.
-async fn plan_state(name: &str, manifest: &PlanManifest, db: &InstalledDb) -> Result<NodeState> {
+async fn plan_state(name: &str, manifest: &PlanManifest, db: &ReadOnlyDb) -> Result<NodeState> {
     let Some(record) = db
         .get_plan(name)
         .await
@@ -267,7 +267,7 @@ pub fn render_terminal(doc: &GraphDoc) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::NewPlan;
+    use wright_state::database::{InstalledDb, NewPlan};
 
     fn write_plan(plans_dir: &std::path::Path, name: &str, extra: &str) {
         let plan_dir = plans_dir.join(name);

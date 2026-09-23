@@ -144,6 +144,7 @@ pub async fn upgrade_part(
 
     let mut tx = TransactionContext::begin(
         db,
+        root_dir,
         HistoryAction::Upgrade,
         &partinfo.name,
         Some(&installed_plan.version),
@@ -157,11 +158,8 @@ pub async fn upgrade_part(
     let existing_files = db.get_files(installed_part.id).await?;
     let new_paths: HashSet<&str> = new_entries.iter().map(|e| e.path.as_str()).collect();
 
-    let backup_dir =
-        tempfile::tempdir().map_err(|e| WrightError::context("failed to create backup dir", e))?;
-
-    // Perform backup. For now, doing it sequentially but with async calls for safety.
-    // Parallelizing async I/O can be done with join_all or similar.
+    // Back up every existing path the upgrade overwrites, through the unified
+    // transaction (same-inode moves into the under-root backup store).
     let overlapping: Vec<_> = existing_files
         .iter()
         .filter(|f| new_paths.contains(f.path.as_str()))
@@ -174,37 +172,12 @@ pub async fn upgrade_part(
         }
 
         if file.file_type == FileType::File {
-            let backup_path = backup_dir.path().join(file.path.trim_start_matches('/'));
-            if let Some(parent) = backup_path.parent() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    WrightError::context(
-                        format!("failed to create backup directory {}", parent.display()),
-                        e,
-                    )
-                })?;
-            }
-            // Prefer hard_link (instant, no data copy) with copy fallback.
-            let result = match tokio::fs::hard_link(&full_path, &backup_path).await {
-                Ok(()) => Ok(()),
-                Err(_) => tokio::fs::copy(&full_path, &backup_path).await.map(|_| ()),
-            };
-
-            match result {
-                Ok(()) => {
-                    tx.rollback_state().record_backup(full_path, backup_path);
-                }
-                Err(e) => {
-                    return Err(WrightError::context(
-                        format!("failed to backup {}", full_path.display()),
-                        e,
-                    ));
-                }
-            }
+            tx.fs().back_up(&full_path).await?;
         } else if file.file_type == FileType::Symlink
             && let Ok(target) = tokio::fs::read_link(&full_path).await
         {
-            tx.rollback_state()
-                .record_symlink_backup(full_path, target.to_string_lossy().to_string());
+            tx.fs()
+                .record_symlink_replaced(full_path, target.to_string_lossy().to_string())?;
         }
     }
 
@@ -217,15 +190,11 @@ pub async fn upgrade_part(
 
     let config_paths = collect_config_paths(&new_entries);
 
-    // copy_entries_to_root should probably also be async.
-    // For now I'll assume it's still sync and wraps internal tokio calls if needed,
-    // but better to refactor it to async too.
     let preserved_configs = match copy_entries_to_root(
         &new_entries,
         temp_dir.path(),
         root_dir,
-        tx.rollback_state(),
-        None,
+        tx.fs(),
         &config_paths,
         &divert_paths,
     )
@@ -283,12 +252,12 @@ pub async fn upgrade_part(
         let full_path = root_dir.join(file.path.trim_start_matches('/'));
         match file.file_type {
             FileType::File | FileType::Symlink => {
-                if full_path.exists() || full_path.symlink_metadata().is_ok() {
-                    let _ = tokio::fs::remove_file(&full_path).await;
-                }
+                // Journal the deletion so a later failure in this same upgrade
+                // restores the file instead of leaving it gone.
+                tx.fs().back_up(&full_path).await?;
             }
             FileType::Directory => {
-                let _ = tokio::fs::remove_dir(&full_path).await;
+                tx.fs().remove_empty_dir(&full_path).await?;
             }
         }
     }

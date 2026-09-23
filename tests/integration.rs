@@ -15,4 +15,5 @@ mod integration {
     mod migration_test;
     mod output_test;
     mod plan_snapshot_test;
+    mod remove_test;
 }

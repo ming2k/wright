@@ -36,6 +36,6 @@ pub struct HistoryArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: HistoryArgs, ctx: &Context<'_>) -> Result<()> {
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     crate::operations::history::execute_history(&db, args.target.as_deref(), args.json).await
 }

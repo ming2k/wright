@@ -8,12 +8,14 @@ mod meta;
 mod migrations;
 mod parts;
 mod plans;
+mod reindex;
 pub mod schema;
 mod types;
 
-pub use core::InstalledDb;
 use core::PART_COLUMNS;
+pub use core::{InstalledDb, ReadOnlyDb};
 pub use plans::PlanRecord;
+pub use reindex::{RebuildSummary, RebuiltFile, RebuiltPart, RebuiltPlan};
 pub use types::{
     DeliveryStatus, DeliveryTransaction, Dependency, FileEntry, FileType, HistoryAction,
     HistoryRecord, HistoryStatus, InstalledPart, NewPart, NewPlan, NewPlanProvenance, OpStatus,

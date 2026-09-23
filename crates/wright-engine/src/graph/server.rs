@@ -31,7 +31,6 @@ const STYLE_CSS: &str = include_str!("assets/style.css");
 struct Shared {
     config: GlobalConfig,
     db_path: PathBuf,
-    ledger_dir: PathBuf,
 }
 
 type Body = Full<Bytes>;
@@ -39,21 +38,12 @@ type Body = Full<Bytes>;
 /// Serve the graph UI on an already-bound listener (bound by the caller so
 /// it learns the effective address first, e.g. for `--port 0`). Runs until
 /// Ctrl-C.
-pub async fn serve(
-    listener: TcpListener,
-    config: GlobalConfig,
-    db_path: PathBuf,
-    ledger_dir: PathBuf,
-) -> Result<()> {
+pub async fn serve(listener: TcpListener, config: GlobalConfig, db_path: PathBuf) -> Result<()> {
     let addr = listener
         .local_addr()
         .context("failed to read bound address")?;
     crate::outln!("Serving plan graph at http://{}/ (Ctrl-C to stop)", addr);
-    let shared = Arc::new(Shared {
-        config,
-        db_path,
-        ledger_dir,
-    });
+    let shared = Arc::new(Shared { config, db_path });
     run(listener, shared, tokio::signal::ctrl_c()).await
 }
 
@@ -122,7 +112,7 @@ async fn route(req: &Request<Incoming>, shared: &Shared) -> Response<Body> {
 
 /// Rebuild the graph document from current state and serialize it.
 async fn graph_json(shared: &Shared) -> Result<String> {
-    let db = wright_state::database::InstalledDb::open(&shared.db_path, Some(&shared.ledger_dir))
+    let db = wright_state::database::ReadOnlyDb::open_read_only(&shared.db_path)
         .await
         .context("failed to open database")?;
     let doc = super::build_graph(&shared.config, &db).await?;
@@ -165,17 +155,12 @@ mod tests {
         config.general.extra_plans_dirs = Vec::new();
 
         let db_path = temp.path().join("wright.db");
-        let ledger_dir = temp.path().join("ledger");
         // Run migrations up front so request-time opens see a valid schema.
-        wright_state::database::InstalledDb::open(&db_path, Some(&ledger_dir))
+        wright_state::database::InstalledDb::open(&db_path, None)
             .await
             .unwrap();
 
-        Arc::new(Shared {
-            config,
-            db_path,
-            ledger_dir,
-        })
+        Arc::new(Shared { config, db_path })
     }
 
     #[tokio::test]

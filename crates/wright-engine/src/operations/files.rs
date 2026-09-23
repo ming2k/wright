@@ -1,8 +1,8 @@
 use crate::error::{Result, WrightError};
 use crate::identify::{Identifier, ResolvedTarget};
-use wright_state::database::{FileEntry, InstalledDb, PartWithPlan};
+use wright_state::database::{FileEntry, PartWithPlan, ReadOnlyDb};
 
-pub async fn execute_files(db: &InstalledDb, target: &str, json: bool) -> Result<()> {
+pub async fn execute_files(db: &ReadOnlyDb, target: &str, json: bool) -> Result<()> {
     let ident = Identifier::parse(target)?;
     let resolved = crate::identify::resolve(db, &ident).await?;
 
@@ -57,7 +57,7 @@ pub async fn execute_files(db: &InstalledDb, target: &str, json: bool) -> Result
     Ok(())
 }
 
-async fn get_files(db: &InstalledDb, part_id: i64) -> Result<Vec<FileEntry>> {
+async fn get_files(db: &ReadOnlyDb, part_id: i64) -> Result<Vec<FileEntry>> {
     db.get_files(part_id)
         .await
         .map_err(|e| WrightError::context("failed to get files", e))
@@ -67,7 +67,7 @@ async fn get_files(db: &InstalledDb, part_id: i64) -> Result<Vec<FileEntry>> {
 mod tests {
     use super::*;
     use crate::error::WrightError;
-    use wright_state::database::{FileType, NewPart, NewPlan};
+    use wright_state::database::{FileType, InstalledDb, NewPart, NewPlan};
 
     async fn test_db() -> InstalledDb {
         InstalledDb::open_in_memory().await.unwrap()

@@ -1,28 +1,33 @@
+use std::path::Path;
+
 use crate::error::Result;
-use crate::transaction::rollback::RollbackState;
+use crate::transaction::fs_tx::{FsIntent, FsTransaction};
 use wright_state::database::{HistoryAction, HistoryStatus, InstalledDb, SessionContext};
 
-/// Unified transaction context coordinating filesystem rollback and audit logging.
+/// A filesystem transaction bound to a pending history row.
 ///
-/// # Design Principles
+/// This is the single entry point every mutating operation (install, upgrade,
+/// remove) uses. It pairs an [`FsTransaction`] — the one filesystem engine —
+/// with the audit row that the operation will settle:
 ///
-/// - All filesystem mutations are recorded via `rollback_state()`.
-/// - On success, call `commit()` to atomically update the database and clean up rollback state.
-/// - On failure, call `rollback()` to restore filesystem state and record the failure.
-/// - If dropped without explicit finalization, the filesystem is automatically rolled back
-///   (the database status is NOT updated in Drop to avoid async-in-Drop issues; callers
-///   should use `rollback()` explicitly on the error path).
+/// - `commit()` marks history `completed` and discards the backup store.
+/// - `rollback()` restores the filesystem and marks the history `rolled_back`.
+/// - Dropping without finalising restores the filesystem and leaves the
+///   history row `pending`, for startup recovery to settle.
 pub struct TransactionContext<'a> {
     db: &'a InstalledDb,
-    rollback: RollbackState,
+    fs: FsTransaction,
     tx_id: i64,
     part_name: String,
     finalized: bool,
 }
 
 impl<'a> TransactionContext<'a> {
+    /// Begin a transaction for `part_name`, labelled with its history row id
+    /// so the journal directory is unique per operation.
     pub async fn begin(
         db: &'a InstalledDb,
+        root_dir: &Path,
         action: HistoryAction,
         part_name: &str,
         old_version: Option<&str>,
@@ -31,11 +36,6 @@ impl<'a> TransactionContext<'a> {
         old_hash: Option<&str>,
         new_hash: Option<&str>,
     ) -> Result<Self> {
-        let rollback = match super::journal_path_from_db(db) {
-            Some(jp) => RollbackState::with_journal(jp),
-            None => RollbackState::new(),
-        };
-
         let tx_id = db
             .record_history(
                 &session.id,
@@ -51,30 +51,41 @@ impl<'a> TransactionContext<'a> {
             )
             .await?;
 
+        let intent = match action {
+            HistoryAction::Install => FsIntent::install(part_name, new_hash),
+            HistoryAction::Upgrade => FsIntent::upgrade(part_name, new_hash),
+            // A rollback reverts toward the old hash, like a removal of the
+            // new state; recovery compares against `old_hash`.
+            HistoryAction::Remove | HistoryAction::Rollback => {
+                FsIntent::remove(part_name, old_hash)
+            }
+        };
+        let fs = FsTransaction::begin(root_dir, &tx_id.to_string(), &[intent])?;
+
         Ok(Self {
             db,
-            rollback,
+            fs,
             tx_id,
             part_name: part_name.to_string(),
             finalized: false,
         })
     }
 
-    pub fn rollback_state(&mut self) -> &mut RollbackState {
-        &mut self.rollback
+    pub fn fs(&mut self) -> &mut FsTransaction {
+        &mut self.fs
     }
 
     pub async fn commit(mut self) -> Result<()> {
         self.db
             .update_history_status(self.tx_id, HistoryStatus::Completed)
             .await?;
-        self.rollback.commit();
+        self.fs.commit();
         self.finalized = true;
         Ok(())
     }
 
     pub async fn rollback(mut self) -> Result<()> {
-        self.rollback.rollback();
+        self.fs.rollback_blocking();
         self.db
             .update_history_status(self.tx_id, HistoryStatus::RolledBack)
             .await?;
@@ -93,8 +104,15 @@ impl<'a> TransactionContext<'a> {
 
 impl<'a> Drop for TransactionContext<'a> {
     fn drop(&mut self) {
+        // The FsTransaction's own Drop restores the filesystem; here we only
+        // note that finalisation did not happen, leaving the history row
+        // pending for startup recovery to settle.
         if !self.finalized {
-            self.rollback.rollback();
+            tracing::warn!(
+                event = "transaction.dropped_unfinalized",
+                part_name = %self.part_name,
+                "Transaction dropped without commit/rollback; filesystem restored, history left pending"
+            );
         }
     }
 }

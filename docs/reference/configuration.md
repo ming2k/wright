@@ -83,8 +83,8 @@ max_concurrent_downloads = 8
 - `parts_dir` is the local stock of built archives.
 - `db_path` tracks the authoritative state of installed parts, files, dependencies, and build sessions.
 - Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
-- `ledger_dir` holds append-only audit data as plain files: `<plan>/builds.jsonl` (per-build cost records) and `<plan>/snapshots/` (plan-source history). Writes are advisory and never fail a build or deploy. A database redirected via `--root`/`--db` uses `<db dir>/ledger` instead of this path.
-- `source_dir` caches downloaded sources and git source snapshots.
+- `ledger_dir` holds append-only audit data as plain files: `<plan>/builds.jsonl` (per-build cost records) and `<plan>/snapshots/` (plan-source history). Writes are advisory and never fail a build or deploy. A database redirected via `--root`/`--db` uses `<db dir>/ledger` instead of this path. Retention is opt-in via `wright clean --ledger`; `wright storage` reports its size.
+- `source_dir` caches downloaded sources and git source snapshots. It is a pure cache: `wright clean --sources` removes it (optionally `--older-than-days N`).
 - `forge_dir` has a default and normally does not need to be declared.
   Override it only when build workspaces must live on another filesystem or
   volume.

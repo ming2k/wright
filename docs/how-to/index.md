@@ -14,6 +14,7 @@ Task-oriented guides for specific problems.
 - [Bootstrap a new system](bootstrap-new-system.md)
 - [Inspect dependency trees](inspect-dependency-tree.md)
 - [Maintain OS parts](maintain-os-parts.md)
+- [Reclaim disk space and recover the registry](reclaim-space-and-recover-registry.md)
 - [Rebuild reverse dependencies](rebuild-reverse-dependencies.md)
 - [Rebuild core system plans](rebuild-core-system-plans.md)
 - [Estimate build costs](estimate-build-costs.md)

@@ -1,4 +1,4 @@
-use super::{InstalledDb, NewPlan, NewPlanProvenance, RegisterPlan};
+use super::{InstalledDb, NewPlan, NewPlanProvenance, ReadOnlyDb, RegisterPlan};
 use crate::error::{Result, WrightError};
 use rusqlite::params;
 
@@ -31,38 +31,7 @@ impl PlanRecord {
     }
 }
 
-impl InstalledDb {
-    pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
-        let name = plan.name.to_string();
-        let version = plan.version.to_string();
-        let release = plan.release as i64;
-        let epoch = plan.epoch as i64;
-        let arch = plan.arch.to_string();
-
-        self.write(move |conn| {
-            let res = conn.execute(
-                "INSERT INTO plans (name, version, release, epoch, arch)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![name, version, release, epoch, arch],
-            );
-            match res {
-                Ok(_) => Ok(conn.last_insert_rowid()),
-                Err(e) => {
-                    if let rusqlite::Error::SqliteFailure(ref err, _) = e
-                        && err.code == rusqlite::ErrorCode::ConstraintViolation
-                    {
-                        return Err(WrightError::DatabaseError(format!(
-                            "plan '{}' already registered",
-                            name
-                        )));
-                    }
-                    Err(WrightError::context("failed to insert plan", e))
-                }
-            }
-        })
-        .await
-    }
-
+impl ReadOnlyDb {
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         let name = name.to_string();
         self.read(move |conn| {
@@ -112,37 +81,6 @@ impl InstalledDb {
         .await
     }
 
-    pub async fn remove_plan(&self, name: &str) -> Result<()> {
-        let name_owned = name.to_string();
-        self.write(move |conn| {
-            let rows_affected = conn.execute("DELETE FROM plans WHERE name = ?1", params![name_owned])
-                .map_err(|e| WrightError::context("failed to remove plan", e))?;
-            if rows_affected == 0 {
-                return Err(WrightError::DatabaseError(format!(
-                    "plan not found: {}",
-                    name_owned
-                )));
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn remove_plan_by_id(&self, id: i64) -> Result<()> {
-        self.write(move |conn| {
-            let rows_affected = conn.execute("DELETE FROM plans WHERE id = ?1", params![id])
-                .map_err(|e| WrightError::context("failed to remove plan by id", e))?;
-            if rows_affected == 0 {
-                return Err(WrightError::DatabaseError(format!(
-                    "plan not found: id {}",
-                    id
-                )));
-            }
-            Ok(())
-        })
-        .await
-    }
-
     pub async fn get_parts_by_plan_id(&self, plan_id: i64) -> Result<Vec<super::InstalledPart>> {
         use super::PART_COLUMNS;
         let sql = format!(
@@ -171,6 +109,39 @@ impl InstalledDb {
                 Ok(Some(id))
             } else {
                 Ok(None)
+            }
+        })
+        .await
+    }
+}
+
+impl InstalledDb {
+    pub async fn insert_plan(&self, plan: NewPlan<'_>) -> Result<i64> {
+        let name = plan.name.to_string();
+        let version = plan.version.to_string();
+        let release = plan.release as i64;
+        let epoch = plan.epoch as i64;
+        let arch = plan.arch.to_string();
+
+        self.write(move |conn| {
+            let res = conn.execute(
+                "INSERT INTO plans (name, version, release, epoch, arch)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![name, version, release, epoch, arch],
+            );
+            match res {
+                Ok(_) => Ok(conn.last_insert_rowid()),
+                Err(e) => {
+                    if let rusqlite::Error::SqliteFailure(ref err, _) = e
+                        && err.code == rusqlite::ErrorCode::ConstraintViolation
+                    {
+                        return Err(WrightError::DatabaseError(format!(
+                            "plan '{}' already registered",
+                            name
+                        )));
+                    }
+                    Err(WrightError::context("failed to insert plan", e))
+                }
             }
         })
         .await
@@ -223,7 +194,13 @@ impl InstalledDb {
             conn.execute(
                 "UPDATE plans SET plan_checksum = ?1, source_checksums = ?2,
                         wright_version = ?3, isolation = ?4 WHERE id = ?5",
-                params![plan_checksum, source_checksums, wright_version, isolation, plan_id],
+                params![
+                    plan_checksum,
+                    source_checksums,
+                    wright_version,
+                    isolation,
+                    plan_id
+                ],
             )
             .map_err(|e| WrightError::context("failed to set plan provenance", e))?;
             Ok(())

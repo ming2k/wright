@@ -1,0 +1,36 @@
+version: "6.0"
+
+root_sanitization:
+  enforce: true
+  allowed_markdown:
+    - "README.md"
+    - "CHANGELOG.md"
+    - "CONTRIBUTING.md"
+    - "AGENTS.md"
+    - "CLAUDE.md"
+    - "GEMINI.md"
+    - "LICENSE.md"
+    - "SECURITY.md"
+
+firewall:
+  public_surfaces:
+    - "docs/tutorials/**"
+    - "docs/how-to/**"
+    - "docs/reference/**"
+    - "docs/explanation/**"
+  internal_surfaces:
+    - "docs/dev/**"
+
+architecture:
+  adr_path: "docs/adr"
+  require_frontmatter:
+    status_enum: ["draft", "accepted", "superseded", "rejected", "deprecated", "proposed"]
+    mandatory_fields: ["id", "title", "status", "date"]
+
+triggers:
+  - watch: "src/**"
+    require_update: "docs/**"
+    message: "Core CLI binary modified; ensure documentation is synchronized."
+  - watch: "crates/**"
+    require_update: "docs/**"
+    message: "Core workspace crates modified; ensure documentation is synchronized."

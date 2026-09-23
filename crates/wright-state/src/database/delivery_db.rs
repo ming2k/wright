@@ -1,8 +1,51 @@
 //! SQLite persistence for delivery state-machine records.
 
-use crate::database::{DeliveryStatus, DeliveryTransaction, InstalledDb, OpStatus, TransactionOp};
+use crate::database::{
+    DeliveryStatus, DeliveryTransaction, InstalledDb, OpStatus, ReadOnlyDb, TransactionOp,
+};
 use crate::error::{Result, WrightError};
 use rusqlite::params;
+
+impl ReadOnlyDb {
+    /// Find any delivery transaction that is not yet complete (leftover from a crash).
+    pub async fn get_active_delivery(&self) -> Result<Option<DeliveryTransaction>> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, command, status, created_at, updated_at
+                 FROM delivery_transactions
+                 WHERE status IN ('planning', 'ready', 'applying')
+                 ORDER BY id DESC
+                 LIMIT 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(DeliveryTransaction::from_row(row)?))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+    }
+
+    /// Get all operations for a delivery transaction, ordered by execution_order.
+    pub async fn get_ops_for_delivery(&self, tx_id: i64) -> Result<Vec<TransactionOp>> {
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash, error_msg
+                 FROM transaction_ops
+                 WHERE transaction_id = ?1
+                 ORDER BY execution_order",
+            )?;
+            let rows = stmt.query_map(params![tx_id], TransactionOp::from_row)?;
+            let mut ops = Vec::new();
+            for r in rows {
+                ops.push(r?);
+            }
+            Ok(ops)
+        })
+        .await
+    }
+}
 
 impl InstalledDb {
     /// Begin a new delivery transaction in PLANNING state.
@@ -118,44 +161,6 @@ impl InstalledDb {
     }
 
     /// Find any delivery transaction that is not yet complete (leftover from a crash).
-    pub async fn get_active_delivery(&self) -> Result<Option<DeliveryTransaction>> {
-        self.read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, command, status, created_at, updated_at
-                 FROM delivery_transactions
-                 WHERE status IN ('planning', 'ready', 'applying')
-                 ORDER BY id DESC
-                 LIMIT 1",
-            )?;
-            let mut rows = stmt.query([])?;
-            if let Some(row) = rows.next()? {
-                Ok(Some(DeliveryTransaction::from_row(row)?))
-            } else {
-                Ok(None)
-            }
-        })
-        .await
-    }
-
-    /// Get all operations for a delivery transaction, ordered by execution_order.
-    pub async fn get_ops_for_delivery(&self, tx_id: i64) -> Result<Vec<TransactionOp>> {
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, transaction_id, part_name, part_hash, action_type, execution_order, status, old_hash, error_msg
-                 FROM transaction_ops
-                 WHERE transaction_id = ?1
-                 ORDER BY execution_order",
-            )?;
-            let rows = stmt.query_map(params![tx_id], TransactionOp::from_row)?;
-            let mut ops = Vec::new();
-            for r in rows {
-                ops.push(r?);
-            }
-            Ok(ops)
-        })
-        .await
-    }
-
     /// Reset an operation back to PENDING status (during crash recovery).
     pub async fn reset_op_to_pending(&self, op_id: i64) -> Result<()> {
         self.write(move |conn| {
@@ -172,11 +177,17 @@ impl InstalledDb {
     /// Delete a delivery transaction and all its operations (called after successful completion or rollback).
     pub async fn cleanup_delivery(&self, tx_id: i64) -> Result<()> {
         self.write(move |conn| {
-            conn.execute("DELETE FROM transaction_ops WHERE transaction_id = ?1", params![tx_id])
-                .map_err(|e| WrightError::context("failed to cleanup ops", e))?;
+            conn.execute(
+                "DELETE FROM transaction_ops WHERE transaction_id = ?1",
+                params![tx_id],
+            )
+            .map_err(|e| WrightError::context("failed to cleanup ops", e))?;
 
-            conn.execute("DELETE FROM delivery_transactions WHERE id = ?1", params![tx_id])
-                .map_err(|e| WrightError::context("failed to cleanup delivery", e))?;
+            conn.execute(
+                "DELETE FROM delivery_transactions WHERE id = ?1",
+                params![tx_id],
+            )
+            .map_err(|e| WrightError::context("failed to cleanup delivery", e))?;
 
             Ok(())
         })

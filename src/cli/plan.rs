@@ -33,7 +33,7 @@ pub struct PlanArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: PlanArgs, ctx: &Context<'_>) -> Result<()> {
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     let ledger_dir = crate::ledger::dir(ctx.config, Some(&ctx.db_path));
     crate::operations::plan::execute_plan(&db, &ledger_dir, &args.plan, args.json).await
 }

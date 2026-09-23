@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use crate::error::{Result, WrightError};
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
 /// Print the plan-source snapshot recorded when the plan's parts were
 /// sealed (ADR-0033, ledger layout ADR-0041). Text mode emits the exact
 /// plan.toml bytes so the output can round-trip onto disk
 /// (`wright plan zlib > plan.toml`).
 pub async fn execute_plan(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     ledger_dir: &Path,
     name: &str,
     json: bool,
@@ -35,11 +35,7 @@ pub async fn execute_plan(
 
 /// Look up the recorded plan-source snapshot for an installed plan.
 /// Returns `(plan_checksum, plan_source)`.
-async fn plan_snapshot(
-    db: &InstalledDb,
-    ledger_dir: &Path,
-    name: &str,
-) -> Result<(String, String)> {
+async fn plan_snapshot(db: &ReadOnlyDb, ledger_dir: &Path, name: &str) -> Result<(String, String)> {
     let plan = db
         .get_plan(name)
         .await?
@@ -68,7 +64,7 @@ async fn plan_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::{NewPlan, NewPlanProvenance, RegisterPlan};
+    use wright_state::database::{InstalledDb, NewPlan, NewPlanProvenance, RegisterPlan};
 
     async fn register_plan(
         db: &InstalledDb,

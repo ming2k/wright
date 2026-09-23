@@ -19,9 +19,40 @@
 |------|-------|
 | Migration files | `crates/wright-state/migrations/*.sql` |
 | Migration tracker | SQLite `PRAGMA user_version` (with legacy `_sqlx_migrations` upgrade detection, ADR-0042) |
-| Initialization | automatic on database open via Single-Writer Actor |
+| Initialization | automatic on read-write database open via Single-Writer Actor; Read-class commands never migrate (ADR-0044) |
 | Upgrade | pending migrations run automatically inside an immediate transaction |
+| Snapshot | before any pending migration, a `VACUUM INTO` snapshot is written to `<db>.pre-migrate-v<from>-to-v<to>.bak` (the 3 most recent are kept) |
+| Rollback | restore the snapshot with `wright doctor --restore <file>` |
+| Repair | rebuild the registry from the inventory with `wright doctor --repair` |
+| Integrity | `wright check`/`wright doctor` run `PRAGMA integrity_check` **and** `PRAGMA foreign_key_check` |
 | Immutable history | never edit files under `crates/wright-state/migrations/` |
+
+### Access modes and locking
+
+There are two database handles, split by privilege class (ADR-0044):
+
+| Handle | Used by | Lock | Migrations | Recovery |
+|--------|---------|------|------------|----------|
+| `ReadOnlyDb` | Read-class commands | none (WAL snapshot isolation) | no | no |
+| `InstalledDb` | Local- and System-class commands | exclusive advisory `flock` | yes | System only |
+
+`InstalledDb` derefs to `ReadOnlyDb`, so both share one query surface; only
+`InstalledDb` can `write()`. Read-class commands take **no** process lock: a
+shared `flock` would still wait on an exclusive writer, so a build or install
+would block `wright list`. Read consistency instead comes from SQLite WAL
+snapshot isolation — each read opens its own read-only connection and sees a
+stable committed snapshot. A Read command against a schema older than the
+binary fails with a typed error naming the command that migrates it.
+
+The registry is a **derived index** over facts that already exist on disk: the
+live root, and `.PARTINFO`/`.FILELIST` inside every archive in `parts_dir`
+(ADR-0043). It is therefore rebuildable. `history` is the exception — it is an
+audit log, not a derivation, and is never touched by a rebuild.
+
+`VACUUM INTO` is the snapshot mechanism because the database runs in WAL mode:
+a plain file copy can miss pages committed to the `-wal` sidecar but not yet
+checkpointed into the main file. Restoring removes the `-wal`/`-shm` sidecars
+so the restored main file is authoritative.
 
 ## Tables
 

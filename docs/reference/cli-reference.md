@@ -8,6 +8,22 @@ through subcommands, organized into four groups that match the reader's intent:
 - **Build & Packaging** — forge, lint, and bootstrap workflows
 - **Cache & Maintenance** — housekeeping and cleanup
 
+## Command Privilege Classes
+
+Every command falls into exactly one class (ADR-0044), which determines what it
+may touch and what privilege it needs:
+
+| Class | Guarantee | Commands |
+|-------|-----------|----------|
+| **Read** | Never writes. Opens the database read-only, creates no files, takes no process lock, runs no migrations or crash recovery. Safe for unprivileged users and concurrent with builds. | `list`, `files`, `owner`, `check`, `doctor`, `history`, `plan`, `graph`, `storage`, `lint` |
+| **Local** | Writes only the forge workspace, part store, source cache, and logs. Runs no crash recovery. | `resolve`, `build`, `package`, `clean` |
+| **System** | Mutates the live target root and/or the installed-state database; runs crash recovery and migrations. Requires privilege. | `install`, `upgrade`, `remove`, `merge`, `provide`, `launch` |
+
+A Read command against a database that does not exist fails with a clear error
+rather than creating one; run an install (or `wright doctor --snapshot`) to initialize
+state first. A Read command against a schema older than the binary also fails,
+naming the command that migrates it.
+
 ## Global Options
 
 | Flag | Description |
@@ -259,17 +275,39 @@ shows a single output, and no target shows everything.
 
 ### `wright doctor`
 
-Run comprehensive system health checks: database integrity, file conflicts,
-deployed file existence, registry dependency resolution, ELF `DT_NEEDED`
-verification, and a global `parts_dir` dependency closure scan. Use after
-batch deployments to detect missing files, providers, and stale dependencies.
-Also reports plans whose source changed since their parts were installed
-(provenance drift); when a plan-source snapshot was recorded, a unified diff
-between the snapshot and the current source follows the report line. Drift is
-advisory and never fails the run.
+Run comprehensive system health checks, drift audits, and disaster recovery:
+database integrity, file conflicts, deployed file existence, registry dependency
+resolution, ELF `DT_NEEDED` verification, and a global `parts_dir` dependency
+closure scan. Use after batch deployments to detect missing files, providers,
+and stale dependencies. Also reports plans whose source changed since their
+parts were installed (provenance drift); when a plan-source snapshot was recorded,
+a unified diff between the snapshot and the current source follows the report line.
+
+When the registry cannot be opened at all, doctor degrades rather than failing
+outright (ADR-0043): the archive-closure scan still runs, the
+registry-dependent checks are reported as skipped, and the command exits
+non-zero with a pointer to `wright doctor --repair` or `wright doctor --restore`.
+
+```bash
+wright doctor
+wright doctor --drift
+wright doctor --drift --json
+wright doctor --repair
+wright doctor --repair --from-store -n
+wright doctor --restore /var/lib/wright/wright.db.pre-migrate-v19-to-v20.bak
+wright doctor --snapshot /backup/w.bak
+```
 
 | Flag | Description |
 |------|-------------|
+| `--drift` | Walk the managed filesystem and report unowned drift (visible alias: `--audit`) |
+| `--include-dirs` | Also list directories when checking drift (default: files and symlinks only) |
+| `--repair` | Rebuild the registry index from archives in inventory (`parts_dir`) |
+| `--from-store` | Also consider orphaned cache copies in CAS store during repair |
+| `-n`, `--dry-run` | Preview what would be rebuilt without writing changes |
+| `--restore <BACKUP>` | Replace the registry database with a previously written snapshot |
+| `--snapshot [PATH]` | Write a consistent standalone snapshot of the registry (default: `<db>.backup`) |
+| `--json` | Emit machine-readable JSON report (with `--drift`, `--repair`, or `--snapshot`) |
 | `--root <PATH>` | Diagnose this target root instead of `/` |
 
 ### `wright plan <TARGET>`
@@ -320,9 +358,9 @@ wright graph --web --port 0 --no-open
 
 ### JSON Output
 
-`list`, `files`, `owner`, `history`, `plan`, and `check` accept `--json`. Empty
-results print `[]` (`check` prints a report object with an empty `issues`
-array). Output shapes:
+`list`, `files`, `owner`, `history`, `plan`, `check`, `usage`, `audit`, and
+`db` accept `--json`. Empty results print `[]` (`check` prints a report object
+with an empty `issues` array). Output shapes:
 
 | Command | Shape |
 |---------|-------|
@@ -332,6 +370,10 @@ array). Output shapes:
 | `history --json` | Array of `{"timestamp","session_id","command","part","action","old_version","new_version","status"}` |
 | `plan --json` | `{"plan","checksum","source"}` |
 | `check --json` | `{"scope","mode","issue_count","issues":[...]}`; each issue carries a `check` tag (e.g. `missing-file`, `broken-dependency`, `unresolved-soname`) |
+| `usage --json` | `{"locations":[{"location","path","bytes","entries","reclaimable_bytes","rule"}],"total_bytes","deployed_bytes","deployed_files"}` |
+| `audit --json` | `{"root","scanned_files","owned_files","unowned":[{"path","kind"}],"external_parts":[...],"external_blind_spot"}` |
+| `db backup --json` | `{"source","output","bytes"}` |
+| `db reindex --json` | `{"plans","parts","files","dependencies"}` (or the preview shape under `-n`) |
 
 `check --json` prints the report first and still exits 1 when issues are
 found — the exit code remains the primary machine interface.
@@ -444,31 +486,64 @@ wright launch --root /mnt/new --plans ./plans @core
 
 ## Cache & Maintenance
 
+### `wright storage`
+
+Report disk usage for every location Wright owns — build workspaces, part
+archives, the CAS store, the source cache, command logs, the audit ledger, and
+the database file plus its WAL sidecar — together with the command that
+reclaims each one (ADR-0043). Read-only.
+
+Every row names its reclamation rule, and the discipline runs the other way
+too: a location with no `storage` row has no deletion flag. Measure before you
+delete.
+
+```bash
+wright storage
+wright storage --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit a machine-readable JSON report instead of a table |
+
+The registry is read best-effort: when it cannot be opened, the filesystem
+rows are still reported and the deployed-footprint row is omitted with a
+warning.
+
 ### `wright clean [TARGET...]`
 
-Reclaim disk space by deleting build workspaces, built part archives, and
-command logs. With no flags, only build workspaces are removed — all of
-them, or those of the named plans. Deletions execute immediately; pass
-`-n`/`--dry-run` to preview the exact removal set first.
+Reclaim disk space across every location Wright owns. With no flags, only
+build workspaces are removed — all of them, or those of the named plans.
+Each flag adds one location with its own predicate; combine them freely.
+Deletions execute immediately; pass `-n`/`--dry-run` to preview the exact
+removal set and its byte total first.
 
 ```bash
 wright clean
 wright clean hello --archives
 wright clean --stale
+wright clean --store --sources --older-than-days 30
+wright clean --ledger --keep-builds 5
+wright clean --logs -n
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--archives` | Also remove part archives sealed by the named plans (matched by archive plan metadata) |
 | `--stale` | Remove only superseded (non-latest) archive versions of each (plan, output) pair; skips workspace cleanup |
+| `--store` | Remove CAS store entries whose inode is shared with no part archive |
+| `--sources` | Remove cached source files (re-fetched on the next build) |
+| `--older-than-days <DAYS>` | With `--sources`, only remove sources older than this |
+| `--ledger` | Rotate the audit ledger (per-plan build records and plan snapshots) |
+| `--keep-builds <N>` | With `--ledger`, build records to keep per plan (default `10`) |
+| `--keep-snapshots <N>` | With `--ledger`, plan snapshots to keep per plan (default `10`) |
 | `--logs` | Also remove Wright command logs |
-| `-n`, `--dry-run` | Preview what would be deleted without removing anything |
+| `-n`, `--dry-run` | Preview what would be deleted, with byte totals, without removing anything |
 
-### `wright prune`
-
-Deprecated hidden alias for `wright clean --stale`, kept for one release.
-Unlike the canonical spelling, it stays a dry run unless `--apply` is
-passed, matching its historical default.
+`--store` reports bytes *actually* reclaimed. A CAS entry is a hard link to
+the part archive it caches, so removing a still-linked entry frees nothing and
+is therefore skipped; only entries whose inode survives nowhere else in
+`parts_dir` are selected, and hard-linked twins are counted once.
 
 ## Common Pipelines
 

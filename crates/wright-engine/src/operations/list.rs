@@ -1,8 +1,8 @@
 use crate::error::Result;
-use wright_state::database::{InstalledDb, Origin, PartWithPlan};
+use wright_state::database::{Origin, PartWithPlan, ReadOnlyDb};
 
 pub async fn execute_list(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     long: bool,
     filter: Option<&str>,
     json: bool,
@@ -208,7 +208,7 @@ fn format_parts(parts: &[PartWithPlan], long: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::{NewPart, NewPlan};
+    use wright_state::database::{InstalledDb, NewPart, NewPlan};
 
     async fn test_db() -> InstalledDb {
         InstalledDb::open_in_memory().await.unwrap()

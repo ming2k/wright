@@ -1,14 +1,13 @@
 mod context;
 mod deploy;
 mod fs;
+mod fs_tx;
 mod hooks;
 mod remove;
-pub mod rollback;
 mod upgrade;
 mod verify;
 
 use crate::error::{Result, WrightError};
-use std::path::PathBuf;
 use wright_part::archive::PartInfo;
 use wright_state::database::{InstalledDb, Origin};
 
@@ -16,17 +15,11 @@ pub use context::TransactionContext;
 pub use deploy::{
     deploy_part, deploy_part_with_origin, deploy_parts, deploy_parts_with_explicit_targets,
 };
+pub use fs_tx::{FsIntent, FsTransaction, recover_all as recover_transactions};
 pub use hooks::get_hook;
-pub use remove::{
-    cascade_remove_list, order_removal_batch, remove_part, remove_part_with_ignored_dependents,
-};
+pub use remove::{PartRef, RemovalBatch, cascade_remove_list, order_removal_batch, remove_part};
 pub use upgrade::upgrade_part;
 pub use verify::verify_part;
-
-/// Derive journal path from the database path.
-pub(super) fn journal_path_from_db(db: &InstalledDb) -> Option<PathBuf> {
-    db.db_path().map(|p| p.with_extension("journal"))
-}
 
 /// Replace conflicts and replaces rows for a part (used during upgrade).
 pub(super) async fn self_replace_relations(

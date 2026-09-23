@@ -73,7 +73,7 @@ pub struct CheckArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: CheckArgs, ctx: &Context<'_>) -> Result<()> {
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     crate::operations::check::execute_check(
         &db,
         &ctx.root_dir,

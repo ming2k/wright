@@ -605,6 +605,7 @@ pub async fn deploy_part_with_origin(
 
     let mut tx = TransactionContext::begin(
         db,
+        root_dir,
         HistoryAction::Install,
         &partinfo.name,
         None,
@@ -614,9 +615,6 @@ pub async fn deploy_part_with_origin(
         Some(&part_hash),
     )
     .await?;
-
-    let backup_dir =
-        tempfile::tempdir().map_err(|e| WrightError::context("failed to create backup dir", e))?;
 
     if run_hooks && let Some(ref script) = hooks.pre_install {
         log_running_hook(&partinfo.name, "pre_install");
@@ -629,8 +627,7 @@ pub async fn deploy_part_with_origin(
         &file_entries,
         temp_dir.path(),
         root_dir,
-        tx.rollback_state(),
-        Some(backup_dir.path()),
+        tx.fs(),
         &HashSet::new(),
         &divert_paths,
     )

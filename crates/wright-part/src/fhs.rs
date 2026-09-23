@@ -72,7 +72,11 @@ pub fn validate(part_dir: &Path, part_name: &str) -> Result<()> {
 /// **Allowed prefixes:**
 /// - `/usr/{bin,lib,lib64,share,include,libexec,libdata}/`
 /// - `/etc/`, `/var/`, `/opt/`, `/boot/`
-fn is_allowed(path: &Path) -> bool {
+///
+/// This is the single definition of Wright's managed scope. `wright doctor --drift`
+/// walks exactly this set, so the seal-time contract and the audit-time
+/// contract can never drift apart (ADR-0043).
+pub fn is_allowed(path: &Path) -> bool {
     let mut c = path.components();
     c.next(); // skip RootDir
     match c.next().and_then(|c| c.as_os_str().to_str()) {
@@ -81,6 +85,34 @@ fn is_allowed(path: &Path) -> bool {
             Some("bin" | "lib" | "lib64" | "share" | "include" | "libexec" | "libdata")
         ),
         Some("etc" | "var" | "opt" | "boot") => true,
+        _ => false,
+    }
+}
+
+/// The top-level directory names audit walks. Deliberately narrower than the
+/// install scope: `/var` is runtime state and `/boot` holds host-owned
+/// kernels, so both are high-churn and unregistered by design. Wright may
+/// still install into them; audit simply does not claim to know what belongs
+/// there.
+pub const AUDITED_TOP_DIRS: &[&str] = &["usr", "etc", "opt"];
+
+/// Whether `path` (an absolute path on the live root) is inside the managed
+/// scope *and* below the sub-tree audit actually inspects.
+///
+/// Unlike [`is_allowed`], this excludes `/var` and `/boot`: both hold
+/// high-churn, unregistered content by design (`/var` is runtime state,
+/// `/boot` holds kernels the host package manager owns), so walking them would
+/// drown the report in false positives. Wright can still install into them;
+/// audit simply does not claim to know what belongs there.
+pub fn is_audited(path: &Path) -> bool {
+    let mut c = path.components();
+    c.next(); // skip RootDir
+    match c.next().and_then(|c| c.as_os_str().to_str()) {
+        Some("usr") => matches!(
+            c.next().and_then(|c| c.as_os_str().to_str()),
+            Some("bin" | "lib" | "lib64" | "share" | "include" | "libexec" | "libdata")
+        ),
+        Some("etc" | "opt") => true,
         _ => false,
     }
 }

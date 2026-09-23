@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::identify::{Identifier, ResolvedTarget};
-use wright_state::database::{HistoryRecord, InstalledDb};
+use wright_state::database::{HistoryRecord, ReadOnlyDb};
 
-pub async fn execute_history(db: &InstalledDb, target: Option<&str>, json: bool) -> Result<()> {
+pub async fn execute_history(db: &ReadOnlyDb, target: Option<&str>, json: bool) -> Result<()> {
     let records = gather_history(db, target).await?;
 
     if json {
@@ -56,7 +56,7 @@ pub async fn execute_history(db: &InstalledDb, target: Option<&str>, json: bool)
 /// universal plan/output identifier: plan-level targets merge the history
 /// of every deployed output of the plan, output-level targets show a
 /// single output.
-async fn gather_history(db: &InstalledDb, target: Option<&str>) -> Result<Vec<HistoryRecord>> {
+async fn gather_history(db: &ReadOnlyDb, target: Option<&str>) -> Result<Vec<HistoryRecord>> {
     let Some(target) = target else {
         return Ok(db.get_history(None).await?);
     };
@@ -80,7 +80,7 @@ async fn gather_history(db: &InstalledDb, target: Option<&str>) -> Result<Vec<Hi
 mod tests {
     use super::*;
     use crate::error::WrightError;
-    use wright_state::database::{HistoryAction, HistoryStatus, NewPart, NewPlan};
+    use wright_state::database::{HistoryAction, HistoryStatus, InstalledDb, NewPart, NewPlan};
 
     async fn test_db() -> InstalledDb {
         InstalledDb::open_in_memory().await.unwrap()

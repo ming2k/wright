@@ -52,17 +52,11 @@ pub async fn run(args: GraphArgs, ctx: &Context<'_>) -> Result<()> {
                 .arg(format!("http://{}/", addr))
                 .spawn();
         }
-        let ledger_dir = crate::ledger::dir(ctx.config, Some(&ctx.db_path));
-        return crate::graph::server::serve(
-            listener,
-            ctx.config.clone(),
-            ctx.db_path.clone(),
-            ledger_dir,
-        )
-        .await;
+        return crate::graph::server::serve(listener, ctx.config.clone(), ctx.db_path.clone())
+            .await;
     }
 
-    let db = ctx.open_db().await?;
+    let db = ctx.open_read_only().await?;
     let doc = crate::graph::build_graph(ctx.config, &db).await?;
     crate::graph::render_terminal(&doc);
     Ok(())

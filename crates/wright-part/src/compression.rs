@@ -38,6 +38,19 @@ impl<R: Read> Read for HashingReader<R> {
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
+/// SHA-256 of a sealed archive's bytes — the same value install records as a
+/// part's `part_hash`. Used by `wright doctor --repair` to restore that column from
+/// the inventory without re-extracting the archive.
+pub fn archive_sha256(path: &Path) -> Result<String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| WrightError::context(format!("failed to open {}", path.display()), e))?;
+    let mut reader = HashingReader::new(std::io::BufReader::new(file));
+    let mut sink = std::io::sink();
+    std::io::copy(&mut reader, &mut sink)
+        .map_err(|e| WrightError::context(format!("failed to hash {}", path.display()), e))?;
+    Ok(reader.finalize())
+}
+
 /// Create a tar.zst archive from a directory.
 /// Handles symlinks by archiving them as symlinks (not following them).
 pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {

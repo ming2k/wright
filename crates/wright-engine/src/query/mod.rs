@@ -2,7 +2,7 @@
 
 use crate::error::{Result, WrightError};
 
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
 use owo_colors::OwoColorize;
 
@@ -111,7 +111,7 @@ fn write_pruned_tag(out: &mut dyn std::io::Write, color: bool) -> std::io::Resul
 
 /// Render the forward dependency tree for a part into a writer.
 pub async fn write_dep_tree(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     name: &str,
     opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
@@ -141,7 +141,7 @@ pub async fn write_dep_tree(
 
 #[allow(clippy::too_many_arguments)]
 async fn write_dep_tree_inner(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
@@ -305,7 +305,7 @@ fn write_line_prefix(
 
 /// Render the reverse dependency tree for a part into a writer.
 pub async fn write_reverse_dep_tree(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     name: &str,
     opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
@@ -335,7 +335,7 @@ pub async fn write_reverse_dep_tree(
 
 #[allow(clippy::too_many_arguments)]
 async fn write_reverse_dep_tree_inner(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     name: &str,
     prefix: &str,
     current_depth: usize,
@@ -435,7 +435,7 @@ async fn write_reverse_dep_tree_inner(
 
 /// Render the full system dependency tree into a writer.
 pub async fn write_system_tree(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     opts: &TreeOptions<'_>,
     out: &mut dyn std::io::Write,
 ) -> Result<TreeStats> {
@@ -507,7 +507,7 @@ pub struct BrokenDep {
 /// to `replaces.name` so renamed targets stay satisfied across plan
 /// migrations. The advisory model is read-only — this function reports;
 /// callers decide how to react.
-pub async fn check_dependencies_structured(db: &InstalledDb) -> Result<Vec<BrokenDep>> {
+pub async fn check_dependencies_structured(db: &ReadOnlyDb) -> Result<Vec<BrokenDep>> {
     let all_parts = db.list_parts().await?;
     let mut broken = Vec::new();
 
@@ -526,7 +526,7 @@ pub async fn check_dependencies_structured(db: &InstalledDb) -> Result<Vec<Broke
     Ok(broken)
 }
 
-async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
+async fn is_dep_satisfied(db: &ReadOnlyDb, required: &str) -> Result<bool> {
     // Dependency edges are keyed by the deployed part (output) name; split
     // legacy qualified references ("plan:output") the same way.
     let target = wright_model::version::dep_output_name(required);
@@ -554,7 +554,7 @@ async fn is_dep_satisfied(db: &InstalledDb, required: &str) -> Result<bool> {
 }
 
 /// Check for circular dependencies in the installed database.
-pub async fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>> {
+pub async fn check_circular_dependencies(db: &ReadOnlyDb) -> Result<Vec<String>> {
     let all_parts = db.list_parts().await?;
     let mut issues = Vec::new();
 
@@ -573,11 +573,11 @@ pub async fn check_circular_dependencies(db: &InstalledDb) -> Result<Vec<String>
 }
 
 /// Check if multiple parts claim ownership of the same file.
-pub async fn check_file_ownership_conflicts(db: &InstalledDb) -> Result<Vec<String>> {
+pub async fn check_file_ownership_conflicts(db: &ReadOnlyDb) -> Result<Vec<String>> {
     Ok(db.get_file_ownership_conflicts().await?)
 }
 
 /// Get recorded shadowed file information.
-pub async fn check_shadowed_files(db: &InstalledDb) -> Result<Vec<String>> {
+pub async fn check_shadowed_files(db: &ReadOnlyDb) -> Result<Vec<String>> {
     Ok(db.get_shadowed_conflicts().await?)
 }

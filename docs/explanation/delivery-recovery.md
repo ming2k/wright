@@ -118,7 +118,7 @@ filesystem action, ensuring the WAL is always ahead of reality.
 
 ### Crash recovery
 
-On startup, any `wright` command runs `delivery::recover_if_needed()`:
+On startup, a **System-class** command runs `delivery::recover_if_needed()`:
 
 1. Find any delivery in `PLANNING`, `READY`, or `APPLYING`.
 2. **PLANNING**: Mark `ROLLED_BACK`.  No mutation occurred.
@@ -131,6 +131,11 @@ On startup, any `wright` command runs `delivery::recover_if_needed()`:
    - Per-part filesystem cleanup is handled by `RollbackState::replay_journal`
      (see below) which runs on `TransactionContext::Drop`.
    - Mark delivery `ROLLED_BACK`, tell user to re-run the command.
+
+Read- and Local-class commands do **not** run recovery: it mutates the
+database, and a query must never write (ADR-0044). A crashed delivery therefore
+stays visible to `wright history` until the next System-class command settles
+it.
 
 On re-run, CAS provides pre-built parts for completed forge+seal work, so the
 user only pays the cost of re-deploying.

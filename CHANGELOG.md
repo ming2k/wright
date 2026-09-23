@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+- **New `wright storage` command reporting disk usage for every location Wright owns (ADR-0043).** A read-only table of byte size, file count, and reclamation rule for build workspaces, part archives, the CAS store, the source cache, command logs, the audit ledger, and the database file plus its WAL sidecar, plus the deployed footprint recorded in the registry (the "computed on demand" figure migration V6 promised when it dropped `parts.install_size`). The registry is read best-effort: when it cannot be opened the filesystem rows still print and the deployed-footprint row is omitted with a warning. `--json` for machine output.
+- **Unified health inspection, drift audit, and registry repair in `wright doctor` (ADR-0043).**
+  - `--drift` (visible alias `--audit`) walks the managed FHS scope to report unowned live-root drift without deletion, whitelisting tool-generated configuration artifacts (`.wnew`, `.worig`).
+  - `--repair` rebuilds the registry index from archives in `parts_dir` (optionally `--from-store`) in one atomic transaction, eliminating implementation-level `db` commands.
+  - `--restore <BACKUP>` replaces the database from a snapshot, validating SQLite headers and removing stale WAL sidecars.
+  - `--snapshot [PATH]` creates a consistent standalone `VACUUM INTO` backup.
+- **`wright clean` gains `--store`, `--sources`, and `--ledger` (ADR-0043).** `--store` removes CAS entries whose inode is shared with no part archive — reporting bytes *actually* reclaimed, since a hard-linked entry frees nothing; `--sources` removes cached sources (optionally `--older-than-days N`); `--ledger` rotates per-plan build records and snapshots (`--keep-builds`, `--keep-snapshots`). Every dry run now prints a byte total.
+- **The database is snapshotted automatically before any pending schema migration (ADR-0043).** A `VACUUM INTO` copy is written to `<db>.pre-migrate-v<from>-to-v<to>.bak` (three most recent retained) and named in the migration-failure error, so a destructive update costs a restore instead of a system.
+
+### Changed
+- **Read-class commands are now genuinely read-only (ADR-0044).** `list`, `files`, `owner`, `check`, `doctor`, `history`, `plan`, `graph`, `storage`, and `lint` open the installed-state database through a new `ReadOnlyDb` type that cannot write: no database or directory is created, no migrations run, no crash recovery runs, and no process lock is taken. Reads rely on SQLite WAL snapshot isolation and no longer wait on a writer.
+- **`wright doctor` degrades instead of failing when the registry is unreadable (ADR-0043).** The archive-closure scan still runs, registry-dependent checks are reported as skipped, and the command exits non-zero with a pointer to `wright doctor --repair` or `wright doctor --restore`.
+- **Integrity checking now includes `PRAGMA foreign_key_check` alongside `PRAGMA integrity_check`**, catching the referential damage a partially-applied migration leaves behind.
+
+### Removed
+- **`wright prune` is removed.** The deprecated hidden alias for `clean --stale`, kept for one release by ADR-0040, is gone; use `wright clean --stale`.
+- **The `--parts` alias for `clean --archives` and the `--clean` alias for `install`/`upgrade`/`launch --fresh` are removed.** Use the canonical spellings.
+- **Removed top-level `wright db`, `wright audit`, and `wright usage` commands.** Replaced by clean domain abstractions: `wright storage` for disk measurement, and `wright doctor` (`--drift`, `--repair`, `--restore`, `--snapshot`) for health, drift, and recovery.
+
+### Breaking
+- **Read-class commands no longer create the database implicitly.** `wright list` (and every other Read command) against a missing database now fails with a clear error instead of materializing one; run an install (or `wright doctor --snapshot`) first. A Read command against a schema older than the binary also fails, naming the command that migrates it.
+- **Crash recovery now runs only on System-class commands.** A crashed delivery stays visible to `wright history` until the next `install`/`upgrade`/`remove`/`merge`/`provide`/`launch` command settles it (ADR-0044).
+
 ## [5.6.2] - 2026-09-17
 
 ### Changed

@@ -63,10 +63,33 @@ retry_count = 3
     config_path
 }
 
+/// Materialize the installed-state database.
+///
+/// Read-class commands (`wright list`) no longer create the database — they
+/// refuse on a missing file (ADR-0044, `[INV-PRIV-02]`). A System-class
+/// command performs the one-time schema initialization instead, mirroring how
+/// a real install populates state before any query runs.
+fn initialize_db(config_path: &std::path::Path, _root: &tempfile::TempDir) {
+    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(config_path)
+        .arg("doctor")
+        .arg("--snapshot")
+        .arg(config_path.parent().unwrap().join("bootstrap.db"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "failed to initialize the test database: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn closed_stdout_pipe_exits_quietly_with_zero() {
     let root = tempfile::tempdir().unwrap();
     let config_path = isolated_config(&root);
+    initialize_db(&config_path, &root);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")
@@ -98,6 +121,7 @@ fn closed_stdout_pipe_exits_quietly_with_zero() {
 fn partial_stdout_read_exits_quietly_with_zero() {
     let root = tempfile::tempdir().unwrap();
     let config_path = isolated_config(&root);
+    initialize_db(&config_path, &root);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_wright"))
         .arg("--config")

@@ -1,67 +1,11 @@
 //! Installed-file ownership and diversion queries.
 
-use super::{FileEntry, InstalledDb};
+use super::{FileEntry, InstalledDb, ReadOnlyDb};
 use crate::error::{Result, WrightError};
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::{TransactionBehavior, params};
 use std::collections::HashMap;
 
-impl InstalledDb {
-    pub async fn record_shadowed_file(
-        &self,
-        path: &str,
-        original_owner_id: i64,
-        shadowed_by_id: i64,
-        diverted_to: Option<&str>,
-    ) -> Result<()> {
-        let path = path.to_string();
-        let diverted_to = diverted_to.map(|s| s.to_string());
-        self.write(move |conn| {
-            conn.execute(
-                "INSERT INTO shadowed_files (path, original_owner_id, shadowed_by_id, diverted_to) VALUES (?1, ?2, ?3, ?4)",
-                params![path, original_owner_id, shadowed_by_id, diverted_to],
-            )
-            .map_err(|e| WrightError::context("failed to record shadowed file", e))?;
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn insert_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
-        let files = files.to_vec();
-        self.write(move |conn| {
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(|e| WrightError::context("failed to begin transaction", e))?;
-
-            {
-                let mut stmt = tx
-                    .prepare(
-                        "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    )
-                    .map_err(|e| WrightError::context("failed to prepare insert file statement", e))?;
-
-                for f in &files {
-                    stmt.execute(params![
-                        part_id,
-                        f.path,
-                        f.file_hash,
-                        f.file_type,
-                        f.file_mode,
-                        f.file_size,
-                        f.is_config,
-                    ])
-                    .map_err(|e| WrightError::context("failed to insert file", e))?;
-                }
-            }
-
-            tx.commit()
-                .map_err(|e| WrightError::context("failed to commit files", e))?;
-            Ok(())
-        })
-        .await
-    }
-
+impl ReadOnlyDb {
     pub async fn get_other_owners(&self, current_part_id: i64, path: &str) -> Result<Vec<String>> {
         let path = path.to_string();
         self.read(move |conn| {
@@ -114,57 +58,6 @@ impl InstalledDb {
                 result.push(r?);
             }
             Ok(result)
-        })
-        .await
-    }
-
-    pub async fn remove_shadowed_records(&self, shadowed_by_id: i64) -> Result<()> {
-        self.write(move |conn| {
-            conn.execute(
-                "DELETE FROM shadowed_files WHERE shadowed_by_id = ?1",
-                params![shadowed_by_id],
-            )
-            .map_err(|e| WrightError::context("failed to remove shadowed records", e))?;
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
-        let files = files.to_vec();
-        self.write(move |conn| {
-            let tx = conn
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(|e| WrightError::context("failed to begin replace transaction", e))?;
-
-            tx.execute("DELETE FROM files WHERE part_id = ?1", params![part_id])
-                .map_err(|e| WrightError::context("failed to delete old files", e))?;
-
-            {
-                let mut stmt = tx
-                    .prepare(
-                        "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    )
-                    .map_err(|e| WrightError::context("failed to prepare insert file statement", e))?;
-
-                for f in &files {
-                    stmt.execute(params![
-                        part_id,
-                        f.path,
-                        f.file_hash,
-                        f.file_type,
-                        f.file_mode,
-                        f.file_size,
-                        f.is_config,
-                    ])
-                    .map_err(|e| WrightError::context("failed to insert file", e))?;
-                }
-            }
-
-            tx.commit()
-                .map_err(|e| WrightError::context("failed to commit replaced files", e))?;
-            Ok(())
         })
         .await
     }
@@ -262,6 +155,36 @@ impl InstalledDb {
         .await
     }
 
+    /// Total deployed footprint recorded in the registry: sum of recorded
+    /// file sizes and the file count. This is the "computed on demand" figure
+    /// migration V6 promised when it dropped `parts.install_size`.
+    pub async fn file_usage(&self) -> Result<(u64, u64)> {
+        self.read(|conn| {
+            let (bytes, files): (i64, i64) = conn.query_row(
+                "SELECT COALESCE(SUM(file_size), 0), COUNT(*) FROM files",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            Ok((bytes.max(0) as u64, files.max(0) as u64))
+        })
+        .await
+    }
+
+    /// Every filesystem path the registry claims to own, across all parts.
+    /// Used by `wright doctor --drift` to subtract the managed set from a live-root walk.
+    pub async fn all_owned_paths(&self) -> Result<std::collections::HashSet<String>> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare("SELECT path FROM files")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut result = std::collections::HashSet::new();
+            for r in rows {
+                result.insert(r?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
     pub async fn get_file_ownership_conflicts(&self) -> Result<Vec<String>> {
         self.read(|conn| {
             let mut stmt = conn.prepare(
@@ -284,6 +207,115 @@ impl InstalledDb {
                 result.push(r?);
             }
             Ok(result)
+        })
+        .await
+    }
+}
+
+impl InstalledDb {
+    pub async fn record_shadowed_file(
+        &self,
+        path: &str,
+        original_owner_id: i64,
+        shadowed_by_id: i64,
+        diverted_to: Option<&str>,
+    ) -> Result<()> {
+        let path = path.to_string();
+        let diverted_to = diverted_to.map(|s| s.to_string());
+        self.write(move |conn| {
+            conn.execute(
+                "INSERT INTO shadowed_files (path, original_owner_id, shadowed_by_id, diverted_to) VALUES (?1, ?2, ?3, ?4)",
+                params![path, original_owner_id, shadowed_by_id, diverted_to],
+            )
+            .map_err(|e| WrightError::context("failed to record shadowed file", e))?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn insert_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
+        let files = files.to_vec();
+        self.write(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|e| WrightError::context("failed to begin transaction", e))?;
+
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    )
+                    .map_err(|e| WrightError::context("failed to prepare insert file statement", e))?;
+
+                for f in &files {
+                    stmt.execute(params![
+                        part_id,
+                        f.path,
+                        f.file_hash,
+                        f.file_type,
+                        f.file_mode,
+                        f.file_size,
+                        f.is_config,
+                    ])
+                    .map_err(|e| WrightError::context("failed to insert file", e))?;
+                }
+            }
+
+            tx.commit()
+                .map_err(|e| WrightError::context("failed to commit files", e))?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn remove_shadowed_records(&self, shadowed_by_id: i64) -> Result<()> {
+        self.write(move |conn| {
+            conn.execute(
+                "DELETE FROM shadowed_files WHERE shadowed_by_id = ?1",
+                params![shadowed_by_id],
+            )
+            .map_err(|e| WrightError::context("failed to remove shadowed records", e))?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn replace_files(&self, part_id: i64, files: &[FileEntry]) -> Result<()> {
+        let files = files.to_vec();
+        self.write(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|e| WrightError::context("failed to begin replace transaction", e))?;
+
+            tx.execute("DELETE FROM files WHERE part_id = ?1", params![part_id])
+                .map_err(|e| WrightError::context("failed to delete old files", e))?;
+
+            {
+                let mut stmt = tx
+                    .prepare(
+                        "INSERT INTO files (part_id, path, file_hash, file_type, file_mode, file_size, is_config)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    )
+                    .map_err(|e| WrightError::context("failed to prepare insert file statement", e))?;
+
+                for f in &files {
+                    stmt.execute(params![
+                        part_id,
+                        f.path,
+                        f.file_hash,
+                        f.file_type,
+                        f.file_mode,
+                        f.file_size,
+                        f.is_config,
+                    ])
+                    .map_err(|e| WrightError::context("failed to insert file", e))?;
+                }
+            }
+
+            tx.commit()
+                .map_err(|e| WrightError::context("failed to commit replaced files", e))?;
+            Ok(())
         })
         .await
     }

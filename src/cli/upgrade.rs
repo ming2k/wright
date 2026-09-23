@@ -33,7 +33,7 @@ pub struct UpgradeArgs {
     /// so plans that need an upgrade are forged from scratch. Unlike
     /// `--force`, this does not redeploy plans that are already up to date.
     /// Composable with `--force`.
-    #[arg(long, short = 'c', alias = "clean")]
+    #[arg(long, short = 'c')]
     pub fresh: bool,
 
     /// Preview what would be rebuilt and deployed without making any changes

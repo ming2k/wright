@@ -55,7 +55,7 @@ use std::path::{Path, PathBuf};
 #[cfg(with_handlers)]
 use crate::config::GlobalConfig;
 #[cfg(with_handlers)]
-use crate::database::InstalledDb;
+use crate::database::{InstalledDb, ReadOnlyDb};
 #[cfg(with_handlers)]
 use crate::error::{Result, WrightError};
 #[cfg(with_handlers)]
@@ -75,6 +75,10 @@ pub struct Context<'a> {
 
 #[cfg(with_handlers)]
 impl<'a> Context<'a> {
+    /// Open the installed-state database for mutation.
+    ///
+    /// Only System- and Local-class commands may call this: it acquires an
+    /// exclusive process lock and runs pending migrations (ADR-0044).
     pub async fn open_db(&self) -> Result<InstalledDb> {
         InstalledDb::open(
             &self.db_path,
@@ -82,6 +86,18 @@ impl<'a> Context<'a> {
         )
         .await
         .map_err(|e| WrightError::context("failed to open database", e))
+    }
+
+    /// Open the installed-state database read-only.
+    ///
+    /// This is the entry point for every Read-class command: no directory or
+    /// database creation, no migrations, and no process lock — reads rely on
+    /// WAL snapshot isolation and never block on a writer (ADR-0044,
+    /// `[INV-PRIV-01]`).
+    pub async fn open_read_only(&self) -> Result<ReadOnlyDb> {
+        ReadOnlyDb::open_read_only(&self.db_path)
+            .await
+            .map_err(|e| WrightError::context("failed to open database", e))
     }
 
     pub fn ensure_lock_and_part_store(&self) -> Result<(LocalPartStore, ProcessLock)> {
@@ -96,11 +112,22 @@ impl<'a> Context<'a> {
     }
 }
 
+/// Recover state left by a crashed System-class command.
+///
+/// This opens the database read-write (running migrations), performs delivery
+/// recovery and mid-flight removal rollback, then drops the handle so the
+/// command can reopen it. It is called *only* for System-class commands: a
+/// Read- or Local-class command must never write, and recovery mutates the
+/// database (ADR-0044, `[INV-PRIV-03]`).
 #[cfg(with_handlers)]
-pub(crate) async fn crash_recover(db_path: &Path, config: &GlobalConfig) {
+pub(crate) async fn crash_recover(db_path: &Path, config: &GlobalConfig, root_dir: &Path) {
     let export_dir = crate::ledger::dir(config, Some(db_path));
     if let Ok(db) = InstalledDb::open(db_path, Some(&export_dir)).await {
         let _ = crate::delivery::recover_if_needed(&db).await;
+        // Undo any removal the previous run left mid-flight. Runs after
+        // delivery recovery so an APPLYING removal delivery has already been
+        // settled; the registry then decides each journal's fate.
+        let _ = crate::transaction::recover_transactions(root_dir, &db).await;
     }
 }
 

@@ -1,6 +1,8 @@
+pub mod audit;
 pub mod build;
 pub mod check;
 pub mod clean;
+pub mod dbadmin;
 pub mod doctor;
 pub mod drive;
 pub mod files;
@@ -17,6 +19,7 @@ pub mod plan;
 pub mod provide;
 pub mod remove;
 pub mod resolve;
+pub mod storage;
 pub mod upgrade;
 
 mod targets;

@@ -1,4 +1,4 @@
-use super::migrations::configure_connection;
+use super::migrations::{CURRENT_DB_VERSION, configure_connection};
 use super::schema;
 use crate::error::{Result, WrightError};
 use crate::lock::ProcessLock;
@@ -43,11 +43,42 @@ impl WriterHandle {
     }
 }
 
-pub struct InstalledDb {
+/// A read-only view of the installed-state database.
+///
+/// This type exposes only the query surface: [`ReadOnlyDb::read`] and every
+/// read method defined across the `database` modules. It has no `write`
+/// method and holds no writer actor for a file-backed database, so a
+/// Read-class command *cannot* mutate the system even by mistake — the
+/// mutation surface is not reachable from this type at all. This is the
+/// type-level enforcement of `[INV-PRIV-01]` (see ADR-0044).
+pub struct ReadOnlyDb {
+    /// `Some` for file-backed databases; each read opens its own read-only
+    /// SQLite connection. `None` for in-memory databases.
+    pub(crate) db_path: Option<PathBuf>,
+    /// `Some` only for in-memory databases, where reads must route to the
+    /// single owning connection. A file-backed [`ReadOnlyDb`] opened via
+    /// [`ReadOnlyDb::open_read_only`] leaves this `None`.
     pub(crate) writer: Option<Arc<WriterHandle>>,
     pub(crate) reader_semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+/// The read-write installed-state database handle.
+///
+/// Derefs to [`ReadOnlyDb`], so every query method is available on an
+/// `InstalledDb` too. The additional capabilities — [`InstalledDb::write`],
+/// the writer actor, and the exclusive process lock — exist only here, which
+/// is why the mutation path must name this type explicitly.
+pub struct InstalledDb {
+    pub(crate) read: ReadOnlyDb,
     pub(super) _lock: Option<ProcessLock>,
-    pub(super) db_path: Option<PathBuf>,
+}
+
+impl std::ops::Deref for InstalledDb {
+    type Target = ReadOnlyDb;
+
+    fn deref(&self) -> &Self::Target {
+        &self.read
+    }
 }
 
 fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
@@ -64,7 +95,15 @@ fn acquire_lock(db_path: &Path) -> Result<ProcessLock> {
     .map_err(|e| WrightError::DatabaseError(e.to_string()))
 }
 
+/// Open a snapshot-isolated read-only connection (ADR-0042).
+///
+/// A `std::fs` read probe runs first so permission and existence failures
+/// surface with an accurate errno (`[INV-PRIV-06]`) instead of SQLite's
+/// undifferentiated `CANTOPEN`.
 fn open_reader_connection(path: &Path) -> Result<rusqlite::Connection> {
+    std::fs::File::open(path)
+        .map_err(|e| map_fs_error(e, format!("cannot read database {}", path.display())))?;
+
     let conn = rusqlite::Connection::open_with_flags(
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -74,137 +113,79 @@ fn open_reader_connection(path: &Path) -> Result<rusqlite::Connection> {
     Ok(conn)
 }
 
-impl InstalledDb {
-    /// Open the installed-state database, running pending migrations.
+/// Map a filesystem failure on a system path to a typed error: permission and
+/// read-only-filesystem failures become [`WrightError::AccessDenied`] with a
+/// remediation hint (`[INV-PRIV-06]`).
+fn map_fs_error(error: std::io::Error, msg: String) -> WrightError {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => WrightError::AccessDenied(msg),
+        _ if error.raw_os_error() == Some(libc::EROFS) => WrightError::AccessDenied(msg),
+        _ => WrightError::context(msg, error),
+    }
+}
+
+impl ReadOnlyDb {
+    /// Open an existing database read-only, without any of the mutation side
+    /// effects of [`InstalledDb::open`].
     ///
-    /// `snapshot_export_dir`: when the pre-migration schema still holds the
-    /// legacy `plan_snapshots` table, its rows are exported into this
-    /// directory (ADR-0041 layout) before the dropping migration runs.
-    /// Export failures abort the open — proceeding would drop the table and
-    /// lose the snapshots. Pass `None` (tests, in-memory) to skip.
-    pub async fn open(path: &Path, snapshot_export_dir: Option<&Path>) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                WrightError::context(
-                    format!("failed to create database directory {}", parent.display()),
-                    e,
-                )
-            })?;
+    /// Specifically, this path:
+    /// - never creates the database directory (`[INV-PRIV-02]`);
+    /// - never creates the database — a missing file is a typed error;
+    /// - never runs migrations — a schema older than the binary is a typed
+    ///   error naming the command that migrates (`[INV-PRIV-03]`);
+    /// - takes **no process lock** (`[INV-PRIV-04]`).
+    ///
+    /// The absence of a lock is what makes readers non-blocking. The exclusive
+    /// process lock on the writer path exists to stop two *writers* from
+    /// racing; a reader neither needs it nor may take a shared form of it,
+    /// because `flock` shared locks still wait on an exclusive holder — a
+    /// shared lock would reintroduce exactly the "a long build blocks `wright
+    /// list`" behaviour this ADR removes. Read consistency instead comes from
+    /// SQLite WAL snapshot isolation: each [`ReadOnlyDb::read`] opens its own
+    /// read-only connection and sees a stable committed snapshot even while a
+    /// writer is mid-transaction. The schema-version probe below is the one
+    /// guard against a reader observing a half-migrated database.
+    ///
+    /// This is the entry point for every Read-class command (ADR-0044).
+    pub async fn open_read_only(path: &Path) -> Result<ReadOnlyDb> {
+        if !path.exists() {
+            return Err(WrightError::DatabaseError(format!(
+                "no installed-state database at {} (hint: run an install first)",
+                path.display()
+            )));
         }
 
-        let lock_file = acquire_lock(path)?;
-
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<WriterJob>(256);
-
-        let path_clone = path.to_path_buf();
-        let export_dir = snapshot_export_dir.map(|p| p.to_path_buf());
-
-        std::thread::Builder::new()
-            .name("wright-db-writer".into())
-            .spawn(move || {
-                let mut conn = match rusqlite::Connection::open(&path_clone) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(WrightError::context("failed to open database", e)));
-                        return;
-                    }
-                };
-
-                if let Err(e) = configure_connection(&mut conn) {
-                    let _ = ready_tx.send(Err(e));
-                    return;
+        // Verify readability and schema version without holding the writer
+        // lock. A read-only connection is the least intrusive probe.
+        {
+            let path = path.to_path_buf();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let conn = open_reader_connection(&path)?;
+                let version: u32 = conn
+                    .query_row("PRAGMA user_version", [], |r| r.get(0))
+                    .map_err(|e| WrightError::context("failed to read schema version", e))?;
+                if version < CURRENT_DB_VERSION {
+                    return Err(WrightError::DatabaseError(format!(
+                        "database schema is v{version}, but this wright expects v{CURRENT_DB_VERSION} \
+                         (hint: a write command such as `wright install` will migrate it)"
+                    )));
                 }
-
-                if let Some(ref dir) = export_dir
-                    && let Err(e) = crate::ledger::export_legacy_plan_snapshots(&conn, dir)
-                {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
-
-                if let Err(e) = schema::init_db(&mut conn) {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
-
-                let _ = ready_tx.send(Ok(()));
-
-                while let Some(job) = job_rx.blocking_recv() {
-                    job(&mut conn);
-                }
+                Ok(())
             })
-            .map_err(|e| WrightError::context("failed to spawn database writer thread", e))?;
-
-        ready_rx
             .await
-            .map_err(|_| WrightError::DatabaseError("database writer thread died during initialization".into()))??;
+            .map_err(|e| WrightError::context("database probe task failed", e))??;
+        }
 
-        Ok(InstalledDb {
-            writer: Some(Arc::new(WriterHandle { sender: job_tx })),
-            reader_semaphore: Arc::new(tokio::sync::Semaphore::new(READER_POOL_CAPACITY)),
-            _lock: Some(lock_file),
+        Ok(ReadOnlyDb {
             db_path: Some(path.to_path_buf()),
-        })
-    }
-
-    pub async fn open_in_memory() -> Result<Self> {
-        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<WriterJob>(256);
-
-        std::thread::Builder::new()
-            .name("wright-db-writer-mem".into())
-            .spawn(move || {
-                let mut conn = match rusqlite::Connection::open_in_memory() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(WrightError::context("failed to open in-memory database", e)));
-                        return;
-                    }
-                };
-
-                if let Err(e) = configure_connection(&mut conn) {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
-
-                if let Err(e) = schema::init_db(&mut conn) {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
-
-                let _ = ready_tx.send(Ok(()));
-
-                while let Some(job) = job_rx.blocking_recv() {
-                    job(&mut conn);
-                }
-            })
-            .map_err(|e| WrightError::context("failed to spawn in-memory database writer thread", e))?;
-
-        ready_rx
-            .await
-            .map_err(|_| WrightError::DatabaseError("database writer thread died during initialization".into()))??;
-
-        Ok(InstalledDb {
-            writer: Some(Arc::new(WriterHandle { sender: job_tx })),
+            writer: None,
             reader_semaphore: Arc::new(tokio::sync::Semaphore::new(READER_POOL_CAPACITY)),
-            _lock: None,
-            db_path: None,
         })
     }
 
-    /// Dispatch a mutating operation to the single persistent writer actor thread.
-    pub async fn write<F, R>(&self, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut rusqlite::Connection) -> Result<R> + Send + 'static,
-        R: Send + 'static,
-    {
-        match self.writer {
-            Some(ref writer) => writer.call(f).await,
-            None => Err(WrightError::DatabaseError(
-                "attempted write operation on read-only database".into(),
-            )),
-        }
+    /// Path of the backing database file, or `None` for an in-memory database.
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
     }
 
     /// Dispatch a read operation concurrently.
@@ -226,7 +207,9 @@ impl InstalledDb {
                 .clone()
                 .acquire_owned()
                 .await
-                .map_err(|_| WrightError::DatabaseError("database reader capacity exhausted".into()))?;
+                .map_err(|_| {
+                    WrightError::DatabaseError("database reader capacity exhausted".into())
+                })?;
 
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
@@ -242,5 +225,195 @@ impl InstalledDb {
                 "database connection unavailable".into(),
             ))
         }
+    }
+}
+
+impl InstalledDb {
+    /// Open the installed-state database read-write, running pending
+    /// migrations and holding an exclusive process lock.
+    ///
+    /// This is the *mutation* entry point: only System- and Local-class
+    /// commands may call it (ADR-0044). Read-class commands must use
+    /// [`ReadOnlyDb::open_read_only`] instead.
+    ///
+    /// `snapshot_export_dir`: when the pre-migration schema still holds the
+    /// legacy `plan_snapshots` table, its rows are exported into this
+    /// directory (ADR-0041 layout) before the dropping migration runs.
+    /// Export failures abort the open — proceeding would drop the table and
+    /// lose the snapshots. Pass `None` (tests, in-memory) to skip.
+    pub async fn open(path: &Path, snapshot_export_dir: Option<&Path>) -> Result<Self> {
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return Err(map_fs_error(
+                e,
+                format!("failed to create database directory {}", parent.display()),
+            ));
+        }
+
+        let lock_file = acquire_lock(path)?;
+
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<WriterJob>(256);
+
+        let path_clone = path.to_path_buf();
+        let export_dir = snapshot_export_dir.map(|p| p.to_path_buf());
+
+        std::thread::Builder::new()
+            .name("wright-db-writer".into())
+            .spawn(move || {
+                let mut conn = match rusqlite::Connection::open(&path_clone) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ =
+                            ready_tx.send(Err(WrightError::context("failed to open database", e)));
+                        return;
+                    }
+                };
+
+                if let Err(e) = configure_connection(&mut conn) {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+
+                if let Some(ref dir) = export_dir
+                    && let Err(e) = crate::ledger::export_legacy_plan_snapshots(&conn, dir)
+                {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+
+                if let Err(e) = schema::init_db(&mut conn, Some(&path_clone)) {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+
+                let _ = ready_tx.send(Ok(()));
+
+                while let Some(job) = job_rx.blocking_recv() {
+                    job(&mut conn);
+                }
+            })
+            .map_err(|e| WrightError::context("failed to spawn database writer thread", e))?;
+
+        ready_rx.await.map_err(|_| {
+            WrightError::DatabaseError("database writer thread died during initialization".into())
+        })??;
+
+        Ok(InstalledDb {
+            read: ReadOnlyDb {
+                db_path: Some(path.to_path_buf()),
+                writer: Some(Arc::new(WriterHandle { sender: job_tx })),
+                reader_semaphore: Arc::new(tokio::sync::Semaphore::new(READER_POOL_CAPACITY)),
+            },
+            _lock: Some(lock_file),
+        })
+    }
+
+    pub async fn open_in_memory() -> Result<Self> {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (job_tx, mut job_rx) = tokio::sync::mpsc::channel::<WriterJob>(256);
+
+        std::thread::Builder::new()
+            .name("wright-db-writer-mem".into())
+            .spawn(move || {
+                let mut conn = match rusqlite::Connection::open_in_memory() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(WrightError::context(
+                            "failed to open in-memory database",
+                            e,
+                        )));
+                        return;
+                    }
+                };
+
+                if let Err(e) = configure_connection(&mut conn) {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+
+                if let Err(e) = schema::init_db(&mut conn, None) {
+                    let _ = ready_tx.send(Err(e));
+                    return;
+                }
+
+                let _ = ready_tx.send(Ok(()));
+
+                while let Some(job) = job_rx.blocking_recv() {
+                    job(&mut conn);
+                }
+            })
+            .map_err(|e| {
+                WrightError::context("failed to spawn in-memory database writer thread", e)
+            })?;
+
+        ready_rx.await.map_err(|_| {
+            WrightError::DatabaseError("database writer thread died during initialization".into())
+        })??;
+
+        Ok(InstalledDb {
+            read: ReadOnlyDb {
+                db_path: None,
+                writer: Some(Arc::new(WriterHandle { sender: job_tx })),
+                reader_semaphore: Arc::new(tokio::sync::Semaphore::new(READER_POOL_CAPACITY)),
+            },
+            _lock: None,
+        })
+    }
+
+    /// Dispatch a mutating operation to the single persistent writer actor thread.
+    pub async fn write<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut rusqlite::Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        match self.read.writer {
+            Some(ref writer) => writer.call(f).await,
+            None => Err(WrightError::DatabaseError(
+                "attempted write operation on read-only database".into(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReadOnlyDb;
+
+    #[test]
+    fn read_only_open_missing_database_does_not_create_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nested").join("wright.db");
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(ReadOnlyDb::open_read_only(&db_path));
+        let err = match result {
+            Ok(_) => panic!("opening a missing database must fail"),
+            Err(e) => e,
+        };
+
+        assert!(
+            format!("{err}").contains("no installed-state database"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !db_path.parent().unwrap().exists(),
+            "open_read_only must not create the database directory"
+        );
+        assert!(
+            !db_path.exists(),
+            "open_read_only must not create the database"
+        );
+    }
+
+    #[test]
+    fn read_only_db_has_no_write_surface() {
+        // `InstalledDb::write` is not reachable through `&ReadOnlyDb`; the
+        // real check is that this crate compiles with read methods on
+        // `ReadOnlyDb` and `write` only on `InstalledDb`.
+        fn assert_send<T: Send>() {}
+        assert_send::<ReadOnlyDb>();
     }
 }

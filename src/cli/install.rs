@@ -79,7 +79,7 @@ pub struct InstallArgs {
     /// so parts that need building are forged from scratch. Unlike `--force`,
     /// this does not redeploy parts that are already up to date. Composable
     /// with `--force`.
-    #[arg(long, short = 'c', alias = "clean")]
+    #[arg(long, short = 'c')]
     pub fresh: bool,
 
     /// Preview what would be forged and deployed without making any changes

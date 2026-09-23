@@ -15,7 +15,7 @@
 //! resolution fails, naming the absolute forms the user can write instead.
 
 use crate::error::{Result, WrightError};
-use wright_state::database::{InstalledDb, PartWithPlan, PlanRecord};
+use wright_state::database::{PartWithPlan, PlanRecord, ReadOnlyDb};
 
 /// A parsed target identifier — pure syntax, no database access.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +95,7 @@ impl ResolvedTarget {
 }
 
 /// Resolve an [`Identifier`] against the installed-state database.
-pub async fn resolve(db: &InstalledDb, ident: &Identifier) -> Result<ResolvedTarget> {
+pub async fn resolve(db: &ReadOnlyDb, ident: &Identifier) -> Result<ResolvedTarget> {
     match ident {
         Identifier::Bare(name) => resolve_bare(db, name).await,
         Identifier::Plan(plan) => resolve_plan(db, plan).await,
@@ -105,7 +105,7 @@ pub async fn resolve(db: &InstalledDb, ident: &Identifier) -> Result<ResolvedTar
 
 /// Resolve a bare name: plan registry first, then deployed outputs, with
 /// collision detection between the two schemes.
-async fn resolve_bare(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
+async fn resolve_bare(db: &ReadOnlyDb, name: &str) -> Result<ResolvedTarget> {
     let plan = db
         .get_plan(name)
         .await
@@ -148,7 +148,7 @@ async fn resolve_bare(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
 }
 
 /// Resolve an absolute plan-level reference (`plan:*`).
-async fn resolve_plan(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
+async fn resolve_plan(db: &ReadOnlyDb, name: &str) -> Result<ResolvedTarget> {
     let plan = db
         .get_plan(name)
         .await
@@ -159,7 +159,7 @@ async fn resolve_plan(db: &InstalledDb, name: &str) -> Result<ResolvedTarget> {
 
 /// Resolve an absolute output-level reference (`plan:output`), validating
 /// that the output actually belongs to the named plan.
-async fn resolve_output(db: &InstalledDb, plan: &str, output: &str) -> Result<ResolvedTarget> {
+async fn resolve_output(db: &ReadOnlyDb, plan: &str, output: &str) -> Result<ResolvedTarget> {
     let plan_record = db
         .get_plan(plan)
         .await
@@ -181,7 +181,7 @@ async fn resolve_output(db: &InstalledDb, plan: &str, output: &str) -> Result<Re
 }
 
 /// Fetch the deployed outputs of a plan record.
-async fn plan_parts(db: &InstalledDb, plan: &PlanRecord) -> Result<Vec<PartWithPlan>> {
+async fn plan_parts(db: &ReadOnlyDb, plan: &PlanRecord) -> Result<Vec<PartWithPlan>> {
     db.get_parts_by_plan(&plan.name)
         .await
         .map_err(|e| WrightError::context("failed to query plan outputs", e))
@@ -189,7 +189,7 @@ async fn plan_parts(db: &InstalledDb, plan: &PlanRecord) -> Result<Vec<PartWithP
 
 /// Shared tail for plan-level resolution: a plan without deployed outputs
 /// is not a usable target.
-async fn resolve_plan_parts(db: &InstalledDb, plan: PlanRecord) -> Result<ResolvedTarget> {
+async fn resolve_plan_parts(db: &ReadOnlyDb, plan: PlanRecord) -> Result<ResolvedTarget> {
     let parts = plan_parts(db, &plan).await?;
     if parts.is_empty() {
         return Err(WrightError::PartNotFound(format!(
@@ -203,7 +203,7 @@ async fn resolve_plan_parts(db: &InstalledDb, plan: PlanRecord) -> Result<Resolv
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::{NewPart, NewPlan};
+    use wright_state::database::{InstalledDb, NewPart, NewPlan};
 
     async fn test_db() -> InstalledDb {
         InstalledDb::open_in_memory().await.unwrap()
@@ -228,7 +228,7 @@ mod tests {
         }
     }
 
-    async fn resolve_str(db: &InstalledDb, input: &str) -> Result<ResolvedTarget> {
+    async fn resolve_str(db: &ReadOnlyDb, input: &str) -> Result<ResolvedTarget> {
         resolve(db, &Identifier::parse(input).unwrap()).await
     }
 

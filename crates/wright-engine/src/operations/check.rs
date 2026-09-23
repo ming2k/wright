@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::error::{Result, WrightError};
 use crate::identify::{Identifier, ResolvedTarget};
 use crate::util::timing::WorkflowTiming;
-use wright_state::database::InstalledDb;
+use wright_state::database::ReadOnlyDb;
 
 /// Implementation of `wright check`.
 ///
@@ -11,7 +11,7 @@ use wright_state::database::InstalledDb;
 /// problem is found, so the CLI dispatch layer maps to a non-zero exit.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_check(
-    db: &InstalledDb,
+    db: &ReadOnlyDb,
     root_dir: &Path,
     target: Option<&str>,
     deep: bool,
@@ -117,7 +117,7 @@ fn error_flag_label(deep: bool, check_files: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wright_state::database::{FileEntry, FileType, NewPart, NewPlan};
+    use wright_state::database::{FileEntry, FileType, InstalledDb, NewPart, NewPlan};
 
     async fn test_db() -> InstalledDb {
         InstalledDb::open_in_memory().await.unwrap()

@@ -44,3 +44,5 @@
 | [ADR-0040](0040-clean-prune-consolidation-and-fresh-flag.md) | Consolidate maintenance deletion into `clean`; rename the from-scratch forge flag to `--fresh` | Accepted |
 | [ADR-0041](0041-file-backed-ledger.md) | File-backed ledger: build records, snapshot files, and `.BUILDINFO` | Accepted |
 | [ADR-0042](0042-single-writer-actor-rusqlite.md) | Single-Writer Actor and Concurrent Readers via rusqlite (replacing sqlx) | Accepted |
+| [ADR-0043](0043-registry-as-derived-index-and-maintenance-surface.md) | Registry as a derived index: measure with `usage`, snapshot before migration, rebuild with `db reindex`, reclaim `store`/`sources`/`ledger`, report drift with `audit` | Proposed |
+| [ADR-0044](0044-command-privilege-classes-and-read-only-query-path.md) | Command privilege classes (Read/Local/System) and a genuinely read-only query path | Proposed |

@@ -1,6 +1,6 @@
 //! Installed-part persistence and lookup.
 
-use super::{InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS, PartWithPlan};
+use super::{InstalledDb, InstalledPart, NewPart, Origin, PART_COLUMNS, PartWithPlan, ReadOnlyDb};
 use crate::error::{Result, WrightError};
 use rusqlite::params;
 
@@ -11,6 +11,120 @@ const PART_WITH_PLAN_SQL: &str = "
     FROM parts p
     INNER JOIN plans pl ON p.plan_id = pl.id
 ";
+
+impl ReadOnlyDb {
+    pub async fn get_part(&self, name: &str) -> Result<Option<InstalledPart>> {
+        let sql = format!("SELECT {} FROM parts WHERE name = ?1", PART_COLUMNS);
+        let name = name.to_string();
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(params![name])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(InstalledPart::from_row(row)?))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+    }
+
+    pub async fn get_part_with_plan(&self, name: &str) -> Result<Option<PartWithPlan>> {
+        let sql = format!("{} WHERE p.name = ?1", PART_WITH_PLAN_SQL);
+        let name = name.to_string();
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(params![name])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(PartWithPlan::from_row(row)?))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+    }
+
+    pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {
+        let sql = format!("{} ORDER BY p.name", PART_WITH_PLAN_SQL);
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], PartWithPlan::from_row)?;
+            let mut parts = Vec::new();
+            for r in rows {
+                parts.push(r?);
+            }
+            Ok(parts)
+        })
+        .await
+    }
+
+    pub async fn get_root_parts(&self) -> Result<Vec<PartWithPlan>> {
+        let sql = format!(
+            "{} WHERE p.name NOT IN (SELECT DISTINCT depends_on FROM dependencies) ORDER BY p.name",
+            PART_WITH_PLAN_SQL
+        );
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], PartWithPlan::from_row)?;
+            let mut parts = Vec::new();
+            for r in rows {
+                parts.push(r?);
+            }
+            Ok(parts)
+        })
+        .await
+    }
+
+    pub async fn get_orphan_parts(&self) -> Result<Vec<PartWithPlan>> {
+        let sql = format!(
+            "{} WHERE p.origin = 'dependency' AND p.name NOT IN (
+                SELECT depends_on FROM dependencies
+            )",
+            PART_WITH_PLAN_SQL
+        );
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], PartWithPlan::from_row)?;
+            let mut parts = Vec::new();
+            for r in rows {
+                parts.push(r?);
+            }
+            Ok(parts)
+        })
+        .await
+    }
+
+    pub async fn get_provided_parts(&self) -> Result<Vec<PartWithPlan>> {
+        let sql = format!(
+            "{} WHERE p.origin = 'external' ORDER BY p.name",
+            PART_WITH_PLAN_SQL
+        );
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], PartWithPlan::from_row)?;
+            let mut parts = Vec::new();
+            for r in rows {
+                parts.push(r?);
+            }
+            Ok(parts)
+        })
+        .await
+    }
+
+    pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<PartWithPlan>> {
+        let sql = format!("{} WHERE pl.name = ?1 ORDER BY p.name", PART_WITH_PLAN_SQL);
+        let plan_name = plan_name.to_string();
+        self.read(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![plan_name], PartWithPlan::from_row)?;
+            let mut parts = Vec::new();
+            for r in rows {
+                parts.push(r?);
+            }
+            Ok(parts)
+        })
+        .await
+    }
+}
 
 impl InstalledDb {
     pub async fn insert_part(&self, part: NewPart<'_>) -> Result<i64> {
@@ -162,7 +276,8 @@ impl InstalledDb {
                 }
             };
 
-            let rows_affected = conn.execute("DELETE FROM parts WHERE name = ?1", params![name])
+            let rows_affected = conn
+                .execute("DELETE FROM parts WHERE name = ?1", params![name])
                 .map_err(|e| WrightError::context("failed to remove part", e))?;
 
             if rows_affected == 0 {
@@ -181,67 +296,6 @@ impl InstalledDb {
             }
 
             Ok(())
-        })
-        .await
-    }
-
-    pub async fn get_part(&self, name: &str) -> Result<Option<InstalledPart>> {
-        let sql = format!("SELECT {} FROM parts WHERE name = ?1", PART_COLUMNS);
-        let name = name.to_string();
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let mut rows = stmt.query(params![name])?;
-            if let Some(row) = rows.next()? {
-                Ok(Some(InstalledPart::from_row(row)?))
-            } else {
-                Ok(None)
-            }
-        })
-        .await
-    }
-
-    pub async fn get_part_with_plan(&self, name: &str) -> Result<Option<PartWithPlan>> {
-        let sql = format!("{} WHERE p.name = ?1", PART_WITH_PLAN_SQL);
-        let name = name.to_string();
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let mut rows = stmt.query(params![name])?;
-            if let Some(row) = rows.next()? {
-                Ok(Some(PartWithPlan::from_row(row)?))
-            } else {
-                Ok(None)
-            }
-        })
-        .await
-    }
-
-    pub async fn list_parts(&self) -> Result<Vec<PartWithPlan>> {
-        let sql = format!("{} ORDER BY p.name", PART_WITH_PLAN_SQL);
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], PartWithPlan::from_row)?;
-            let mut parts = Vec::new();
-            for r in rows {
-                parts.push(r?);
-            }
-            Ok(parts)
-        })
-        .await
-    }
-
-    pub async fn get_root_parts(&self) -> Result<Vec<PartWithPlan>> {
-        let sql = format!(
-            "{} WHERE p.name NOT IN (SELECT DISTINCT depends_on FROM dependencies) ORDER BY p.name",
-            PART_WITH_PLAN_SQL
-        );
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], PartWithPlan::from_row)?;
-            let mut parts = Vec::new();
-            for r in rows {
-                parts.push(r?);
-            }
-            Ok(parts)
         })
         .await
     }
@@ -267,75 +321,6 @@ impl InstalledDb {
             )
             .map_err(|e| WrightError::context("failed to set origin", e))?;
             Ok(())
-        })
-        .await
-    }
-
-    pub async fn get_orphan_parts(&self) -> Result<Vec<PartWithPlan>> {
-        let sql = format!(
-            "{} WHERE p.origin = 'dependency' AND p.name NOT IN (
-                SELECT depends_on FROM dependencies
-            )",
-            PART_WITH_PLAN_SQL
-        );
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], PartWithPlan::from_row)?;
-            let mut parts = Vec::new();
-            for r in rows {
-                parts.push(r?);
-            }
-            Ok(parts)
-        })
-        .await
-    }
-
-    pub async fn get_provided_parts(&self) -> Result<Vec<PartWithPlan>> {
-        let sql = format!(
-            "{} WHERE p.origin = 'external' ORDER BY p.name",
-            PART_WITH_PLAN_SQL
-        );
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map([], PartWithPlan::from_row)?;
-            let mut parts = Vec::new();
-            for r in rows {
-                parts.push(r?);
-            }
-            Ok(parts)
-        })
-        .await
-    }
-
-    pub async fn get_parts_by_plan(&self, plan_name: &str) -> Result<Vec<PartWithPlan>> {
-        let sql = format!("{} WHERE pl.name = ?1 ORDER BY p.name", PART_WITH_PLAN_SQL);
-        let plan_name = plan_name.to_string();
-        self.read(move |conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let rows = stmt.query_map(params![plan_name], PartWithPlan::from_row)?;
-            let mut parts = Vec::new();
-            for r in rows {
-                parts.push(r?);
-            }
-            Ok(parts)
-        })
-        .await
-    }
-
-    pub async fn remove_parts_by_plan(&self, plan_name: &str) -> Result<u64> {
-        let plan_name = plan_name.to_string();
-        self.write(move |conn| {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM parts INNER JOIN plans ON parts.plan_id = plans.id WHERE plans.name = ?1",
-                params![plan_name],
-                |r| r.get(0),
-            )
-            .map_err(|e| WrightError::context("failed to count parts by plan", e))?;
-
-            conn.execute("DELETE FROM plans WHERE name = ?1", params![plan_name])
-                .map_err(|e| WrightError::context("failed to remove parts by plan", e))?;
-
-            Ok(count as u64)
         })
         .await
     }
