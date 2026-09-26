@@ -13,15 +13,90 @@ use crate::resolve::{
     self, BuildExecutionPlan, BuildPlanOptions, MatchPolicy, ResolveOptions, create_execution_plan,
     resolve_build_set, resolve_explicit_plan_names,
 };
+use wright_part::abi::{
+    AbiBreakReason, AbiCompatibility, PartAbi, diff_abi, extract_elf_abi, extract_part_abi,
+};
 use wright_part::folio;
 use wright_part::store::{LocalPartStore, ResolvedPartVersioned};
-use wright_plan::manifest::{OutputConfig, PlanManifest};
+use wright_plan::manifest::{AbiStability, OutputConfig, PlanManifest};
 use wright_state::cas::CasStore;
 use wright_state::database::{InstalledDb, SessionContext};
 
 use super::fingerprints::PlanFingerprints;
 use super::request::InstallRequest;
 use crate::util::timing::{WorkflowTiming, format_duration};
+
+/// Extract the pre-update ABI of an installed plan from its currently deployed files.
+async fn snapshot_installed_plan_abi(
+    db: &InstalledDb,
+    root_dir: &Path,
+    plan_name: &str,
+) -> Result<Option<PartAbi>> {
+    let Some(plan) = db.get_plan(plan_name).await? else {
+        return Ok(None);
+    };
+
+    let parts = db.get_parts_by_plan_id(plan.id).await?;
+    let mut libraries = std::collections::BTreeMap::new();
+
+    for part in parts {
+        let files = db.get_files(part.id).await?;
+        for file in files {
+            if file.file_type != wright_state::database::FileType::File {
+                continue;
+            }
+            if !file.path.contains(".so") {
+                continue;
+            }
+            let abs_path = root_dir.join(file.path.trim_start_matches('/'));
+            if !abs_path.exists() {
+                continue;
+            }
+            if let Ok(Some(elf_abi)) = extract_elf_abi(&abs_path) {
+                libraries.insert(file.path.trim_start_matches('/').to_string(), elf_abi);
+            }
+        }
+    }
+
+    if libraries.is_empty() {
+        return Ok(None);
+    }
+
+    let mut part_abi = PartAbi {
+        libraries,
+        abi_hash: String::new(),
+    };
+    part_abi.recompute_overall_hash();
+    Ok(Some(part_abi))
+}
+
+/// Evaluate ABI compatibility between old and new snapshots, accounting for
+/// plan manifest policy (such as `abi_stability = "inlined"` or `abi_epoch` bumps).
+fn evaluate_plan_abi_compatibility(
+    old_abi: &PartAbi,
+    new_abi: &PartAbi,
+    manifest: &PlanManifest,
+    previous_epoch: Option<u32>,
+) -> AbiCompatibility {
+    if manifest.metadata.abi_stability == AbiStability::Inlined {
+        return AbiCompatibility::Incompatible(AbiBreakReason::PolicyInlined);
+    }
+
+    if let (Some(new_epoch), Some(old_epoch)) = (manifest.metadata.abi_epoch, previous_epoch) {
+        if new_epoch > old_epoch {
+            return AbiCompatibility::Incompatible(AbiBreakReason::ExplicitEpochBump {
+                old_epoch,
+                new_epoch,
+            });
+        }
+    }
+
+    if manifest.metadata.abi_stability == AbiStability::Fixed {
+        return AbiCompatibility::Identical;
+    }
+
+    diff_abi(old_abi, new_abi)
+}
 
 /// Resolve the archive that a just-sealed (or CAS-restored) plan build must
 /// have produced.
@@ -121,6 +196,8 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         build_opts,
         run_hooks,
         dry_run,
+        resolved_build_set,
+        inhibit_rebuild,
     } = request;
 
     if targets.is_empty() {
@@ -143,14 +220,17 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     register_folio_assumptions(config, db_path, &expansion.provides).await?;
 
+    let (target_policies, dep_policies) = if match_policies.is_empty() {
+        (vec![MatchPolicy::Outdated], Some(vec![MatchPolicy::Missing]))
+    } else {
+        (match_policies.clone(), Some(match_policies))
+    };
+
     let resolve_opts = ResolveOptions {
         deps,
         rdeps,
-        match_policies: if match_policies.is_empty() {
-            vec![MatchPolicy::Outdated]
-        } else {
-            match_policies
-        },
+        match_policies: target_policies,
+        dep_match_policies: dep_policies,
         depth: Some(depth.unwrap_or(0)),
         include_targets: true,
         preserve_targets: force,
@@ -165,10 +245,17 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         ..Default::default()
     });
 
-    let build_set: Vec<String> = resolve_build_set(config, targets.clone(), resolve_opts.clone())
-        .await
-        .map_err(|e| WrightError::context("failed to resolve build set", e))?
-        .names;
+    let resolved_set = if let Some(rbs) = resolved_build_set {
+        rbs
+    } else {
+        resolve_build_set(config, targets.clone(), resolve_opts.clone())
+            .await
+            .map_err(|e| WrightError::context("failed to resolve build set", e))?
+    };
+
+    let build_set: Vec<String> = resolved_set.names;
+    let rebuild_reasons = resolved_set.rebuild_reasons;
+    let rebuild_triggers = resolved_set.rebuild_triggers;
 
     if build_set.is_empty() {
         if !quiet {
@@ -354,11 +441,39 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     prepare_step.success();
 
+    // ── Pre-update ABI snapshots for rebuild inhibition ─────────────
+    let mut pre_update_abis: HashMap<String, Option<PartAbi>> = HashMap::new();
+    let mut previous_epochs: HashMap<String, Option<u32>> = HashMap::new();
+    if inhibit_rebuild && !force {
+        for task in plan.build_set() {
+            let base = BuildExecutionPlan::task_base_name(task);
+            if !pre_update_abis.contains_key(base) {
+                if let Ok(Some(plan_rec)) = db.get_plan(base).await {
+                    previous_epochs.insert(base.to_string(), Some(plan_rec.epoch as u32));
+                }
+                let abi_snapshot = snapshot_installed_plan_abi(&db, root_dir, base).await.unwrap_or(None);
+                pre_update_abis.insert(base.to_string(), abi_snapshot);
+            }
+        }
+    }
+
+    let mut inhibited_tasks: HashSet<String> = HashSet::new();
+
     for (batch_idx, batch) in plan.batches().iter().enumerate() {
         bail_if_cancelled!();
 
+        let active_tasks: Vec<String> = batch
+            .iter()
+            .filter(|t| !inhibited_tasks.contains(BuildExecutionPlan::task_base_name(t)))
+            .cloned()
+            .collect();
+
+        if active_tasks.is_empty() {
+            continue;
+        }
+
         if !quiet && total_batches > 1 {
-            let bases: Vec<&str> = batch
+            let bases: Vec<&str> = active_tasks
                 .iter()
                 .map(|t| BuildExecutionPlan::task_base_name(t))
                 .collect::<std::collections::BTreeSet<_>>()
@@ -386,7 +501,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         let mut cas_hit_bases: HashSet<String> = HashSet::new();
         if !force {
             let mut bases_seen = HashSet::new();
-            for task in batch {
+            for task in &active_tasks {
                 let base = BuildExecutionPlan::task_base_name(task).to_string();
                 if !bases_seen.insert(base.clone()) {
                     continue;
@@ -426,7 +541,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         //    failures are settled together once no task is left running.
         let mut join_set: JoinSet<(String, Result<()>)> = JoinSet::new();
         let mut task_ids: HashMap<tokio::task::Id, String> = HashMap::new();
-        for task in batch {
+        for task in &active_tasks {
             let base = BuildExecutionPlan::task_base_name(task).to_string();
             if cas_hit_bases.contains(&base) {
                 // CAS hit — skip forge for this task.
@@ -577,7 +692,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         let seal_step = timing.step("seal");
         let mut bases_in_batch: Vec<String> = Vec::new();
         let mut bases_seen: HashSet<String> = HashSet::new();
-        for task in batch {
+        for task in &active_tasks {
             let base = BuildExecutionPlan::task_base_name(task).to_string();
             if task.ends_with(":bootstrap")
                 || !bases_seen.insert(base.clone())
@@ -642,6 +757,76 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         }
 
         seal_step.success();
+
+        // ── Physical ABI evaluation for reverse rebuild inhibition ────
+        if inhibit_rebuild && !force {
+            for base in &bases_in_batch {
+                if let Some(Some(old_abi)) = pre_update_abis.get(base) {
+                    let plan_path = plan
+                        .plan_path_for_task(base)
+                        .or_else(|| plan.plan_path_for_task(&format!("{}:bootstrap", base)));
+                    if let Some(path) = plan_path
+                        && let Ok(manifest) = PlanManifest::from_file(path)
+                        && let Ok(build_root) = foundry.build_root(&manifest)
+                    {
+                        let staging_dir = build_root.join("staging");
+                        if let Ok(new_abi) = extract_part_abi(&staging_dir) {
+                            let compat = evaluate_plan_abi_compatibility(
+                                old_abi,
+                                &new_abi,
+                                &manifest,
+                                previous_epochs.get(base).copied().flatten(),
+                            );
+                            if compat.is_compatible() {
+                                let mut newly_inhibited = Vec::new();
+                                for (downstream, trigger) in &rebuild_triggers {
+                                    if trigger == base
+                                        && rebuild_reasons.get(downstream)
+                                            == Some(&crate::resolve::RebuildReason::LinkDependency)
+                                        && !inhibited_tasks.contains(downstream)
+                                    {
+                                        inhibited_tasks.insert(downstream.clone());
+                                        newly_inhibited.push(downstream.clone());
+                                    }
+                                }
+                                let mut queue = newly_inhibited.clone();
+                                while let Some(parent) = queue.pop() {
+                                    for (downstream, trigger) in &rebuild_triggers {
+                                        if trigger == &parent
+                                            && rebuild_reasons.get(downstream)
+                                                == Some(&crate::resolve::RebuildReason::LinkDependency)
+                                            && !inhibited_tasks.contains(downstream)
+                                        {
+                                            inhibited_tasks.insert(downstream.clone());
+                                            queue.push(downstream.clone());
+                                            newly_inhibited.push(downstream.clone());
+                                        }
+                                    }
+                                }
+                                if !newly_inhibited.is_empty() {
+                                    info!(
+                                        verb = "Inhibiting",
+                                        event = "abi.inhibit_rebuild",
+                                        trigger = %base,
+                                        inhibited = %newly_inhibited.join(", "),
+                                        "ABI backward compatible; inhibited reverse rebuild of {} dependent(s)",
+                                        newly_inhibited.len()
+                                    );
+                                }
+                            } else if let AbiCompatibility::Incompatible(ref reason) = compat {
+                                info!(
+                                    verb = "Cascading",
+                                    event = "abi.break_detected",
+                                    trigger = %base,
+                                    reason = %reason,
+                                    "ABI break detected; cascading rebuild to reverse dependents"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // 3. Deploy this wave.
         //    Also restore CAS parts for bases with CAS hits (they weren't
@@ -830,6 +1015,16 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
             }
         }
         deploy_step.success();
+    }
+
+    if !inhibited_tasks.is_empty() && !quiet {
+        info!(
+            verb = "Inhibited",
+            event = "abi.inhibition_summary",
+            count = inhibited_tasks.len(),
+            "safely inhibited rebuild of {} reverse dependent(s) via physical ABI verification",
+            inhibited_tasks.len()
+        );
     }
 
     // ── Mark delivery as COMPLETED ──────────────────────────────────

@@ -141,6 +141,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let hooks_path = part_dir.join(".HOOKS");
     let plansrc_path = part_dir.join(".PLANSRC");
     let buildinfo_path = part_dir.join(".BUILDINFO");
+    let abiinfo_path = part_dir.join(".ABIINFO");
     // A previously interrupted seal must not leak stale metadata into the
     // next archive.
     let _ = std::fs::remove_file(&partinfo_path);
@@ -148,6 +149,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let _ = std::fs::remove_file(&hooks_path);
     let _ = std::fs::remove_file(&plansrc_path);
     let _ = std::fs::remove_file(&buildinfo_path);
+    let _ = std::fs::remove_file(&abiinfo_path);
 
     // Generate .PARTINFO
     let partinfo = generate_partinfo(spec);
@@ -192,6 +194,11 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
                 .map_err(|e| WrightError::context("failed to write .BUILDINFO", e))?;
         }
 
+        let part_abi = crate::abi::extract_part_abi(part_dir)?;
+        if !part_abi.libraries.is_empty() {
+            crate::abi::write_abi_info(&abiinfo_path, &part_abi)?;
+        }
+
         let part_path = output_path.join(&spec.archive_name);
         crate::compression::create_tar_zst(part_dir, &part_path)?;
         Ok(part_path)
@@ -204,6 +211,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
     let _ = std::fs::remove_file(hooks_path);
     let _ = std::fs::remove_file(plansrc_path);
     let _ = std::fs::remove_file(buildinfo_path);
+    let _ = std::fs::remove_file(abiinfo_path);
 
     result
 }
@@ -236,6 +244,11 @@ pub fn read_plan_source(extract_dir: &Path) -> Option<String> {
 pub fn read_build_info(extract_dir: &Path) -> Option<BuildInfo> {
     let content = std::fs::read_to_string(extract_dir.join(".BUILDINFO")).ok()?;
     toml::from_str(&content).ok()
+}
+
+/// Read the `.ABIINFO` snapshot from an already-extracted archive directory.
+pub fn read_abi_info(extract_dir: &Path) -> Option<crate::abi::PartAbi> {
+    crate::abi::read_abi_info(extract_dir).ok().flatten()
 }
 
 /// Light summary of an archive's metadata + file list, used by the
@@ -462,6 +475,7 @@ fn generate_filelist(part_dir: &Path) -> Result<String> {
             || relative_str.starts_with(".HOOKS")
             || relative_str.starts_with(".PLANSRC")
             || relative_str.starts_with(".BUILDINFO")
+            || relative_str.starts_with(".ABIINFO")
         {
             continue;
         }

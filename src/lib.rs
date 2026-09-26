@@ -27,7 +27,7 @@ pub mod delivery {
 /// Compatibility facade for part formats and sealing helpers.
 pub mod part {
     pub use wright_part::{
-        PartError, Result, Version, VersionConstraint, VersionOp, compression, elf, error, fhs,
+        PartError, Result, Version, VersionConstraint, VersionOp, abi, compression, elf, error, fhs,
         folio, soname, store, version,
     };
 

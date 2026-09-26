@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0046](0046-scoped-dependency-resolution-and-update-containment.md)
 
 ## Context
 

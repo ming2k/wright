@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 mod convert;
 mod parse;
@@ -217,7 +217,21 @@ pub struct PlanManifest {
     pub plan_source: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+/// Stability policy governing physical ABI probe extraction and rebuild inhibition.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AbiStability {
+    /// Standard dynamic shared libraries. Enables probe-based rebuild inhibition.
+    #[default]
+    Dynamic,
+    /// Inlined/header-only or heavy C++ template library.
+    /// Probes cannot verify consumer inlining, so reverse rebuild inhibition is disabled.
+    Inlined,
+    /// Guaranteed stable ABI across all updates.
+    Fixed,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PlanMetadata {
     pub name: String,
     #[serde(default)]
@@ -232,6 +246,10 @@ pub struct PlanMetadata {
     pub url: Option<String>,
     #[serde(default)]
     pub maintainer: Option<String>,
+    #[serde(default)]
+    pub abi_epoch: Option<u32>,
+    #[serde(default)]
+    pub abi_stability: AbiStability,
 }
 
 #[derive(Debug, Clone, Default)]

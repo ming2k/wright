@@ -85,6 +85,10 @@ pub struct ForgeConfig {
     /// distribution uses different package names.
     #[serde(default = "default_stable_toolchain")]
     pub stable_toolchain: Vec<String>,
+    /// Inhibit reverse-dependency rebuilds when the updated package's physical
+    /// ABI probe proves backward compatibility. Defaults to true.
+    #[serde(default = "default_true")]
+    pub inhibit_abi_rebuild: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -204,6 +208,9 @@ fn default_executors_dir() -> PathBuf {
 fn default_forge_dir() -> PathBuf {
     PathBuf::from("/var/tmp/wright/workshop")
 }
+fn default_true() -> bool {
+    true
+}
 fn default_isolation() -> String {
     "strict".to_string()
 }
@@ -248,6 +255,7 @@ impl Default for ForgeConfig {
             nproc_per_isolation: None,
             max_cpus: None,
             stable_toolchain: default_stable_toolchain(),
+            inhibit_abi_rebuild: true,
         }
     }
 }

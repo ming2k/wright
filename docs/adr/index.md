@@ -4,7 +4,7 @@
 |-----|----------|--------|
 | [ADR-0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [ADR-0002](0002-wave-by-wave-install.md) | Wave-by-wave install instead of one big install | Accepted |
-| [ADR-0003](0003-default-resolution-policy.md) | Default resolution policy for install | Accepted |
+| [ADR-0003](0003-default-resolution-policy.md) | Default resolution policy for install | Superseded by ADR-0046 |
 | [ADR-0004](0004-no-magic-behavior.md) | No implicit magic behavior | Accepted |
 | [ADR-0005](0005-two-database-design.md) | Two-database design (installed + archive) | Superseded by ADR-0030 |
 | [ADR-0006](0006-mvp-two-pass-build.md) | MVP two-pass build for dependency cycles | Accepted |
@@ -46,3 +46,5 @@
 | [ADR-0042](0042-single-writer-actor-rusqlite.md) | Single-Writer Actor and Concurrent Readers via rusqlite (replacing sqlx) | Accepted |
 | [ADR-0043](0043-registry-as-derived-index-and-maintenance-surface.md) | Registry as a derived index: measure with `usage`, snapshot before migration, rebuild with `db reindex`, reclaim `store`/`sources`/`ledger`, report drift with `audit` | Proposed |
 | [ADR-0044](0044-command-privilege-classes-and-read-only-query-path.md) | Command privilege classes (Read/Local/System) and a genuinely read-only query path | Proposed |
+| [ADR-0045](0045-deterministic-abi-extraction-and-rebuild-inhibition.md) | Deterministic ABI extraction and reverse rebuild inhibition | Accepted |
+| [ADR-0046](0046-scoped-dependency-resolution-and-update-containment.md) | Scoped dependency resolution and update containment | Accepted |

@@ -125,6 +125,9 @@ pub struct ResolveOptions {
     pub deps: DepDomain,
     pub rdeps: DepDomain,
     pub match_policies: Vec<MatchPolicy>,
+    /// Match policies specifically for forward-expanded dependencies.
+    /// When None, defaults to `[MatchPolicy::Missing]`, containing update propagation.
+    pub dep_match_policies: Option<Vec<MatchPolicy>>,
     pub depth: Option<usize>,
     pub include_targets: bool,
     pub preserve_targets: bool,
@@ -245,11 +248,16 @@ pub async fn resolve_build_set(
             .context("failed to open database for dependency resolution")?;
 
         if opts.deps.contains(DepDomain::ALL) {
+            let dep_policies = opts
+                .dep_match_policies
+                .as_deref()
+                .unwrap_or(&[MatchPolicy::Missing]);
+
             let dep_count = expand_missing_dependencies(
                 &mut plans_to_build,
                 &index,
                 &db,
-                &opts.match_policies,
+                dep_policies,
                 opts.deps,
                 actual_max,
                 &config.build.stable_toolchain,
@@ -277,11 +285,20 @@ pub async fn resolve_build_set(
                     continue;
                 }
                 if let Ok(m) = PlanManifest::from_file(&path) {
+                    let is_target = original_plans.contains(&canonical);
+                    let policies = if is_target {
+                        &opts.match_policies
+                    } else {
+                        opts.dep_match_policies
+                            .as_deref()
+                            .unwrap_or(&[MatchPolicy::Missing])
+                    };
+
                     if graph::dependency_matches_policy(
                         &m.metadata.name,
                         &index,
                         &db,
-                        &opts.match_policies,
+                        policies,
                     )
                     .await
                     .unwrap_or(true)

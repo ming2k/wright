@@ -78,6 +78,7 @@ runtime_deps = ["wayland"]
         fresh: false,
         dry_run: true,
         root: None,
+        no_inhibit_rebuild: false,
     };
 
     let ctx = Context {
@@ -312,6 +313,7 @@ runtime_deps = ["wayland"]
         depth: Some(0),
         include_targets: true,
         preserve_targets: false,
+        ..Default::default()
     };
 
     let build_set =

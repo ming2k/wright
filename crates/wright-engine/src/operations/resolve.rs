@@ -33,6 +33,7 @@ pub async fn execute_resolve(request: ResolveRequest, config: &GlobalConfig) -> 
             deps,
             rdeps,
             match_policies,
+            dep_match_policies: None,
             depth,
             include_targets: true,
             preserve_targets: true,

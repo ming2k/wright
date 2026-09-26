@@ -1,5 +1,6 @@
 //! Part archive formats, local stores, folios, and package validation.
 
+pub mod abi;
 pub mod archive;
 pub mod compression;
 pub mod elf;

@@ -104,6 +104,8 @@ pub async fn execute_launch(
         part_store: &part_store,
         run_hooks: false,
         dry_run: false,
+        resolved_build_set: None,
+        inhibit_rebuild: false,
     })
     .await?;
 

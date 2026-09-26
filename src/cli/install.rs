@@ -89,6 +89,10 @@ pub struct InstallArgs {
     /// Alternate root directory for file operations
     #[arg(long)]
     pub root: Option<PathBuf>,
+
+    /// Do not inhibit reverse-dependency rebuilds even if physical ABI probe proves backward compatibility
+    #[arg(long)]
+    pub no_inhibit_rebuild: bool,
 }
 
 #[cfg(with_handlers)]
@@ -136,6 +140,8 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         build_opts: None,
         run_hooks: true,
         dry_run: args.dry_run,
+        resolved_build_set: None,
+        inhibit_rebuild: !args.no_inhibit_rebuild && ctx.config.build.inhibit_abi_rebuild,
     })
     .await
 }

@@ -31,4 +31,9 @@ pub struct InstallRequest<'a> {
     /// Resolve and print the execution plan, then return without forging,
     /// sealing, or deploying anything.
     pub dry_run: bool,
+    /// Pre-resolved build set preserving triggers and reasons.
+    pub resolved_build_set: Option<crate::resolve::ResolvedBuildSet>,
+    /// Inhibit reverse-dependency rebuilds when the updated package's physical
+    /// ABI probe proves backward compatibility.
+    pub inhibit_rebuild: bool,
 }

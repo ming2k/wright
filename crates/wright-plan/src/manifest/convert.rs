@@ -47,6 +47,8 @@ impl SubFabricateOutput {
                     .unwrap_or_else(|| parent.metadata.arch.clone()),
                 url: parent.metadata.url.clone(),
                 maintainer: parent.metadata.maintainer.clone(),
+                abi_epoch: parent.metadata.abi_epoch,
+                abi_stability: parent.metadata.abi_stability,
             },
             build_deps: Vec::new(),
             link_deps: Vec::new(),

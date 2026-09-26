@@ -19,6 +19,7 @@ pub async fn execute_upgrade(
     fresh: bool,
     dry_run: bool,
     depth: Option<usize>,
+    no_inhibit_rebuild: bool,
     config: &GlobalConfig,
     db_path: &Path,
     root_dir: &Path,
@@ -60,10 +61,12 @@ pub async fn execute_upgrade(
 
     // Resolve build set including link reverse-dependencies.
     // preserve_targets=true so the outdated explicit targets are always rebuilt.
+    // dep_match_policies=Missing so dependencies are not eagerly upgraded unless missing.
     let resolve_opts = ResolveOptions {
         deps: DepDomain::ALL,
         rdeps: DepDomain::LINK,
         match_policies: vec![MatchPolicy::Outdated],
+        dep_match_policies: Some(vec![MatchPolicy::Missing]),
         depth: Some(depth.unwrap_or(0)),
         include_targets: true,
         preserve_targets: true,
@@ -149,7 +152,7 @@ pub async fn execute_upgrade(
 
     // Run the full install workflow (resolve → forge → seal → deploy) for the resolved set.
     execute_install(InstallRequest {
-        targets: build_set.names,
+        targets: build_set.names.clone(),
         deps: DepDomain::ALL,
         rdeps: DepDomain::empty(),
         match_policies: vec![],
@@ -165,6 +168,8 @@ pub async fn execute_upgrade(
         build_opts: None,
         run_hooks: true,
         dry_run: false,
+        resolved_build_set: Some(build_set),
+        inhibit_rebuild: !no_inhibit_rebuild && config.build.inhibit_abi_rebuild,
     })
     .await
 }

@@ -47,6 +47,10 @@ pub struct UpgradeArgs {
     /// Alternate root directory for file operations
     #[arg(long)]
     pub root: Option<PathBuf>,
+
+    /// Do not inhibit reverse-dependency rebuilds even if physical ABI probe proves backward compatibility
+    #[arg(long)]
+    pub no_inhibit_rebuild: bool,
 }
 
 #[cfg(with_handlers)]
@@ -58,6 +62,7 @@ pub async fn run(args: UpgradeArgs, ctx: &Context<'_>) -> Result<()> {
         args.fresh,
         args.dry_run,
         args.depth,
+        args.no_inhibit_rebuild,
         ctx.config,
         &ctx.db_path,
         &ctx.root_dir,

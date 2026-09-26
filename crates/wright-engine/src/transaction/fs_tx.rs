@@ -332,13 +332,26 @@ impl FsTransaction {
                     let _ = std::fs::remove_file(from);
                     let _ = std::fs::remove_dir(from);
                     if let Err(e) = std::fs::rename(to, from) {
-                        warn!(
-                            event = "fs_tx.rollback_restore_failed",
-                            from = ?from,
-                            to = ?to,
-                            error = %e,
-                            "Failed to restore moved path during rollback"
-                        );
+                        let restored = if e.raw_os_error() == Some(18) {
+                            // Cross-device link: fall back to copy + remove
+                            if std::fs::copy(to, from).is_ok() {
+                                let _ = std::fs::remove_file(to);
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !restored {
+                            warn!(
+                                event = "fs_tx.rollback_restore_failed",
+                                from = ?from,
+                                to = ?to,
+                                error = %e,
+                                "Failed to restore moved path during rollback"
+                            );
+                        }
                     }
                 }
                 Entry::SymlinkReplaced { path, target } => {

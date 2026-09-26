@@ -7,7 +7,7 @@ use crate::error::{Result, WrightError};
 
 use super::PlanBuildOptions;
 use super::{
-    BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig, PhaseConfig,
+    AbiStability, BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig, PhaseConfig,
     PipelineOrder, PipelineStage, PlanManifest, PlanMetadata, Relations, Source, Sources,
 };
 
@@ -49,6 +49,8 @@ struct RawPlanMetadata {
     pub arch: Option<String>,
     pub url: Option<String>,
     pub maintainer: Option<String>,
+    pub abi_epoch: Option<u32>,
+    pub abi_stability: Option<AbiStability>,
 }
 
 impl RawPlanMetadata {
@@ -63,6 +65,8 @@ impl RawPlanMetadata {
             arch: self.arch.unwrap_or(other.arch),
             url: self.url.or(other.url),
             maintainer: self.maintainer.or(other.maintainer),
+            abi_epoch: self.abi_epoch.or(other.abi_epoch),
+            abi_stability: self.abi_stability.unwrap_or(other.abi_stability),
         }
     }
 }
@@ -252,6 +256,8 @@ impl PlanManifest {
                     .ok_or_else(|| WrightError::ParseError("missing field `arch`".to_string()))?,
                 url: flattened_metadata.url,
                 maintainer: flattened_metadata.maintainer,
+                abi_epoch: flattened_metadata.abi_epoch,
+                abi_stability: flattened_metadata.abi_stability.unwrap_or_default(),
             }
         };
 
