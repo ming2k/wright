@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- **Aggregated file diversion reporting in transaction engine.**
+  - Replaces per-file `File diverted` warning spam with context-rich, aggregated notifications grouped deterministically by owner (`Diverted N files from '<owner>' to '<part>' (e.g. <sample>)`).
+  - Preserves full fine-grained file-level diversion auditing in structured debug trace logs (`/var/log/wright/`).
+
 ## [5.7.1] - 2026-09-27
 
 ### Added

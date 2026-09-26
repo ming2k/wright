@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
@@ -125,12 +125,13 @@ pub async fn upgrade_part(
     let owners = db.find_owners_batch(&file_paths).await?;
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
+    let mut diverted_by_owner: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in &new_entries {
         if entry.file_type == FileType::File
             && let Some(owner) = owners.get(&entry.path)
             && *owner != partinfo.name
         {
-            warn!(
+            debug!(
                 event = "upgrade.file_diverted",
                 plan_name = partinfo.name,
                 path = crate::util::compact_path(&entry.path),
@@ -139,6 +140,35 @@ pub async fn upgrade_part(
             );
             shadows.push((entry.path.clone(), owner.clone()));
             divert_paths.insert(entry.path.clone());
+            diverted_by_owner
+                .entry(owner.clone())
+                .or_default()
+                .push(crate::util::compact_path(&entry.path));
+        }
+    }
+
+    for (owner, paths) in &diverted_by_owner {
+        if paths.len() == 1 {
+            warn!(
+                event = "upgrade.files_diverted",
+                plan_name = partinfo.name,
+                owner = %owner,
+                count = 1,
+                "Diverted {} from '{owner}' to '{}'",
+                paths[0],
+                partinfo.name
+            );
+        } else {
+            warn!(
+                event = "upgrade.files_diverted",
+                plan_name = partinfo.name,
+                owner = %owner,
+                count = paths.len(),
+                "Diverted {} files from '{owner}' to '{}' (e.g. {})",
+                paths.len(),
+                partinfo.name,
+                paths[0]
+            );
         }
     }
 

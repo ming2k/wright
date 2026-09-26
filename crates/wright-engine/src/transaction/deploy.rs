@@ -586,12 +586,13 @@ pub async fn deploy_part_with_origin(
 
     let mut shadows = Vec::new();
     let mut divert_paths = HashSet::new();
+    let mut diverted_by_owner: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in &file_entries {
         if entry.file_type == FileType::File
             && let Some(owner_name) = owners.get(&entry.path)
             && owner_name.as_str() != partinfo.name
         {
-            warn!(
+            debug!(
                 event = "deploy.file_diverted",
                 plan_name = partinfo.name,
                 path = crate::util::compact_path(&entry.path),
@@ -600,6 +601,35 @@ pub async fn deploy_part_with_origin(
             );
             shadows.push((entry.path.clone(), owner_name.clone()));
             divert_paths.insert(entry.path.clone());
+            diverted_by_owner
+                .entry(owner_name.clone())
+                .or_default()
+                .push(crate::util::compact_path(&entry.path));
+        }
+    }
+
+    for (owner, paths) in &diverted_by_owner {
+        if paths.len() == 1 {
+            warn!(
+                event = "deploy.files_diverted",
+                plan_name = partinfo.name,
+                owner = %owner,
+                count = 1,
+                "Diverted {} from '{owner}' to '{}'",
+                paths[0],
+                partinfo.name
+            );
+        } else {
+            warn!(
+                event = "deploy.files_diverted",
+                plan_name = partinfo.name,
+                owner = %owner,
+                count = paths.len(),
+                "Diverted {} files from '{owner}' to '{}' (e.g. {})",
+                paths.len(),
+                partinfo.name,
+                paths[0]
+            );
         }
     }
 
