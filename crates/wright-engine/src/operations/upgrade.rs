@@ -41,15 +41,18 @@ pub async fn execute_upgrade(
         if !quiet {
             crate::outln!("found {} plan(s) to upgrade", targets.len());
         }
-    } else if !force {
-        // For explicit targets without --force, filter out plans that are
-        // already up-to-date so we don't waste time rebuilding them.
-        targets = filter_outdated_targets(&targets, config, db_path).await?;
-        if targets.is_empty() {
-            if !quiet {
-                crate::outln!("specified plans are already up to date");
+    } else {
+        // For explicit targets: validate that targets exist and are installed.
+        if force {
+            validate_upgrade_targets(&targets, config, db_path).await?;
+        } else {
+            targets = filter_outdated_targets(&targets, config, db_path).await?;
+            if targets.is_empty() {
+                if !quiet {
+                    crate::outln!("specified plans are already up to date");
+                }
+                return Ok(());
             }
-            return Ok(());
         }
     }
 
@@ -223,6 +226,45 @@ async fn plan_is_outdated(
     Ok(expected != installed)
 }
 
+async fn validate_upgrade_targets(
+    targets: &[String],
+    config: &GlobalConfig,
+    db_path: &Path,
+) -> Result<()> {
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
+        .await
+        .map_err(|e| WrightError::context("open database", e))?;
+
+    let plan_dirs = plan_search_dirs(config);
+    let index = PlanIndex::discover(&plan_dirs)?;
+
+    for target in targets {
+        let plan_path = match index.path_for(target) {
+            Some(p) => p,
+            None => {
+                return Err(WrightError::ValidationError(format!(
+                    "Target not found: {target}"
+                )));
+            }
+        };
+
+        let manifest = match PlanManifest::from_file(plan_path) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(WrightError::context(format!("failed to parse plan {target}"), e));
+            }
+        };
+
+        if db.get_plan(&manifest.metadata.name).await?.is_none() {
+            return Err(WrightError::ValidationError(format!(
+                "plan '{target}' is not installed (use 'wright install {target}' to deploy it)"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Filter explicit targets to only those whose plan manifest differs from the
 /// deployed version.
 async fn filter_outdated_targets(
@@ -242,9 +284,9 @@ async fn filter_outdated_targets(
         let plan_path = match index.path_for(target) {
             Some(p) => p,
             None => {
-                // If the plan doesn't exist locally, skip it (it may be an
-                // externally-provided part or a typo).
-                continue;
+                return Err(WrightError::ValidationError(format!(
+                    "Target not found: {target}"
+                )));
             }
         };
 
@@ -263,8 +305,9 @@ async fn filter_outdated_targets(
         let plan = match db.get_plan(&manifest.metadata.name).await? {
             Some(p) => p,
             None => {
-                // Not installed — nothing to upgrade.
-                continue;
+                return Err(WrightError::ValidationError(format!(
+                    "plan '{target}' is not installed (use 'wright install {target}' to deploy it)"
+                )));
             }
         };
 
@@ -395,6 +438,41 @@ include = ["/usr/include/**"]
             .await
             .unwrap();
         assert_eq!(outdated, ["split-plan"]);
+    }
+
+    #[tokio::test]
+    async fn uninstalled_plan_target_fails_with_clear_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("my-app");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        std::fs::write(
+            plan_dir.join("plan.toml"),
+            r#"
+name = "my-app"
+version = "1.0.0"
+release = 1
+description = "app"
+license = "MIT"
+arch = "x86_64"
+"#,
+        )
+        .unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        let err = filter_outdated_targets(&["my-app".to_string()], &config, &db_path)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("is not installed"),
+            "expected 'is not installed', got: {err}"
+        );
     }
 
     /// Same manifest version as deployed, but the plan gained an output and

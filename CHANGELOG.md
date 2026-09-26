@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Explicit upgrade targets validation in `wright upgrade`.**
+  - Rejects uninstalled explicit targets with actionable error (`plan '<target>' is not installed (use 'wright install <target>' to deploy it)`), fixing misleading `specified plans are already up to date` when upgrading an unmanaged package.
+  - Rejects missing targets with `Target not found: <target>` instead of silently ignoring them.
+
 ### Changed
 - **Aggregated file diversion reporting in transaction engine.**
   - Replaces per-file `File diverted` warning spam with context-rich, aggregated notifications grouped deterministically by owner (`Diverted N files from '<owner>' to '<part>' (e.g. <sample>)`).
