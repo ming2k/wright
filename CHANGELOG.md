@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [5.7.1] - 2026-09-27
+
+### Added
+- **Deterministic ELF ABI extraction and circuit-breaker reverse rebuild inhibition (ADR-0045).**
+  - Parses dynamic ELF sections (`SONAME`, `DT_NEEDED`, exported symbols and versions) using `goblin` to compute canonical SHA-256 ABI fingerprints.
+  - Automatically serializes and embeds `.ABIINFO` inside sealed `.wright.tar.zst` part archives during package staging.
+  - Performs ground-truth ABI diffing during upgrade execution. When physical ABI compatibility is mathematically proven (identical or backward-compatible superset), reverse rebuilds of dependent packages (`link_deps`) are safely inhibited, eliminating mass rebuild cascades.
+  - Supports `--inhibit-rebuild` and `--no-inhibit-rebuild` CLI overrides on `wright install` and `wright upgrade`.
+- **Scoped dependency resolution and update containment (ADR-0046).**
+  - Decouples explicit target matching policies from forward dependency expansion policies in `ResolveOptions`. Targeted commands default dependency policy to missing dependencies only, strictly bounding change locality and preventing unintended cascading upgrades.
+  - Adds `--upgrade-deps` CLI option to `wright install` and `wright upgrade` to explicitly allow forward dependency upgrades when requested.
+  - Adds `strict_containment` engine configuration toggle in `wright.toml`.
+
 ## [5.7.0] - 2026-09-23
 
 ### Added
