@@ -1,6 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [5.8.0] - 2026-09-27
+
+### Added
+- **Action Graph Scheduler and Dual-DAG Execution Engine (ADR-0048).**
+  - Introduces `wright-scheduler` crate with `ActionGraph`, point-to-point `ActionPlanner`, and asynchronous event-driven `ActionScheduler`.
+  - Replaces coarse wave-by-wave barriers with fine-grained point-to-point dependency edges (`Deploy(A) -> Build(B)`), achieving true pipelined concurrency across packages.
+  - Formulates the "Three Trees" physical transformation model (Source Tree, Staging Tree, Live Root Tree) and 9 canonical typed action atoms (`Lint`, `Fetch`, `Build`, `RestoreCache`, `Seal`, `VerifyAbi`, `Deploy`, `CommitRegistry`, `Rollback`).
+- **Domain-Centric Storage Architecture (ADR-0048).**
+  - Dismantles monolithic `wright-state` into focused domain crates:
+    - `wright-registry`: SQLite installed package index and delivery recovery (`InstalledDb`, `RegistryQuery`).
+    - `wright-cache`: Zero-second build artifact reuse cache (`BuildCache`), eliminating low-level `CAS` jargon.
+    - `wright-ledger`: Immutable append-only audit records and plan snapshots.
+    - `wright-lock`: Advisory cross-process file locks.
+- **Physical Workspace Boundary Modularization (ADR-0048).**
+  - Dismantles monolithic `wright-engine` into `wright-actions`, `wright-resolve`, `wright-sandbox`, and `wright-config`.
+  - Establishes strict 5-layer onion architecture enforced at compile time.
 
 ### Fixed
 - **Explicit upgrade targets validation in `wright upgrade`.**
