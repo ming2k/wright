@@ -112,8 +112,8 @@ wright upgrade all
 ### Explicit Rebuild Scope
 
 ```bash
-wright resolve openssl --rdeps=all --depth=0 | wright build --force
-wright resolve openssl --rdeps=all --depth=0 | wright package
+wright resolve openssl --rdeps=all --rdeps-depth=0 | wright build --force
+wright resolve openssl --rdeps=all --rdeps-depth=0 | wright package
 wright upgrade openssl
 ```
 

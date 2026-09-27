@@ -34,7 +34,7 @@ were added, a full cascade is unnecessary.
 wright resolve libfoo --rdeps=link
 
 # The entire chain, regardless of depth
-wright resolve libfoo --rdeps=link --depth=0
+wright resolve libfoo --rdeps=link --rdeps-depth=0
 ```
 
 ## Apply the update safely
@@ -44,14 +44,14 @@ dependency wave in order and leaves clear resume state if any rebuild fails, so
 you never leave the system in a half-updated state.
 
 ```bash
-# Rebuild only the direct link dependents
-wright install libfoo --rdeps=link
+# Rebuild only the direct link dependents (1-hop direct consumers)
+wright install libfoo --rdeps=link --rdeps-depth=1
 
 # Rebuild the entire reverse-dependency chain (full cascade)
-wright install libfoo --rdeps=all --depth=0
+wright install libfoo --rdeps=all --rdeps-depth=0
 
 # Limit the cascade to a fixed depth
-wright install libfoo --rdeps=link --depth=3
+wright install libfoo --rdeps=link --rdeps-depth=3
 ```
 
 Prefer `wright install --rdeps` over a manual `resolve → build → package →

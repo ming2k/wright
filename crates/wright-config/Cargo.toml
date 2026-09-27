@@ -1,0 +1,19 @@
+[package]
+name = "wright-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Global configuration parsing and schema for Wright"
+
+[dependencies]
+figment = { version = "0.10.19", features = ["toml", "env"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+wright-model = { path = "../wright-model" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

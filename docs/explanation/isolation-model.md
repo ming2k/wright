@@ -146,8 +146,7 @@ OverlayFS changes the failure surface:
 There is still an edge case where a host process briefly holds a write reference
 to a lower-layer inode at the exact moment a build task tries to execute it.
 Wright handles that with ETXTBSY retry logic at both the isolation exec layer
-and the pipeline stage layer.  Contributor details are in
-[Isolation Race Handling](../dev/isolation-pitfalls.md).
+and the pipeline stage layer.
 
 ## Recovering From a Crashed Run
 
@@ -171,9 +170,6 @@ You can still recover manually if the automatic cleanup somehow fails:
 sudo umount -R /var/tmp/wright/workshop/<plan>-<version>/target
 sudo rm -rf /var/tmp/wright/workshop/<plan>-<version>
 ```
-
-Contributor implementation details are in
-[Isolation Race Handling — EBUSY on cleanup](../dev/isolation-pitfalls.md).
 
 ## Relationship to ADRs
 

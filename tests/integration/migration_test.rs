@@ -5,7 +5,7 @@ use std::path::Path;
 
 const INSTALLED_SCHEMA: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/crates/wright-state/migrations/001_initial_schema.sql"
+    "/crates/wright-registry/migrations/001_initial_schema.sql"
 ));
 
 fn seed_preseeded_v1_schema(path: &Path, schema: &str) {

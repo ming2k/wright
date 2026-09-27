@@ -364,7 +364,8 @@ script = "echo ok"
         rdeps: DepDomain::empty(),
         match_policies: vec![MatchPolicy::Outdated],
         dep_match_policies: Some(vec![MatchPolicy::Missing]),
-        depth: Some(0),
+        deps_depth: Some(0),
+        rdeps_depth: Some(0),
         include_targets: true,
         preserve_targets: true,
     };
@@ -394,7 +395,8 @@ script = "echo ok"
         rdeps: DepDomain::empty(),
         match_policies: vec![MatchPolicy::Outdated],
         dep_match_policies: Some(vec![MatchPolicy::Outdated]),
-        depth: Some(0),
+        deps_depth: Some(0),
+        rdeps_depth: Some(0),
         include_targets: true,
         preserve_targets: true,
     };

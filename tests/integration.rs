@@ -5,8 +5,10 @@
 mod integration {
     mod abi_inhibition_test;
     mod batch_failure_test;
+    mod bidirectional_resolution_test;
     mod build_test;
     mod diversion_test;
+    mod dual_dag_scheduler_test;
     mod force_test;
     mod install_pipeline_test;
     mod install_test;

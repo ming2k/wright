@@ -1,0 +1,18 @@
+[package]
+name = "wright-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zero-second build artifact reuse cache for Wright (ADR-0048)"
+
+[dependencies]
+libc = "0.2"
+sha2 = "0.10"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

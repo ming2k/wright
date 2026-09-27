@@ -1,8 +1,18 @@
-# ADR-0029: Engine-Owned Workspace Boundary Mapping
+---
+id: ADR-0029
+title: "Engine-Owned Workspace Boundary Mapping"
+status: superseded
+date: 2026-03-20
+scope: core/workspace
+superseded_by: ADR-0048
+negative_knowledge: true
+---
 
-## Status
+# 0029. Engine-Owned Workspace Boundary Mapping
 
-Accepted
+- Status: Superseded by [ADR-0048](0048-action-graph-scheduler-and-domain-storage.md)
+- Date: 2026-03-20
+- Superseded By: [ADR-0048](0048-action-graph-scheduler-and-domain-storage.md)
 
 ## Context
 

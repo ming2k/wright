@@ -41,13 +41,13 @@ This pessimistic policy is intentionally conservative to reduce ABI and integrat
 Build the changed part and force a full dependent cascade:
 
 ```bash
-wright resolve <changed-part> --rdeps=all --depth=0 | wright build --force
+wright resolve <changed-part> --rdeps=all --rdeps-depth=0 | wright build --force
 ```
 
 Build, then install the resulting archives:
 
 ```bash
-wright resolve <changed-part> --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright resolve <changed-part> --rdeps=all --rdeps-depth=0 > /tmp/wright-rebuild
 wright build --force $(cat /tmp/wright-rebuild)
 wright package --print-parts $(cat /tmp/wright-rebuild) | wright merge --path
 ```
@@ -55,7 +55,7 @@ wright package --print-parts $(cat /tmp/wright-rebuild) | wright merge --path
 When you also want a deep dependency refresh, include dependency force-rebuild:
 
 ```bash
-wright resolve <changed-part> --deps=all --rdeps=all --depth=0 > /tmp/wright-rebuild
+wright resolve <changed-part> --deps=all --rdeps=all --deps-depth=0 --rdeps-depth=0 > /tmp/wright-rebuild
 wright build --force $(cat /tmp/wright-rebuild)
 wright package --print-parts $(cat /tmp/wright-rebuild) | wright merge --path
 ```
@@ -64,7 +64,7 @@ wright package --print-parts $(cat /tmp/wright-rebuild) | wright merge --path
 
 1. Choose the user-facing part you actually want to improve.
 2. Update its plan/version/source as needed.
-3. Run conservative rebuild with `wright resolve <part> --rdeps`, then `wright build --force`, `wright package --print-parts`, and `wright merge --path`; switch to `--rdeps=all --depth=0` only when the change is broader than link-ABI impact.
+3. Run conservative rebuild with `wright resolve <part> --rdeps`, then `wright build --force`, `wright package --print-parts`, and `wright merge --path`; switch to `--rdeps=all --rdeps-depth=0` only when the change is broader than link-ABI impact.
 4. Install the printed artifacts if this is a live system update.
 5. Run health checks:
 

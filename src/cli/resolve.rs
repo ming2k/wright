@@ -51,9 +51,29 @@ pub struct ResolveArgs {
     #[arg(long = "match", alias = "match-policies", value_enum)]
     pub match_policies: Vec<MatchPolicyArg>,
 
-    /// Maximum traversal depth; `0` means unlimited
-    #[arg(long)]
-    pub depth: Option<usize>,
+    /// Maximum depth for forward dependency expansion (`0` means unlimited, traversing entire bottom-up chain).
+    /// Bare `--deps-depth` or `--deep` defaults to `0`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "0",
+        alias = "deep",
+        alias = "upgrade-deps"
+    )]
+    pub deps_depth: Option<usize>,
+
+    /// Maximum depth for reverse dependency expansion (`0` means unlimited).
+    /// Sets the impact blast radius (e.g. `1` rechecks direct consumers only).
+    /// Bare `--rdeps-depth` or `--impact` defaults to `1`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "1",
+        alias = "impact"
+    )]
+    pub rdeps_depth: Option<usize>,
 
     /// Display the result as a dependency forest
     #[arg(long, short)]
@@ -63,10 +83,22 @@ pub struct ResolveArgs {
 #[cfg(with_handlers)]
 pub async fn run(args: ResolveArgs, ctx: &Context<'_>) -> Result<()> {
     let mut deps = args.deps.map(map_domain).unwrap_or_else(DepDomain::empty);
-    let rdeps = args.rdeps.map(map_domain).unwrap_or_else(DepDomain::empty);
+    let mut rdeps = args.rdeps.map(map_domain).unwrap_or_else(DepDomain::empty);
     if args.tree && deps.is_empty() && rdeps.is_empty() {
         deps = DepDomain::ALL;
     }
+    if args.deps_depth.is_some() && deps.is_empty() {
+        deps = DepDomain::ALL;
+    }
+    if args.rdeps_depth.is_some() && rdeps.is_empty() {
+        rdeps = DepDomain::LINK;
+    }
+
+    let dep_match_policies = if args.deps_depth.is_some() {
+        Some(vec![MatchPolicy::Outdated])
+    } else {
+        None
+    };
 
     let match_policies = if args.match_policies.is_empty() {
         vec![MatchPolicy::All]
@@ -83,7 +115,9 @@ pub async fn run(args: ResolveArgs, ctx: &Context<'_>) -> Result<()> {
             deps,
             rdeps,
             match_policies,
-            depth: args.depth,
+            dep_match_policies,
+            deps_depth: args.deps_depth,
+            rdeps_depth: args.rdeps_depth,
             tree: args.tree,
         },
         ctx.config,

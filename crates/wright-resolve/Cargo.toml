@@ -1,0 +1,27 @@
+[package]
+name = "wright-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Declarative Package DAG dependency resolution and cycle-breaking solver for Wright (ADR-0048)"
+
+[dependencies]
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+tracing = "0.1"
+wright-config = { path = "../wright-config" }
+wright-ledger = { path = "../wright-ledger" }
+wright-model = { path = "../wright-model" }
+wright-part = { path = "../wright-part" }
+wright-plan = { path = "../wright-plan" }
+wright-registry = { path = "../wright-registry" }
+wright-scheduler = { path = "../wright-scheduler" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

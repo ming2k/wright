@@ -1,0 +1,25 @@
+[package]
+name = "wright-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "System installed package index and delivery transaction state for Wright (ADR-0043, ADR-0048)"
+
+[dependencies]
+chrono = "0.4"
+futures-util = "0.3.32"
+libc = "0.2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1.52.1", features = ["sync", "rt", "macros"] }
+tracing = "0.1"
+wright-ledger = { path = "../wright-ledger" }
+wright-lock = { path = "../wright-lock" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

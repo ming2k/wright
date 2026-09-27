@@ -30,7 +30,7 @@
 | [ADR-0026](0026-workspace-crate-boundaries.md) | Workspace boundaries for CLI, engine, state, part, plan, and model | Superseded by ADR-0029 |
 | [ADR-0027](0027-isolation-fails-closed.md) | Isolation fails closed | Accepted |
 | [ADR-0028](0028-single-threaded-isolation-helper.md) | Namespace setup runs in a single-threaded helper process | Accepted |
-| [ADR-0029](0029-engine-owned-boundary-mapping.md) | Engine-owned mapping between sibling workspace crates | Accepted |
+| [ADR-0029](0029-engine-owned-boundary-mapping.md) | Engine-owned mapping between sibling workspace crates | Superseded by ADR-0048 |
 | [ADR-0030](0030-single-database.md) | Single database for system state | Accepted |
 | [ADR-0031](0031-folio-manifest-amendments.md) | Folio manifest amendments (hooks, `<name>.toml`, no `[config]`/`arch`) | Accepted |
 | [ADR-0032](0032-cli-surface-consistency.md) | CLI surface consistency conventions | Accepted (`-c` row and dry-run inversion superseded by ADR-0040) |
@@ -48,3 +48,5 @@
 | [ADR-0044](0044-command-privilege-classes-and-read-only-query-path.md) | Command privilege classes (Read/Local/System) and a genuinely read-only query path | Proposed |
 | [ADR-0045](0045-deterministic-abi-extraction-and-rebuild-inhibition.md) | Deterministic ABI extraction and reverse rebuild inhibition | Accepted |
 | [ADR-0046](0046-scoped-dependency-resolution-and-update-containment.md) | Scoped dependency resolution and update containment | Accepted |
+| [ADR-0047](0047-bidirectional-subgraph-expansion-and-blast-radius-control.md) | Bidirectional subgraph expansion and blast radius control | Accepted |
+| [ADR-0048](0048-action-graph-scheduler-and-domain-storage.md) | Action graph scheduler and domain-centric storage architecture | Accepted |

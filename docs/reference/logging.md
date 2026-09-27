@@ -1,8 +1,7 @@
 # Logging
 
 Where Wright writes logs and how to control verbosity. For the design rationale
-see [tracing-output-design](../dev/tracing-output-design.md) and
-[ADR-0021](../adr/0021-cargo-style-span-driven-output.md).
+see [ADR-0021](../adr/0021-cargo-style-span-driven-output.md).
 
 ## Output Surfaces
 

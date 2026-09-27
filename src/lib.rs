@@ -1,26 +1,26 @@
 pub mod cli;
 
-pub use wright_engine::{
+pub use wright_actions::{
     cli_aborted, cli_action, cli_error, cli_failed, cli_output, cli_span, cli_warn, errln, out,
     outln,
 };
-pub use wright_engine::{
-    config, error, foundry, graph, identify, isolation, ledger, operations, query, resolve, seal,
-    transaction,
+pub use wright_actions::{
+    action, config, error, foundry, graph, identify, isolation, ledger, operations, query,
+    resolve, seal, transaction,
 };
 
-/// Compatibility facade for plan parsing and discovery.
 pub use wright_plan as plan;
+pub use wright_registry::database;
+pub use wright_cache as cache;
+pub use wright_registry as registry;
+pub use wright_sandbox as sandbox;
+pub use wright_scheduler as scheduler;
 
-/// Compatibility facade for installed-state database types.
-pub use wright_state::database;
-
-/// Compatibility facade for delivery state and content-addressed storage.
 pub mod delivery {
-    pub use wright_state::delivery::*;
+    pub use wright_registry::delivery::*;
 
     pub mod store {
-        pub use wright_state::cas::*;
+        pub use wright_cache::*;
     }
 }
 
@@ -32,7 +32,7 @@ pub mod part {
     };
 
     pub mod archive {
-        pub use wright_engine::seal::{create_part, create_part_with_isolation};
+        pub use wright_actions::seal::{create_part, create_part_with_isolation};
         pub use wright_part::archive::*;
     }
 
@@ -42,7 +42,7 @@ pub mod part {
 /// Application utilities plus compatibility paths for helpers now owned by
 /// lower-level crates.
 pub mod util {
-    pub use wright_engine::util::{
+    pub use wright_actions::util::{
         checksum, compact_path, display, download, logging, output, progress, sanitize_filename,
         stdin, timing,
     };
@@ -52,6 +52,6 @@ pub mod util {
     }
 
     pub mod lock {
-        pub use wright_state::lock::*;
+        pub use wright_lock::*;
     }
 }

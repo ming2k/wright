@@ -1,4 +1,4 @@
-//! Output-channel and SIGPIPE policy (see `wright_engine::util::output`):
+//! Output-channel and SIGPIPE policy (see `wright_actions::util::output`):
 //!
 //! * A closed stdout reader (`wright list | head`) is a quiet exit 0 — never
 //!   a panic (101) or a SIGPIPE death (141).

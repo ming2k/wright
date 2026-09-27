@@ -1,0 +1,24 @@
+[package]
+name = "wright-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Action DAG task scheduler and executor for Wright (ADR-0048)"
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1.52.1", features = ["sync", "rt", "macros"] }
+tracing = "0.1"
+wright-cache = { path = "../wright-cache" }
+wright-ledger = { path = "../wright-ledger" }
+wright-model = { path = "../wright-model" }
+wright-part = { path = "../wright-part" }
+wright-plan = { path = "../wright-plan" }
+wright-registry = { path = "../wright-registry" }
+wright-sandbox = { path = "../wright-sandbox" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

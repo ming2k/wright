@@ -1,0 +1,19 @@
+[package]
+name = "wright-ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "File-backed immutable audit ledger and snapshots for Wright (ADR-0041, ADR-0048)"
+
+[dependencies]
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

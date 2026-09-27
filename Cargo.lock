@@ -3986,14 +3986,21 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wright-engine",
+ "wright-actions",
+ "wright-cache",
+ "wright-config",
+ "wright-ledger",
+ "wright-lock",
  "wright-part",
  "wright-plan",
- "wright-state",
+ "wright-registry",
+ "wright-resolve",
+ "wright-sandbox",
+ "wright-scheduler",
 ]
 
 [[package]]
-name = "wright-engine"
+name = "wright-actions"
 version = "5.7.1"
 dependencies = [
  "bytes",
@@ -4025,11 +4032,63 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "walkdir",
+ "wright-cache",
+ "wright-config",
+ "wright-ledger",
+ "wright-lock",
  "wright-model",
  "wright-part",
  "wright-plan",
- "wright-state",
+ "wright-registry",
+ "wright-resolve",
+ "wright-sandbox",
+ "wright-scheduler",
  "zstd",
+]
+
+[[package]]
+name = "wright-cache"
+version = "5.7.1"
+dependencies = [
+ "libc",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "wright-config"
+version = "5.7.1"
+dependencies = [
+ "figment",
+ "libc",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "wright-model",
+]
+
+[[package]]
+name = "wright-ledger"
+version = "5.7.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "wright-lock"
+version = "5.7.1"
+dependencies = [
+ "libc",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -4078,7 +4137,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wright-state"
+name = "wright-registry"
 version = "5.7.1"
 dependencies = [
  "chrono",
@@ -4086,11 +4145,64 @@ dependencies = [
  "libc",
  "rusqlite",
  "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wright-ledger",
+ "wright-lock",
+]
+
+[[package]]
+name = "wright-resolve"
+version = "5.7.1"
+dependencies = [
+ "chrono",
+ "serde",
  "sha2",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
+ "wright-config",
+ "wright-ledger",
+ "wright-model",
+ "wright-part",
+ "wright-plan",
+ "wright-registry",
+ "wright-scheduler",
+]
+
+[[package]]
+name = "wright-sandbox"
+version = "5.7.1"
+dependencies = [
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wright-model",
+]
+
+[[package]]
+name = "wright-scheduler"
+version = "5.7.1"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wright-cache",
+ "wright-ledger",
+ "wright-model",
+ "wright-part",
+ "wright-plan",
+ "wright-registry",
+ "wright-sandbox",
 ]
 
 [[package]]

@@ -96,7 +96,8 @@ wright install gcc --match=all
 | `-d`, `--deps [link\|runtime\|build\|all]` | Forward dependency domain to expand; a bare `--deps` means `all`, and omitting the flag follows all domains |
 | `-r`, `--rdeps [link\|runtime\|build\|all]` | Additionally rebuild deployed reverse dependents; a bare `--rdeps` means `link`, and omitting the flag skips reverse expansion |
 | `--match <missing\|outdated\|installed\|all>` | Which dependency state triggers inclusion; requires a value, may be repeated, and defaults to `outdated` |
-| `--depth <N>` | Maximum expansion depth |
+| `--deps-depth [N]` | Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain; bare `--deps-depth` or `--deep` defaults to `0`) |
+| `--rdeps-depth [N]` | Maximum depth for reverse dependency expansion (`0` means unlimited; bare `--rdeps-depth` or `--impact` defaults to `1` for 1-hop direct consumers) |
 | `-c`, `--fresh` | Wipe the forge workspace before building plans that need an update, so they forge from scratch; does not redeploy up-to-date plans |
 | `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
 | `-n`, `--dry-run` | Fully resolve the wave plan and print it (`[dry-run] install -> <root>`, then one `batch N:` line per batch) without forging or deploying |
@@ -120,7 +121,8 @@ wright upgrade zlib --force
 | `-f`, `--force` | Force reforge and redeploy even if the plan version matches |
 | `-c`, `--fresh` | Wipe the forge workspace before building plans that need an upgrade, so they forge from scratch; does not redeploy up-to-date plans |
 | `-n`, `--dry-run` | Resolve the upgrade set (including reverse-dependency expansion) and print it without building anything |
-| `--depth <N>` | Maximum depth for reverse dependency expansion |
+| `--deps-depth [N]` | Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain; bare `--deps-depth` or `--deep` defaults to `0`) |
+| `--rdeps-depth [N]` | Maximum depth for reverse dependency expansion (`0` means unlimited; bare `--rdeps-depth` or `--impact` defaults to `1` for 1-hop direct consumers) |
 | `--root <PATH>` | Operate on this target root instead of `/` |
 
 ### `wright remove <TARGET...>`
@@ -389,7 +391,7 @@ Use `--tree` for a human-readable dependency forest.
 ```bash
 wright resolve hello
 wright resolve hello --deps --match=outdated
-wright resolve openssl --rdeps=link --depth=0
+wright resolve openssl --rdeps=link --rdeps-depth=0
 wright resolve hello --deps --tree
 ```
 
@@ -398,7 +400,8 @@ wright resolve hello --deps --tree
 | `-d`, `--deps [link\|runtime\|build\|all]` | Expand dependencies; an omitted value means `all` |
 | `-r`, `--rdeps [link\|runtime\|build\|all]` | Expand reverse dependents; an omitted value means `link` |
 | `--match <missing\|outdated\|installed\|all>` | Filter by installed state; may be repeated |
-| `--depth <N>` | Limit traversal depth; `0` means unlimited |
+| `--deps-depth [N]` | Maximum depth for forward dependency expansion (`0` means unlimited; bare `--deps-depth` or `--deep` defaults to `0`) |
+| `--rdeps-depth [N]` | Maximum depth for reverse dependency expansion (`0` means unlimited; bare `--rdeps-depth` or `--impact` defaults to `1` for 1-hop direct consumers) |
 | `-t`, `--tree` | Render a dependency forest instead of plain plan names |
 
 ### `wright build <TARGET...>`

@@ -17,7 +17,7 @@
 
 | Item | Value |
 |------|-------|
-| Migration files | `crates/wright-state/migrations/*.sql` |
+| Migration files | `crates/wright-registry/migrations/*.sql` |
 | Migration tracker | SQLite `PRAGMA user_version` (with legacy `_sqlx_migrations` upgrade detection, ADR-0042) |
 | Initialization | automatic on read-write database open via Single-Writer Actor; Read-class commands never migrate (ADR-0044) |
 | Upgrade | pending migrations run automatically inside an immediate transaction |
@@ -25,7 +25,7 @@
 | Rollback | restore the snapshot with `wright doctor --restore <file>` |
 | Repair | rebuild the registry from the inventory with `wright doctor --repair` |
 | Integrity | `wright check`/`wright doctor` run `PRAGMA integrity_check` **and** `PRAGMA foreign_key_check` |
-| Immutable history | never edit files under `crates/wright-state/migrations/` |
+| Immutable history | never edit files under `crates/wright-registry/migrations/` |
 
 ### Access modes and locking
 

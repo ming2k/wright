@@ -321,11 +321,11 @@ the same time.
 
 ## References
 
-- `crates/wright-engine/src/foundry/layers.rs` — `LayerManager`, merged
+- `crates/wright-actions/src/foundry/layers.rs` — `LayerManager`, merged
   base, populate/harvest/merge machinery, reflink sharing
-- `crates/wright-engine/src/isolation/native/run.rs` — isolation sandbox
+- `crates/wright-sandbox/src/native/run.rs` — isolation sandbox
   mount namespace and overlay setup
-- `crates/wright-engine/src/foundry/forge/execute.rs` — stage execution
+- `crates/wright-actions/src/foundry/forge/execute.rs` — stage execution
   and retry logic
 - [ADR-0012](../adr/0012-overlayfs-per-task-upper.md) — original per-task
   upper layer design (superseded)
@@ -335,5 +335,3 @@ the same time.
   layers with sandbox-mounted stage overlays (superseded)
 - [ADR-0037](../adr/0037-real-directory-stage-trees.md) — real directory
   stage working trees
-- [Isolation Race Handling](../dev/isolation-pitfalls.md) —
-  contributor-oriented deep dive on all races

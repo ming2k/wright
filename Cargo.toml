@@ -1,10 +1,17 @@
 [workspace]
 members = [
-    "crates/wright-engine",
+    "crates/wright-actions",
+    "crates/wright-cache",
+    "crates/wright-config",
+    "crates/wright-ledger",
+    "crates/wright-lock",
     "crates/wright-model",
     "crates/wright-part",
     "crates/wright-plan",
-    "crates/wright-state",
+    "crates/wright-registry",
+    "crates/wright-resolve",
+    "crates/wright-sandbox",
+    "crates/wright-scheduler",
 ]
 resolver = "3"
 
@@ -40,10 +47,17 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tokio = { version = "1.52.1", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-wright-engine = { path = "crates/wright-engine" }
+wright-cache = { path = "crates/wright-cache" }
+wright-config = { path = "crates/wright-config" }
+wright-actions = { path = "crates/wright-actions" }
+wright-ledger = { path = "crates/wright-ledger" }
+wright-lock = { path = "crates/wright-lock" }
 wright-part = { path = "crates/wright-part" }
 wright-plan = { path = "crates/wright-plan" }
-wright-state = { path = "crates/wright-state" }
+wright-registry = { path = "crates/wright-registry" }
+wright-resolve = { path = "crates/wright-resolve" }
+wright-sandbox = { path = "crates/wright-sandbox" }
+wright-scheduler = { path = "crates/wright-scheduler" }
 
 [dev-dependencies]
 rusqlite = { version = "0.31", features = ["bundled"] }

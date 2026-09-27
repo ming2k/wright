@@ -17,7 +17,11 @@ wright resolve gtk4 --tree --rdeps
 ## Limit Depth
 
 ```bash
-wright resolve gtk4 --tree --depth=2
+# Limit forward dependency depth
+wright resolve gtk4 --tree --deps-depth=2
+
+# Limit reverse dependent depth (e.g. 1-hop direct consumers)
+wright resolve gtk4 --tree --rdeps-depth=1
 ```
 
 ## Filter by Dependency Type

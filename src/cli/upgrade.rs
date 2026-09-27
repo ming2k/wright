@@ -9,7 +9,9 @@ use crate::error::Result;
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
   wright upgrade zlib
-  wright upgrade zlib openssl
+  wright upgrade zlib --deps-depth (or --deep)
+  wright upgrade zlib --rdeps-depth=1 (or --impact=1)
+  wright upgrade zlib --deep --impact=1
   wright upgrade all
   wright upgrade all --dry-run
   wright upgrade all --fresh
@@ -17,7 +19,7 @@ Examples:
 
 #[derive(Args)]
 #[command(
-    long_about = "Upgrade plans to the latest version.\n\nWhen given plan names, `wright` checks if the plan has a newer version than what is deployed, then resolves, forges, seals, and deploys it along with any installed parts that link-depend on it (to ensure ABI consistency). Use `all` to check every installed plan for updates.\n\nFor archive-based upgrades, use `wright merge --force`.",
+    long_about = "Upgrade plans to the latest version.\n\nWhen given plan names, `wright` checks if the plan has a newer version than what is deployed, then resolves, forges, seals, and deploys it along with any installed parts that link-depend on it (to ensure ABI consistency). Use `--deps-depth` (or `--deep`) to recursively upgrade its entire forward dependency chain bottom-up. Use `--rdeps-depth=1` (or `--impact=1`) to restrict reverse dependency rebuilds to 1-hop direct consumers. Use `all` to check every installed plan for updates.\n\nFor archive-based upgrades, use `wright merge --force`.",
     after_help = WRIGHT_UPGRADE_AFTER_HELP
 )]
 pub struct UpgradeArgs {
@@ -40,9 +42,29 @@ pub struct UpgradeArgs {
     #[arg(long, short = 'n')]
     pub dry_run: bool,
 
-    /// Maximum depth for reverse dependency expansion. `0` means unlimited.
-    #[arg(long)]
-    pub depth: Option<usize>,
+    /// Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain).
+    /// Bare `--deps-depth` or `--deep` defaults to `0`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "0",
+        alias = "deep",
+        alias = "upgrade-deps"
+    )]
+    pub deps_depth: Option<usize>,
+
+    /// Maximum depth for reverse dependency expansion (`0` means unlimited).
+    /// Sets the impact blast radius (e.g. `1` rechecks direct consumers only).
+    /// Bare `--rdeps-depth` or `--impact` defaults to `1`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "1",
+        alias = "impact"
+    )]
+    pub rdeps_depth: Option<usize>,
 
     /// Alternate root directory for file operations
     #[arg(long)]
@@ -61,7 +83,8 @@ pub async fn run(args: UpgradeArgs, ctx: &Context<'_>) -> Result<()> {
         args.force,
         args.fresh,
         args.dry_run,
-        args.depth,
+        args.deps_depth,
+        args.rdeps_depth,
         args.no_inhibit_rebuild,
         ctx.config,
         &ctx.db_path,

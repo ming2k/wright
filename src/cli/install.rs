@@ -66,9 +66,29 @@ pub struct InstallArgs {
     #[arg(long = "match", alias = "match-policies", value_enum)]
     pub match_policies: Vec<MatchPolicyArg>,
 
-    /// Maximum expansion depth. `0` means unlimited.
-    #[arg(long)]
-    pub depth: Option<usize>,
+    /// Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain).
+    /// Bare `--deps-depth` or `--deep` defaults to `0`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "0",
+        alias = "deep",
+        alias = "upgrade-deps"
+    )]
+    pub deps_depth: Option<usize>,
+
+    /// Maximum depth for reverse dependency expansion (`0` means unlimited).
+    /// Sets the impact blast radius (e.g. `1` rechecks direct consumers only).
+    /// Bare `--rdeps-depth` or `--impact` defaults to `1`.
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 0..=1,
+        default_missing_value = "1",
+        alias = "impact"
+    )]
+    pub rdeps_depth: Option<usize>,
 
     /// Force a from-scratch rebuild and redeploy even if matching parts
     /// already exist. Implies `--fresh`.
@@ -118,6 +138,15 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
     // the targets (bare `--rdeps` means `link`; omitted means none).
     let deps = args.deps.map(map_domain).unwrap_or(DepDomain::ALL);
     let rdeps = args.rdeps.map(map_domain).unwrap_or_else(DepDomain::empty);
+    let dep_match_policies = if args.deps_depth.is_some() {
+        if args.force {
+            Some(vec![crate::resolve::MatchPolicy::All])
+        } else {
+            Some(vec![crate::resolve::MatchPolicy::Outdated])
+        }
+    } else {
+        None
+    };
 
     execute_install(InstallRequest {
         targets,
@@ -128,7 +157,9 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
             .into_iter()
             .map(map_match_policy)
             .collect(),
-        depth: args.depth,
+        dep_match_policies,
+        deps_depth: args.deps_depth,
+        rdeps_depth: args.rdeps_depth,
         force: args.force,
         clean: args.fresh,
         config: ctx.config,
