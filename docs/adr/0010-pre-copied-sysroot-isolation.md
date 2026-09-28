@@ -1,3 +1,11 @@
+---
+id: ADR-0010
+title: "Pre-copied read-only sysroot instead of OverlayFS for strict isolation"
+status: superseded
+date: 2026-05-05
+superseded_by: ADR-0012
+---
+
 # ADR-0010: Pre-copied read-only sysroot instead of OverlayFS for strict isolation
 
 ## Status

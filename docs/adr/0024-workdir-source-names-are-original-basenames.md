@@ -1,3 +1,10 @@
+---
+id: ADR-0024
+title: "Work-Directory Source Names Are Original Basenames"
+status: accepted
+date: 2026-06-10
+---
+
 # ADR-0024: Work-Directory Source Names Are Original Basenames
 
 ## Status

@@ -1,3 +1,10 @@
+---
+id: ADR-0009
+title: "Separate Plan-Level and Output-Level Dependencies"
+status: accepted
+date: 2026-05-03
+---
+
 # ADR-0009: Separate Plan-Level and Output-Level Dependencies
 
 ## Status

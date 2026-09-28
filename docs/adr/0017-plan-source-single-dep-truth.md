@@ -1,3 +1,10 @@
+---
+id: ADR-0017
+title: "Plan Source as Single Dependency Truth + ELF Lint"
+status: accepted
+date: 2026-05-10
+---
+
 # ADR-0017: Plan Source as Single Dependency Truth + ELF Lint
 
 ## Status

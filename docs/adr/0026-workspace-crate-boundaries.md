@@ -1,3 +1,11 @@
+---
+id: ADR-0026
+title: "Workspace Crate Boundaries"
+status: superseded
+date: 2026-07-14
+superseded_by: ADR-0029
+---
+
 # ADR-0026: Workspace Crate Boundaries
 
 ## Status

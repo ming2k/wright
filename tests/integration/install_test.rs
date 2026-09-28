@@ -597,3 +597,326 @@ async fn test_list_installed_parts() {
 
     let _ = std::fs::remove_file(&archive);
 }
+
+#[tokio::test]
+async fn test_upgrade_retires_stale_outputs_and_cleans_files() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let part_store = LocalPartStore::new();
+
+    let x_v1 = build_split_archive("1.0.0", "x");
+    let y_v1 = build_split_archive("1.0.0", "y");
+
+    // Initially deploy split-plan v1 with both x and y
+    transaction::deploy_parts(
+        &db,
+        &[x_v1.clone(), y_v1.clone()],
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-v1".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    assert!(db.get_part("x").await.unwrap().is_some());
+    assert!(db.get_part("y").await.unwrap().is_some());
+    assert!(root.path().join("usr/bin/x").exists());
+    assert!(root.path().join("usr/bin/y").exists());
+
+    // In v2, split-plan drops output y and only produces x
+    let v2_source = r#"
+name = "split-plan"
+version = "2.0.0"
+release = 1
+description = "split plan v2 with single output"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "x"
+description = "x output"
+include = ["/usr/bin/x"]
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/x
+"""
+"#;
+    let mut v2_manifest = PlanManifest::parse(v2_source).unwrap();
+    v2_manifest.plan_source = Some(v2_source.to_string());
+
+    let x_v2 = create_split_archive_from_manifest(&v2_manifest, "x", None);
+
+    // Deploy v2 batch containing only x
+    transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&x_v2),
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-v2".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    // Verify x is upgraded to 2.0.0
+    let x_part = db.get_part("x").await.unwrap().expect("x should be installed");
+    let plan = db.get_plan_by_id(x_part.plan_id).await.unwrap().expect("plan exists");
+    assert_eq!(plan.version, "2.0.0");
+    assert!(root.path().join("usr/bin/x").exists());
+
+    // Verify y was automatically retired: unregistered from db and its files deleted with zero leftovers
+    assert!(db.get_part("y").await.unwrap().is_none());
+    assert!(
+        !root.path().join("usr/bin/y").exists(),
+        "stale output file /usr/bin/y must be cleaned up"
+    );
+
+    let plan_parts = db.get_parts_by_plan("split-plan").await.unwrap();
+    assert_eq!(plan_parts.len(), 1);
+    assert_eq!(plan_parts[0].name, "x");
+
+    let _ = std::fs::remove_file(&x_v1);
+    let _ = std::fs::remove_file(&y_v1);
+    let _ = std::fs::remove_file(&x_v2);
+}
+
+#[tokio::test]
+async fn test_upgrade_with_replaces_cleans_replaced_part() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let part_store = LocalPartStore::new();
+
+    let x_v1 = build_split_archive("1.0.0", "x");
+
+    transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&x_v1),
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-v1".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    assert!(db.get_part("x").await.unwrap().is_some());
+    assert!(root.path().join("usr/bin/x").exists());
+
+    // In v2, output is renamed to 'z', which declares replaces = ["x"]
+    let v2_manifest = PlanManifest::parse(
+        r#"
+name = "split-plan"
+version = "2.0.0"
+release = 1
+description = "split plan v2 replacing x"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "z"
+description = "z replaces x"
+replaces = ["x"]
+include = ["/usr/bin/z"]
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/z
+"""
+"#,
+    )
+    .unwrap();
+
+    let z_v2 = create_split_archive_from_manifest(&v2_manifest, "z", None);
+
+    transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&z_v2),
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-v2".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    assert!(db.get_part("z").await.unwrap().is_some());
+    assert!(root.path().join("usr/bin/z").exists());
+
+    // x is cleanly removed
+    assert!(db.get_part("x").await.unwrap().is_none());
+    assert!(!root.path().join("usr/bin/x").exists());
+
+    let _ = std::fs::remove_file(&x_v1);
+    let _ = std::fs::remove_file(&z_v2);
+}
+
+#[tokio::test]
+async fn test_upgrade_stale_output_retirement_blocked_by_dependents_without_force() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let part_store = LocalPartStore::new();
+
+    let x_v1 = build_split_archive("1.0.0", "x");
+    let y_v1 = build_split_archive("1.0.0", "y");
+
+    transaction::deploy_parts(
+        &db,
+        &[x_v1.clone(), y_v1.clone()],
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-v1".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    let dep_m = PlanManifest::parse(
+        r#"
+name = "dep-app"
+version = "1.0.0"
+release = 1
+description = "dependent app"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "dep-app"
+description = "dep-app output"
+runtime_deps = ["y"]
+include = ["/usr/bin/dep-app"]
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/dep-app
+"""
+"#,
+    )
+    .unwrap();
+
+    let dep_archive = create_split_archive_from_manifest(&dep_m, "dep-app", None);
+    transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&dep_archive),
+        root.path(),
+        &part_store,
+        false,
+        false,
+        true,
+        SessionContext {
+            id: "test-dep".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    let v2_source = r#"
+name = "split-plan"
+version = "2.0.0"
+release = 1
+description = "split plan v2 with single output"
+license = "MIT"
+arch = "x86_64"
+
+[[output]]
+name = "x"
+description = "x output"
+include = ["/usr/bin/x"]
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = """
+install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/x
+"""
+"#;
+    let mut v2_manifest = PlanManifest::parse(v2_source).unwrap();
+    v2_manifest.plan_source = Some(v2_source.to_string());
+    let x_v2 = create_split_archive_from_manifest(&v2_manifest, "x", None);
+
+    // Deploying without force should fail because 'dep-app' depends on 'y'
+    let err = transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&x_v2),
+        root.path(),
+        &part_store,
+        false, // force: false
+        false,
+        true,
+        SessionContext {
+            id: "test-v2".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("cannot retire stale output 'y'"));
+    assert!(err.to_string().contains("dep-app"));
+
+    // Deploying WITH force = true should succeed and retire 'y'
+    transaction::deploy_parts(
+        &db,
+        std::slice::from_ref(&x_v2),
+        root.path(),
+        &part_store,
+        true, // force: true
+        false,
+        true,
+        SessionContext {
+            id: "test-v2-forced".into(),
+            command: "test".into(),
+        },
+        tempfile::tempdir().unwrap().path(),
+    )
+    .await
+    .unwrap();
+
+    assert!(db.get_part("y").await.unwrap().is_none());
+    assert!(!root.path().join("usr/bin/y").exists());
+
+    let _ = std::fs::remove_file(&x_v1);
+    let _ = std::fs::remove_file(&y_v1);
+    let _ = std::fs::remove_file(&dep_archive);
+    let _ = std::fs::remove_file(&x_v2);
+}

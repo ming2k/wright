@@ -516,3 +516,68 @@ async fn test_crashed_removal_delivery_is_settled_by_recovery() {
 
     let _ = std::fs::remove_file(&archive);
 }
+
+#[tokio::test]
+async fn test_execute_remove_force_allows_removing_depended_part() {
+    let db = InstalledDb::open_in_memory().await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let ledger = tempfile::tempdir().unwrap();
+
+    let archive = create_test_archive("hello").await;
+    transaction::deploy_part(
+        &db,
+        &archive,
+        root.path(),
+        false,
+        session(),
+        ledger.path(),
+    )
+    .await
+    .unwrap();
+
+    // Register a dependent part that depends on 'hello'
+    db.provide_part("consumer-app", "1.0").await.unwrap();
+    let consumer = db.get_part("consumer-app").await.unwrap().unwrap();
+    db.insert_dependencies(
+        consumer.id,
+        &[wright::database::Dependency {
+            name: "hello".to_string(),
+            version_constraint: None,
+        }],
+    )
+    .await
+    .unwrap();
+
+    // Removing 'hello' without force must fail because 'consumer-app' depends on it
+    let res_unforced = wright::operations::remove::execute_remove(
+        &db,
+        &["hello"],
+        false,
+        false,
+        false,
+        false,
+        root.path(),
+    )
+    .await;
+    assert!(res_unforced.is_err());
+    let err_str = res_unforced.unwrap_err().to_string();
+    assert!(err_str.contains("cannot remove: hello (required by consumer-app)"));
+    assert!(db.get_part("hello").await.unwrap().is_some());
+
+    // Removing 'hello' WITH force must succeed and remove it cleanly
+    let res_forced = wright::operations::remove::execute_remove(
+        &db,
+        &["hello"],
+        true,
+        false,
+        false,
+        false,
+        root.path(),
+    )
+    .await;
+    assert!(res_forced.is_ok(), "forced execute_remove must succeed");
+    assert!(db.get_part("hello").await.unwrap().is_none());
+    assert!(!root.path().join("usr/bin/hello").exists());
+
+    let _ = std::fs::remove_file(&archive);
+}

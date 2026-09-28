@@ -1,3 +1,11 @@
+---
+id: ADR-0022
+title: "Git Source Fetching via libgit2, Never the System `git`"
+status: superseded
+date: 2026-06-04
+superseded_by: ADR-0035
+---
+
 # ADR-0022: Git Source Fetching via libgit2, Never the System `git`
 
 ## Status

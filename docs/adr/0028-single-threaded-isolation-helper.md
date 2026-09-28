@@ -1,3 +1,10 @@
+---
+id: ADR-0028
+title: "Namespace setup runs in a single-threaded helper process"
+status: accepted
+date: 2026-07-14
+---
+
 # ADR-0028: Namespace setup runs in a single-threaded helper process
 
 ## Status

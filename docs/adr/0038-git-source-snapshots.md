@@ -1,3 +1,10 @@
+---
+id: ADR-0038
+title: "Git Sources Cached as Tree Snapshots"
+status: accepted
+date: 2026-08-14
+---
+
 # ADR-0038: Git Sources Cached as Tree Snapshots
 
 ## Status

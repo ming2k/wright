@@ -1,3 +1,10 @@
+---
+id: ADR-0008
+title: "No -dev Splitting for Personal Distributions"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0008: No -dev Splitting for Personal Distributions
 
 ## Status

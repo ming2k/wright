@@ -1,3 +1,10 @@
+---
+id: ADR-0025
+title: "Incremental Cargo Workspace"
+status: accepted
+date: 2026-07-14
+---
+
 # ADR-0025: Incremental Cargo Workspace
 
 ## Status

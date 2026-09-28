@@ -29,7 +29,7 @@ pub async fn execute_remove(
     dry_run: bool,
     root_dir: &std::path::Path,
 ) -> Result<()> {
-    let plan = plan_removal(db, parts, recursive, cascade).await?;
+    let plan = plan_removal(db, parts, recursive, cascade, force).await?;
 
     if plan.targets.is_empty() {
         return Err(WrightError::ValidationError(
@@ -176,6 +176,7 @@ async fn plan_removal(
     parts: &[&str],
     recursive: bool,
     cascade: bool,
+    force: bool,
 ) -> Result<RemovalPlan> {
     let mut requested: Vec<String> = Vec::new();
     let mut members: HashSet<String> = HashSet::new();
@@ -219,7 +220,7 @@ async fn plan_removal(
         }
     }
 
-    // Validate: every dependent of a batch member must also be in the batch.
+    // Validate: every dependent of a batch member must also be in the batch, unless force is set.
     let mut blockers: Vec<String> = Vec::new();
     for name in &members {
         for dependent in db.get_dependents(name).await? {
@@ -229,12 +230,22 @@ async fn plan_removal(
         }
     }
     if !blockers.is_empty() {
-        blockers.sort();
-        blockers.dedup();
-        return Err(WrightError::DependencyError(format!(
-            "cannot remove: {}",
-            blockers.join(", ")
-        )));
+        if force {
+            blockers.sort();
+            blockers.dedup();
+            tracing::warn!(
+                event = "remove.forced",
+                "Forced removal overriding dependencies: {}",
+                blockers.join(", ")
+            );
+        } else {
+            blockers.sort();
+            blockers.dedup();
+            return Err(WrightError::DependencyError(format!(
+                "cannot remove: {}",
+                blockers.join(", ")
+            )));
+        }
     }
 
     // Order dependents before their dependencies.
@@ -360,10 +371,13 @@ mod tests {
         add_plan(&db, "app", &["app"]).await;
         link(&db, "app", "lib").await;
 
-        let blocked = plan_removal(&db, &["lib"], false, false).await;
+        let blocked = plan_removal(&db, &["lib"], false, false, false).await;
         assert!(blocked.is_err(), "lib alone must be blocked by app");
 
-        let plan = plan_removal(&db, &["lib", "app"], false, false)
+        let forced = plan_removal(&db, &["lib"], false, false, true).await;
+        assert!(forced.is_ok(), "force must override blocking dependent");
+
+        let plan = plan_removal(&db, &["lib", "app"], false, false, false)
             .await
             .unwrap();
         let app_at = plan.targets.iter().position(|n| n == "app").unwrap();
@@ -380,7 +394,7 @@ mod tests {
         add_plan(&db, "app", &["app"]).await;
         link(&db, "app", "lib").await;
 
-        let plan = plan_removal(&db, &["lib"], true, false).await.unwrap();
+        let plan = plan_removal(&db, &["lib"], true, false, false).await.unwrap();
         assert!(plan.targets.contains(&"app".to_string()));
         assert!(plan.targets.contains(&"lib".to_string()));
     }

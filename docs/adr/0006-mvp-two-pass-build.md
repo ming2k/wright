@@ -1,3 +1,10 @@
+---
+id: ADR-0006
+title: "MVP Two-Pass Build for Dependency Cycles"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0006: MVP Two-Pass Build for Dependency Cycles
 
 ## Status

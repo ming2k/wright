@@ -1,3 +1,10 @@
+---
+id: ADR-0041
+title: "File-Backed Ledger — Build Records, Snapshots, and `.BUILDINFO`"
+status: accepted
+date: 2026-08-14
+---
+
 # ADR-0041: File-Backed Ledger — Build Records, Snapshots, and `.BUILDINFO`
 
 ## Status

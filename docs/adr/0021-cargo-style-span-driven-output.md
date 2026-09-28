@@ -1,3 +1,10 @@
+---
+id: ADR-0021
+title: "Cargo-Style Span-Driven CLI Output"
+status: accepted
+date: 2026-05-15
+---
+
 # ADR-0021: Cargo-Style Span-Driven CLI Output
 
 ## Status

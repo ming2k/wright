@@ -1,3 +1,10 @@
+---
+id: ADR-0020
+title: "Merge `src/cli/` and `src/commands/` into a single directory"
+status: accepted
+date: 2026-05-15
+---
+
 # ADR-0020: Merge `src/cli/` and `src/commands/` into a single directory
 
 ## Status

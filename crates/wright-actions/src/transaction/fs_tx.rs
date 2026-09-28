@@ -394,6 +394,13 @@ async fn move_path(src: &Path, dst: &Path) -> std::io::Result<()> {
     match tokio::fs::rename(src, dst).await {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            let meta = tokio::fs::symlink_metadata(src).await?;
+            if meta.is_symlink() {
+                let target = tokio::fs::read_link(src).await?;
+                tokio::fs::symlink(&target, dst).await?;
+                let _ = tokio::fs::remove_file(src).await;
+                return Ok(());
+            }
             tokio::fs::copy(src, dst).await?;
             if let Ok(f) = tokio::fs::File::open(dst).await {
                 let _ = f.sync_all().await;
@@ -639,5 +646,27 @@ mod tests {
 
         assert!(dir.is_dir(), "non-empty dir must survive");
         assert!(dir.join("user.conf").exists());
+    }
+
+    #[tokio::test]
+    async fn back_up_dangling_symlink_succeeds_and_restores() {
+        let root = tempfile::tempdir().unwrap();
+        let bin_dir = root.path().join("usr/bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let symlink = bin_dir.join("broken_link");
+        // Point to a non-existent target to simulate a dangling symlink
+        tokio::fs::symlink("target_that_does_not_exist", &symlink).await.unwrap();
+
+        let mut tx =
+            FsTransaction::begin(root.path(), "t7", &[FsIntent::upgrade("p", Some("h"))]).unwrap();
+        tx.back_up(&symlink).await.unwrap();
+        assert!(!symlink.exists() && symlink.symlink_metadata().is_err());
+
+        tx.rollback_blocking();
+        assert!(symlink.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(
+            tokio::fs::read_link(&symlink).await.unwrap().to_str().unwrap(),
+            "target_that_does_not_exist"
+        );
     }
 }

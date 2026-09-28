@@ -1,3 +1,10 @@
+---
+id: ADR-0013
+title: "Multi-lowerdir OverlayFS isolation"
+status: accepted
+date: 2026-05-06
+---
+
 # ADR-0013: Multi-lowerdir OverlayFS isolation
 
 ## Status

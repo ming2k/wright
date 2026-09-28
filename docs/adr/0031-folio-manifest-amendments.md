@@ -1,3 +1,10 @@
+---
+id: ADR-0031
+title: "Folio Manifest Amendments"
+status: accepted
+date: 2026-08-08
+---
+
 # ADR-0031: Folio Manifest Amendments
 
 ## Status

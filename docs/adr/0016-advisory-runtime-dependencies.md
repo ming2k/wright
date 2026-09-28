@@ -1,3 +1,10 @@
+---
+id: ADR-0016
+title: "Advisory Runtime Dependencies"
+status: accepted
+date: 2026-05-10
+---
+
 # ADR-0016: Advisory Runtime Dependencies
 
 ## Status

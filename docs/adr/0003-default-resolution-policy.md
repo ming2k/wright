@@ -1,3 +1,11 @@
+---
+id: ADR-0003
+title: "Default Resolution Policy for Apply"
+status: superseded
+date: 2026-05-02
+superseded_by: ADR-0046
+---
+
 # ADR-0003: Default Resolution Policy for Apply
 
 ## Status

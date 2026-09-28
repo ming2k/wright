@@ -1,3 +1,10 @@
+---
+id: ADR-0015
+title: "Folio Manifest Replaces Pack Format"
+status: accepted
+date: 2026-05-10
+---
+
 # ADR-0015: Folio Manifest Replaces Pack Format
 
 ## Status

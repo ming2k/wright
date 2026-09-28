@@ -1,3 +1,11 @@
+---
+id: ADR-0036
+title: "Merged-base stage layers with sandbox-mounted stage overlays"
+status: superseded
+date: 2026-08-13
+superseded_by: ADR-0037
+---
+
 # ADR-0036: Merged-base stage layers with sandbox-mounted stage overlays
 
 ## Status

@@ -1,3 +1,10 @@
+---
+id: ADR-0043
+title: "The registry is a derived index; maintenance measures, snapshots, rebuilds, and reclaims"
+status: proposed
+date: 2026-09-23
+---
+
 # ADR-0043: The registry is a derived index; maintenance measures, snapshots, rebuilds, and reclaims
 
 ## Status

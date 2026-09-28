@@ -1,3 +1,10 @@
+---
+id: ADR-0034
+title: "Plan/Output Namespaces and Plan-Qualified Part Layout"
+status: accepted
+date: 2026-08-12
+---
+
 # ADR-0034: Plan/Output Namespaces and Plan-Qualified Part Layout
 
 ## Status

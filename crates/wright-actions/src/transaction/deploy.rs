@@ -11,11 +11,13 @@ use wright_model::version::{self, Version};
 use wright_part::archive;
 use wright_part::archive::PartInfo;
 use wright_part::store::LocalPartStore;
+use wright_plan::manifest::PlanManifest;
 use wright_registry::database::{
     Dependency, FileType, HistoryAction, InstalledDb, NewPart, Origin, SessionContext,
 };
 
 use super::{ensure_plan_registered, guard_plan_reparent, remove_part, upgrade_part};
+use crate::operations::install::manifest_part_names;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlanRevision {
@@ -102,7 +104,19 @@ pub async fn deploy_parts_with_explicit_targets(
     ledger_dir: &Path,
 ) -> Result<()> {
     let candidates = read_install_candidates(parts)?;
-    validate_plan_output_batches(db, &candidates).await?;
+    let to_retire = validate_plan_output_batches(db, &candidates, force).await?;
+
+    for retired_name in &to_retire {
+        if db.get_part(retired_name).await?.is_some() {
+            info!(
+                event = "deploy.retiring_stale_output",
+                part_name = %retired_name,
+                "Retiring stale output '{}'",
+                retired_name
+            );
+            remove_part(db, retired_name, root_dir, true, session.clone()).await?;
+        }
+    }
 
     let mut resolved_map = HashMap::new();
     let mut batch_versions = HashMap::new();
@@ -247,7 +261,8 @@ fn read_install_candidates(parts: &[PathBuf]) -> Result<Vec<InstallCandidate>> {
 async fn validate_plan_output_batches(
     db: &InstalledDb,
     candidates: &[InstallCandidate],
-) -> Result<()> {
+    force: bool,
+) -> Result<Vec<String>> {
     let mut by_plan: BTreeMap<&str, Vec<&InstallCandidate>> = BTreeMap::new();
     for candidate in candidates {
         by_plan
@@ -256,11 +271,19 @@ async fn validate_plan_output_batches(
             .push(candidate);
     }
 
+    let mut to_retire = Vec::new();
+
+    // Collect all parts declared in `replaces` across all candidates in the batch
+    let batch_replaces: HashSet<String> = candidates
+        .iter()
+        .flat_map(|c| c.partinfo.replaces.iter().cloned())
+        .collect();
+
     for (plan_name, candidates) in by_plan {
         let first = candidates.first().expect("non-empty plan folio");
         let expected_revision = PlanRevision::from_partinfo(&first.partinfo);
         let mut incoming_outputs = HashSet::new();
-        for candidate in candidates {
+        for candidate in &candidates {
             let revision = PlanRevision::from_partinfo(&candidate.partinfo);
             if revision != expected_revision {
                 return Err(WrightError::DeployError(format!(
@@ -295,21 +318,69 @@ async fn validate_plan_output_batches(
                     .filter(|part| !incoming_outputs.contains(&part.name))
                     .map(|part| part.name.clone())
                     .collect();
+
                 if !stale_outputs.is_empty() {
-                    return Err(WrightError::DeployError(format!(
-                        "cannot deploy plan '{}' {} while deployed output(s) from {} would remain: {}; deploy those outputs in the same batch or use wright install {}",
-                        plan_name,
-                        expected_revision.label(),
-                        installed_revision.label(),
-                        stale_outputs.join(", "),
-                        plan_name
-                    )));
+                    // Try to read .PLANSRC from candidate archives to discover declared outputs of the new revision
+                    let mut declared_outputs: Option<HashSet<String>> = None;
+                    for c in &candidates {
+                        if let Ok(Some(plansrc)) = archive::read_archive_plansrc(&c.path) {
+                            if let Ok(manifest) = PlanManifest::parse(&plansrc) {
+                                let names = manifest_part_names(&manifest);
+                                declared_outputs = Some(names.into_iter().collect());
+                                break;
+                            }
+                        }
+                    }
+
+                    let mut violating_stale = Vec::new();
+                    for stale in stale_outputs {
+                        let is_replaced = batch_replaces.contains(&stale);
+                        let is_dropped_from_manifest = declared_outputs
+                            .as_ref()
+                            .map(|d| !d.contains(&stale))
+                            .unwrap_or(false);
+
+                        if is_replaced || is_dropped_from_manifest {
+                            // Validate dependents of retired stale output if not forced and not replaced
+                            if !force && !is_replaced {
+                                let dependents = db.get_dependents(&stale).await?;
+                                let external_dependents: Vec<_> = dependents
+                                    .into_iter()
+                                    .filter(|dep| !incoming_outputs.contains(dep) && !to_retire.contains(dep))
+                                    .collect();
+                                if !external_dependents.is_empty() {
+                                    return Err(WrightError::DeployError(format!(
+                                        "cannot retire stale output '{}' from plan '{}': deployed package(s) '{}' depend on it. Rebuild the dependent package or pass --force",
+                                        stale,
+                                        plan_name,
+                                        external_dependents.join(", ")
+                                    )));
+                                }
+                            }
+                            if !to_retire.contains(&stale) {
+                                to_retire.push(stale);
+                            }
+                        } else {
+                            violating_stale.push(stale);
+                        }
+                    }
+
+                    if !violating_stale.is_empty() {
+                        return Err(WrightError::DeployError(format!(
+                            "cannot deploy plan '{}' {} while deployed output(s) from {} would remain: {}; deploy those outputs in the same batch or use wright install {}",
+                            plan_name,
+                            expected_revision.label(),
+                            installed_revision.label(),
+                            violating_stale.join(", "),
+                            plan_name
+                        )));
+                    }
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(to_retire)
 }
 
 async fn warn_about_runtime_dependencies(

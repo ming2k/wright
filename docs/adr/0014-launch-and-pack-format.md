@@ -1,3 +1,11 @@
+---
+id: ADR-0014
+title: "`wright launch` and the Pack Format"
+status: superseded
+date: 2026-05-07
+superseded_by: ADR-0015
+---
+
 # ADR-0014: `wright launch` and the Pack Format
 
 ## Status

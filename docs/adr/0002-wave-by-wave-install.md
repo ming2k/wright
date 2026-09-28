@@ -1,3 +1,10 @@
+---
+id: ADR-0002
+title: "Wave-by-Wave Install Instead of One Big Install"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0002: Wave-by-Wave Install Instead of One Big Install
 
 ## Status

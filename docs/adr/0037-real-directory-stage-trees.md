@@ -1,3 +1,10 @@
+---
+id: ADR-0037
+title: "Real directory stage working trees instead of stage overlays"
+status: accepted
+date: 2026-08-13
+---
+
 # ADR-0037: Real directory stage working trees instead of stage overlays
 
 ## Status

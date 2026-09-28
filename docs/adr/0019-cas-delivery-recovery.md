@@ -1,3 +1,10 @@
+---
+id: ADR-0019
+title: "Two-Layer CAS + WAL Recovery for Delivery"
+status: accepted
+date: 2026-05-12
+---
+
 # ADR-0019: Two-Layer CAS + WAL Recovery for Delivery
 
 ## Status

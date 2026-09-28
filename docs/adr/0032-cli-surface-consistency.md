@@ -1,3 +1,10 @@
+---
+id: ADR-0032
+title: "CLI Surface Consistency Conventions"
+status: accepted
+date: 2026-08-08
+---
+
 # ADR-0032: CLI Surface Consistency Conventions
 
 ## Status

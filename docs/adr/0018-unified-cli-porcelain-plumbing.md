@@ -1,3 +1,10 @@
+---
+id: ADR-0018
+title: "Unified CLI with Porcelain–Plumbing Separation"
+status: accepted
+date: 2026-05-12
+---
+
 # ADR-0018: Unified CLI with Porcelain–Plumbing Separation
 
 ## Status

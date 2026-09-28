@@ -1,3 +1,11 @@
+---
+id: ADR-0012
+title: "OverlayFS with per-task writable upper layers"
+status: superseded
+date: 2026-05-05
+superseded_by: ADR-0013
+---
+
 # ADR-0012: OverlayFS with per-task writable upper layers
 
 ## Status

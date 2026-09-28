@@ -1,3 +1,10 @@
+---
+id: ADR-0007
+title: "usrmerge and sbin Merged into bin"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0007: usrmerge and sbin Merged into bin
 
 ## Status

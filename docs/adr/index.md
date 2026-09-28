@@ -50,3 +50,4 @@
 | [ADR-0046](0046-scoped-dependency-resolution-and-update-containment.md) | Scoped dependency resolution and update containment | Accepted |
 | [ADR-0047](0047-bidirectional-subgraph-expansion-and-blast-radius-control.md) | Bidirectional subgraph expansion and blast radius control | Accepted |
 | [ADR-0048](0048-action-graph-scheduler-and-domain-storage.md) | Action graph scheduler and domain-centric storage architecture | Accepted |
+| [ADR-0049](0049-plan-output-evolution-and-atomic-retirement.md) | Plan output evolution, automated retirement, and resilient storage transactions | Accepted |

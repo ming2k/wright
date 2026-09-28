@@ -1,3 +1,10 @@
+---
+id: ADR-0023
+title: "Parts Are Maintenance-Ledger Artifacts, Not Distribution Products"
+status: accepted
+date: 2026-06-10
+---
+
 # ADR-0023: Parts Are Maintenance-Ledger Artifacts, Not Distribution Products
 
 ## Status

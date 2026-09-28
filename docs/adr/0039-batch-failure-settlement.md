@@ -1,3 +1,10 @@
+---
+id: ADR-0039
+title: "Batch failure settlement instead of fail-fast"
+status: accepted
+date: 2026-08-14
+---
+
 # ADR-0039: Batch failure settlement instead of fail-fast
 
 ## Status

@@ -1,3 +1,10 @@
+---
+id: ADR-0027
+title: "Isolation fails closed"
+status: accepted
+date: 2026-07-14
+---
+
 # ADR-0027: Isolation fails closed
 
 ## Status

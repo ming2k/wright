@@ -1,3 +1,10 @@
+---
+id: ADR-0001
+title: "Record Architecture Decisions"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0001: Record Architecture Decisions
 
 ## Status

@@ -1,3 +1,10 @@
+---
+id: ADR-0035
+title: "Git Source Fetching via gitoxide (gix)"
+status: accepted
+date: 2026-08-12
+---
+
 # ADR-0035: Git Source Fetching via gitoxide (gix)
 
 ## Status

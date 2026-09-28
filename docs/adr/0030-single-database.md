@@ -1,3 +1,10 @@
+---
+id: ADR-0030
+title: "Single Database for System State"
+status: accepted
+date: 2026-08-08
+---
+
 # ADR-0030: Single Database for System State
 
 ## Status

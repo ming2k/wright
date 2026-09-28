@@ -1,3 +1,10 @@
+---
+id: ADR-0004
+title: "No Implicit Magic Behavior"
+status: accepted
+date: 2026-05-02
+---
+
 # ADR-0004: No Implicit Magic Behavior
 
 ## Status

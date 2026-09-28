@@ -80,7 +80,7 @@ Freshly sealed archives are also stored in CAS so that future runs can skip the 
 Finally, all archive paths (newly sealed + CAS-restored) are collected and deployed in a single call to `deploy_parts_with_explicit_targets`.  The deployer validates the batch as a whole:
 
 - All outputs belonging to the same plan must share the same revision.
-- When upgrading a plan, every old output must be replaced; partial upgrades are rejected.
+- When upgrading a plan, old outputs must be replaced or safely retired; partial upgrades that omit active outputs are rejected, while outputs dropped by the new plan or superseded via `replaces` are automatically retired and cleanly uninstalled before deploying the new revision.
 
 Only after validation succeeds are files copied to the target root and recorded in the database.
 

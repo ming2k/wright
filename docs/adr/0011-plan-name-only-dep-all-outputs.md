@@ -1,3 +1,10 @@
+---
+id: ADR-0011
+title: "Plan-Name-Only Dependency References Resolve to All Outputs"
+status: accepted
+date: 2026-05-05
+---
+
 # ADR-0011: Plan-Name-Only Dependency References Resolve to All Outputs
 
 ## Status

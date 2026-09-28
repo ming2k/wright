@@ -1,3 +1,10 @@
+---
+id: ADR-0040
+title: "Consolidate maintenance deletion into `clean` and rename the from-scratch forge flag to `--fresh`"
+status: accepted
+date: 2026-08-14
+---
+
 # ADR-0040: Consolidate maintenance deletion into `clean` and rename the from-scratch forge flag to `--fresh`
 
 ## Status

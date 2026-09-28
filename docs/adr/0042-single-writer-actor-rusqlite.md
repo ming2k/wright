@@ -1,3 +1,10 @@
+---
+id: ADR-0042
+title: "Single-Writer Actor and Concurrent Readers via rusqlite"
+status: accepted
+date: 2026-09-17
+---
+
 # ADR-0042: Single-Writer Actor and Concurrent Readers via rusqlite
 
 ## Status

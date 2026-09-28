@@ -1,3 +1,11 @@
+---
+id: ADR-0005
+title: "Two-Database Design"
+status: superseded
+date: 2026-05-02
+superseded_by: ADR-0030
+---
+
 # ADR-0005: Two-Database Design
 
 ## Status

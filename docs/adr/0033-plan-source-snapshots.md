@@ -1,3 +1,10 @@
+---
+id: ADR-0033
+title: "Plan-Source Snapshots in Parts and the Registry"
+status: accepted
+date: 2026-08-12
+---
+
 # ADR-0033: Plan-Source Snapshots in Parts and the Registry
 
 ## Status

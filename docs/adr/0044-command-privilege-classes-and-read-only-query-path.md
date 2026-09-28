@@ -1,3 +1,10 @@
+---
+id: ADR-0044
+title: "Command privilege classes and a genuinely read-only query path"
+status: proposed
+date: 2026-09-23
+---
+
 # ADR-0044: Command privilege classes and a genuinely read-only query path
 
 ## Status

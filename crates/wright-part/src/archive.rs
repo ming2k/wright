@@ -359,6 +359,39 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
     )))
 }
 
+/// Read .PLANSRC from an archive without full extraction, returning None if absent.
+pub fn read_archive_plansrc(part_path: &Path) -> Result<Option<String>> {
+    let file = std::fs::File::open(part_path)
+        .map_err(|e| WrightError::context(format!("failed to open {}", part_path.display()), e))?;
+
+    let decoder = zstd::Decoder::new(file)
+        .map_err(|e| WrightError::context("zstd decoder init failed", e))?;
+
+    let mut archive = tar::Archive::new(decoder);
+
+    for entry in archive
+        .entries()
+        .map_err(|e| WrightError::context("failed to read archive entries", e))?
+    {
+        let mut entry = entry.map_err(|e| WrightError::context("failed to read entry", e))?;
+
+        let path = entry
+            .path()
+            .map_err(|e| WrightError::context("failed to read entry path", e))?;
+
+        let path_str = path.to_string_lossy();
+        if path_str.ends_with(".PLANSRC") {
+            let mut content = String::new();
+            entry
+                .read_to_string(&mut content)
+                .map_err(|e| WrightError::context("failed to read .PLANSRC", e))?;
+            return Ok(Some(content));
+        }
+    }
+
+    Ok(None)
+}
+
 fn generate_partinfo(spec: &PartSpec) -> String {
     let build_date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -713,6 +746,10 @@ mod tests {
             super::read_plan_source(extract.path()).as_deref(),
             Some("name = \"demo\"\nrelease = 1\n")
         );
+        assert_eq!(
+            super::read_archive_plansrc(&part).unwrap().as_deref(),
+            Some("name = \"demo\"\nrelease = 1\n")
+        );
         let meta = super::read_archive_meta(&part).unwrap();
         assert!(
             !meta.files.iter().any(|f| f.contains(".PLANSRC")),
@@ -734,6 +771,7 @@ mod tests {
         let extract = tempfile::tempdir().unwrap();
         let _ = super::extract_part(&part, extract.path()).unwrap();
         assert!(super::read_plan_source(extract.path()).is_none());
+        assert!(super::read_archive_plansrc(&part).unwrap().is_none());
     }
 
     #[test]
