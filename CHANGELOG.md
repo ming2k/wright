@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.8.1] - 2026-09-27
+
+### Added
+- **Automated stale output retirement during plan upgrades (ADR-0049).**
+  - When a plan upgrades to a newer revision with an altered outputs structure (such as dropping, consolidating, or replacing sub-outputs via `replaces`), Wright now automatically and cleanly retires the stale outputs (removing their installed files and unregistering database rows transactionally) before deploying the new revision.
+  - Eliminates administrative deadlock during rolling upgrades while strictly preserving plan revision consistency for active outputs.
+
+### Fixed
+- **Unconditional dependency blocking in `wright remove -f` (ADR-0049).**
+  - `plan_removal` now honors the `force` flag during dependency closure validation, allowing operators to decisively force-remove packages despite downstream dependents without getting stuck in removal deadlocks.
+- **Cross-device (`EXDEV`) symlink transactional backup failure (ADR-0049).**
+  - `move_path` in `FsTransaction` now detects symbolic links via `symlink_metadata` on cross-device boundary transitions, using `read_link + symlink` instead of dereferencing `fs::copy`. Fixes `ENOENT (os error 2)` crashes when backing up dangling symlinks whose targets were displaced.
+
 ## [5.8.0] - 2026-09-27
 
 ### Added
