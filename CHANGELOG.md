@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.8.3] - 2026-10-01
+
+### Changed
+- **Compilation Pipeline Optimization and Dependency Slimming (ADR-0052).**
+  - Configures modern linker (`mold`) support in `.cargo/config.toml` for `x86_64-unknown-linux-gnu` with automatic fallback, reducing debug binary link latency.
+  - Tunes development and test profiles (`debug = 1`, `split-debuginfo = "unpacked"`), reducing the debug binary size by >57% while retaining stack backtrace line numbers.
+  - Prunes `crates/wright-part` `zip` dependencies by disabling default features, shedding redundant cryptographic and compression algorithms (`aes`, `hmac`, `lzma-rs`, `zopfli`, etc.).
+  - Slims `tokio` feature flags across workspace crates to only required submodules (`rt-multi-thread`, `macros`, `net`, etc.).
+
 ## [5.8.2] - 2026-10-01
 
 ### Added
