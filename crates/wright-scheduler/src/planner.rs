@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use crate::error::Result;
 use super::graph::{ActionGraph, ActionId, ActionKind, ActionNode};
+use crate::error::Result;
 
 /// Minimal domain interface required to compile a package execution plan into an Action DAG.
 pub trait PackageGraphPlan {
@@ -25,10 +25,7 @@ pub struct ActionPlanner;
 impl ActionPlanner {
     /// Lower a resolved package plan into an `ActionGraph` with
     /// point-to-point cross-package pipelining edges.
-    pub fn plan<P: PackageGraphPlan>(
-        exec_plan: &P,
-        opts: &PlannerOptions,
-    ) -> Result<ActionGraph> {
+    pub fn plan<P: PackageGraphPlan>(exec_plan: &P, opts: &PlannerOptions) -> Result<ActionGraph> {
         let mut graph = ActionGraph::new();
 
         // 1. Instantiate intra-package action atoms for each task.

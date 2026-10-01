@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::error::{Result, WrightError};
-use wright_registry::database::{FileType, HistoryAction, HistoryStatus, InstalledDb, SessionContext};
+use wright_registry::database::{
+    FileType, HistoryAction, HistoryStatus, InstalledDb, SessionContext,
+};
 
 use super::fs_tx::{FsIntent, FsTransaction};
 use super::get_hook;

@@ -52,7 +52,8 @@ async fn test_build_log_and_workspace_permissions_under_strict_umask() {
         .mode()
         & 0o777;
     assert_eq!(
-        build_root_mode, 0o755,
+        build_root_mode,
+        0o755,
         "build_root ({}) must be 0755 despite strict umask, got {:o}",
         result.build_root.display(),
         build_root_mode
@@ -64,7 +65,8 @@ async fn test_build_log_and_workspace_permissions_under_strict_umask() {
         .mode()
         & 0o777;
     assert_eq!(
-        staging_mode, 0o755,
+        staging_mode,
+        0o755,
         "staging_dir ({}) must be 0755 despite strict umask, got {:o}",
         result.staging_dir.display(),
         staging_mode
@@ -73,13 +75,10 @@ async fn test_build_log_and_workspace_permissions_under_strict_umask() {
     // INV-PERM-01: Logs directory must be world-traversable (0755)
     let logs_dir = result.build_root.join("logs");
     assert!(logs_dir.exists(), "logs directory must exist");
-    let logs_dir_mode = std::fs::metadata(&logs_dir)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
+    let logs_dir_mode = std::fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777;
     assert_eq!(
-        logs_dir_mode, 0o755,
+        logs_dir_mode,
+        0o755,
         "logs_dir ({}) must be 0755, got {:o}",
         logs_dir.display(),
         logs_dir_mode
@@ -94,7 +93,8 @@ async fn test_build_log_and_workspace_permissions_under_strict_umask() {
         .mode()
         & 0o777;
     assert_eq!(
-        compile_log_mode, 0o644,
+        compile_log_mode,
+        0o644,
         "compile.log ({}) must be 0644, got {:o}",
         compile_log.display(),
         compile_log_mode
@@ -110,7 +110,8 @@ async fn test_build_log_and_workspace_permissions_under_strict_umask() {
         .mode()
         & 0o777;
     assert_eq!(
-        staging_log_mode, 0o644,
+        staging_log_mode,
+        0o644,
         "staging.log ({}) must be 0644, got {:o}",
         staging_log.display(),
         staging_log_mode
@@ -124,8 +125,7 @@ async fn test_slice_errors_log_world_readable() {
     let (mut manifest, plan_dir) = load_manifest_without_isolation("hello");
 
     // Configure multi-output with partial rule so that unclaimed staging files exist
-    let mut outputs_vec = Vec::new();
-    outputs_vec.push((
+    let outputs_vec = vec![(
         "sub".to_string(),
         wright::plan::manifest::SubFabricateOutput {
             include: Some(vec!["nonexistent/**".to_string()]),
@@ -141,7 +141,7 @@ async fn test_slice_errors_log_world_readable() {
             hooks: None,
             backup: None,
         },
-    ));
+    )];
     manifest.outputs = Some(wright::plan::manifest::OutputConfig::Multi(outputs_vec));
 
     let mut config = GlobalConfig::default();
@@ -208,7 +208,8 @@ fn test_isolation_scratch_retains_private_mode() {
         .mode()
         & 0o777;
     assert_eq!(
-        scratch_mode, 0o700,
+        scratch_mode,
+        0o700,
         "isolation scratch ({}) must remain 0700, got {:o}",
         scratch_parent.display(),
         scratch_mode
@@ -222,20 +223,15 @@ fn test_daily_log_permissions_under_strict_umask() {
     let tmp = tempfile::tempdir().unwrap();
     let log_dir = tmp.path().join("logs");
 
-    let _guard = wright::util::logging::init_logging(
-        &log_dir,
-        tracing_subscriber::EnvFilter::new("debug"),
-    );
+    let _guard =
+        wright::util::logging::init_logging(&log_dir, tracing_subscriber::EnvFilter::new("debug"));
 
     unsafe { libc::umask(old_umask) };
 
-    let dir_mode = std::fs::metadata(&log_dir)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
+    let dir_mode = std::fs::metadata(&log_dir).unwrap().permissions().mode() & 0o777;
     assert_eq!(
-        dir_mode, 0o755,
+        dir_mode,
+        0o755,
         "log_dir ({}) must be 0755, got {:o}",
         log_dir.display(),
         dir_mode
@@ -243,13 +239,10 @@ fn test_daily_log_permissions_under_strict_umask() {
 
     let today_path = wright::util::logging::today_log_path(&log_dir);
     assert!(today_path.exists(), "today log file must exist");
-    let file_mode = std::fs::metadata(&today_path)
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o777;
+    let file_mode = std::fs::metadata(&today_path).unwrap().permissions().mode() & 0o777;
     assert_eq!(
-        file_mode, 0o644,
+        file_mode,
+        0o644,
         "today_path ({}) must be 0644, got {:o}",
         today_path.display(),
         file_mode

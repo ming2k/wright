@@ -524,16 +524,9 @@ async fn test_execute_remove_force_allows_removing_depended_part() {
     let ledger = tempfile::tempdir().unwrap();
 
     let archive = create_test_archive("hello").await;
-    transaction::deploy_part(
-        &db,
-        &archive,
-        root.path(),
-        false,
-        session(),
-        ledger.path(),
-    )
-    .await
-    .unwrap();
+    transaction::deploy_part(&db, &archive, root.path(), false, session(), ledger.path())
+        .await
+        .unwrap();
 
     // Register a dependent part that depends on 'hello'
     db.provide_part("consumer-app", "1.0").await.unwrap();

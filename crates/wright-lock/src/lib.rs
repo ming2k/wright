@@ -154,7 +154,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let lock_dir = tmp.path();
 
-        let lock1 = acquire_lock(lock_dir, LockIdentity::Command("test"), LockMode::Exclusive).unwrap();
+        let lock1 =
+            acquire_lock(lock_dir, LockIdentity::Command("test"), LockMode::Exclusive).unwrap();
         assert!(lock1.path().exists());
 
         // A second exclusive lock with 100ms timeout must fail with Timeout

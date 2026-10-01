@@ -102,8 +102,9 @@ mod tests {
         assert!(first.exists());
 
         // Same checksum: skipped
-        let second = record_plan_snapshot(ledger, "demo", "abc1234", "plan source 1 modified", None)
-            .unwrap();
+        let second =
+            record_plan_snapshot(ledger, "demo", "abc1234", "plan source 1 modified", None)
+                .unwrap();
         assert!(second.is_none());
 
         // Different checksum: written

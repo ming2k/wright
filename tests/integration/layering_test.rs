@@ -232,7 +232,9 @@ install -Dm755 prog "${STAGING_DIR}/usr/bin/prog"
         "configure layer must have captured empty directory lib/deps"
     );
     assert!(
-        build_root.join("layers/02-configure/nested/scaffolding/deep").is_dir(),
+        build_root
+            .join("layers/02-configure/nested/scaffolding/deep")
+            .is_dir(),
         "configure layer must have captured deeply nested empty directory"
     );
 

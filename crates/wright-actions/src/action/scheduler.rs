@@ -6,16 +6,16 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tracing::warn;
 
-use wright_scheduler::{ActionGraph, ActionId, ActionKind};
 use crate::config::GlobalConfig;
 use crate::error::{Result, WrightError};
 use crate::foundry::{BuildOptions, Foundry};
 use crate::resolve::BuildExecutionPlan;
+use wright_cache::BuildCache;
 use wright_part::abi::PartAbi;
 use wright_part::store::LocalPartStore;
 use wright_plan::manifest::PlanManifest;
-use wright_cache::BuildCache;
 use wright_registry::database::{InstalledDb, SessionContext};
+use wright_scheduler::{ActionGraph, ActionId, ActionKind};
 
 /// Configuration and resource limits for the task scheduler (ADR-0048).
 #[derive(Debug, Clone)]
@@ -31,7 +31,9 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            max_cpus: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+            max_cpus: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1),
             dry_run: false,
             run_hooks: true,
             inhibit_abi_rebuild: true,
@@ -122,7 +124,10 @@ impl ActionScheduler {
         }
 
         if self.scheduler_cfg.dry_run {
-            crate::outln!("[dry-run] Planned action graph contains {} action(s):", graph.len());
+            crate::outln!(
+                "[dry-run] Planned action graph contains {} action(s):",
+                graph.len()
+            );
             for id in graph.topological_sort()? {
                 if let Some(node) = graph.get(&id) {
                     crate::outln!("  [{}] {} ({})", node.kind.verb(), id, node.package_name);
@@ -172,7 +177,10 @@ impl ActionScheduler {
                 let quiet = self.scheduler_cfg.quiet;
 
                 let plan_path = exec_plan.plan_path_for_task(&package_name).cloned();
-                let archives_for_deploy = plan_archives.get(&package_name).cloned().unwrap_or_default();
+                let archives_for_deploy = plan_archives
+                    .get(&package_name)
+                    .cloned()
+                    .unwrap_or_default();
 
                 let compile_lock = Arc::clone(&self.compile_lock);
                 let configure_lock = Arc::clone(&self.configure_lock);
@@ -212,7 +220,10 @@ impl ActionScheduler {
                         archive_paths,
                         abi_snapshot,
                     }) => {
-                        let pkg_name = graph.get(&id).map(|n| n.package_name.clone()).unwrap_or_default();
+                        let pkg_name = graph
+                            .get(&id)
+                            .map(|n| n.package_name.clone())
+                            .unwrap_or_default();
                         graph.mark_succeeded(&id);
 
                         if !archive_paths.is_empty() {
@@ -277,20 +288,16 @@ impl ActionScheduler {
         deploy_mutex: Arc<Mutex<()>>,
     ) -> TaskOutcome {
         match kind {
-            ActionKind::Lint { plan_name: _ } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
-            ActionKind::Fetch { plan_name: _ } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
+            ActionKind::Lint { plan_name: _ } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
+            ActionKind::Fetch { plan_name: _ } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
             ActionKind::Build {
                 plan_name,
                 clean,
@@ -354,13 +361,11 @@ impl ActionScheduler {
             ActionKind::RestoreCache {
                 plan_name: _,
                 fingerprint: _,
-            } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
+            } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
             ActionKind::Seal { plan_name, force } => {
                 let Some(plan_file) = plan_path else {
                     return TaskOutcome::Failure {
@@ -379,7 +384,8 @@ impl ActionScheduler {
                     }
                 };
 
-                let seal_res = crate::seal::package_manifest(&manifest, &config, false, force).await;
+                let seal_res =
+                    crate::seal::package_manifest(&manifest, &config, false, force).await;
                 if let Err(e) = seal_res {
                     return TaskOutcome::Failure { id, error: e };
                 }
@@ -387,7 +393,13 @@ impl ActionScheduler {
                 // Resolve newly sealed archives from part store
                 let mut archives = Vec::new();
                 for output_name in crate::operations::install::manifest_part_names(&manifest) {
-                    match crate::operations::install::resolve_plan_part(&part_store, &manifest, &output_name).await {
+                    match crate::operations::install::resolve_plan_part(
+                        &part_store,
+                        &manifest,
+                        &output_name,
+                    )
+                    .await
+                    {
                         Ok(Some(resolved)) => archives.push(resolved.path),
                         Ok(None) => warn!(
                             event = "seal.part_missing",
@@ -405,13 +417,11 @@ impl ActionScheduler {
                     abi_snapshot: None,
                 }
             }
-            ActionKind::VerifyAbi { plan_name: _ } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
+            ActionKind::VerifyAbi { plan_name: _ } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
             ActionKind::Deploy {
                 plan_name: _,
                 archive_paths,
@@ -462,20 +472,16 @@ impl ActionScheduler {
                     Err(e) => TaskOutcome::Failure { id, error: e },
                 }
             }
-            ActionKind::CommitRegistry { plan_name: _ } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
-            ActionKind::Rollback { plan_name: _, .. } => {
-                TaskOutcome::Success {
-                    id,
-                    archive_paths: vec![],
-                    abi_snapshot: None,
-                }
-            }
+            ActionKind::CommitRegistry { plan_name: _ } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
+            ActionKind::Rollback { .. } => TaskOutcome::Success {
+                id,
+                archive_paths: vec![],
+                abi_snapshot: None,
+            },
         }
     }
 }

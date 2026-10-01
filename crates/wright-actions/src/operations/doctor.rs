@@ -296,8 +296,7 @@ mod tests {
         })
         .await
         .unwrap();
-        wright_ledger::record_plan_snapshot(ledger_dir, "demo", checksum, source, None)
-            .unwrap();
+        wright_ledger::record_plan_snapshot(ledger_dir, "demo", checksum, source, None).unwrap();
     }
 
     #[tokio::test]

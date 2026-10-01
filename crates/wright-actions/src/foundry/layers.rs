@@ -1235,29 +1235,46 @@ mod tests {
         let layer_cfg = mgr.layer_dir("configure");
 
         // INV-LAYER-01: Empty directories must be harvested into stage layer
-        assert!(layer_cfg.join("lib/deps").is_dir(), "layer must capture empty directory lib/deps");
-        assert!(layer_cfg.join("nested/empty/sub").is_dir(), "layer must capture nested empty directory");
+        assert!(
+            layer_cfg.join("lib/deps").is_dir(),
+            "layer must capture empty directory lib/deps"
+        );
+        assert!(
+            layer_cfg.join("nested/empty/sub").is_dir(),
+            "layer must capture nested empty directory"
+        );
 
         let completed = vec!["configure".to_string()];
-        mgr.merge_layer_into_base("configure", &source, &completed).unwrap();
+        mgr.merge_layer_into_base("configure", &source, &completed)
+            .unwrap();
         let base = build_root.join("base");
         assert!(base.join("lib/deps").is_dir(), "base must contain lib/deps");
-        assert!(base.join("nested/empty/sub").is_dir(), "base must contain nested/empty/sub");
+        assert!(
+            base.join("nested/empty/sub").is_dir(),
+            "base must contain nested/empty/sub"
+        );
 
         // Stage 2: compile starts. populate_target must provide lib/deps to target/
         mgr.prepare_upper_layer("compile").unwrap();
         mgr.populate_target().unwrap();
 
         // INV-LAYER-02: Next stage working tree must inherit empty directories intact
-        assert!(target.join("lib/deps").is_dir(), "compile target must have lib/deps present");
-        assert!(target.join("nested/empty/sub").is_dir(), "compile target must have nested/empty/sub present");
+        assert!(
+            target.join("lib/deps").is_dir(),
+            "compile target must have lib/deps present"
+        );
+        assert!(
+            target.join("nested/empty/sub").is_dir(),
+            "compile target must have nested/empty/sub present"
+        );
 
         // Stage 2 compiler writes dependency file into lib/deps
         write_file(&target.join("lib/deps/alloca.Po"), "# dep file");
         mgr.commit_layer("compile").unwrap();
 
         let completed = vec!["configure".to_string(), "compile".to_string()];
-        mgr.merge_layer_into_base("compile", &source, &completed).unwrap();
+        mgr.merge_layer_into_base("compile", &source, &completed)
+            .unwrap();
         assert_eq!(read(&base.join("lib/deps/alloca.Po")), "# dep file");
 
         // Stage 3: deletion of empty directory produces tombstone and updates base (INV-LAYER-03)
@@ -1268,11 +1285,25 @@ mod tests {
 
         let layer_clean = mgr.layer_dir("clean");
         let deletions = read(&layer_clean.join(LAYER_DELETIONS_FILE));
-        assert!(deletions.lines().any(|l| l == "nested/empty/sub"), "tombstone must include deleted empty dir");
+        assert!(
+            deletions.lines().any(|l| l == "nested/empty/sub"),
+            "tombstone must include deleted empty dir"
+        );
 
-        let completed = vec!["configure".to_string(), "compile".to_string(), "clean".to_string()];
-        mgr.merge_layer_into_base("clean", &source, &completed).unwrap();
-        assert!(!base.join("nested/empty/sub").exists(), "deleted dir must be unlinked from base");
-        assert!(base.join("nested/empty").is_dir(), "parent directory must remain");
+        let completed = vec![
+            "configure".to_string(),
+            "compile".to_string(),
+            "clean".to_string(),
+        ];
+        mgr.merge_layer_into_base("clean", &source, &completed)
+            .unwrap();
+        assert!(
+            !base.join("nested/empty/sub").exists(),
+            "deleted dir must be unlinked from base"
+        );
+        assert!(
+            base.join("nested/empty").is_dir(),
+            "parent directory must remain"
+        );
     }
 }

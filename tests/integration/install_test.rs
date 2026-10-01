@@ -675,8 +675,16 @@ install -Dm755 /bin/sh ${STAGING_DIR}/usr/bin/x
     .unwrap();
 
     // Verify x is upgraded to 2.0.0
-    let x_part = db.get_part("x").await.unwrap().expect("x should be installed");
-    let plan = db.get_plan_by_id(x_part.plan_id).await.unwrap().expect("plan exists");
+    let x_part = db
+        .get_part("x")
+        .await
+        .unwrap()
+        .expect("x should be installed");
+    let plan = db
+        .get_plan_by_id(x_part.plan_id)
+        .await
+        .unwrap()
+        .expect("plan exists");
     assert_eq!(plan.version, "2.0.0");
     assert!(root.path().join("usr/bin/x").exists());
 

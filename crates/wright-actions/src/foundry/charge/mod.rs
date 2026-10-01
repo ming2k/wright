@@ -92,7 +92,9 @@ impl Charge {
         tokio::fs::create_dir_all(&source_dir)
             .await
             .map_err(|e| WrightError::context("failed to create source dir", e))?;
-        crate::util::fs::ensure_public_dir_async(&source_dir).await.ok();
+        crate::util::fs::ensure_public_dir_async(&source_dir)
+            .await
+            .ok();
 
         self.fetch(manifest, plan_dir).await?;
         self.verify(manifest).await?;

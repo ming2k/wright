@@ -13,13 +13,13 @@ use crate::resolve::{
     self, BuildExecutionPlan, BuildPlanOptions, MatchPolicy, ResolveOptions, create_execution_plan,
     resolve_build_set, resolve_explicit_plan_names,
 };
+use wright_cache::BuildCache;
 use wright_part::abi::{
     AbiBreakReason, AbiCompatibility, PartAbi, diff_abi, extract_elf_abi, extract_part_abi,
 };
 use wright_part::folio;
 use wright_part::store::{LocalPartStore, ResolvedPartVersioned};
 use wright_plan::manifest::{AbiStability, OutputConfig, PlanManifest};
-use wright_cache::BuildCache;
 use wright_registry::database::{InstalledDb, SessionContext};
 
 use super::fingerprints::PlanFingerprints;
@@ -82,13 +82,13 @@ fn evaluate_plan_abi_compatibility(
         return AbiCompatibility::Incompatible(AbiBreakReason::PolicyInlined);
     }
 
-    if let (Some(new_epoch), Some(old_epoch)) = (manifest.metadata.abi_epoch, previous_epoch) {
-        if new_epoch > old_epoch {
-            return AbiCompatibility::Incompatible(AbiBreakReason::ExplicitEpochBump {
-                old_epoch,
-                new_epoch,
-            });
-        }
+    if let (Some(new_epoch), Some(old_epoch)) = (manifest.metadata.abi_epoch, previous_epoch)
+        && new_epoch > old_epoch
+    {
+        return AbiCompatibility::Incompatible(AbiBreakReason::ExplicitEpochBump {
+            old_epoch,
+            new_epoch,
+        });
     }
 
     if manifest.metadata.abi_stability == AbiStability::Fixed {
@@ -475,7 +475,9 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                 if let Ok(Some(plan_rec)) = db.get_plan(base).await {
                     previous_epochs.insert(base.to_string(), Some(plan_rec.epoch as u32));
                 }
-                let abi_snapshot = snapshot_installed_plan_abi(&db, root_dir, base).await.unwrap_or(None);
+                let abi_snapshot = snapshot_installed_plan_abi(&db, root_dir, base)
+                    .await
+                    .unwrap_or(None);
                 pre_update_abis.insert(base.to_string(), abi_snapshot);
             }
         }
@@ -818,7 +820,9 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                                     for (downstream, trigger) in &rebuild_triggers {
                                         if trigger == &parent
                                             && rebuild_reasons.get(downstream)
-                                                == Some(&crate::resolve::RebuildReason::LinkDependency)
+                                                == Some(
+                                                    &crate::resolve::RebuildReason::LinkDependency,
+                                                )
                                             && !inhibited_tasks.contains(downstream)
                                         {
                                             inhibited_tasks.insert(downstream.clone());

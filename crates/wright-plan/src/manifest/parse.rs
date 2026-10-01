@@ -7,8 +7,9 @@ use crate::error::{Result, WrightError};
 
 use super::PlanBuildOptions;
 use super::{
-    AbiStability, BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig, PhaseConfig,
-    PipelineOrder, PipelineStage, PlanManifest, PlanMetadata, Relations, Source, Sources,
+    AbiStability, BackupConfig, DeployScripts, DiscardRule, FabricateHooks, OutputConfig,
+    PhaseConfig, PipelineOrder, PipelineStage, PlanManifest, PlanMetadata, Relations, Source,
+    Sources,
 };
 
 #[derive(Deserialize)]

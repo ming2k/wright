@@ -35,7 +35,7 @@ similar = "2"
 tar = "0.4"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.1", features = ["rt", "rt-multi-thread", "macros", "fs", "sync", "time", "net", "signal", "process", "io-util"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-appender = "0.2.5"

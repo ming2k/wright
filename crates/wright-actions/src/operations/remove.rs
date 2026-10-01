@@ -394,7 +394,9 @@ mod tests {
         add_plan(&db, "app", &["app"]).await;
         link(&db, "app", "lib").await;
 
-        let plan = plan_removal(&db, &["lib"], true, false, false).await.unwrap();
+        let plan = plan_removal(&db, &["lib"], true, false, false)
+            .await
+            .unwrap();
         assert!(plan.targets.contains(&"app".to_string()));
         assert!(plan.targets.contains(&"lib".to_string()));
     }

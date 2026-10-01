@@ -6,8 +6,8 @@ use tracing::trace;
 
 use crate::foundry::Foundry;
 use crate::resolve::BuildExecutionPlan;
-use wright_plan::manifest::PlanManifest;
 use wright_cache::BuildCache;
+use wright_plan::manifest::PlanManifest;
 
 /// Pre-computed fingerprint for each plan name in the build set.
 ///

@@ -45,16 +45,14 @@ pub(super) async fn ensure_plan_registered(
     plan_source: Option<&str>,
     ledger_dir: &std::path::Path,
 ) -> Result<i64> {
-    let provenance =
-        partinfo
-            .provenance
-            .as_ref()
-            .map(|provenance| wright_registry::database::NewPlanProvenance {
-                plan_checksum: provenance.plan_checksum.as_deref(),
-                source_checksums: &provenance.source_checksums,
-                wright_version: &provenance.wright_version,
-                isolation: &provenance.isolation,
-            });
+    let provenance = partinfo.provenance.as_ref().map(|provenance| {
+        wright_registry::database::NewPlanProvenance {
+            plan_checksum: provenance.plan_checksum.as_deref(),
+            source_checksums: &provenance.source_checksums,
+            wright_version: &provenance.wright_version,
+            isolation: &provenance.isolation,
+        }
+    });
 
     let plan_id = db
         .ensure_plan_registered(wright_registry::database::RegisterPlan {

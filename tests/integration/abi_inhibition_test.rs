@@ -19,7 +19,9 @@ fn test_diff_abi_identical() {
     };
 
     let mut old_abi = PartAbi::default();
-    old_abi.libraries.insert("usr/lib/libcrypto.so.3".to_string(), lib);
+    old_abi
+        .libraries
+        .insert("usr/lib/libcrypto.so.3".to_string(), lib);
     old_abi.recompute_overall_hash();
 
     let new_abi = old_abi.clone();
@@ -52,11 +54,15 @@ fn test_diff_abi_backward_compatible_superset() {
     };
 
     let mut old_abi = PartAbi::default();
-    old_abi.libraries.insert("usr/lib/libssl.so.3".to_string(), old_lib);
+    old_abi
+        .libraries
+        .insert("usr/lib/libssl.so.3".to_string(), old_lib);
     old_abi.recompute_overall_hash();
 
     let mut new_abi = PartAbi::default();
-    new_abi.libraries.insert("usr/lib/libssl.so.3".to_string(), new_lib);
+    new_abi
+        .libraries
+        .insert("usr/lib/libssl.so.3".to_string(), new_lib);
     new_abi.recompute_overall_hash();
 
     let result = diff_abi(&old_abi, &new_abi);
@@ -91,11 +97,15 @@ fn test_diff_abi_symbol_removal_breakage() {
     };
 
     let mut old_abi = PartAbi::default();
-    old_abi.libraries.insert("usr/lib/libxml2.so.2".to_string(), old_lib);
+    old_abi
+        .libraries
+        .insert("usr/lib/libxml2.so.2".to_string(), old_lib);
     old_abi.recompute_overall_hash();
 
     let mut new_abi = PartAbi::default();
-    new_abi.libraries.insert("usr/lib/libxml2.so.2".to_string(), new_lib);
+    new_abi
+        .libraries
+        .insert("usr/lib/libxml2.so.2".to_string(), new_lib);
     new_abi.recompute_overall_hash();
 
     let result = diff_abi(&old_abi, &new_abi);
@@ -126,11 +136,15 @@ fn test_diff_abi_soname_bump_breakage() {
     };
 
     let mut old_abi = PartAbi::default();
-    old_abi.libraries.insert("usr/lib/libcurl.so.4".to_string(), old_lib);
+    old_abi
+        .libraries
+        .insert("usr/lib/libcurl.so.4".to_string(), old_lib);
     old_abi.recompute_overall_hash();
 
     let mut new_abi = PartAbi::default();
-    new_abi.libraries.insert("usr/lib/libcurl.so.5".to_string(), new_lib);
+    new_abi
+        .libraries
+        .insert("usr/lib/libcurl.so.5".to_string(), new_lib);
     new_abi.recompute_overall_hash();
 
     let result = diff_abi(&old_abi, &new_abi);
@@ -154,7 +168,9 @@ fn test_diff_abi_library_removed() {
     };
 
     let mut old_abi = PartAbi::default();
-    old_abi.libraries.insert("usr/lib/libsub.so.1".to_string(), old_lib);
+    old_abi
+        .libraries
+        .insert("usr/lib/libsub.so.1".to_string(), old_lib);
     old_abi.recompute_overall_hash();
 
     let new_abi = PartAbi::default(); // empty in new version!
@@ -262,7 +278,9 @@ async fn test_targeted_install_does_not_propagate_updates_to_satisfied_deps() {
 
     let db_path = state.join("wright.db");
     let ledger_dir = state.join("ledger");
-    let db = InstalledDb::open(&db_path, Some(&ledger_dir)).await.unwrap();
+    let db = InstalledDb::open(&db_path, Some(&ledger_dir))
+        .await
+        .unwrap();
 
     // 1. Simulate installed system state:
     // 'dep-satisfied' is installed at version 1.0.0

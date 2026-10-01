@@ -2,11 +2,11 @@
 
 pub mod scheduler;
 
-pub use wright_scheduler::{
-    ActionGraph, ActionId, ActionKind, ActionNode, ActionStatus,
-    PackageGraphPlan, PlannerOptions, ResourceDemand, SchedulerError,
-};
 pub use scheduler::{ActionScheduler, SchedulerConfig, TaskOutcome};
+pub use wright_scheduler::{
+    ActionGraph, ActionId, ActionKind, ActionNode, ActionStatus, PackageGraphPlan, PlannerOptions,
+    ResourceDemand, SchedulerError,
+};
 
 /// ActionPlanner lowered over BuildExecutionPlan
 pub struct ActionPlanner;

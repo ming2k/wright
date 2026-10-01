@@ -23,7 +23,9 @@ impl TestEnv {
 
         let db_path = state.join("wright.db");
         let ledger_dir = state.join("ledger");
-        let db = InstalledDb::open(&db_path, Some(&ledger_dir)).await.unwrap();
+        let db = InstalledDb::open(&db_path, Some(&ledger_dir))
+            .await
+            .unwrap();
 
         // 1. Install 3-tier chain: app -> libmid -> libbase (installed at v1.0.0)
         for (name, dep) in [

@@ -45,7 +45,9 @@ impl Mold {
                     e,
                 )
             })?;
-        crate::util::fs::ensure_public_dir_async(&default_output_dir).await.ok();
+        crate::util::fs::ensure_public_dir_async(&default_output_dir)
+            .await
+            .ok();
 
         let mut split_dirs = HashMap::new();
 
@@ -75,7 +77,9 @@ impl Mold {
                             e,
                         )
                     })?;
-                crate::util::fs::ensure_public_dir_async(&sub_output_dir).await.ok();
+                crate::util::fs::ensure_public_dir_async(&sub_output_dir)
+                    .await
+                    .ok();
                 let includes = incs
                     .iter()
                     .map(|pat| {
@@ -299,10 +303,15 @@ impl Mold {
 
                 let logs_dir = build_root.join("logs");
                 let _ = tokio::fs::create_dir_all(&logs_dir).await;
-                crate::util::fs::ensure_public_tree_async(&logs_dir, None).await.ok();
+                crate::util::fs::ensure_public_tree_async(&logs_dir, None)
+                    .await
+                    .ok();
                 let log_path = logs_dir.join("slice-errors.log");
                 if let Ok(mut f) = std::fs::File::create(&log_path) {
-                    crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
+                    crate::util::fs::relax_file_permissions(
+                        &log_path,
+                        crate::util::fs::FILE_PUBLIC_MODE,
+                    );
                     use std::io::Write;
                     let _ = writeln!(f, "plan = {}", manifest.metadata.name);
                     let _ = writeln!(f, "staging_dir = {}", staging_dir.display());
@@ -311,7 +320,10 @@ impl Mold {
                     for p in &unmatched {
                         let _ = writeln!(f, "{p}");
                     }
-                    crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
+                    crate::util::fs::relax_file_permissions(
+                        &log_path,
+                        crate::util::fs::FILE_PUBLIC_MODE,
+                    );
                     info!("Full unmatched file list written to {}", log_path.display());
                 }
 
@@ -425,7 +437,8 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                     Some(ft) if ft.is_dir() => {
                         let _ = tokio::fs::create_dir_all(&dest_path).await;
                         if let Ok(meta) = tokio::fs::symlink_metadata(&path).await {
-                            let _ = tokio::fs::set_permissions(&dest_path, meta.permissions()).await;
+                            let _ =
+                                tokio::fs::set_permissions(&dest_path, meta.permissions()).await;
                         }
                         dirs_to_visit.push(path);
                     }

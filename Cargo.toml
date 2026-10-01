@@ -45,7 +45,7 @@ path = "src/bin/wright.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "net"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wright-cache = { path = "crates/wright-cache" }
 wright-config = { path = "crates/wright-config" }
@@ -75,3 +75,19 @@ clap_complete = "4"
 # exist when build.rs `#[path]`-includes src/cli/mod.rs.
 [lints]
 workspace = true
+
+[profile.dev]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.test]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

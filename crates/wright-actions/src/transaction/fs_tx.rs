@@ -655,7 +655,9 @@ mod tests {
         std::fs::create_dir_all(&bin_dir).unwrap();
         let symlink = bin_dir.join("broken_link");
         // Point to a non-existent target to simulate a dangling symlink
-        tokio::fs::symlink("target_that_does_not_exist", &symlink).await.unwrap();
+        tokio::fs::symlink("target_that_does_not_exist", &symlink)
+            .await
+            .unwrap();
 
         let mut tx =
             FsTransaction::begin(root.path(), "t7", &[FsIntent::upgrade("p", Some("h"))]).unwrap();
@@ -665,7 +667,11 @@ mod tests {
         tx.rollback_blocking();
         assert!(symlink.symlink_metadata().unwrap().is_symlink());
         assert_eq!(
-            tokio::fs::read_link(&symlink).await.unwrap().to_str().unwrap(),
+            tokio::fs::read_link(&symlink)
+                .await
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "target_that_does_not_exist"
         );
     }

@@ -49,8 +49,8 @@ async fn plan_snapshot(db: &ReadOnlyDb, ledger_dir: &Path, name: &str) -> Result
         ))
     })?;
 
-    let source = wright_ledger::plan_snapshot_source(ledger_dir, name, &checksum)
-        .ok_or_else(|| {
+    let source =
+        wright_ledger::plan_snapshot_source(ledger_dir, name, &checksum).ok_or_else(|| {
             WrightError::ValidationError(format!(
                 "no plan-source snapshot recorded for '{}' (parts sealed before ADR-0033); \
                  rebuild and re-deploy to record one",
@@ -91,8 +91,7 @@ mod tests {
         .await
         .unwrap();
         if let (Some(sum), Some(source)) = (checksum, snapshot) {
-            wright_ledger::record_plan_snapshot(ledger_dir, name, sum, source, None)
-                .unwrap();
+            wright_ledger::record_plan_snapshot(ledger_dir, name, sum, source, None).unwrap();
         }
     }
 

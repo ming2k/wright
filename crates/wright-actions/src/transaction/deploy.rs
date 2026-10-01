@@ -323,12 +323,12 @@ async fn validate_plan_output_batches(
                     // Try to read .PLANSRC from candidate archives to discover declared outputs of the new revision
                     let mut declared_outputs: Option<HashSet<String>> = None;
                     for c in &candidates {
-                        if let Ok(Some(plansrc)) = archive::read_archive_plansrc(&c.path) {
-                            if let Ok(manifest) = PlanManifest::parse(&plansrc) {
-                                let names = manifest_part_names(&manifest);
-                                declared_outputs = Some(names.into_iter().collect());
-                                break;
-                            }
+                        if let Ok(Some(plansrc)) = archive::read_archive_plansrc(&c.path)
+                            && let Ok(manifest) = PlanManifest::parse(&plansrc)
+                        {
+                            let names = manifest_part_names(&manifest);
+                            declared_outputs = Some(names.into_iter().collect());
+                            break;
                         }
                     }
 
@@ -346,7 +346,9 @@ async fn validate_plan_output_batches(
                                 let dependents = db.get_dependents(&stale).await?;
                                 let external_dependents: Vec<_> = dependents
                                     .into_iter()
-                                    .filter(|dep| !incoming_outputs.contains(dep) && !to_retire.contains(dep))
+                                    .filter(|dep| {
+                                        !incoming_outputs.contains(dep) && !to_retire.contains(dep)
+                                    })
                                     .collect();
                                 if !external_dependents.is_empty() {
                                     return Err(WrightError::DeployError(format!(

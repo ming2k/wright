@@ -96,10 +96,7 @@ pub enum AbiCompatibility {
 impl AbiCompatibility {
     /// Returns true if downstream dependents can safely skip recompilation.
     pub fn is_compatible(&self) -> bool {
-        matches!(
-            self,
-            Self::Identical | Self::CompatibleSuperset { .. }
-        )
+        matches!(self, Self::Identical | Self::CompatibleSuperset { .. })
     }
 }
 
@@ -120,10 +117,7 @@ pub enum AbiBreakReason {
         missing: Vec<String>,
     },
     /// The plan author explicitly bumped the `abi_epoch`.
-    ExplicitEpochBump {
-        old_epoch: u32,
-        new_epoch: u32,
-    },
+    ExplicitEpochBump { old_epoch: u32, new_epoch: u32 },
     /// Plan explicitly declared `abi_stability = "inlined"` or similar policy.
     PolicyInlined,
     /// No shared libraries found in one or both artifacts.
@@ -144,11 +138,7 @@ impl std::fmt::Display for AbiBreakReason {
             }
             Self::SymbolsRemoved { library, missing } => {
                 if missing.len() <= 3 {
-                    write!(
-                        f,
-                        "{library} symbols removed: {}",
-                        missing.join(", ")
-                    )
+                    write!(f, "{library} symbols removed: {}", missing.join(", "))
                 } else {
                     write!(
                         f,
@@ -159,11 +149,17 @@ impl std::fmt::Display for AbiBreakReason {
                     )
                 }
             }
-            Self::ExplicitEpochBump { old_epoch, new_epoch } => {
+            Self::ExplicitEpochBump {
+                old_epoch,
+                new_epoch,
+            } => {
                 write!(f, "explicit abi_epoch bump ({old_epoch} -> {new_epoch})")
             }
             Self::PolicyInlined => {
-                write!(f, "plan declared inlined ABI stability (header/template heavy)")
+                write!(
+                    f,
+                    "plan declared inlined ABI stability (header/template heavy)"
+                )
             }
             Self::NoSharedLibraries => {
                 write!(f, "no shared libraries present to prove ABI preservation")
@@ -212,10 +208,10 @@ pub fn extract_elf_abi(path: &Path) -> Result<Option<ElfAbi>> {
             continue;
         }
 
-        if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
-            if !name.is_empty() {
-                exported_symbols.insert(name.to_string());
-            }
+        if let Some(name) = elf.dynstrtab.get_at(sym.st_name)
+            && !name.is_empty()
+        {
+            exported_symbols.insert(name.to_string());
         }
     }
 
@@ -324,7 +320,9 @@ pub fn diff_abi(old_abi: &PartAbi, new_abi: &PartAbi) -> AbiCompatibility {
             });
 
         let Some(new_lib) = new_lib else {
-            return AbiCompatibility::Incompatible(AbiBreakReason::LibraryRemoved(old_path.clone()));
+            return AbiCompatibility::Incompatible(AbiBreakReason::LibraryRemoved(
+                old_path.clone(),
+            ));
         };
 
         // 1. SONAME check
@@ -362,10 +360,9 @@ pub fn diff_abi(old_abi: &PartAbi, new_abi: &PartAbi) -> AbiCompatibility {
 
 /// Write `.ABIINFO` TOML into the specified path.
 pub fn write_abi_info(dest: &Path, abi: &PartAbi) -> Result<()> {
-    let toml_str = toml::to_string_pretty(abi)
-        .map_err(|e| WrightError::context("serialize .ABIINFO", e))?;
-    std::fs::write(dest, toml_str)
-        .map_err(|e| WrightError::context("write .ABIINFO", e))?;
+    let toml_str =
+        toml::to_string_pretty(abi).map_err(|e| WrightError::context("serialize .ABIINFO", e))?;
+    std::fs::write(dest, toml_str).map_err(|e| WrightError::context("write .ABIINFO", e))?;
     Ok(())
 }
 
@@ -375,10 +372,10 @@ pub fn read_abi_info(extract_dir: &Path) -> Result<Option<PartAbi>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| WrightError::context("read .ABIINFO", e))?;
-    let abi: PartAbi = toml::from_str(&content)
-        .map_err(|e| WrightError::context("parse .ABIINFO", e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| WrightError::context("read .ABIINFO", e))?;
+    let abi: PartAbi =
+        toml::from_str(&content).map_err(|e| WrightError::context("parse .ABIINFO", e))?;
     Ok(Some(abi))
 }
 
@@ -400,7 +397,9 @@ mod tests {
         };
 
         let mut old_abi = PartAbi::default();
-        old_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), lib.clone());
+        old_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), lib.clone());
         old_abi.recompute_overall_hash();
 
         let new_abi = old_abi.clone();
@@ -431,15 +430,22 @@ mod tests {
         };
 
         let mut old_abi = PartAbi::default();
-        old_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), old_lib);
+        old_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), old_lib);
         old_abi.recompute_overall_hash();
 
         let mut new_abi = PartAbi::default();
-        new_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), new_lib);
+        new_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), new_lib);
         new_abi.recompute_overall_hash();
 
         let res = diff_abi(&old_abi, &new_abi);
-        assert_eq!(res, AbiCompatibility::CompatibleSuperset { added_symbols: 1 });
+        assert_eq!(
+            res,
+            AbiCompatibility::CompatibleSuperset { added_symbols: 1 }
+        );
         assert!(res.is_compatible());
     }
 
@@ -467,15 +473,22 @@ mod tests {
         };
 
         let mut old_abi = PartAbi::default();
-        old_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), old_lib);
+        old_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), old_lib);
         old_abi.recompute_overall_hash();
 
         let mut new_abi = PartAbi::default();
-        new_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), new_lib);
+        new_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), new_lib);
         new_abi.recompute_overall_hash();
 
         let res = diff_abi(&old_abi, &new_abi);
-        assert!(matches!(res, AbiCompatibility::Incompatible(AbiBreakReason::SymbolsRemoved { .. })));
+        assert!(matches!(
+            res,
+            AbiCompatibility::Incompatible(AbiBreakReason::SymbolsRemoved { .. })
+        ));
         assert!(!res.is_compatible());
     }
 
@@ -499,15 +512,22 @@ mod tests {
         };
 
         let mut old_abi = PartAbi::default();
-        old_abi.libraries.insert("usr/lib/libtest.so.1".to_string(), old_lib);
+        old_abi
+            .libraries
+            .insert("usr/lib/libtest.so.1".to_string(), old_lib);
         old_abi.recompute_overall_hash();
 
         let mut new_abi = PartAbi::default();
-        new_abi.libraries.insert("usr/lib/libtest.so.2".to_string(), new_lib);
+        new_abi
+            .libraries
+            .insert("usr/lib/libtest.so.2".to_string(), new_lib);
         new_abi.recompute_overall_hash();
 
         let res = diff_abi(&old_abi, &new_abi);
-        assert!(matches!(res, AbiCompatibility::Incompatible(AbiBreakReason::SonameChanged { .. })));
+        assert!(matches!(
+            res,
+            AbiCompatibility::Incompatible(AbiBreakReason::SonameChanged { .. })
+        ));
         assert!(!res.is_compatible());
     }
 
@@ -528,7 +548,8 @@ mod tests {
         };
 
         let mut abi = PartAbi::default();
-        abi.libraries.insert("usr/lib/libdemo.so.1".to_string(), lib);
+        abi.libraries
+            .insert("usr/lib/libdemo.so.1".to_string(), lib);
         abi.recompute_overall_hash();
 
         write_abi_info(&file, &abi).unwrap();

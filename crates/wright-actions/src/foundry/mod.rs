@@ -316,7 +316,9 @@ impl Foundry {
         }
 
         let build_root = self.build_root(manifest)?;
-        crate::util::fs::ensure_public_tree_async(&build_root, Some(&self.config.build.forge_dir)).await.ok();
+        crate::util::fs::ensure_public_tree_async(&build_root, Some(&self.config.build.forge_dir))
+            .await
+            .ok();
 
         // Reap any stale overlay mounts left behind by a prior crash or
         // forced termination.  This prevents EBUSY when the user later

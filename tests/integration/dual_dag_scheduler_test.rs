@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use wright::action::{
-    ActionGraph, ActionId, ActionKind, ActionNode, ActionPlanner, ActionScheduler,
-    PlannerOptions, SchedulerConfig,
+    ActionGraph, ActionId, ActionKind, ActionNode, ActionPlanner, ActionScheduler, PlannerOptions,
+    SchedulerConfig,
 };
 use wright::config::GlobalConfig;
 use wright::foundry::Foundry;
 use wright::resolve::BuildExecutionPlan;
-use wright_part::store::LocalPartStore;
 use wright_cache::BuildCache;
+use wright_part::store::LocalPartStore;
 use wright_registry::database::{InstalledDb, SessionContext};
 
 #[test]
@@ -46,20 +46,50 @@ fn test_dual_dag_point_to_point_pipelining() {
     let zlib_deploy = ActionId::deploy("zlib");
     let zlib_commit = ActionId::commit("zlib");
 
-    assert!(graph.dependencies_of(&zlib_seal).unwrap().contains(&zlib_build));
-    assert!(graph.dependencies_of(&zlib_verify).unwrap().contains(&zlib_seal));
-    assert!(graph.dependencies_of(&zlib_deploy).unwrap().contains(&zlib_verify));
-    assert!(graph.dependencies_of(&zlib_commit).unwrap().contains(&zlib_deploy));
+    assert!(
+        graph
+            .dependencies_of(&zlib_seal)
+            .unwrap()
+            .contains(&zlib_build)
+    );
+    assert!(
+        graph
+            .dependencies_of(&zlib_verify)
+            .unwrap()
+            .contains(&zlib_seal)
+    );
+    assert!(
+        graph
+            .dependencies_of(&zlib_deploy)
+            .unwrap()
+            .contains(&zlib_verify)
+    );
+    assert!(
+        graph
+            .dependencies_of(&zlib_commit)
+            .unwrap()
+            .contains(&zlib_deploy)
+    );
 
     // Verify point-to-point cross-package pipelining edge:
     // Build(openssl) depends on Deploy(zlib)
     let openssl_build = ActionId::build("openssl");
-    assert!(graph.dependencies_of(&openssl_build).unwrap().contains(&zlib_deploy));
+    assert!(
+        graph
+            .dependencies_of(&openssl_build)
+            .unwrap()
+            .contains(&zlib_deploy)
+    );
 
     // Build(curl) depends on Deploy(openssl)
     let openssl_deploy = ActionId::deploy("openssl");
     let curl_build = ActionId::build("curl");
-    assert!(graph.dependencies_of(&curl_build).unwrap().contains(&openssl_deploy));
+    assert!(
+        graph
+            .dependencies_of(&curl_build)
+            .unwrap()
+            .contains(&openssl_deploy)
+    );
 
     // Topological sort must succeed with zero cycles
     let order = graph.topological_sort().unwrap();

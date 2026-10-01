@@ -1,9 +1,9 @@
 use super::migrations::{CURRENT_DB_VERSION, configure_connection};
 use super::schema;
 use crate::error::{Result, WrightError};
-use wright_lock::{LockIdentity, LockMode, ProcessLock};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use wright_lock::{LockIdentity, LockMode, ProcessLock};
 
 pub(super) const PART_COLUMNS: &str =
     "id, name, plan_id, installed_at, part_hash, deploy_scripts, origin";
@@ -377,10 +377,7 @@ impl InstalledDb {
     }
 }
 
-fn export_legacy_plan_snapshots(
-    conn: &rusqlite::Connection,
-    ledger_dir: &Path,
-) -> Result<usize> {
+fn export_legacy_plan_snapshots(conn: &rusqlite::Connection, ledger_dir: &Path) -> Result<usize> {
     let exists: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'plan_snapshots'",
@@ -428,7 +425,12 @@ fn export_legacy_plan_snapshots(
                 );
             }
             None => {
-                let _ = record_detached_snapshot(ledger_dir, &checksum, &source, recorded_at.as_deref());
+                let _ = record_detached_snapshot(
+                    ledger_dir,
+                    &checksum,
+                    &source,
+                    recorded_at.as_deref(),
+                );
             }
         }
         count += 1;
@@ -458,13 +460,22 @@ fn record_detached_snapshot(
         return Ok(());
     }
     std::fs::create_dir_all(&dir).map_err(|e| {
-        WrightError::context(format!("failed to create snapshot dir {}", dir.display()), e)
+        WrightError::context(
+            format!("failed to create snapshot dir {}", dir.display()),
+            e,
+        )
     })?;
-    let file_name = format!("{}-{}.toml", wright_ledger::snapshot_timestamp(recorded_at), checksum);
+    let file_name = format!(
+        "{}-{}.toml",
+        wright_ledger::snapshot_timestamp(recorded_at),
+        checksum
+    );
     let path = dir.join(&file_name);
     let tmp = dir.join(format!(".{file_name}.tmp"));
-    std::fs::write(&tmp, source).map_err(|e| WrightError::context(format!("failed to write {}", tmp.display()), e))?;
-    std::fs::rename(&tmp, &path).map_err(|e| WrightError::context(format!("failed to commit {}", path.display()), e))?;
+    std::fs::write(&tmp, source)
+        .map_err(|e| WrightError::context(format!("failed to write {}", tmp.display()), e))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| WrightError::context(format!("failed to commit {}", path.display()), e))?;
     Ok(())
 }
 

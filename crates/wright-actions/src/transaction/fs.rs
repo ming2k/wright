@@ -184,13 +184,16 @@ pub(super) async fn copy_entries_to_root(
                     }
                 } else if existing_meta.is_file() {
                     tx.back_up(&dest_path).await?;
-                } else if existing_meta.file_type().is_dir() {
-                    if let Err(e) = tokio::fs::remove_dir_all(&dest_path).await {
-                        return Err(WrightError::context(
-                            format!("failed to remove existing directory {}", dest_path.display()),
-                            e,
-                        ));
-                    }
+                } else if existing_meta.file_type().is_dir()
+                    && let Err(e) = tokio::fs::remove_dir_all(&dest_path).await
+                {
+                    return Err(WrightError::context(
+                        format!(
+                            "failed to remove existing directory {}",
+                            dest_path.display()
+                        ),
+                        e,
+                    ));
                 }
             }
 

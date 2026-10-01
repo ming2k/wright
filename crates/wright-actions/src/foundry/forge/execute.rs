@@ -141,7 +141,7 @@ impl<'a> Forge<'a> {
 
         let expanded_script = crate::foundry::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{stage_name}.log"));
-        crate::util::fs::ensure_public_tree(&self.logs_dir, None).ok();
+        crate::util::fs::ensure_public_tree(self.logs_dir, None).ok();
 
         let mut stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
             crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
@@ -277,7 +277,7 @@ impl<'a> Forge<'a> {
 
         let expanded_script = crate::foundry::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{stage_name}.log"));
-        crate::util::fs::ensure_public_tree(&self.logs_dir, None).ok();
+        crate::util::fs::ensure_public_tree(self.logs_dir, None).ok();
 
         let mut stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
             crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);

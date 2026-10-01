@@ -14,13 +14,13 @@ macro_rules! outln {
 }
 pub(crate) use outln;
 
-pub mod error;
 mod bootstrap;
+pub mod error;
 mod graph;
 mod resolver;
 
-pub use error::{ResolveError, Result, ResultExt};
 pub(crate) use ResolveError as WrightError;
+pub use error::{ResolveError, Result, ResultExt};
 pub use resolver::{plan_search_dirs, resolve_targets, setup_part_store};
 pub use wright_config::GlobalConfig;
 
@@ -261,7 +261,9 @@ pub async fn resolve_build_set(
         let db_path = config.general.db_path.clone();
         let db = InstalledDb::open(&db_path, Some(&ledger_dir(config, Some(&db_path))))
             .await
-            .map_err(|e| ResolveError::context("failed to open database for dependency resolution", e))?;
+            .map_err(|e| {
+                ResolveError::context("failed to open database for dependency resolution", e)
+            })?;
 
         if !opts.deps.is_empty() {
             let dep_policies = opts
@@ -312,14 +314,9 @@ pub async fn resolve_build_set(
                             .unwrap_or(&[MatchPolicy::Missing])
                     };
 
-                    if graph::dependency_matches_policy(
-                        &m.metadata.name,
-                        &index,
-                        &db,
-                        policies,
-                    )
-                    .await
-                    .unwrap_or(true)
+                    if graph::dependency_matches_policy(&m.metadata.name, &index, &db, policies)
+                        .await
+                        .unwrap_or(true)
                     {
                         retained.insert(path);
                     }
@@ -496,7 +493,6 @@ impl wright_scheduler::PackageGraphPlan for BuildExecutionPlan {
 }
 
 impl BuildExecutionPlan {
-
     #[doc(hidden)]
     pub fn for_testing(
         build_set: HashSet<String>,
@@ -531,8 +527,16 @@ pub fn summarize_build_resources(config: &GlobalConfig) -> BuildResourceSummary 
 }
 
 pub fn describe_build_resources(resources: BuildResourceSummary) -> String {
-    let task_word = if resources.concurrent_tasks == 1 { "task" } else { "tasks" };
-    let cpu_word = if resources.total_cpus == 1 { "cpu" } else { "cpus" };
+    let task_word = if resources.concurrent_tasks == 1 {
+        "task"
+    } else {
+        "tasks"
+    };
+    let cpu_word = if resources.total_cpus == 1 {
+        "cpu"
+    } else {
+        "cpus"
+    };
     if resources.concurrent_tasks == resources.total_cpus {
         format!("{} {}", resources.total_cpus, cpu_word)
     } else {

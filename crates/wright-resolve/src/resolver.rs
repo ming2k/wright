@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use wright_config::GlobalConfig;
 use crate::error::{ResolveError, Result};
+use wright_config::GlobalConfig;
 use wright_part::store::LocalPartStore;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::PlanManifest;
@@ -53,8 +53,12 @@ pub fn resolve_targets(
                 for plans_dir in plan_dirs {
                     let candidate = plans_dir.join(clean_target).join("plan.toml");
                     if candidate.exists() {
-                        PlanManifest::from_file(&candidate)
-                            .map_err(|e| ResolveError::context(format!("failed to parse plan '{}'", clean_target), e))?;
+                        PlanManifest::from_file(&candidate).map_err(|e| {
+                            ResolveError::context(
+                                format!("failed to parse plan '{}'", clean_target),
+                                e,
+                            )
+                        })?;
                         plans_to_build.insert(candidate);
                         found = true;
                         break;

@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use tracing::{debug, trace};
 
-use crate::error::{ResolveError, Result};
 use crate::bootstrap::{PlanGraph, collect_phase_deps};
+use crate::error::{ResolveError, Result};
 use wright_model::version;
 use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::{OutputConfig, PlanManifest};
@@ -85,8 +85,12 @@ pub(super) async fn expand_missing_dependencies(
                 resolved_count += 1;
                 plans_to_build.insert(plan_path.clone());
                 build_set.insert(dep_plan_name.clone());
-                triggers.entry(dep_plan_name.clone()).or_insert_with(|| name.clone());
-                reasons.entry(dep_plan_name.clone()).or_insert(RebuildReason::Transitive);
+                triggers
+                    .entry(dep_plan_name.clone())
+                    .or_insert_with(|| name.clone());
+                reasons
+                    .entry(dep_plan_name.clone())
+                    .or_insert(RebuildReason::Transitive);
             }
         }
 
@@ -143,8 +147,12 @@ pub(super) async fn expand_missing_dependencies(
                             resolved_count += 1;
                             plans_to_build.insert(rdep_plan_path.clone());
                             build_set.insert(rdep_plan_name.clone());
-                            triggers.entry(rdep_plan_name.clone()).or_insert_with(|| build_dep_plan_name.clone());
-                            reasons.entry(rdep_plan_name.clone()).or_insert(RebuildReason::Transitive);
+                            triggers
+                                .entry(rdep_plan_name.clone())
+                                .or_insert_with(|| build_dep_plan_name.clone());
+                            reasons
+                                .entry(rdep_plan_name.clone())
+                                .or_insert(RebuildReason::Transitive);
                         }
 
                         runtime_queue.push_back((rdep_plan_name, rdep_depth));

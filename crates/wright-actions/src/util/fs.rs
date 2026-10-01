@@ -29,7 +29,10 @@ pub fn ensure_dir_mode<P: AsRef<Path>>(path: P, target_mode: u32) -> std::io::Re
 }
 
 /// Asynchronous version of `ensure_dir_mode`.
-pub async fn ensure_dir_mode_async<P: AsRef<Path>>(path: P, target_mode: u32) -> std::io::Result<()> {
+pub async fn ensure_dir_mode_async<P: AsRef<Path>>(
+    path: P,
+    target_mode: u32,
+) -> std::io::Result<()> {
     let path = path.as_ref();
     tokio::fs::create_dir_all(path).await?;
     relax_path_permissions(path, target_mode);
@@ -51,7 +54,10 @@ pub async fn ensure_public_dir_async<P: AsRef<Path>>(path: P) -> std::io::Result
 ///
 /// This prevents inner directories from being rendered inaccessible due to restricted
 /// parent directories created under a strict umask (e.g. `0077`).
-pub fn ensure_public_tree<P: AsRef<Path>>(path: P, root_limit: Option<&Path>) -> std::io::Result<()> {
+pub fn ensure_public_tree<P: AsRef<Path>>(
+    path: P,
+    root_limit: Option<&Path>,
+) -> std::io::Result<()> {
     let path = path.as_ref();
     std::fs::create_dir_all(path)?;
 
@@ -60,10 +66,10 @@ pub fn ensure_public_tree<P: AsRef<Path>>(path: P, root_limit: Option<&Path>) ->
         let mut curr = Some(path);
         while let Some(p) = curr {
             relax_path_permissions(p, DIR_PUBLIC_MODE);
-            if let Some(limit) = root_limit {
-                if p == limit {
-                    break;
-                }
+            if let Some(limit) = root_limit
+                && p == limit
+            {
+                break;
             }
             curr = p.parent();
         }
@@ -84,10 +90,10 @@ pub async fn ensure_public_tree_async<P: AsRef<Path>>(
         let mut curr = Some(path);
         while let Some(p) = curr {
             relax_path_permissions(p, DIR_PUBLIC_MODE);
-            if let Some(limit) = root_limit {
-                if p == limit {
-                    break;
-                }
+            if let Some(limit) = root_limit
+                && p == limit
+            {
+                break;
             }
             curr = p.parent();
         }
@@ -147,11 +153,17 @@ mod tests {
         // Manually simulate strict directory creation (0700)
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(std::fs::metadata(&sub).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&sub).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
 
         // Relax with ensure_public_dir
         ensure_public_dir(&sub).unwrap();
-        assert_eq!(std::fs::metadata(&sub).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            std::fs::metadata(&sub).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[test]
@@ -168,8 +180,14 @@ mod tests {
         // Relax tree up to tmp
         ensure_public_tree(&logs_dir, Some(tmp.path())).unwrap();
 
-        assert_eq!(std::fs::metadata(&pkg_dir).unwrap().permissions().mode() & 0o777, 0o755);
-        assert_eq!(std::fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            std::fs::metadata(&pkg_dir).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(&logs_dir).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[test]
@@ -180,10 +198,16 @@ mod tests {
 
         std::fs::write(&log_file, "compiling...").unwrap();
         std::fs::set_permissions(&log_file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert_eq!(std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
 
         relax_file_permissions(&log_file, FILE_PUBLIC_MODE);
-        assert_eq!(std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777, 0o644);
+        assert_eq!(
+            std::fs::metadata(&log_file).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
     }
 
     #[test]

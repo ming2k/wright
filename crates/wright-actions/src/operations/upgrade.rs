@@ -265,7 +265,10 @@ async fn validate_upgrade_targets(
         let manifest = match PlanManifest::from_file(plan_path) {
             Ok(m) => m,
             Err(e) => {
-                return Err(WrightError::context(format!("failed to parse plan {target}"), e));
+                return Err(WrightError::context(
+                    format!("failed to parse plan {target}"),
+                    e,
+                ));
             }
         };
 

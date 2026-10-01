@@ -84,10 +84,7 @@ pub enum ActionKind {
     },
 
     /// Slice staging tree and seal into `.wright.tar.zst` archives.
-    Seal {
-        plan_name: String,
-        force: bool,
-    },
+    Seal { plan_name: String, force: bool },
 
     /// Extract and diff ELF ABI symbols to decide dynamic downstream pruning.
     VerifyAbi { plan_name: String },
@@ -180,10 +177,7 @@ pub enum ActionStatus {
 
 impl ActionStatus {
     pub fn is_finished(&self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::Failed(_) | Self::Skipped(_)
-        )
+        matches!(self, Self::Succeeded | Self::Failed(_) | Self::Skipped(_))
     }
 
     pub fn is_success_or_skipped(&self) -> bool {
@@ -342,13 +336,13 @@ impl ActionGraph {
     pub fn prune_subtree(&mut self, root_id: &ActionId, reason: &str) {
         let mut queue = vec![root_id.clone()];
         while let Some(current) = queue.pop() {
-            if let Some(node) = self.nodes.get_mut(&current) {
-                if !node.status.is_finished() {
-                    node.status = ActionStatus::Skipped(reason.to_string());
-                    if let Some(children) = self.dependents.get(&current) {
-                        for child in children {
-                            queue.push(child.clone());
-                        }
+            if let Some(node) = self.nodes.get_mut(&current)
+                && !node.status.is_finished()
+            {
+                node.status = ActionStatus::Skipped(reason.to_string());
+                if let Some(children) = self.dependents.get(&current) {
+                    for child in children {
+                        queue.push(child.clone());
                     }
                 }
             }
@@ -556,9 +550,18 @@ mod tests {
 
         // Pruning a should skip a, b, and c
         graph.prune_subtree(&a, "ABI backward compatible");
-        assert!(matches!(graph.get(&a).unwrap().status, ActionStatus::Skipped(_)));
-        assert!(matches!(graph.get(&b).unwrap().status, ActionStatus::Skipped(_)));
-        assert!(matches!(graph.get(&c).unwrap().status, ActionStatus::Skipped(_)));
+        assert!(matches!(
+            graph.get(&a).unwrap().status,
+            ActionStatus::Skipped(_)
+        ));
+        assert!(matches!(
+            graph.get(&b).unwrap().status,
+            ActionStatus::Skipped(_)
+        ));
+        assert!(matches!(
+            graph.get(&c).unwrap().status,
+            ActionStatus::Skipped(_)
+        ));
         assert!(graph.is_finished());
     }
 }

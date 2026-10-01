@@ -353,7 +353,7 @@ pub fn run_in_isolation(
     command: &str,
     args: &[String],
 ) -> Result<IsolationOutput> {
-    let result = (|| {
+    (|| {
         config.validate()?;
         if crate::cancellation::is_cancelled() {
             return Err(IsolationError::Cancelled);
@@ -365,8 +365,7 @@ pub fn run_in_isolation(
                 helper::run_parent(config, command, args)
             }
         }
-    })();
-    result.map_err(Into::into)
+    })()
 }
 
 /// Run the internal single-threaded isolation helper protocol.
