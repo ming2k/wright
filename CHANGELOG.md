@@ -1,6 +1,6 @@
 # Changelog
 
-## [5.8.3] - 2026-10-01
+## [5.8.4] - 2026-10-01
 
 ### Added
 - **Payload Permission Canonicalization, Deployment Healing, and Triple-Defense Umask Immunity (ADR-0053).**
@@ -9,6 +9,8 @@
   - Canonicalizes package archive (`.tar.zst`) permissions during sealing: directories are guaranteed `0755` (preserving setgid/sticky bits), executable binaries `0755`, and non-executable data files `0644` with unwanted group/other write bits stripped (`[INV-PERM-05]`).
   - Enforces `0755` directory permissions during transactional deployment to target rootfs, preventing ambient `sudo umask 0077` contamination and automatically self-healing previously deployed `0700` directories (`[INV-PERM-06]`).
   - Ensures plan authors are never burdened with manual `chmod` workarounds for standard packaging stages (`[INV-PERM-07]`).
+
+## [5.8.3] - 2026-10-01
 
 ### Changed
 - **Compilation Pipeline Optimization and Dependency Slimming (ADR-0052).**
