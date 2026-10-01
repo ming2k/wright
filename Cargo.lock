@@ -3976,7 +3976,7 @@ dependencies = [
 
 [[package]]
 name = "wright"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -4002,7 +4002,7 @@ dependencies = [
 
 [[package]]
 name = "wright-actions"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "bytes",
  "chrono",
@@ -4049,7 +4049,7 @@ dependencies = [
 
 [[package]]
 name = "wright-cache"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "libc",
  "sha2",
@@ -4060,7 +4060,7 @@ dependencies = [
 
 [[package]]
 name = "wright-config"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "figment",
  "libc",
@@ -4072,7 +4072,7 @@ dependencies = [
 
 [[package]]
 name = "wright-ledger"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "chrono",
  "serde",
@@ -4084,7 +4084,7 @@ dependencies = [
 
 [[package]]
 name = "wright-lock"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "libc",
  "tempfile",
@@ -4094,11 +4094,11 @@ dependencies = [
 
 [[package]]
 name = "wright-model"
-version = "5.8.1"
+version = "5.8.2"
 
 [[package]]
 name = "wright-part"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "bzip2",
  "chrono",
@@ -4124,7 +4124,7 @@ dependencies = [
 
 [[package]]
 name = "wright-plan"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "regex",
  "serde",
@@ -4139,7 +4139,7 @@ dependencies = [
 
 [[package]]
 name = "wright-registry"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4156,7 +4156,7 @@ dependencies = [
 
 [[package]]
 name = "wright-resolve"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "chrono",
  "serde",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "wright-sandbox"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "libc",
  "nix",
@@ -4191,7 +4191,7 @@ dependencies = [
 
 [[package]]
 name = "wright-scheduler"
-version = "5.8.1"
+version = "5.8.2"
 dependencies = [
  "tempfile",
  "thiserror",

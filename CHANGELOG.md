@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.8.2] - 2026-10-01
+
+### Added
+- **Directory Topology Preservation across Stage Layers (ADR-0051).**
+  - Promotes directories to first-class filesystem entities across the entire foundry lifecycle (`LayerManager`).
+  - Empty directories generated during early build stages (such as GNU Autotools or CMake creating `lib/deps` during `./configure`) are faithfully harvested into stage layers and preserved across stage boundaries without requiring `.keep` workarounds or plan script modifications (`[INV-LAYER-01]`, `[INV-LAYER-02]`).
+  - Empty directories in staging outputs are fully preserved during part slicing (`Mold::slice` / `hard_link_all`).
+  - Implements directory deletion tombstone tracking in `deletions.txt` to mirror directory removals into the merged base (`[INV-LAYER-03]`).
+- **Diagnostic Artifact Accessibility and Umask Immunity (ADR-0050).**
+  - Enforces deterministic, umask-immune permission sanitization across the forge workspace and logging subsystem.
+  - Per-stage build logs (`logs/*.log`, `slice-errors.log`) and daily diagnostic logs (`wright.log.YYYY-MM-DD`) are guaranteed to be world-readable (`0644`), and their parent directories world-traversable (`0755`), even when builds are triggered under strict umasks (such as `sudo`'s `0077`) (`[INV-PERM-01]`, `[INV-PERM-03]`).
+  - Isolation scratch directories (`.wright-isolation/`) remain strictly isolated (`0700`) (`[INV-PERM-02]`).
+
 ## [5.8.1] - 2026-09-27
 
 ### Added
