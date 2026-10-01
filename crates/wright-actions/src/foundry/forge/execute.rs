@@ -141,8 +141,10 @@ impl<'a> Forge<'a> {
 
         let expanded_script = crate::foundry::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{stage_name}.log"));
+        crate::util::fs::ensure_public_tree(&self.logs_dir, None).ok();
 
         let mut stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
+            crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
             use std::io::Write;
             let ok = write!(
                 f,
@@ -242,6 +244,7 @@ impl<'a> Forge<'a> {
             let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
             let _ = write!(log_file, "\n=== Exit code: {exit_code} ===\n",);
         }
+        crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
 
         if exit_code != 0 {
             return Err(WrightError::ForgeError(format!(
@@ -274,8 +277,10 @@ impl<'a> Forge<'a> {
 
         let expanded_script = crate::foundry::variables::substitute(&stage.script, &self.vars);
         let log_path = self.logs_dir.join(format!("{stage_name}.log"));
+        crate::util::fs::ensure_public_tree(&self.logs_dir, None).ok();
 
         let mut stdout_log_file = std::fs::File::create(&log_path).ok().and_then(|mut f| {
+            crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
             use std::io::Write;
             let ok = write!(
                 f,
@@ -371,6 +376,7 @@ impl<'a> Forge<'a> {
             let _ = std::io::copy(&mut result.stderr.file, &mut log_file);
             let _ = write!(log_file, "\n=== Exit code: {exit_code} ===\n",);
         }
+        crate::util::fs::relax_file_permissions(&log_path, crate::util::fs::FILE_PUBLIC_MODE);
 
         if exit_code != 0 {
             return Err(WrightError::ForgeError(format!(

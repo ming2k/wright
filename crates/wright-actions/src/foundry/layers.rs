@@ -179,12 +179,14 @@ impl LayerManager {
                 e,
             )
         })?;
+        crate::util::fs::ensure_public_dir(&layers_dir).ok();
         std::fs::create_dir_all(&base_dir).map_err(|e| {
             WrightError::context(
                 format!("failed to create base dir {}", base_dir.display()),
                 e,
             )
         })?;
+        crate::util::fs::ensure_public_dir(&base_dir).ok();
 
         // `target/` is a real directory (a symlink in pre-merged-base build
         // roots).  In fallback mode it is the stage's working tree; in
@@ -201,6 +203,7 @@ impl LayerManager {
                 e,
             )
         })?;
+        crate::util::fs::ensure_public_dir(&target_dir).ok();
 
         Ok(Self {
             layers_dir,
@@ -233,6 +236,7 @@ impl LayerManager {
         std::fs::create_dir_all(&dir).map_err(|e| {
             WrightError::context(format!("failed to create layer dir {}", dir.display()), e)
         })?;
+        crate::util::fs::ensure_public_dir(&dir).ok();
         Ok(dir)
     }
 
@@ -369,11 +373,51 @@ impl LayerManager {
             return Ok(());
         }
 
-        // Additions and modifications: anything in `target/` that is absent
+        let target_entries = collect_tree_entries(&self.target_dir)?;
+        let base_entries = collect_tree_entries(&self.base_dir)?;
+
+        // 1. Directory additions: any directory in `target/` that does not exist in `base/`
+        // (or was previously not a directory).
+        for target_dir in &target_entries.dirs {
+            let rel_path = target_dir
+                .strip_prefix(&self.target_dir)
+                .unwrap_or(target_dir);
+            let base_path = self.base_dir.join(rel_path);
+            let in_base = match std::fs::symlink_metadata(&base_path) {
+                Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
+                Err(_) => false,
+            };
+
+            if !in_base {
+                let dest = layer_dir.join(rel_path);
+                std::fs::create_dir_all(&dest).map_err(|e| {
+                    WrightError::context(
+                        format!("failed to create layer dir {}", dest.display()),
+                        e,
+                    )
+                })?;
+                if let Ok(meta) = std::fs::symlink_metadata(target_dir) {
+                    let _ = std::fs::set_permissions(&dest, meta.permissions());
+                }
+            } else if let (Ok(t_meta), Ok(b_meta)) = (
+                std::fs::symlink_metadata(target_dir),
+                std::fs::symlink_metadata(&base_path),
+            ) {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if t_meta.permissions().mode() != b_meta.permissions().mode() {
+                        let dest = layer_dir.join(rel_path);
+                        let _ = std::fs::create_dir_all(&dest);
+                        let _ = std::fs::set_permissions(&dest, t_meta.permissions());
+                    }
+                }
+            }
+        }
+
+        // 2. File additions and modifications: anything in `target/` that is absent
         // from, or differs from, the merged base.
-        let mut all_files: Vec<PathBuf> = Vec::new();
-        collect_files_recursive(&self.target_dir, &mut all_files)?;
-        for target_file in &all_files {
+        for target_file in &target_entries.files {
             let rel_path = target_file
                 .strip_prefix(&self.target_dir)
                 .unwrap_or(target_file);
@@ -390,17 +434,27 @@ impl LayerManager {
             }
         }
 
-        // Deletions: base entries the stage removed from `target/`.  These
+        // 3. Deletions: base entries the stage removed from `target/`. These
         // become tombstones applied to `base/` at merge time.
-        let mut base_files: Vec<PathBuf> = Vec::new();
-        collect_files_recursive(&self.base_dir, &mut base_files)?;
         let mut deletions: Vec<String> = Vec::new();
-        for base_file in &base_files {
+        for base_file in &base_entries.files {
             let rel_path = base_file.strip_prefix(&self.base_dir).unwrap_or(base_file);
             if std::fs::symlink_metadata(self.target_dir.join(rel_path)).is_err() {
                 deletions.push(rel_path.to_string_lossy().into_owned());
             }
         }
+        for base_dir in &base_entries.dirs {
+            let rel_path = base_dir.strip_prefix(&self.base_dir).unwrap_or(base_dir);
+            let in_target = match std::fs::symlink_metadata(self.target_dir.join(rel_path)) {
+                Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
+                Err(_) => false,
+            };
+            if !in_target {
+                deletions.push(rel_path.to_string_lossy().into_owned());
+            }
+        }
+        deletions.sort_by(|a, b| b.cmp(a));
+
         let tombstone = layer_dir.join(LAYER_DELETIONS_FILE);
         if deletions.is_empty() {
             let _ = std::fs::remove_file(&tombstone);
@@ -707,6 +761,10 @@ fn share_tree_sync(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                 }
                 Some(ft) if ft.is_dir() => {
                     if !path.is_symlink() {
+                        ensure_dest_dir(&dest_path)?;
+                        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                            let _ = std::fs::set_permissions(&dest_path, meta.permissions());
+                        }
                         dirs_to_visit.push(path);
                     }
                 }
@@ -771,7 +829,21 @@ fn reflink(src: &Path, dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+#[derive(Debug, Default)]
+struct TreeEntries {
+    dirs: Vec<PathBuf>,
+    files: Vec<PathBuf>,
+}
+
+fn collect_tree_entries(dir: &Path) -> Result<TreeEntries> {
+    let mut out = TreeEntries::default();
+    collect_tree_entries_recursive(dir, &mut out)?;
+    out.dirs.sort();
+    out.files.sort();
+    Ok(out)
+}
+
+fn collect_tree_entries_recursive(dir: &Path, out: &mut TreeEntries) -> Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
     };
@@ -779,11 +851,12 @@ fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry.path();
         let ft = entry.file_type().ok();
         match ft {
-            Some(ft) if ft.is_symlink() => out.push(path),
+            Some(ft) if ft.is_symlink() => out.files.push(path),
             Some(ft) if ft.is_dir() && !path.is_symlink() => {
-                collect_files_recursive(&path, out)?;
+                out.dirs.push(path.clone());
+                collect_tree_entries_recursive(&path, out)?;
             }
-            _ => out.push(path),
+            _ => out.files.push(path),
         }
     }
     Ok(())
@@ -1137,5 +1210,69 @@ mod tests {
             assert_eq!(read(&a), "original");
             assert_eq!(read(&b), "original+appended");
         }
+    }
+
+    #[test]
+    fn empty_directories_are_preserved_across_stages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let build_root = tmp.path().join("workshop/pkg-1.0");
+        let source = tmp.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        write_file(&source.join("Makefile.in"), "all:\n");
+
+        let mgr = LayerManager::new(&build_root).unwrap();
+        mgr.reconcile_base(&source, &[]).unwrap();
+
+        // Stage 1: configure creates empty scaffolding directories (Autotools lib/deps pattern)
+        mgr.prepare_upper_layer("configure").unwrap();
+        mgr.populate_target().unwrap();
+        let target = mgr.target_dir();
+        std::fs::create_dir_all(target.join("lib/deps")).unwrap();
+        std::fs::create_dir_all(target.join("nested/empty/sub")).unwrap();
+        write_file(&target.join("Makefile"), "all: target\n");
+
+        mgr.commit_layer("configure").unwrap();
+        let layer_cfg = mgr.layer_dir("configure");
+
+        // INV-LAYER-01: Empty directories must be harvested into stage layer
+        assert!(layer_cfg.join("lib/deps").is_dir(), "layer must capture empty directory lib/deps");
+        assert!(layer_cfg.join("nested/empty/sub").is_dir(), "layer must capture nested empty directory");
+
+        let completed = vec!["configure".to_string()];
+        mgr.merge_layer_into_base("configure", &source, &completed).unwrap();
+        let base = build_root.join("base");
+        assert!(base.join("lib/deps").is_dir(), "base must contain lib/deps");
+        assert!(base.join("nested/empty/sub").is_dir(), "base must contain nested/empty/sub");
+
+        // Stage 2: compile starts. populate_target must provide lib/deps to target/
+        mgr.prepare_upper_layer("compile").unwrap();
+        mgr.populate_target().unwrap();
+
+        // INV-LAYER-02: Next stage working tree must inherit empty directories intact
+        assert!(target.join("lib/deps").is_dir(), "compile target must have lib/deps present");
+        assert!(target.join("nested/empty/sub").is_dir(), "compile target must have nested/empty/sub present");
+
+        // Stage 2 compiler writes dependency file into lib/deps
+        write_file(&target.join("lib/deps/alloca.Po"), "# dep file");
+        mgr.commit_layer("compile").unwrap();
+
+        let completed = vec!["configure".to_string(), "compile".to_string()];
+        mgr.merge_layer_into_base("compile", &source, &completed).unwrap();
+        assert_eq!(read(&base.join("lib/deps/alloca.Po")), "# dep file");
+
+        // Stage 3: deletion of empty directory produces tombstone and updates base (INV-LAYER-03)
+        mgr.prepare_upper_layer("clean").unwrap();
+        mgr.populate_target().unwrap();
+        std::fs::remove_dir(target.join("nested/empty/sub")).unwrap();
+        mgr.commit_layer("clean").unwrap();
+
+        let layer_clean = mgr.layer_dir("clean");
+        let deletions = read(&layer_clean.join(LAYER_DELETIONS_FILE));
+        assert!(deletions.lines().any(|l| l == "nested/empty/sub"), "tombstone must include deleted empty dir");
+
+        let completed = vec!["configure".to_string(), "compile".to_string(), "clean".to_string()];
+        mgr.merge_layer_into_base("clean", &source, &completed).unwrap();
+        assert!(!base.join("nested/empty/sub").exists(), "deleted dir must be unlinked from base");
+        assert!(base.join("nested/empty").is_dir(), "parent directory must remain");
     }
 }

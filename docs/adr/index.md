@@ -51,3 +51,5 @@
 | [ADR-0047](0047-bidirectional-subgraph-expansion-and-blast-radius-control.md) | Bidirectional subgraph expansion and blast radius control | Accepted |
 | [ADR-0048](0048-action-graph-scheduler-and-domain-storage.md) | Action graph scheduler and domain-centric storage architecture | Accepted |
 | [ADR-0049](0049-plan-output-evolution-and-atomic-retirement.md) | Plan output evolution, automated retirement, and resilient storage transactions | Accepted |
+| [ADR-0050](0050-diagnostic-artifact-accessibility-and-permission-boundaries.md) | Diagnostic artifact accessibility, explicit permission boundaries, and umask immunity | Accepted |
+| [ADR-0051](0051-directory-topology-preservation-in-stage-layers.md) | Directory topology preservation and first-class directory lifecycle in stage layers | Accepted |

@@ -1,6 +1,7 @@
 pub mod checksum;
 pub mod display;
 pub mod download;
+pub mod fs;
 pub mod logging;
 pub mod output;
 pub mod progress;

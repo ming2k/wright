@@ -335,3 +335,5 @@ the same time.
   layers with sandbox-mounted stage overlays (superseded)
 - [ADR-0037](../adr/0037-real-directory-stage-trees.md) — real directory
   stage working trees
+- [ADR-0051](../adr/0051-directory-topology-preservation-in-stage-layers.md) — directory
+  topology preservation and first-class directory lifecycle in stage layers

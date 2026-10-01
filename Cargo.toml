@@ -60,6 +60,7 @@ wright-sandbox = { path = "crates/wright-sandbox" }
 wright-scheduler = { path = "crates/wright-scheduler" }
 
 [dev-dependencies]
+libc = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3"
 

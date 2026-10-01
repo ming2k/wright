@@ -151,3 +151,98 @@ install -Dm644 source/demo/target/artifact.o "${STAGING_DIR}/usr/share/demo/arti
         "built\n"
     );
 }
+
+/// An earlier stage (e.g. configure) creates an empty directory scaffolding
+/// (e.g. `mkdir -p lib/deps` as in GNU Autotools / Emacs). A later stage (compile)
+/// relies on that directory already existing (ADR-0051).
+#[test]
+fn stage_working_tree_preserves_empty_scaffolding_directories_across_stages() {
+    let root = tempfile::tempdir().unwrap();
+    let (config_path, forge_dir) = isolated_config(&root);
+
+    let plan_dir = root.path().join("plans/empty-dir-scaffolding");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "empty-dir-scaffolding"
+version = "1.0.0"
+release = 1
+description = "empty scaffolding directories must survive across stages"
+license = "MIT"
+arch = "x86_64"
+
+link_deps = []
+
+[pipeline.configure]
+executor = "shell"
+isolation = "relaxed"
+script = """
+# Autotools / CMake pattern: create empty directory for dependency tracking files
+mkdir -p lib/deps
+mkdir -p nested/scaffolding/deep
+echo "configured" > config.status
+"""
+
+[pipeline.compile]
+executor = "shell"
+isolation = "relaxed"
+script = """
+# Verify that the empty directory created in configure is present in compile
+test -d lib/deps || { echo "lib/deps missing in compile stage!" >&2; exit 1; }
+test -d nested/scaffolding/deep || { echo "nested/scaffolding/deep missing in compile stage!" >&2; exit 1; }
+
+# Write compiler dependency output into the pre-created directory
+echo "alloca.o: alloca.c" > lib/deps/alloca.Po
+echo "compiled_binary" > prog
+"""
+
+[pipeline.staging]
+executor = "shell"
+isolation = "relaxed"
+script = """
+test -d lib/deps || { echo "lib/deps missing in staging stage!" >&2; exit 1; }
+install -Dm755 prog "${STAGING_DIR}/usr/bin/prog"
+"""
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("build")
+        .arg("empty-dir-scaffolding")
+        .arg("--until-stage")
+        .arg("staging")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wright build failed: stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build_root = forge_dir.join("empty-dir-scaffolding-1.0.0");
+
+    // INV-LAYER-01: Empty directory was harvested into configure layer
+    assert!(
+        build_root.join("layers/02-configure/lib/deps").is_dir(),
+        "configure layer must have captured empty directory lib/deps"
+    );
+    assert!(
+        build_root.join("layers/02-configure/nested/scaffolding/deep").is_dir(),
+        "configure layer must have captured deeply nested empty directory"
+    );
+
+    // INV-LAYER-02: Compile stage successfully populated files in the pre-existing directory
+    assert_eq!(
+        std::fs::read_to_string(build_root.join("base/lib/deps/alloca.Po")).unwrap(),
+        "alloca.o: alloca.c\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(build_root.join("staging/usr/bin/prog")).unwrap(),
+        "compiled_binary\n"
+    );
+}

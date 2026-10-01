@@ -817,6 +817,30 @@ pub fn init_logging(
     cli_filter: tracing_subscriber::EnvFilter,
 ) -> tracing_appender::non_blocking::WorkerGuard {
     let _ = std::fs::create_dir_all(log_dir);
+    crate::util::fs::ensure_public_tree(log_dir, None).ok();
+
+    // Pre-create/relax today's log file with world-readable permissions (INV-PERM-01)
+    let today_path = today_log_path(log_dir);
+    if let Ok(f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&today_path)
+    {
+        drop(f);
+        crate::util::fs::relax_file_permissions(&today_path, crate::util::fs::FILE_PUBLIC_MODE);
+    }
+
+    // Also relax any existing daily logs in log_dir if permitted
+    if let Ok(entries) = std::fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("wright.log") {
+                    crate::util::fs::relax_file_permissions(&p, crate::util::fs::FILE_PUBLIC_MODE);
+                }
+            }
+        }
+    }
 
     // 1. File handler — structured JSON for diagnostics. DEBUG by default,
     //    overridable via WRIGHT_LOG.

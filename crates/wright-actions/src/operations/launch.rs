@@ -232,9 +232,14 @@ fn ensure_target_skeleton(root_dir: &Path) -> std::io::Result<()> {
         "var/lib/wright/sources",
         "var/log/wright",
         "var/tmp/wright",
+        "var/tmp/wright/workshop",
         "etc/wright",
     ] {
-        std::fs::create_dir_all(root_dir.join(sub))?;
+        let p = root_dir.join(sub);
+        std::fs::create_dir_all(&p)?;
+        if sub.starts_with("var/log") || sub.starts_with("var/tmp") {
+            crate::util::fs::ensure_public_tree(&p, Some(root_dir)).ok();
+        }
     }
     Ok(())
 }

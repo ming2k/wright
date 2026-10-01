@@ -316,6 +316,7 @@ impl Foundry {
         }
 
         let build_root = self.build_root(manifest)?;
+        crate::util::fs::ensure_public_tree_async(&build_root, Some(&self.config.build.forge_dir)).await.ok();
 
         // Reap any stale overlay mounts left behind by a prior crash or
         // forced termination.  This prevents EBUSY when the user later
@@ -563,7 +564,9 @@ async fn ensure_clean_dir(dir: &Path) -> Result<()> {
             format!("failed to create forge directory {}", dir.display()),
             e,
         )
-    })
+    })?;
+    crate::util::fs::ensure_public_dir_async(dir).await.ok();
+    Ok(())
 }
 
 fn dir_is_populated(dir: &Path) -> bool {

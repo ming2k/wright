@@ -125,6 +125,15 @@ make
 Log files are **always written**, regardless of whether `-v` is set. `-v`
 additionally echoes output to the terminal in real time.
 
+### Permissions and Diagnostic Accessibility
+
+In accordance with ADR-0050, Wright enforces deterministic, umask-immune permissions across the forge:
+- **Build Root and Log Directories** (`<forge_dir>/<name>-<version>/`, `logs/`, `staging/`, `outputs/`): created with mode `0755` (`drwxr-xr-x`).
+- **Stage Logs** (`logs/*.log`, `slice-errors.log`): created with mode `0644` (`-rw-r--r--`).
+- **Isolation Scratch** (`.wright-isolation/`): created with mode `0700` (`drwx------`) to strictly isolate kernel mounts and OverlayFS work directories.
+
+Even when builds are triggered under privileged execution (`sudo wright install` or `sudo wright build`) where the host environment enforces a restrictive umask (`0077`), logs and public staging directories remain readable and traversable by unprivileged users for debugging, bug reporting, and auditing.
+
 ### On failure
 
 When a stage exits non-zero, the last 40 lines of stderr (or stdout if stderr
