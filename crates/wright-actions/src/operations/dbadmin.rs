@@ -185,7 +185,30 @@ pub async fn execute_reindex(
                 crate::cli_output!("  {}:{}", plan.name, part.name);
             }
         }
+        for name in wright_part::archive::ARCHIVE_METADATA_FILES {
+            let leaked = root_dir.join(name.trim_start_matches('/'));
+            if leaked.is_file() || leaked.is_symlink() {
+                crate::cli_output!("  would remove leaked metadata file: {}", leaked.display());
+            }
+        }
         return Ok(());
+    }
+
+    // Purge any leaked archive protocol metadata files at the target root.
+    for name in wright_part::archive::ARCHIVE_METADATA_FILES {
+        let leaked = root_dir.join(name.trim_start_matches('/'));
+        if leaked.is_file() || leaked.is_symlink() {
+            match std::fs::remove_file(&leaked) {
+                Ok(()) => {
+                    crate::cli_action!("Cleaned", "leaked metadata file {}", leaked.display())
+                }
+                Err(e) => crate::cli_warn!(
+                    "failed to remove leaked metadata file {}: {}",
+                    leaked.display(),
+                    e
+                ),
+            }
+        }
     }
 
     // Preserve what the current registry still knows about origins; a damaged

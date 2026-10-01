@@ -248,3 +248,243 @@ fn test_daily_log_permissions_under_strict_umask() {
         file_mode
     );
 }
+
+#[test]
+fn test_sandbox_direct_exec_resets_umask() {
+    let src = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let mut config = wright::sandbox::IsolationConfig::new(
+        wright::sandbox::IsolationLevel::None,
+        src.path().to_path_buf(),
+        out.path().to_path_buf(),
+        "perm-test-task".to_string(),
+    );
+
+    let old_umask = unsafe { libc::umask(0o077) };
+    let output = wright::sandbox::run_in_isolation(
+        &mut config,
+        "/bin/sh",
+        &["-c".to_string(), "umask".to_string()],
+    )
+    .unwrap();
+    unsafe { libc::umask(old_umask) };
+
+    assert!(output.status.success());
+    let stdout = output.stdout.tail.trim().to_string();
+    assert_eq!(stdout, "0022", "child process umask must be reset to 0022");
+}
+
+#[test]
+fn test_staging_and_archive_sealing_permissions_under_strict_umask() {
+    let old_umask = unsafe { libc::umask(0o077) };
+
+    let staging_tmp = tempfile::tempdir().unwrap();
+    let staging_dir = staging_tmp.path();
+
+    // Create nested directories with restricted 0700 mode (simulating sudo umask 0077)
+    let nested_dir = staging_dir.join("usr/libexec/mytool/31.1");
+    std::fs::create_dir_all(&nested_dir).unwrap();
+    std::fs::set_permissions(&nested_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let share_dir = staging_dir.join("usr/share/mytool/lisp");
+    std::fs::create_dir_all(&share_dir).unwrap();
+    std::fs::set_permissions(&share_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Create executable with 0700 mode
+    let helper_bin = nested_dir.join("helper");
+    std::fs::write(&helper_bin, b"#!/bin/sh\necho ok\n").unwrap();
+    std::fs::set_permissions(&helper_bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    // Create data file with 0600 mode
+    let lisp_file = share_dir.join("init.el");
+    std::fs::write(&lisp_file, b";; lisp init\n").unwrap();
+    std::fs::set_permissions(&lisp_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    // Create archive
+    let out_tmp = tempfile::tempdir().unwrap();
+    let archive_path = out_tmp.path().join("test.tar.zst");
+    wright::part::compression::create_tar_zst(staging_dir, &archive_path).unwrap();
+
+    // Verify tar archive headers contain canonicalized permissions (0755 dirs/executables, 0644 files)
+    let file = std::fs::File::open(&archive_path).unwrap();
+    let decoder = zstd::Decoder::new(file).unwrap();
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().to_string();
+        let mode = entry.header().mode().unwrap() & 0o777;
+        let entry_type = entry.header().entry_type();
+        if entry_type == tar::EntryType::Directory {
+            assert_eq!(
+                mode, 0o755,
+                "tar directory entry '{path}' must be 0755, got {mode:o}"
+            );
+        } else if path.ends_with("helper") {
+            assert_eq!(
+                mode, 0o755,
+                "tar executable entry '{path}' must be 0755, got {mode:o}"
+            );
+        } else if path.ends_with("init.el") {
+            assert_eq!(
+                mode, 0o644,
+                "tar data file entry '{path}' must be 0644, got {mode:o}"
+            );
+        }
+    }
+
+    // Verify unpacking under strict umask 0077 still materializes 0755 dirs and 0644 files
+    let extract_tmp = tempfile::tempdir().unwrap();
+    wright::part::compression::extract_tar_zst(&archive_path, extract_tmp.path()).unwrap();
+
+    unsafe { libc::umask(old_umask) };
+
+    let extracted_nested = extract_tmp.path().join("usr/libexec/mytool/31.1");
+    let extracted_share = extract_tmp.path().join("usr/share/mytool/lisp");
+    let extracted_helper = extracted_nested.join("helper");
+    let extracted_lisp = extracted_share.join("init.el");
+
+    let nested_mode =
+        std::fs::metadata(&extracted_nested).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        nested_mode, 0o755,
+        "unpacked directory must be 0755, got {nested_mode:o}"
+    );
+
+    let share_mode =
+        std::fs::metadata(&extracted_share).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        share_mode, 0o755,
+        "unpacked directory must be 0755, got {share_mode:o}"
+    );
+
+    let helper_mode =
+        std::fs::metadata(&extracted_helper).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        helper_mode, 0o755,
+        "unpacked executable must be 0755, got {helper_mode:o}"
+    );
+
+    let lisp_mode =
+        std::fs::metadata(&extracted_lisp).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        lisp_mode, 0o644,
+        "unpacked data file must be 0644, got {lisp_mode:o}"
+    );
+}
+
+#[tokio::test]
+async fn test_deploy_directory_and_file_materialization_under_strict_umask() {
+    let old_umask = unsafe { libc::umask(0o077) };
+
+    let db = wright::database::InstalledDb::open_in_memory().await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let ledger = tempfile::tempdir().unwrap();
+
+    // Pre-create an existing directory with restricted 0700 permissions on the target root
+    // to test that deployment heals existing restricted directories!
+    let preexisting_dir = root.path().join("usr/share/mytool");
+    std::fs::create_dir_all(&preexisting_dir).unwrap();
+    std::fs::set_permissions(&preexisting_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        std::fs::metadata(&preexisting_dir).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+
+    // Build a test package
+    let plan_tmp = tempfile::tempdir().unwrap();
+    let plan_toml = r#"
+name = "pkg-perm-test"
+version = "1.0.0"
+release = 1
+arch = "x86_64"
+description = "permission test part"
+license = "MIT"
+
+[pipeline.staging]
+isolation = "none"
+script = """
+mkdir -p ${STAGING_DIR}/usr/libexec/mytool/31.1
+mkdir -p ${STAGING_DIR}/usr/share/mytool/lisp
+echo '#!/bin/sh' > ${STAGING_DIR}/usr/libexec/mytool/31.1/helper
+chmod 700 ${STAGING_DIR}/usr/libexec/mytool/31.1/helper
+echo '; lisp' > ${STAGING_DIR}/usr/share/mytool/lisp/init.el
+"""
+"#;
+    std::fs::write(plan_tmp.path().join("plan.toml"), plan_toml).unwrap();
+    let manifest = PlanManifest::from_file(&plan_tmp.path().join("plan.toml")).unwrap();
+    let mut config = GlobalConfig::default();
+    let build_tmp = tempfile::tempdir().unwrap();
+    config.build.forge_dir = build_tmp.path().to_path_buf();
+    let parts_tmp = tempfile::tempdir().unwrap();
+    config.general.parts_dir = parts_tmp.path().to_path_buf();
+
+    let foundry = Foundry::new(config.clone());
+    let result = foundry
+        .build(
+            &manifest,
+            plan_tmp.path(),
+            Path::new("/"),
+            BuildOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let archive = wright::part::archive::create_part(&result.staging_dir, &manifest, parts_tmp.path(), None).unwrap();
+    assert!(archive.exists(), "sealed archive must exist at {}", archive.display());
+
+    let session = wright::database::SessionContext {
+        id: "perm-test-session".into(),
+        command: "install".into(),
+    };
+
+    // Deploy to target root under strict umask 0077
+    wright::transaction::deploy_part(&db, &archive, root.path(), false, session, ledger.path())
+        .await
+        .unwrap();
+
+    unsafe { libc::umask(old_umask) };
+
+    // Verify all target directories are 0755
+    let usr_dir = root.path().join("usr");
+    let libexec_dir = root.path().join("usr/libexec");
+    let mytool_libexec = root.path().join("usr/libexec/mytool");
+    let mytool_ver = root.path().join("usr/libexec/mytool/31.1");
+    let share_dir = root.path().join("usr/share");
+    let share_mytool = root.path().join("usr/share/mytool");
+    let share_lisp = root.path().join("usr/share/mytool/lisp");
+
+    for dir in [
+        &usr_dir,
+        &libexec_dir,
+        &mytool_libexec,
+        &mytool_ver,
+        &share_dir,
+        &share_mytool,
+        &share_lisp,
+    ] {
+        let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o755,
+            "target directory '{}' must be 0755, got {mode:o}",
+            dir.display()
+        );
+    }
+
+    // Verify files on target root
+    let helper_file = mytool_ver.join("helper");
+    let init_el_file = share_lisp.join("init.el");
+
+    let helper_mode = std::fs::metadata(&helper_file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        helper_mode, 0o755,
+        "executable file '{}' must be 0755, got {helper_mode:o}",
+        helper_file.display()
+    );
+
+    let init_el_mode = std::fs::metadata(&init_el_file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        init_el_mode, 0o644,
+        "data file '{}' must be 0644, got {init_el_mode:o}",
+        init_el_file.display()
+    );
+}

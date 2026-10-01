@@ -3893,6 +3893,7 @@ dependencies = [
  "clap_mangen",
  "libc",
  "rusqlite",
+ "tar",
  "tempfile",
  "tokio",
  "tracing",
@@ -3908,6 +3909,7 @@ dependencies = [
  "wright-resolve",
  "wright-sandbox",
  "wright-scheduler",
+ "zstd",
 ]
 
 [[package]]

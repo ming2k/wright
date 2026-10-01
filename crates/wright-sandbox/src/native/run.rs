@@ -161,6 +161,12 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
             match unsafe { fork() } {
                 Ok(ForkResult::Child) => {
                     // Grandchild — PID 1 in the new PID namespace.
+                    // Enforce standard build umask (022) so that any files or directories
+                    // created during sandbox preparation or build stage execution are
+                    // world-readable and world-traversable (0755/0644).
+                    unsafe {
+                        libc::umask(0o022);
+                    }
                     if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) } != 0 {
                         die(format!(
                             "set namespace-init parent-death signal: {}",
@@ -484,6 +490,12 @@ fn run_local(config: &IsolationConfig, command: &str, args: &[String]) -> Result
                     // execve — build-script pipelines (`tar … | head`) must
                     // see the traditional death, not EPIPE write errors.
                     crate::restore_default_sigpipe();
+
+                    // Defend stage command against inherited strict umask (e.g. sudo 0077)
+                    // by explicitly resetting umask to standard 0022.
+                    unsafe {
+                        libc::umask(0o022);
+                    }
 
                     // Defensive retry for ETXTBUSY: multiple lowerdirs may
                     // kernels or filesystem configurations may briefly report the

@@ -339,6 +339,11 @@ impl Mold {
             for (file_path, dest_path) in link_actions {
                 if let Some(parent) = dest_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).await;
+                    }
                 }
                 if let Err(e) = link_or_copy(&file_path, &dest_path).await {
                     return Err(WrightError::context(
@@ -355,6 +360,11 @@ impl Mold {
             for (dest_path, target) in symlink_actions {
                 if let Some(parent) = dest_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).await;
+                    }
                 }
                 tokio::fs::symlink(&target, &dest_path).await.map_err(|e| {
                     WrightError::context(
@@ -413,6 +423,11 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                 let dest_path = dest_dir.join(rel_path);
                 if let Some(parent) = dest_path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).await;
+                    }
                 }
 
                 match file_type {
@@ -437,8 +452,23 @@ async fn hard_link_all(src_dir: &Path, dest_dir: &Path) -> Result<()> {
                     Some(ft) if ft.is_dir() => {
                         let _ = tokio::fs::create_dir_all(&dest_path).await;
                         if let Ok(meta) = tokio::fs::symlink_metadata(&path).await {
-                            let _ =
-                                tokio::fs::set_permissions(&dest_path, meta.permissions()).await;
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let mode = wright_part::compression::canonicalize_dir_mode(
+                                    meta.permissions().mode(),
+                                );
+                                let _ = tokio::fs::set_permissions(
+                                    &dest_path,
+                                    std::fs::Permissions::from_mode(mode),
+                                )
+                                .await;
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ =
+                                    tokio::fs::set_permissions(&dest_path, meta.permissions()).await;
+                            }
                         }
                         dirs_to_visit.push(path);
                     }

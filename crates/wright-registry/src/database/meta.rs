@@ -73,6 +73,55 @@ impl ReadOnlyDb {
         .await
     }
 
+    /// Check for archive-level protocol metadata files mistakenly recorded
+    /// into the `files` or `shadowed_files` tables.
+    pub async fn get_leaked_metadata_conflicts(
+        &self,
+        metadata_files: &[&str],
+    ) -> Result<Vec<String>> {
+        let targets: Vec<String> = metadata_files
+            .iter()
+            .map(|name| format!("/{}", name.trim_start_matches('/')))
+            .collect();
+        self.read(move |conn| {
+            let mut results = Vec::new();
+            for target in &targets {
+                let mut stmt = conn.prepare(
+                    "SELECT p.name, f.path FROM files f
+                     JOIN parts p ON f.part_id = p.id
+                     WHERE f.path = ?1",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![target], |row| {
+                    let part: String = row.get(0)?;
+                    let path: String = row.get(1)?;
+                    Ok(format!(
+                        "Archive metadata '{}' leaked into installed part '{}'",
+                        path, part
+                    ))
+                })?;
+                for r in rows {
+                    results.push(r?);
+                }
+
+                let mut stmt_shadow = conn.prepare(
+                    "SELECT path FROM shadowed_files WHERE path = ?1",
+                )?;
+                let rows_shadow = stmt_shadow.query_map(rusqlite::params![target], |row| {
+                    let path: String = row.get(0)?;
+                    Ok(format!(
+                        "Archive metadata '{}' present in shadowed conflicts",
+                        path
+                    ))
+                })?;
+                for r in rows_shadow {
+                    results.push(r?);
+                }
+            }
+            Ok(results)
+        })
+        .await
+    }
+
     pub async fn get_history(&self, part: Option<&str>) -> Result<Vec<HistoryRecord>> {
         let part = part.map(|s| s.to_string());
         self.read(move |conn| {

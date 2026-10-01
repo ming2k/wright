@@ -671,4 +671,50 @@ mod tests {
         let part = db.get_part("host-lib").await.unwrap().unwrap();
         assert_eq!(part.origin, Origin::External);
     }
+
+    #[tokio::test]
+    async fn test_get_leaked_metadata_conflicts() {
+        let db = test_db().await;
+        let part_id = db
+            .insert_part(NewPart {
+                name: "pkg-a",
+                plan_id: 1,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let conflicts = db
+            .get_leaked_metadata_conflicts(&[".ABIINFO", ".PARTINFO"])
+            .await
+            .unwrap();
+        assert!(conflicts.is_empty());
+
+        let files = vec![
+            FileEntry {
+                path: "/usr/bin/tool".to_string(),
+                file_hash: Some("abc".to_string()),
+                file_size: Some(10),
+                file_type: FileType::File,
+                file_mode: Some(0o755),
+                is_config: false,
+            },
+            FileEntry {
+                path: "/.ABIINFO".to_string(),
+                file_hash: Some("abi".to_string()),
+                file_size: Some(20),
+                file_type: FileType::File,
+                file_mode: Some(0o644),
+                is_config: false,
+            },
+        ];
+        db.insert_files(part_id, &files).await.unwrap();
+
+        let conflicts = db
+            .get_leaked_metadata_conflicts(&[".ABIINFO", ".PARTINFO"])
+            .await
+            .unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("/.ABIINFO"));
+    }
 }

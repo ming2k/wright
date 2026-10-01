@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use wright_part::archive::PartInfo;
+use wright_part::archive::{is_archive_metadata, PartInfo};
 use wright_registry::database::{FileEntry, FileType};
 
 pub(super) fn collect_file_entries(
@@ -20,13 +20,7 @@ pub(super) fn collect_file_entries(
         .filter_map(|e| e.ok())
         .filter(|e| {
             let rel = e.path().strip_prefix(extract_dir).unwrap_or(e.path());
-            let s = rel.to_string_lossy();
-            !s.is_empty()
-                && !s.starts_with(".PARTINFO")
-                && !s.starts_with(".FILELIST")
-                && !s.starts_with(".HOOKS")
-                && !s.starts_with(".PLANSRC")
-                && !s.starts_with(".BUILDINFO")
+            !rel.as_os_str().is_empty() && !is_archive_metadata(rel)
         })
         .collect();
 
@@ -66,6 +60,17 @@ pub(super) fn collect_file_entries(
 
         let is_config = backup_set.contains(file_path.as_str());
 
+        let mode = metadata.permissions().mode();
+        let file_mode = match file_type {
+            FileType::Directory => {
+                Some(wright_part::compression::canonicalize_dir_mode(mode) as i64)
+            }
+            FileType::File => {
+                Some(wright_part::compression::canonicalize_file_mode(mode) as i64)
+            }
+            FileType::Symlink => Some(mode as i64),
+        };
+
         entries.push(FileEntry {
             path: file_path,
             file_hash,
@@ -75,7 +80,7 @@ pub(super) fn collect_file_entries(
                 None
             },
             file_type,
-            file_mode: Some(metadata.permissions().mode() as i64),
+            file_mode,
             is_config,
         });
     }
@@ -138,8 +143,19 @@ pub(super) async fn copy_entries_to_root(
                     e,
                 )
             })?;
-            tx.record_created(dest_path, true)?;
+            tx.record_created(dest_path.clone(), true)?;
         }
+        // Normalize directory permissions on rootfs to ensure traversability (0755),
+        // preventing ambient sudo umask (0077) from polluting rootfs directories.
+        let target_mode = match entry.file_mode {
+            Some(m) => wright_part::compression::canonicalize_dir_mode(m as u32),
+            None => 0o755,
+        };
+        let _ = tokio::fs::set_permissions(
+            &dest_path,
+            std::fs::Permissions::from_mode(target_mode),
+        )
+        .await;
     }
 
     // --- Phase 2: install files and symlinks ---
@@ -223,9 +239,11 @@ pub(super) async fn copy_entries_to_root(
                     WrightError::context(format!("failed to write {}", side_path.display()), e)
                 })?;
                 if let Some(mode) = entry.file_mode {
+                    let sanitized =
+                        wright_part::compression::canonicalize_file_mode(mode as u32);
                     let _ = tokio::fs::set_permissions(
                         &side_path,
-                        std::fs::Permissions::from_mode(mode as u32),
+                        std::fs::Permissions::from_mode(sanitized),
                     )
                     .await;
                 }
@@ -253,9 +271,11 @@ pub(super) async fn copy_entries_to_root(
                     )
                 })?;
                 if let Some(mode) = entry.file_mode {
+                    let sanitized =
+                        wright_part::compression::canonicalize_file_mode(mode as u32);
                     let _ = tokio::fs::set_permissions(
                         &dest_path,
-                        std::fs::Permissions::from_mode(mode as u32),
+                        std::fs::Permissions::from_mode(sanitized),
                     )
                     .await;
                 }
@@ -282,9 +302,11 @@ pub(super) async fn copy_entries_to_root(
                     )
                 })?;
                 if let Some(mode) = entry.file_mode {
+                    let sanitized =
+                        wright_part::compression::canonicalize_file_mode(mode as u32);
                     let _ = tokio::fs::set_permissions(
                         &dest_path,
-                        std::fs::Permissions::from_mode(mode as u32),
+                        std::fs::Permissions::from_mode(sanitized),
                     )
                     .await;
                 }
@@ -294,4 +316,88 @@ pub(super) async fn copy_entries_to_root(
     }
 
     Ok(preserved_configs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use wright_part::archive::{PartInfo, PlanMetadata, ARCHIVE_METADATA_FILES};
+
+    fn dummy_partinfo() -> PartInfo {
+        PartInfo {
+            name: "test-pkg".to_string(),
+            build_date: "2025-01-01".to_string(),
+            runtime_deps: vec![],
+            replaces: vec![],
+            conflicts: vec![],
+            backup_files: vec!["/etc/app.conf".to_string()],
+            plan: PlanMetadata {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                release: 1,
+                epoch: 0,
+                arch: "x86_64".to_string(),
+            },
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn deploy_invariant_filters_all_root_metadata_and_preserves_payload() {
+        let extract = tempdir().unwrap();
+        let partinfo = dummy_partinfo();
+
+        // 1. Populate normal payload
+        std::fs::create_dir_all(extract.path().join("usr/bin")).unwrap();
+        std::fs::write(extract.path().join("usr/bin/my-binary"), b"ELF content").unwrap();
+
+        std::fs::create_dir_all(extract.path().join("etc")).unwrap();
+        std::fs::write(extract.path().join("etc/app.conf"), "setting = 1").unwrap();
+
+        // 2. Populate payload sharing name with metadata in subdirectory
+        std::fs::create_dir_all(extract.path().join("usr/share/doc")).unwrap();
+        std::fs::write(extract.path().join("usr/share/doc/.ABIINFO"), "nested abi docs").unwrap();
+
+        // 3. Populate ALL root archive protocol metadata files in extract dir
+        for name in ARCHIVE_METADATA_FILES {
+            std::fs::write(
+                extract.path().join(name),
+                format!("metadata content for {}", name),
+            )
+            .unwrap();
+        }
+
+        // 4. Collect file entries
+        let entries =
+            collect_file_entries(extract.path(), &partinfo).expect("collect_file_entries");
+
+        // Verify: None of the root metadata files are collected into entries
+        for name in ARCHIVE_METADATA_FILES {
+            let forbidden_path = format!("/{}", name);
+            assert!(
+                !entries.iter().any(|e| e.path == forbidden_path),
+                "{} leaked into collected deploy FileEntry!",
+                forbidden_path
+            );
+        }
+
+        // Verify: No entry whatsoever matches is_archive_metadata
+        assert!(
+            !entries
+                .iter()
+                .any(|e| is_archive_metadata(Path::new(&e.path))),
+            "no entry in FileEntry should match is_archive_metadata"
+        );
+
+        // Verify: Real payload is preserved
+        assert!(entries.iter().any(|e| e.path == "/usr/bin/my-binary"));
+        assert!(entries
+            .iter()
+            .any(|e| e.path == "/etc/app.conf" && e.is_config));
+        assert!(
+            entries.iter().any(|e| e.path == "/usr/share/doc/.ABIINFO"),
+            "nested file /usr/share/doc/.ABIINFO must be preserved as payload"
+        );
+    }
 }

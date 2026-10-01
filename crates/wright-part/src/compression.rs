@@ -3,10 +3,47 @@
 use std::io::Read;
 use std::path::{Component, Path};
 
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
 use sha2::{Digest, Sha256};
 
 use crate::error::{Result, WrightError};
 use tracing::warn;
+
+/// Canonicalize directory permissions for package archives and deployment.
+///
+/// Ensures all directories are traversable and readable by all users (`0o755`),
+/// preserving special bits (setuid `0o4000`, setgid `0o2000`, sticky `0o1000`).
+/// If sticky bit is set (like `/tmp`), preserves permissions (e.g. `0o1777`).
+/// Strips unwanted group and other write bits on non-sticky directories.
+#[inline]
+pub fn canonicalize_dir_mode(raw_mode: u32) -> u32 {
+    let special = raw_mode & 0o7000;
+    if special & 0o1000 != 0 {
+        raw_mode | 0o755
+    } else {
+        special | 0o755
+    }
+}
+
+/// Canonicalize regular file permissions for package archives and deployment.
+///
+/// Follows standard packaging conventions (e.g. Arch `makepkg`, Debian `dpkg`):
+/// - Preserves special bits (setuid `0o4000`, setgid `0o2000`, sticky `0o1000`).
+/// - If the file is executable (`raw_mode & 0o111 != 0`), normalizes to `0o755` (rwxr-xr-x).
+/// - If non-executable, normalizes to `0o644` (rw-r--r--).
+/// - Strips group and other write bits.
+#[inline]
+pub fn canonicalize_file_mode(raw_mode: u32) -> u32 {
+    let special = raw_mode & 0o7000;
+    let base = if raw_mode & 0o111 != 0 {
+        0o755
+    } else {
+        0o644
+    };
+    special | base
+}
 
 /// A reader that computes a SHA-256 hash of every byte read through it.
 struct HashingReader<R: Read> {
@@ -34,9 +71,6 @@ impl<R: Read> Read for HashingReader<R> {
         Ok(n)
     }
 }
-
-#[cfg(unix)]
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 /// SHA-256 of a sealed archive's bytes — the same value install records as a
 /// part's `part_hash`. Used by `wright doctor --repair` to restore that column from
@@ -111,8 +145,22 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                 .append_link(&mut header, &rel_path, &target)
                 .map_err(|e| WrightError::context("tar append symlink failed", e))?;
         } else if metadata.is_dir() {
+            let mut header = tar::Header::new_gnu();
+            header.set_metadata(&metadata);
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            #[cfg(unix)]
+            {
+                let mode = canonicalize_dir_mode(metadata.mode());
+                header.set_mode(mode);
+            }
+            #[cfg(not(unix))]
+            {
+                header.set_mode(0o755);
+            }
+            header.set_cksum();
             tar_builder
-                .append_dir(&rel_path, full_path)
+                .append_data(&mut header, &rel_path, &mut std::io::empty())
                 .map_err(|e| WrightError::context("tar append dir failed", e))?;
         } else {
             // The tar crate's append_path_with_name passes the absolute source path
@@ -180,9 +228,31 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
                         )
                     })?;
                 } else {
-                    tar_builder
-                        .append_path_with_name(full_path, &rel_path)
-                        .map_err(|e| WrightError::context("tar append file failed", e))?;
+                    #[cfg(unix)]
+                    {
+                        let mut file = std::fs::File::open(full_path).map_err(|e| {
+                            WrightError::context(
+                                format!("failed to open file {}", full_path.display()),
+                                e,
+                            )
+                        })?;
+                        let mut header = tar::Header::new_gnu();
+                        header.set_metadata(&metadata);
+                        header.set_entry_type(tar::EntryType::Regular);
+                        header.set_size(metadata.len());
+                        let mode = canonicalize_file_mode(metadata.mode());
+                        header.set_mode(mode);
+                        header.set_cksum();
+                        tar_builder
+                            .append_data(&mut header, &rel_path, &mut file)
+                            .map_err(|e| WrightError::context("tar append file failed", e))?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        tar_builder
+                            .append_path_with_name(full_path, &rel_path)
+                            .map_err(|e| WrightError::context("tar append file failed", e))?;
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -354,6 +424,11 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
                     e,
                 )
             })?;
+            #[cfg(unix)]
+            {
+                let mode = entry.unix_mode().map(canonicalize_dir_mode).unwrap_or(0o755);
+                let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
+            }
         } else {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
@@ -362,6 +437,10 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
                         e,
                     )
                 })?;
+                #[cfg(unix)]
+                {
+                    let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
+                }
             }
 
             let mut outfile = std::fs::File::create(&out_path).map_err(|e| {
@@ -374,10 +453,10 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
 
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = entry.unix_mode() {
+                    let sanitized = canonicalize_file_mode(mode);
                     let _ =
-                        std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
+                        std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(sanitized));
                 }
             }
         }
@@ -417,17 +496,20 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
         }
 
         // The tar crate's unpack_in strips setuid/setgid/sticky bits (a security
-        // measure). Capture the full mode from the header beforehand so we can
-        // re-apply it afterwards, preserving bits like the setuid on unix_chkpwd.
+        // measure). Capture the full mode and entry type from the header beforehand
+        // so we can re-apply canonicalized permissions afterwards, ensuring directories
+        // are world-traversable (0755) and files are properly accessible even under strict umask.
         #[cfg(unix)]
         let restore = {
             let mode = entry.header().mode().ok();
+            let entry_type = entry.header().entry_type();
             let is_file = matches!(
-                entry.header().entry_type(),
+                entry_type,
                 tar::EntryType::Regular | tar::EntryType::GNUSparse
             );
+            let is_dir = entry_type == tar::EntryType::Directory;
             let dest = dest_dir.join(&*path);
-            (mode, is_file, dest)
+            (mode, is_file, is_dir, dest)
         };
 
         entry
@@ -436,10 +518,15 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
 
         #[cfg(unix)]
         {
-            let (mode, is_file, dest) = restore;
-            if is_file && let Some(m) = mode {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m));
+            let (mode, is_file, is_dir, dest) = restore;
+            if let Some(m) = mode {
+                if is_file {
+                    let sanitized = canonicalize_file_mode(m);
+                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
+                } else if is_dir {
+                    let sanitized = canonicalize_dir_mode(m);
+                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
+                }
             }
         }
     }

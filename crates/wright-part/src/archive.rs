@@ -122,6 +122,59 @@ fn purge_excluded_files(part_dir: &Path) {
     }
 }
 
+/// Canonical list of archive-level protocol metadata files situated at the archive root.
+/// These files carry archive structure, provenance, and hooks; they are never payload
+/// and must never be installed to the target filesystem or recorded in .FILELIST.
+pub const ARCHIVE_METADATA_FILES: &[&str] = &[
+    ".PARTINFO",
+    ".FILELIST",
+    ".HOOKS",
+    ".PLANSRC",
+    ".BUILDINFO",
+    ".ABIINFO",
+];
+
+/// Returns true if the given relative or normalized path points to an archive-level
+/// protocol metadata file.
+///
+/// Protocol metadata strictly resides at the root level of the archive or staging tree.
+/// A file with the same name located in a subdirectory (e.g. `etc/.ABIINFO`) is normal
+/// payload, not protocol metadata.
+///
+/// Leading root `/` or current-dir `./` components are ignored, allowing both
+/// relative paths (e.g. `.ABIINFO`, `./.ABIINFO`) and normalized root paths
+/// (e.g. `/.ABIINFO`) to be checked reliably.
+pub fn is_archive_metadata(path: &Path) -> bool {
+    let mut components = path.components().filter(|c| {
+        !matches!(c, std::path::Component::RootDir | std::path::Component::CurDir)
+    });
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(name)), None) => {
+            name.to_str().is_some_and(|s| ARCHIVE_METADATA_FILES.contains(&s))
+        }
+        _ => false,
+    }
+}
+
+/// Returns true if the path inside a tar archive matches the target metadata file name
+/// situated at the archive root.
+pub fn is_archive_member(path: &Path, expected_name: &str) -> bool {
+    let mut components = path.components().filter(|c| {
+        !matches!(c, std::path::Component::RootDir | std::path::Component::CurDir)
+    });
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(name)), None) => name == expected_name,
+        _ => false,
+    }
+}
+
+/// Remove all archive protocol metadata files from the root of the given staging directory.
+pub fn clean_staging_metadata(part_dir: &Path) {
+    for name in ARCHIVE_METADATA_FILES {
+        let _ = std::fs::remove_file(part_dir.join(name));
+    }
+}
+
 /// Write a `.wright.tar.zst` binary part archive from archive-owned metadata.
 pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Result<PathBuf> {
     let mut components = Path::new(&spec.archive_name).components();
@@ -136,20 +189,16 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
 
     purge_excluded_files(part_dir);
 
+    // A previously interrupted seal must not leak stale metadata into the
+    // next archive.
+    clean_staging_metadata(part_dir);
+
     let partinfo_path = part_dir.join(".PARTINFO");
     let filelist_path = part_dir.join(".FILELIST");
     let hooks_path = part_dir.join(".HOOKS");
     let plansrc_path = part_dir.join(".PLANSRC");
     let buildinfo_path = part_dir.join(".BUILDINFO");
     let abiinfo_path = part_dir.join(".ABIINFO");
-    // A previously interrupted seal must not leak stale metadata into the
-    // next archive.
-    let _ = std::fs::remove_file(&partinfo_path);
-    let _ = std::fs::remove_file(&filelist_path);
-    let _ = std::fs::remove_file(&hooks_path);
-    let _ = std::fs::remove_file(&plansrc_path);
-    let _ = std::fs::remove_file(&buildinfo_path);
-    let _ = std::fs::remove_file(&abiinfo_path);
 
     // Generate .PARTINFO
     let partinfo = generate_partinfo(spec);
@@ -206,12 +255,7 @@ pub fn write_part(part_dir: &Path, spec: &PartSpec, output_path: &Path) -> Resul
 
     // Metadata belongs to the archive, never to the staging tree. Clean it up
     // after both successful and failed archive writes.
-    let _ = std::fs::remove_file(partinfo_path);
-    let _ = std::fs::remove_file(filelist_path);
-    let _ = std::fs::remove_file(hooks_path);
-    let _ = std::fs::remove_file(plansrc_path);
-    let _ = std::fs::remove_file(buildinfo_path);
-    let _ = std::fs::remove_file(abiinfo_path);
+    clean_staging_metadata(part_dir);
 
     result
 }
@@ -280,9 +324,8 @@ pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
         let path = entry
             .path()
             .map_err(|e| WrightError::context("failed to read entry path", e))?;
-        let path_str = path.to_string_lossy().into_owned();
 
-        if path_str.ends_with(".PARTINFO") && partinfo.is_none() {
+        if is_archive_member(&path, ".PARTINFO") && partinfo.is_none() {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
@@ -291,7 +334,7 @@ pub fn read_archive_meta(part_path: &Path) -> Result<ArchiveMeta> {
                 &content,
                 &part_path.display().to_string(),
             )?);
-        } else if path_str.ends_with(".FILELIST") && files.is_none() {
+        } else if is_archive_member(&path, ".FILELIST") && files.is_none() {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
@@ -343,8 +386,7 @@ pub fn read_partinfo(part_path: &Path) -> Result<PartInfo> {
             .path()
             .map_err(|e| WrightError::context("failed to read entry path", e))?;
 
-        let path_str = path.to_string_lossy();
-        if path_str.ends_with(".PARTINFO") {
+        if is_archive_member(&path, ".PARTINFO") {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
@@ -379,8 +421,7 @@ pub fn read_archive_plansrc(part_path: &Path) -> Result<Option<String>> {
             .path()
             .map_err(|e| WrightError::context("failed to read entry path", e))?;
 
-        let path_str = path.to_string_lossy();
-        if path_str.ends_with(".PLANSRC") {
+        if is_archive_member(&path, ".PLANSRC") {
             let mut content = String::new();
             entry
                 .read_to_string(&mut content)
@@ -495,24 +536,16 @@ fn generate_provenance_toml(provenance: &Provenance) -> String {
     toml
 }
 
-fn generate_filelist(part_dir: &Path) -> Result<String> {
+pub fn generate_filelist(part_dir: &Path) -> Result<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(part_dir).sort_by_file_name() {
         let entry = entry.map_err(|e| WrightError::context("failed to walk directory", e))?;
         let relative = entry.path().strip_prefix(part_dir).unwrap_or(entry.path());
-        let relative_str = relative.to_string_lossy();
         // Skip metadata files and root
-        if relative_str.is_empty()
-            || relative_str.starts_with(".PARTINFO")
-            || relative_str.starts_with(".FILELIST")
-            || relative_str.starts_with(".HOOKS")
-            || relative_str.starts_with(".PLANSRC")
-            || relative_str.starts_with(".BUILDINFO")
-            || relative_str.starts_with(".ABIINFO")
-        {
+        if relative.as_os_str().is_empty() || is_archive_metadata(relative) {
             continue;
         }
-        files.push(format!("/{}", relative_str));
+        files.push(format!("/{}", relative.to_string_lossy()));
     }
     Ok(files.join("\n"))
 }
@@ -828,9 +861,13 @@ mod tests {
 
         super::write_part(staging.path(), &spec, &missing_output).unwrap_err();
 
-        assert!(!staging.path().join(".PARTINFO").exists());
-        assert!(!staging.path().join(".FILELIST").exists());
-        assert!(!staging.path().join(".HOOKS").exists());
+        for name in super::ARCHIVE_METADATA_FILES {
+            assert!(
+                !staging.path().join(name).exists(),
+                "archive failure must clean {} from staging",
+                name
+            );
+        }
     }
 
     #[test]
@@ -954,5 +991,146 @@ runtime_deps = ["bash"]
                 .to_string()
                 .contains("missing required [plan]")
         );
+    }
+
+    #[test]
+    fn metadata_ssot_exact_matching_and_invariants() {
+        use std::path::Path;
+
+        // Positive matches: root-level with or without leading slash / curdir
+        for name in super::ARCHIVE_METADATA_FILES {
+            assert!(
+                super::is_archive_metadata(Path::new(name)),
+                "{} must be recognized as archive metadata",
+                name
+            );
+            assert!(
+                super::is_archive_metadata(Path::new(&format!("/{}", name))),
+                "/{} must be recognized as archive metadata",
+                name
+            );
+            assert!(
+                super::is_archive_metadata(Path::new(&format!("./{}", name))),
+                "./{} must be recognized as archive metadata",
+                name
+            );
+            assert!(
+                super::is_archive_member(Path::new(name), name),
+                "is_archive_member must match exact name {}",
+                name
+            );
+            assert!(
+                super::is_archive_member(Path::new(&format!("./{}", name)), name),
+                "is_archive_member must match ./{}",
+                name
+            );
+        }
+
+        // Subdirectories: same name in subdirectory must NOT be treated as archive metadata
+        let subpaths = [
+            "etc/.ABIINFO",
+            "usr/share/doc/.PARTINFO",
+            "var/lib/.PLANSRC",
+            "/etc/.FILELIST",
+            "/usr/share/.BUILDINFO",
+            "/opt/.HOOKS",
+        ];
+        for subpath in &subpaths {
+            assert!(
+                !super::is_archive_metadata(Path::new(subpath)),
+                "nested file {} must NOT be treated as archive metadata",
+                subpath
+            );
+            assert!(
+                !super::is_archive_member(Path::new(subpath), ".ABIINFO"),
+                "nested file {} must NOT match archive member",
+                subpath
+            );
+        }
+
+        // Partial prefix / suffix collisions
+        let collisions = [
+            ".PARTINFO_foo",
+            ".FILELIST.bak",
+            ".HOOKS_old",
+            ".PLANSRC.txt",
+            ".BUILDINFO_v2",
+            ".ABIINFO_extra",
+            "usr/bin/app",
+            "/bin/sh",
+        ];
+        for col in &collisions {
+            assert!(
+                !super::is_archive_metadata(Path::new(col)),
+                "{} must NOT match archive metadata",
+                col
+            );
+        }
+    }
+
+    #[test]
+    fn sealing_invariant_excludes_and_cleans_all_archive_metadata() {
+        let spec = part_spec("strict");
+        let staging = tempfile::tempdir().unwrap();
+
+        // Populate valid payload
+        std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
+        std::fs::write(staging.path().join("usr/bin/app"), "binary").unwrap();
+        std::fs::create_dir_all(staging.path().join("etc")).unwrap();
+        std::fs::write(staging.path().join("etc/app.conf"), "config").unwrap();
+        // A payload file that shares the name of a metadata file in a nested folder
+        std::fs::create_dir_all(staging.path().join("usr/share")).unwrap();
+        std::fs::write(staging.path().join("usr/share/.ABIINFO"), "nested").unwrap();
+
+        // Stale metadata sitting in staging root from interrupted build
+        for name in super::ARCHIVE_METADATA_FILES {
+            std::fs::write(staging.path().join(name), "stale").unwrap();
+        }
+
+        // 1. generate_filelist must exclude all root metadata but preserve nested payload
+        let filelist = super::generate_filelist(staging.path()).unwrap();
+        let filelist_lines: Vec<&str> = filelist.lines().collect();
+
+        assert!(filelist_lines.contains(&"/usr/bin/app"));
+        assert!(filelist_lines.contains(&"/etc/app.conf"));
+        assert!(
+            filelist_lines.contains(&"/usr/share/.ABIINFO"),
+            "nested file with same name must be retained in filelist"
+        );
+        for name in super::ARCHIVE_METADATA_FILES {
+            let root_meta = format!("/{}", name);
+            assert!(
+                !filelist_lines.contains(&root_meta.as_str()),
+                "{} must NOT appear in generated .FILELIST",
+                root_meta
+            );
+        }
+
+        // 2. Seal archive
+        let out = tempfile::tempdir().unwrap();
+        let part = super::write_part(staging.path(), &spec, out.path()).unwrap();
+
+        // 3. Staging directory must be cleaned of all root metadata
+        for name in super::ARCHIVE_METADATA_FILES {
+            assert!(
+                !staging.path().join(name).exists(),
+                "staging root must be cleaned of {} after sealing",
+                name
+            );
+        }
+        // But nested payload must remain
+        assert!(staging.path().join("usr/share/.ABIINFO").exists());
+        assert!(staging.path().join("usr/bin/app").exists());
+
+        // 4. Archive .FILELIST must not have metadata
+        let meta = super::read_archive_meta(&part).unwrap();
+        for name in super::ARCHIVE_METADATA_FILES {
+            let root_meta = format!("/{}", name);
+            assert!(
+                !meta.files.contains(&root_meta),
+                "sealed archive filelist must not contain {}",
+                root_meta
+            );
+        }
     }
 }

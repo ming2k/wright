@@ -147,11 +147,12 @@ pub(super) async fn run_deploy_script(
     let root_env = if use_chroot { Path::new("/") } else { root_dir };
     let current_dir = if use_chroot { Path::new("/") } else { root_dir };
 
-    // Hooks are user scripts: restore the default SIGPIPE disposition for
-    // the exec'd shell (wright itself keeps SIGPIPE ignored — see
-    // util::output).
+    // Hooks are user scripts: restore the default SIGPIPE disposition and
+    // reset umask to standard 0022 so any directories/files created in hooks
+    // are not polluted by the caller's umask (e.g. sudo 0077).
     unsafe {
         command.pre_exec(|| {
+            libc::umask(0o022);
             crate::util::output::restore_default_sigpipe();
             Ok(())
         });

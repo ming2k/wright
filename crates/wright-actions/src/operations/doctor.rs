@@ -329,4 +329,30 @@ mod tests {
 
         assert!(plan_drift_diff(ledger.path(), "demo", "nosuchchecksum", &plan_path).is_none());
     }
+
+    #[tokio::test]
+    async fn metadata_leak_is_detected_by_health_check() {
+        let db = InstalledDb::open_in_memory().await.unwrap();
+        let root = tempfile::tempdir().unwrap();
+
+        // 1. Initially clean
+        let (issues, found) =
+            super::super::health::metadata_leak_check(&db, root.path())
+                .await
+                .unwrap();
+        assert_eq!(issues, 0);
+        assert!(found.is_empty());
+
+        // 2. Leaked file on live root
+        std::fs::write(root.path().join(".ABIINFO"), "leaked").unwrap();
+        let (issues, found) =
+            super::super::health::metadata_leak_check(&db, root.path())
+                .await
+                .unwrap();
+        assert_eq!(issues, 1);
+        assert!(matches!(
+            found[0],
+            super::super::health::CheckIssue::ProtocolLeak { .. }
+        ));
+    }
 }

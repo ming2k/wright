@@ -127,12 +127,16 @@ additionally echoes output to the terminal in real time.
 
 ### Permissions and Diagnostic Accessibility
 
-In accordance with ADR-0050, Wright enforces deterministic, umask-immune permissions across the forge:
+In accordance with ADR-0050 and ADR-0053, Wright enforces deterministic, umask-immune permissions across the forge, package sealing, and deployment pipelines:
 - **Build Root and Log Directories** (`<forge_dir>/<name>-<version>/`, `logs/`, `staging/`, `outputs/`): created with mode `0755` (`drwxr-xr-x`).
 - **Stage Logs** (`logs/*.log`, `slice-errors.log`): created with mode `0644` (`-rw-r--r--`).
 - **Isolation Scratch** (`.wright-isolation/`): created with mode `0700` (`drwx------`) to strictly isolate kernel mounts and OverlayFS work directories.
+- **Triple-Defense Payload Immunity (ADR-0053)**:
+  1. *Subprocess Execution*: Sandbox child processes, direct runners, and deploy hooks reset process umask to `0022` prior to command execution (`[INV-PERM-04]`).
+  2. *Archive Sealing*: Package archives (`.wright.tar.zst`) canonicalize directories to `0755` (preserving sticky/setgid bits), executable binaries to `0755`, and regular data files to `0644` (`[INV-PERM-05]`).
+  3. *Deployment Materialization*: Directory hierarchies created during rootfs deployment explicitly enforce `0755`, self-healing any pre-existing restricted directories and preventing ambient caller umasks (e.g. `sudo`'s `0077`) from contaminating host paths (`[INV-PERM-06]`).
 
-Even when builds are triggered under privileged execution (`sudo wright install` or `sudo wright build`) where the host environment enforces a restrictive umask (`0077`), logs and public staging directories remain readable and traversable by unprivileged users for debugging, bug reporting, and auditing.
+Even when builds and installations are triggered under privileged execution (`sudo wright install` or `sudo wright build`) where the host environment enforces a restrictive umask (`0077`), logs, staging trees, sealed archives, and target rootfs directories remain readable and traversable by unprivileged users (`[INV-PERM-07]`).
 
 ### On failure
 

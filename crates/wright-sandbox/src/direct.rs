@@ -46,6 +46,10 @@ pub(super) fn run(
     // post-fork child of the multi-threaded application process.
     unsafe {
         child.pre_exec(move || {
+            // Defend stage command against inherited strict umask (e.g. sudo 0077)
+            // by explicitly resetting umask to standard 0022 in the post-fork child.
+            libc::umask(0o022);
+
             // The stage command is user code: give it the traditional
             // SIGPIPE disposition (wright itself keeps SIGPIPE ignored —
             // see util::output). One fixed-size libc call, no allocation.

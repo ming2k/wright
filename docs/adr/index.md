@@ -54,3 +54,4 @@
 | [ADR-0050](0050-diagnostic-artifact-accessibility-and-permission-boundaries.md) | Diagnostic artifact accessibility, explicit permission boundaries, and umask immunity | Accepted |
 | [ADR-0051](0051-directory-topology-preservation-in-stage-layers.md) | Directory topology preservation and first-class directory lifecycle in stage layers | Accepted |
 | [ADR-0052](0052-compilation-pipeline-optimization-and-dependency-slimming.md) | Compilation pipeline optimization and dependency slimming | Accepted |
+| [ADR-0053](0053-payload-permission-canonicalization-and-triple-defense-umask-immunity.md) | Payload permission canonicalization, deployment healing, and triple-defense umask immunity | Accepted |

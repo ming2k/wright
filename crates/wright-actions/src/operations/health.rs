@@ -16,6 +16,8 @@ pub(super) enum CheckIssue {
     DatabaseIntegrity { message: String },
     /// A file owned by more than one part (shadowing conflict).
     ShadowedFileConflict { message: String },
+    /// An archive-internal protocol metadata file leaked into the installed payload or root.
+    ProtocolLeak { message: String },
     /// A check itself failed to run; counts as one issue.
     CheckError { message: String },
     /// A deployed file is missing from disk or has the wrong type.
@@ -63,6 +65,10 @@ pub(super) async fn run_standard_checks(
     let (integrity_issues, mut found) = integrity_check(db).await?;
     total_issues += integrity_issues;
     issues.append(&mut found);
+
+    let (leak_issues, mut found_leaks) = metadata_leak_check(db, root_dir).await?;
+    total_issues += leak_issues;
+    issues.append(&mut found_leaks);
     if integrity_only {
         return Ok(CheckOutcome {
             total_issues,
@@ -175,6 +181,71 @@ async fn integrity_check(db: &ReadOnlyDb) -> Result<(usize, Vec<CheckIssue>)> {
                 message: format!("shadow check failed: {}", e),
             });
         }
+    }
+
+    Ok((issues, found))
+}
+
+// ── protocol metadata isolation ──────────────────────────────────────────
+
+pub(super) async fn metadata_leak_check(
+    db: &ReadOnlyDb,
+    root_dir: &Path,
+) -> Result<(usize, Vec<CheckIssue>)> {
+    let mut issues = 0usize;
+    let mut found = Vec::new();
+
+    crate::cli_action!("Checking", "protocol metadata isolation");
+
+    match db
+        .get_leaked_metadata_conflicts(wright_part::archive::ARCHIVE_METADATA_FILES)
+        .await
+    {
+        Ok(list) if list.is_empty() => {}
+        Ok(list) => {
+            crate::cli_warn!(
+                "{} leaked archive protocol metadata record(s) in registry (run `wright doctor --repair` to fix)",
+                list.len()
+            );
+            issues += list.len();
+            emit_bullets(&list);
+            found.extend(
+                list.into_iter()
+                    .map(|message| CheckIssue::ProtocolLeak { message }),
+            );
+        }
+        Err(e) => {
+            crate::cli_error!("metadata isolation check failed: {}", e);
+            issues += 1;
+            found.push(CheckIssue::CheckError {
+                message: format!("metadata isolation check failed: {}", e),
+            });
+        }
+    }
+
+    let mut root_leaks = Vec::new();
+    for name in wright_part::archive::ARCHIVE_METADATA_FILES {
+        let path = root_dir.join(name.trim_start_matches('/'));
+        if path.is_file() || path.is_symlink() {
+            root_leaks.push(format!(
+                "Leaked metadata file '{}' present at destination root (run `wright doctor --repair` to clean)",
+                path.display()
+            ));
+        }
+    }
+
+    if !root_leaks.is_empty() {
+        crate::cli_warn!(
+            "{} leaked archive protocol metadata file(s) on disk (run `wright doctor --repair` to clean)",
+            root_leaks.len()
+        );
+        issues += root_leaks.len();
+        emit_bullets(&root_leaks);
+        found.extend(
+            root_leaks
+                .into_iter()
+                .map(|message| CheckIssue::ProtocolLeak { message }),
+        );
     }
 
     Ok((issues, found))
