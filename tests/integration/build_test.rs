@@ -88,6 +88,193 @@ async fn test_build_and_archive_hello() {
     assert!(extract_dir.path().join(".FILELIST").exists());
 }
 
+/// ADR-0055: the seal step records a `local` source by the content address of
+/// its bytes, so the ledger can answer "did a file bundled with the plan
+/// change?" — a question `plan_checksum` cannot answer, because it covers
+/// `plan.toml` alone. This is what lets `wright upgrade` select such a plan.
+#[tokio::test]
+async fn test_sealed_provenance_addresses_local_sources_by_content() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    config.general.source_dir = root.path().join("sources");
+    config.general.parts_dir = root.path().join("parts");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let plan_dir = root.path().join("plan");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    let unit = plan_dir.join("unit.service");
+    std::fs::write(&unit, "ExecStart=/bin/old\n").unwrap();
+    std::fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "local-provenance"
+version = "1.0.0"
+release = 1
+description = "local provenance"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "unit.service"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "install -Dm644 unit.service ${STAGING_DIR}/etc/unit.service"
+"#,
+    )
+    .unwrap();
+    // Loaded from a file, so the manifest knows the directory its plan-relative
+    // local source resolves against.
+    let manifest = PlanManifest::from_file(&plan_dir.join("plan.toml")).unwrap();
+
+    let foundry = Foundry::new(config.clone());
+    async fn build_and_seal(
+        foundry: &Foundry,
+        manifest: &PlanManifest,
+        plan_dir: &Path,
+        config: &GlobalConfig,
+    ) {
+        foundry
+            .build(manifest, plan_dir, Path::new("/"), BuildOptions::default())
+            .await
+            .unwrap();
+        wright::seal::package_manifest(manifest, config, false, true)
+            .await
+            .unwrap();
+    }
+
+    // Each seal writes into its own time-stamped directory under parts_dir, so
+    // take the most recently written archive.
+    let sealed_part = || {
+        fn collect(dir: &Path, out: &mut Vec<(std::time::SystemTime, PathBuf)>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, out);
+                } else if path.to_string_lossy().ends_with(".wright.tar.zst") {
+                    let stamp = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    out.push((stamp, path));
+                }
+            }
+        }
+        let mut found = Vec::new();
+        collect(&config.general.parts_dir, &mut found);
+        found.sort();
+        found.pop().expect("a sealed part").1
+    };
+
+    build_and_seal(&foundry, &manifest, &plan_dir, &config).await;
+    let before = archive::read_partinfo(&sealed_part())
+        .unwrap()
+        .provenance
+        .unwrap()
+        .source_checksums;
+    assert_eq!(before.len(), 1, "one local source, one provenance line");
+    assert!(
+        before[0].starts_with("local unit.service sha256="),
+        "expected a content-addressed local line, got {before:?}"
+    );
+
+    // Edit only the bundled file; plan.toml is untouched.
+    std::fs::write(&unit, "ExecStart=/bin/new\n").unwrap();
+    build_and_seal(&foundry, &manifest, &plan_dir, &config).await;
+    let after = archive::read_partinfo(&sealed_part())
+        .unwrap()
+        .provenance
+        .unwrap()
+        .source_checksums;
+    assert_ne!(
+        before, after,
+        "re-sealing after an edit must record the new content address"
+    );
+}
+
+/// ADR-0054 regression: editing a `[[sources]] type = "local"` file must
+/// re-materialize the source tree and re-run every stage. Before this, an
+/// edited local source changed no cache key, so a rebuild reported success and
+/// redeployed the previous bytes.
+#[tokio::test]
+async fn test_edited_local_source_is_rebuilt_into_staging() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = GlobalConfig::default();
+    config.build.forge_dir = root.path().join("build");
+    config.general.source_dir = root.path().join("sources");
+    std::fs::create_dir_all(&config.build.forge_dir).unwrap();
+
+    let plan_dir = root.path().join("plan");
+    std::fs::create_dir_all(&plan_dir).unwrap();
+    std::fs::write(plan_dir.join("unit.service"), "ExecStart=/bin/old\n").unwrap();
+
+    let manifest = PlanManifest::parse(
+        r#"
+name = "local-source"
+version = "1.0.0"
+release = 1
+description = "local source rebuild"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "unit.service"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "install -Dm644 unit.service ${STAGING_DIR}/etc/local-source.service"
+"#,
+    )
+    .unwrap();
+
+    let foundry = Foundry::new(config);
+    async fn build_once(foundry: &Foundry, manifest: &PlanManifest, plan_dir: &Path) -> PathBuf {
+        foundry
+            .build(manifest, plan_dir, Path::new("/"), BuildOptions::default())
+            .await
+            .unwrap();
+        foundry.build_root(manifest).unwrap()
+    }
+
+    let build_root = build_once(&foundry, &manifest, &plan_dir).await;
+    let staged = build_root.join("staging/etc/local-source.service");
+    assert_eq!(
+        std::fs::read_to_string(&staged).unwrap(),
+        "ExecStart=/bin/old\n"
+    );
+
+    // An unchanged rebuild must still short-circuit: a sentinel dropped into the
+    // materialized tree survives because nothing is re-extracted.
+    let sentinel = build_root.join("source/.sentinel");
+    std::fs::write(&sentinel, "untouched").unwrap();
+    build_once(&foundry, &manifest, &plan_dir).await;
+    assert!(
+        sentinel.exists(),
+        "unchanged local sources must reuse the materialized tree"
+    );
+
+    // Now edit the source. Same path, same length, different bytes.
+    std::fs::write(plan_dir.join("unit.service"), "ExecStart=/bin/new\n").unwrap();
+    let build_root = build_once(&foundry, &manifest, &plan_dir).await;
+    assert!(
+        !sentinel.exists(),
+        "edited local sources must re-materialize the tree"
+    );
+    assert_eq!(
+        std::fs::read_to_string(build_root.join("staging/etc/local-source.service")).unwrap(),
+        "ExecStart=/bin/new\n",
+        "staging must reflect the edited local source"
+    );
+}
+
 #[tokio::test]
 async fn test_failed_first_build_preserves_work_for_stage_resume() {
     let root = tempfile::tempdir().unwrap();

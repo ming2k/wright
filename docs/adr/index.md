@@ -55,3 +55,7 @@
 | [ADR-0051](0051-directory-topology-preservation-in-stage-layers.md) | Directory topology preservation and first-class directory lifecycle in stage layers | Accepted |
 | [ADR-0052](0052-compilation-pipeline-optimization-and-dependency-slimming.md) | Compilation pipeline optimization and dependency slimming | Accepted |
 | [ADR-0053](0053-payload-permission-canonicalization-and-triple-defense-umask-immunity.md) | Payload permission canonicalization, deployment healing, and triple-defense umask immunity | Accepted |
+| [ADR-0054](0054-content-addressed-source-identity.md) | Content-addressed source identity for every cache key | Accepted |
+| [ADR-0055](0055-plan-drift-covers-bundled-sources.md) | Plan drift covers the whole plan, not just plan.toml | Accepted |
+| [ADR-0056](0056-explicit-cold-builds.md) | Explicit cold builds: `--no-cache` purges shared caches and denies every reuse decision | Superseded by ADR-0057 |
+| [ADR-0057](0057-transactional-cold-purge-and-trust-boundary.md) | Transactional cold purge: cache trust boundary, atomic cleanup, exact accounting | Accepted |

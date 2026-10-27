@@ -44,6 +44,22 @@ snapshot isolation — each read opens its own read-only connection and sees a
 stable committed snapshot. A Read command against a schema older than the
 binary fails with a typed error naming the command that migrates it.
 
+### Process lock hierarchy
+
+Commands that mutate shared state take process locks in one fixed order
+(ADR-0057):
+
+| Order | Lock file | Held by |
+|-------|-----------|---------|
+| 1 | `cmd-wright.lock` | `install`, `upgrade`, `clean` (not `-n`), `launch` (not `-n`), `doctor --repair` (not `-n`), `doctor --restore`, `remove`, `merge`, `provide` |
+| 2 | `cmd-build.lock` | `build`; also held by any command that purges caches or deletes forge workspaces |
+| 3 | `db-<file>.lock` | `InstalledDb::open` |
+
+Locks live under `<db parent>/locks/`. Read-class commands take none. The
+startup crash recovery in dispatch acquires and releases the database lock
+before the command lock; that exception is narrow and does not invert the
+command-level order.
+
 The registry is a **derived index** over facts that already exist on disk: the
 live root, and `.PARTINFO`/`.FILELIST` inside every archive in `parts_dir`
 (ADR-0043). It is therefore rebuildable. `history` is the exception — it is an
@@ -58,7 +74,7 @@ so the restored main file is authoritative.
 
 | Table | Contents |
 |-------|----------|
-| `plans` | plan identity metadata (name, version, release, epoch, arch) plus seal-time provenance (plan_checksum, source_checksums, wright_version, isolation; NULL for parts sealed before ADR-0023) |
+| `plans` | plan identity metadata (name, version, release, epoch, arch) plus seal-time provenance (plan_checksum, source_checksums, wright_version, isolation; NULL for parts sealed before ADR-0023). `source_checksums` is a JSON array of per-source audit lines; a `local` entry carries the SHA-256 of the file's bytes (ADR-0055), which is what lets `wright upgrade` and `wright doctor` see a change to a file bundled beside `plan.toml` |
 | `parts` | installed part metadata: origin, plan association, archive hash |
 | `files` | installed file paths, types, checksums, ownership |
 | `dependencies` | advisory runtime dependency edges per part (soft TEXT pointer; not enforced) |
@@ -201,6 +217,7 @@ erDiagram
 | `history.part_name` | `parts.name` at transaction time | Historical install, upgrade, remove subject |
 | `history.session_id` | `delivery_transactions.id` (legacy) | Logical grouping for history records |
 | `plans.plan_checksum` | ledger snapshot file `<plan>/snapshots/*-<checksum>.toml` | Seal-time provenance hash; the ledger file holds the matching raw plan source when a deployed part carried `.PLANSRC` (ADR-0041). Soft pointer — NULL or a missing file is valid. |
+| `plans.source_checksums` | `.PARTINFO` `[provenance] source_checksums` in the deployed parts | Per-source audit lines, content-addressed for `local` sources (ADR-0023, ADR-0055). Rebuilt from part archives by `wright db reindex` (ADR-0043). A set that is absent or not content-addressed makes drift comparison abstain rather than report a false "up to date". |
 
 ## Removed Databases
 

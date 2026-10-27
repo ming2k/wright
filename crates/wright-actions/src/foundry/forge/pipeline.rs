@@ -100,6 +100,13 @@ fn stage_checkpoint_input(
     input
 }
 
+/// Compute the expected input hash of every stage in the pipeline.
+///
+/// `source_seed` is the content address of the plan's resolved sources
+/// (ADR-0054, `[INV-SRC-03]`) and becomes the `prev_hash` of the first stage —
+/// the root of the chain. Seeding from the empty string instead (the pre-ADR-0054 behaviour)
+/// left the chain unable to express "the sources changed", so an edited local
+/// source left every stage looking up-to-date.
 pub(crate) fn compute_expected_hashes(
     manifest: &PlanManifest,
     stage_order: &[String],
@@ -107,9 +114,10 @@ pub(crate) fn compute_expected_hashes(
     build_phase: Option<&str>,
     executors: &ExecutorRegistry,
     global_default: IsolationLevel,
+    source_seed: &str,
 ) -> Result<HashMap<String, String>> {
     let mut results = HashMap::new();
-    let mut prev_hash = String::new();
+    let mut prev_hash = source_seed.to_string();
 
     for name in stage_order {
         let mut ordered_input = String::new();
@@ -215,6 +223,7 @@ script = "echo compiling"
             None,
             &executors,
             IsolationLevel::None,
+            "",
         )
         .unwrap();
         let strict = compute_expected_hashes(
@@ -224,6 +233,7 @@ script = "echo compiling"
             None,
             &executors,
             IsolationLevel::Strict,
+            "",
         )
         .unwrap();
 
@@ -243,6 +253,7 @@ script = "echo compiling"
             None,
             &executors,
             IsolationLevel::Strict,
+            "",
         )
         .unwrap();
 
@@ -254,9 +265,49 @@ script = "echo compiling"
             None,
             &executors,
             IsolationLevel::Strict,
+            "",
         )
         .unwrap();
 
         assert_ne!(before["compile"], after["compile"]);
+    }
+
+    /// ADR-0054: the source digest is the root of the chain, so changing it
+    /// must invalidate every stage — not just the stages named in the plan.
+    #[test]
+    fn checkpoint_hash_chain_is_rooted_in_the_source_digest() {
+        let manifest = inherited_manifest();
+        let executors = ExecutorRegistry::new();
+        let order = stage_order_for_manifest(&manifest, None);
+        let env = HashMap::new();
+
+        let before = compute_expected_hashes(
+            &manifest,
+            &order,
+            &env,
+            None,
+            &executors,
+            IsolationLevel::Strict,
+            "digest-before",
+        )
+        .unwrap();
+        let after = compute_expected_hashes(
+            &manifest,
+            &order,
+            &env,
+            None,
+            &executors,
+            IsolationLevel::Strict,
+            "digest-after",
+        )
+        .unwrap();
+
+        assert!(!before.is_empty());
+        for (stage, before_hash) in &before {
+            assert_ne!(
+                before_hash, &after[stage],
+                "stage '{stage}' must be invalidated when the sources change"
+            );
+        }
     }
 }

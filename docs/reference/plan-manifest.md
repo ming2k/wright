@@ -137,6 +137,13 @@ to a full mirror fetch when the server refuses a shallow fetch by hash.
 | `as` | string | optional | Filename for this source in both the source cache and `${WORKDIR}`. Defaults to `<plan>-<basename>` in the cache and the file's own basename in `${WORKDIR}` |
 | `extract_to` | string | optional | Subdirectory under `${WORKDIR}` to copy the file into |
 
+The file must be a regular file; directories cannot be copied into the work
+directory. A `local` source is **content-addressed by the SHA-256 of its bytes**
+(ADR-0054): editing the file invalidates the source cache entry, the build key,
+and every stage checkpoint, so the next build re-copies and rebuilds from the
+new content. It also marks the plan as drift (ADR-0055), so `wright upgrade`
+re-selects it without `--force` and `wright doctor` reports it.
+
 ### Archive Handling
 
 - Archives with supported extensions (`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz`, `.zip`) are automatically extracted during the `extract` stage.

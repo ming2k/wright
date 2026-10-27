@@ -29,7 +29,10 @@ impl Charge {
         submodules: bool,
     ) -> Result<Option<String>> {
         let actual_ref = git_ref.unwrap_or("HEAD");
-        if dest.exists() {
+        // A cold build must re-resolve the ref upstream even if a snapshot for
+        // the same (url, ref) exists: the snapshot is a pin, and only a fresh
+        // fetch can discover that the named ref moved (ADR-0054, ADR-0057).
+        if !self.no_cache && dest.exists() {
             debug!(
                 "[{}] git snapshot already cached: {}",
                 scope,
@@ -967,6 +970,68 @@ mod tests {
             entries,
             vec![("a.txt".to_string(), "one\n".to_string())],
             "snapshot should hold exactly the pinned tree"
+        );
+    }
+
+    /// A named-ref snapshot is a pin: a warm fetch keeps it even after the ref
+    /// moves, and only a cold fetch re-resolves the ref (ADR-0054, ADR-0057).
+    #[test]
+    fn snapshot_refresh_re_resolves_a_moved_named_ref() {
+        let root = tempfile::tempdir().unwrap();
+        let (upstream, _branch, first, tip) = make_upstream(root.path());
+        let sources_dir = root.path().join("sources");
+        std::fs::create_dir_all(&sources_dir).unwrap();
+
+        let mut repo = gix::open(&upstream).unwrap();
+        repo.committer_or_set_generic_fallback().unwrap();
+        repo.reference(
+            "refs/heads/refresh-test",
+            gix::ObjectId::from_hex(first.as_bytes()).unwrap(),
+            gix::refs::transaction::PreviousValue::Any,
+            "test ref",
+        )
+        .unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = sources_dir.clone();
+        let warm = Charge::new(&config, Arc::new(Semaphore::new(1)));
+        let url = upstream.to_str().unwrap();
+        let dest = sources_dir.join(git_snapshot_filename(url, "refresh-test", false));
+
+        warm.fetch_git_snapshot(url, Some("refresh-test"), &dest, "test", false)
+            .unwrap();
+        assert_eq!(
+            read_snapshot(&dest),
+            vec![("a.txt".to_string(), "one\n".to_string())]
+        );
+
+        repo.reference(
+            "refs/heads/refresh-test",
+            gix::ObjectId::from_hex(tip.as_bytes()).unwrap(),
+            gix::refs::transaction::PreviousValue::Any,
+            "move test ref",
+        )
+        .unwrap();
+
+        // Warm: the cached snapshot still answers, so the moved ref is unseen.
+        let commit = warm
+            .fetch_git_snapshot(url, Some("refresh-test"), &dest, "test", false)
+            .unwrap();
+        assert!(commit.is_none());
+        assert_eq!(
+            read_snapshot(&dest),
+            vec![("a.txt".to_string(), "one\n".to_string())]
+        );
+
+        // Cold: the ref is re-resolved and the snapshot replaced atomically.
+        let cold = Charge::with_no_cache(&config, Arc::new(Semaphore::new(1)), true);
+        let commit = cold
+            .fetch_git_snapshot(url, Some("refresh-test"), &dest, "test", false)
+            .unwrap();
+        assert_eq!(commit.as_deref(), Some(tip.as_str()));
+        assert_eq!(
+            read_snapshot(&dest),
+            vec![("b.txt".to_string(), "two\n".to_string())]
         );
     }
 

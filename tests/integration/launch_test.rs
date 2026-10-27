@@ -100,6 +100,7 @@ fn folio_req(path: PathBuf, dry_run: bool, force: bool) -> LaunchRequest {
         dry_run,
         force,
         fresh: false,
+        no_cache: false,
     }
 }
 
@@ -119,6 +120,7 @@ fn targets_req(
         dry_run,
         force,
         fresh: false,
+        no_cache: false,
     }
 }
 
@@ -226,6 +228,57 @@ async fn launches_folio() {
     assert!(cfg.contains("source_dir    = \"/var/lib/wright/sources\""));
 
     assert!(root_dir.join("var/lib/wright/folios/test.toml").exists());
+}
+
+#[tokio::test]
+async fn no_cache_launch_purges_only_the_target_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = test_config(temp.path());
+
+    write_plan(&config.general.plans_dir, "simple-nc");
+
+    // Host caches must survive a target-root cold launch.
+    let host_source = config.general.source_dir.join("host-source.bin");
+    let host_store = config.general.store_dir.join("host.part");
+    fs::write(&host_source, b"host").unwrap();
+    fs::write(&host_store, b"host").unwrap();
+
+    let root_dir = temp.path().join("target");
+    let target_source = root_dir.join("var/lib/wright/sources/seed.bin");
+    let target_store = root_dir.join("var/lib/wright/store/seed.part");
+    let target_parts = root_dir.join("var/lib/wright/parts/keepme.txt");
+    for path in [&target_source, &target_store, &target_parts] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"seed").unwrap();
+    }
+
+    launch::execute_launch(
+        LaunchRequest {
+            source: LaunchSource::Targets {
+                plans_dir: None,
+                folios_dir: None,
+                targets: vec!["simple-nc".to_string()],
+            },
+            dry_run: false,
+            force: false,
+            fresh: false,
+            no_cache: true,
+        },
+        &config,
+        &temp.path().join("target-db.db"),
+        &root_dir,
+        0,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(root_dir.join("usr/share/simple-nc").exists());
+    assert!(!target_source.exists(), "target source cache is purged");
+    assert!(!target_store.exists(), "target CAS is purged");
+    assert!(target_parts.exists(), "target parts inventory survives");
+    assert!(host_source.exists(), "host source cache is untouched");
+    assert!(host_store.exists(), "host CAS is untouched");
 }
 
 #[tokio::test]
@@ -552,7 +605,7 @@ async fn creates_target_skeleton() {
         "var/lib/wright/parts",
         "var/lib/wright/store",
         "var/lib/wright/staging",
-        "var/lib/wright/lock",
+        "var/lib/wright/locks",
         "var/lib/wright/plans",
         "var/lib/wright/folios",
         "var/lib/wright/sources",

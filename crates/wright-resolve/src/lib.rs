@@ -152,6 +152,9 @@ pub struct BuildPlanOptions {
     pub fetch_only: bool,
     pub clean: bool,
     pub force: bool,
+    /// Cold build (ADR-0057): purge shared caches and forbid every reuse
+    /// decision for this invocation. Implies `clean`, but not `force`.
+    pub no_cache: bool,
     pub checksum: bool,
     pub skip_check: bool,
     pub verbose: bool,

@@ -267,7 +267,7 @@ pub async fn dispatch(cli: Cli, config: &GlobalConfig) -> Result<()> {
             check::run(args, &ctx).await
         }
         Commands::Query(QueryCommands::Doctor(mut args)) => {
-            let is_mutating = args.repair || args.restore.is_some() || args.snapshot.is_some();
+            let is_mutating = args.is_mutating();
             let ctx = ctx_with_root(
                 args.root.take(),
                 top_db,
@@ -526,5 +526,74 @@ mod tests {
         };
         assert!(args.fresh);
         assert!(!args.force);
+    }
+
+    #[test]
+    fn launch_accepts_no_cache() {
+        let cli =
+            Cli::try_parse_from(["wright", "launch", "--root", "/mnt/new", "--no-cache"]).unwrap();
+
+        let Commands::Build(crate::cli::BuildCommands::Launch(args)) = cli.command else {
+            panic!("expected launch command");
+        };
+        assert!(args.no_cache);
+        assert!(!args.fresh);
+    }
+
+    #[test]
+    fn install_accepts_no_cache() {
+        let cli = Cli::try_parse_from(["wright", "install", "zlib", "--no-cache"]).unwrap();
+
+        let Commands::System(SystemCommands::Install(args)) = cli.command else {
+            panic!("expected install command");
+        };
+        assert!(args.no_cache);
+        assert!(!args.force);
+        assert!(!args.fresh);
+    }
+
+    #[test]
+    fn upgrade_accepts_no_cache() {
+        let cli = Cli::try_parse_from(["wright", "upgrade", "all", "--no-cache"]).unwrap();
+
+        let Commands::System(SystemCommands::Upgrade(args)) = cli.command else {
+            panic!("expected upgrade command");
+        };
+        assert!(args.no_cache);
+        assert!(!args.force);
+        assert!(!args.fresh);
+    }
+
+    #[test]
+    fn build_accepts_no_cache_and_dry_run() {
+        let cli =
+            Cli::try_parse_from(["wright", "build", "zlib", "--no-cache", "--dry-run"]).unwrap();
+
+        let Commands::Build(crate::cli::BuildCommands::Build(args)) = cli.command else {
+            panic!("expected build command");
+        };
+        assert!(args.no_cache);
+        assert!(args.dry_run);
+        assert!(!args.force);
+    }
+
+    #[test]
+    fn build_no_cache_conflicts_with_stage() {
+        assert!(
+            Cli::try_parse_from(["wright", "build", "zlib", "--no-cache", "--stage=check"])
+                .is_err(),
+            "--stage depends on an existing forge, which a cold build has purged"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "wright",
+                "build",
+                "zlib",
+                "--no-cache",
+                "--force-stage=check"
+            ])
+            .is_err(),
+            "--force-stage has no meaning when every checkpoint is denied"
+        );
     }
 }

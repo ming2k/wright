@@ -1,7 +1,7 @@
 ---
 id: ADR-NNNN
 title: "[Title of Decision]"
-status: draft # [draft | accepted | superseded | rejected | deprecated]
+status: proposed # [proposed | accepted | superseded | rejected | deprecated]
 date: YYYY-MM-DD
 scope: [e.g., core/engine, storage/ledger, cli]
 superseded_by: null # e.g., ADR-0042
@@ -10,7 +10,7 @@ negative_knowledge: true
 
 # NNNN. [Title of Decision]
 
-- Status: Draft | Accepted | Rejected | Deprecated | Superseded by [ADR-NNNN](NNNN-slug.md)
+- Status: Proposed | Accepted | Rejected | Deprecated | Superseded by ADR-NNNN
 - Date: YYYY-MM-DD
 - Deciders: [Names / GitHub handles]
 - Consulted: [Names / GitHub handles]

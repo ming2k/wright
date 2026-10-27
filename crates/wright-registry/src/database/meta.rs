@@ -103,9 +103,8 @@ impl ReadOnlyDb {
                     results.push(r?);
                 }
 
-                let mut stmt_shadow = conn.prepare(
-                    "SELECT path FROM shadowed_files WHERE path = ?1",
-                )?;
+                let mut stmt_shadow =
+                    conn.prepare("SELECT path FROM shadowed_files WHERE path = ?1")?;
                 let rows_shadow = stmt_shadow.query_map(rusqlite::params![target], |row| {
                     let path: String = row.get(0)?;
                     Ok(format!(

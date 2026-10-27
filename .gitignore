@@ -21,6 +21,7 @@ wright.toml
 /GEMINI.md
 .claude/
 .codex/
+.commandcode/
 .gemini/
 .kimi/
 .muta/

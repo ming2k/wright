@@ -5,6 +5,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use crate::error::{Result, WrightError};
+use crate::foundry::charge::SourceDigest;
 use crate::foundry::checkpoint::Checkpoint;
 use crate::foundry::executor::ExecutorRegistry;
 use crate::foundry::layers::LayerManager;
@@ -35,6 +36,9 @@ pub struct ForgeContext<'a> {
     pub stop_after_stage: Option<String>,
     pub skip_check: bool,
     pub force: bool,
+    /// Cold build (ADR-0057): stage checkpoints and the staging cache may not
+    /// answer for this build, even if their files survived.
+    pub no_cache: bool,
     pub executors: &'a ExecutorRegistry,
     pub default_isolation: IsolationLevel,
     pub rlimits: ResourceLimits,
@@ -43,7 +47,9 @@ pub struct ForgeContext<'a> {
     pub configure_lock: Option<Arc<Semaphore>>,
     pub compile_cpu_count: Option<u32>,
     pub compile_lock: Option<Arc<Semaphore>>,
-    pub build_key: String,
+    /// Content address of the plan's resolved sources (ADR-0054). Seeds the
+    /// stage hash chain and decides whether checkpoints may be honoured at all.
+    pub source_digest: SourceDigest,
     /// Shared step-timing registry: each executed stage records its
     /// duration here so the build ledger can report per-stage costs.
     pub timing: crate::util::timing::WorkflowTiming,
@@ -61,6 +67,7 @@ pub struct Forge<'a> {
     stop_after_stage: Option<String>,
     skip_check: bool,
     force: bool,
+    no_cache: bool,
     executors: &'a ExecutorRegistry,
     default_isolation: IsolationLevel,
     rlimits: ResourceLimits,
@@ -73,6 +80,9 @@ pub struct Forge<'a> {
     layers: LayerManager,
     work_dir: PathBuf,
     build_phase: Option<String>,
+    /// Content address of the resolved sources. The root of the stage hash
+    /// chain: without a root, the chain cannot express "the sources changed".
+    source_digest: SourceDigest,
     timing: crate::util::timing::WorkflowTiming,
 }
 
@@ -82,7 +92,12 @@ impl<'a> Forge<'a> {
         let plan_name = &ctx.manifest.metadata.name;
         let version = ctx.manifest.metadata.version.as_deref().unwrap_or("");
 
-        let checkpoint = Checkpoint::load(ctx.work_dir.clone(), plan_name, version)?;
+        let checkpoint = Checkpoint::load(
+            ctx.work_dir.clone(),
+            plan_name,
+            version,
+            ctx.source_digest.as_str(),
+        )?;
         let layers = LayerManager::new(&ctx.work_dir)?;
         let work_dir = ctx.work_dir.clone();
 
@@ -98,6 +113,7 @@ impl<'a> Forge<'a> {
             stop_after_stage: ctx.stop_after_stage,
             skip_check: ctx.skip_check,
             force: ctx.force,
+            no_cache: ctx.no_cache,
             executors: ctx.executors,
             default_isolation: ctx.default_isolation,
             rlimits: ctx.rlimits,
@@ -110,12 +126,17 @@ impl<'a> Forge<'a> {
             layers,
             work_dir,
             build_phase,
+            source_digest: ctx.source_digest,
             timing: ctx.timing,
         })
     }
 
+    /// Whether stage checkpoints may be trusted for this build.
+    ///
+    /// Volatile sources (ADR-0054) have no content address, so there is nothing
+    /// a checkpoint could be keyed on: every stage re-runs.
     fn can_checkpoint(&self) -> bool {
-        self.stages.is_empty() && !self.force
+        self.stages.is_empty() && !self.force && !self.no_cache && !self.source_digest.is_volatile()
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -160,6 +181,7 @@ impl<'a> Forge<'a> {
                 self.build_phase.as_deref(),
                 self.executors,
                 self.default_isolation,
+                self.source_digest.as_str(),
             )?
         } else {
             HashMap::new()

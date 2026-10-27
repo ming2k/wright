@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[cfg(with_handlers)]
 use crate::cli::common::Context;
 #[cfg(with_handlers)]
-use crate::error::Result;
+use crate::error::{Result, WrightError};
 
 const WRIGHT_UPGRADE_AFTER_HELP: &str = "\
 Examples:
@@ -15,7 +15,9 @@ Examples:
   wright upgrade all
   wright upgrade all --dry-run
   wright upgrade all --fresh
-  wright upgrade all --force";
+  wright upgrade all --force
+  wright upgrade all --no-cache
+  wright upgrade all --no-cache --dry-run";
 
 #[derive(Args)]
 #[command(
@@ -37,6 +39,15 @@ pub struct UpgradeArgs {
     /// Composable with `--force`.
     #[arg(long, short = 'c')]
     pub fresh: bool,
+
+    /// Cold rebuild: transactionally purge the source cache and the CAS store
+    /// (verified pinned http inputs are kept), then rebuild every selected plan
+    /// from freshly fetched sources, bypassing all derived reuse. `all` selects
+    /// every installed plan. Stronger than `--fresh`, which clears only the
+    /// per-plan forge workspace. Combine with `--dry-run` to preview what would
+    /// be purged.
+    #[arg(long)]
+    pub no_cache: bool,
 
     /// Preview what would be rebuilt and deployed without making any changes
     #[arg(long, short = 'n')]
@@ -78,10 +89,28 @@ pub struct UpgradeArgs {
 #[cfg(with_handlers)]
 pub async fn run(args: UpgradeArgs, ctx: &Context<'_>) -> Result<()> {
     let (part_store, _lock) = ctx.ensure_lock_and_part_store()?;
+
+    // Cold upgrades purge shared caches, so they must also exclude ordinary
+    // builds, which hold only the `build` lock. Lock order is `wright` then
+    // `build` (ADR-0057).
+    let _build_lock = if args.no_cache {
+        Some(
+            crate::util::lock::acquire_lock(
+                &crate::util::lock::lock_dir_from_db(&ctx.db_path),
+                crate::util::lock::LockIdentity::Command("build"),
+                crate::util::lock::LockMode::Exclusive,
+            )
+            .map_err(|e| WrightError::context("failed to acquire cold-build cache lock", e))?,
+        )
+    } else {
+        None
+    };
+
     crate::operations::upgrade::execute_upgrade(
         args.targets,
         args.force,
         args.fresh,
+        args.no_cache,
         args.dry_run,
         args.deps_depth,
         args.rdeps_depth,

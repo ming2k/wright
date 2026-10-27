@@ -323,6 +323,7 @@ impl PlanManifest {
             source_plan: None,
             plan_checksum: None,
             plan_source: None,
+            plan_dir: None,
         };
 
         manifest.validate()?;
@@ -346,6 +347,7 @@ impl PlanManifest {
         })?;
         manifest.plan_checksum = Some(crate::checksum::sha256_bytes(content.as_bytes()));
         manifest.plan_source = Some(content);
+        manifest.plan_dir = path.parent().map(std::path::Path::to_path_buf);
 
         if path.file_name().and_then(|s| s.to_str()) == Some("plan.toml") {
             let mvp_path = path.with_file_name("mvp.toml");

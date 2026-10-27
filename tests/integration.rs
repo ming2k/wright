@@ -16,6 +16,7 @@ mod integration {
     mod launch_test;
     mod layering_test;
     mod migration_test;
+    mod no_cache_test;
     mod output_test;
     mod permission_boundary_test;
     mod plan_snapshot_test;

@@ -44,11 +44,15 @@ changes that cross crate boundaries:
 cargo test --workspace               # all unit + integration tests
 cargo test --test integration        # only tests/integration/
 cargo test build_test                # filter by test name substring
-cargo test -p wright-engine           # application engine only
-cargo test -p wright-state            # persistence and recovery only
-cargo test -p wright-part             # archives and package validation
-cargo test -p wright-plan             # plan parsing and discovery
-cargo test -p wright-model            # domain values only
+cargo test -p wright-actions         # use cases, foundry, seal, and deploy
+cargo test -p wright-resolve         # target resolution and build waves
+cargo test -p wright-scheduler       # action graph and executor
+cargo test -p wright-registry        # installed state and delivery transactions
+cargo test -p wright-sandbox         # namespace and OverlayFS mechanics
+cargo test -p wright-part            # archives and package validation
+cargo test -p wright-plan            # plan parsing and discovery
+cargo test -p wright-model           # domain values only
+cargo test --test doc_governance     # links, firewall, root whitelist, ADR frontmatter
 ```
 
 Tests that require namespace isolation call
@@ -92,8 +96,8 @@ as `docs:`.
 2. CI runs three jobs in parallel: `rustfmt`, `clippy`, `build & test`.
    All three must be green.
 3. If the PR touches code with a corresponding documentation surface
-   (see [Update Checklist](../governance/documentation/core/workflow.md#part-1-code-to-doc-trigger-matrix)), state in
-   the PR description whether the documentation was updated or why not.
+   (see [Code-to-Doc Synchronization](standards/workflow.md#2-code-to-doc-synchronization)),
+   state in the PR description whether the documentation was updated or why not.
 4. Squash-merge on approval; the commit title becomes the changelog
    source for release notes.
 
@@ -102,28 +106,34 @@ as `docs:`.
 Wright follows the Diátaxis framework with strict routing. Before
 writing or moving any documentation:
 
-1. Read [Documentation Governance](../governance/documentation/core/index.md).
-2. Route the content with [Taxonomy](../governance/documentation/core/taxonomy.md).
-3. Match voice and formatting with the [Style Guide](../governance/documentation/core/style.md).
+1. Read the [Engineering Standards](standards/README.md).
+2. Route the content with [Taxonomy](standards/taxonomy.md).
+3. Match voice and formatting with [Style](standards/style.md).
 
 Hard rules to keep in mind:
 
-- `docs/adr/` records are immutable. To change a decision, write a new
-  ADR and mark the old one `Superseded by ADR-NNNN`. See
-  [ADR Architecture Profile](../governance/documentation/profiles/architecture/adr.md).
+- `docs/adr/` records are durable. To change a decision, write a new ADR
+  and mark the old one `superseded` with `superseded_by: ADR-NNNN`. See
+  [ADR Standards](standards/adr.md).
 - `CHANGELOG.md` entries are append-only. Do not edit released history;
   add under `Unreleased`.
-- `crates/wright-state/migrations/*.sql` are immutable. To change schema,
+- `crates/wright-registry/migrations/*.sql` are immutable. To change schema,
   add a new numbered migration.
 - Do not link from user-facing docs (`docs/tutorials/`,
   `docs/how-to/`, `docs/reference/`, `docs/explanation/`) into
   `docs/dev/`. The reverse direction is fine.
+
+Run `cargo test --test doc_governance` after moving or renaming
+documentation; it fails on a dead link, an escaped firewall, or invalid ADR
+frontmatter.
 
 ## Architecture context
 
 New contributors should read these once to understand the lay of the
 land before opening non-trivial PRs:
 
+- [System Architecture Governance](standards/architecture.md) — crate
+  layers, dependency direction, and architectural red-lines
 - [Module Layout](module-layout.md) — where each subsystem lives
 - [CLI Output & Tracing Design](tracing-output-design.md) — the
   Cargo-style output model every command must follow

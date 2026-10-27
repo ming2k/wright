@@ -73,24 +73,42 @@ At the same time, `install` does **not** default to reverse rebuild cascades.
 Rebuilding dependent dependents is a heavier policy decision and remains an
 explicit low-level workflow.
 
-### Parts-Dir First, Plan-Driven
+### Parts-Dir Is Inventory, Not a Build Cache
 
-`wright install` does not blindly rebuild everything.
+`wright install` does not use the mere existence of an archive in `parts_dir`
+to skip work.
 
-- If `parts_dir` already contains matching build outputs, they can be reused.
-- If a dependency part is missing or outdated and a plan exists for it, Wright builds it.
-- The install step still resolves archive dependencies from archives in `parts_dir`.
+- `parts_dir` is the hand-off between seal and deploy, and the inventory that
+  resolve, remove, and `doctor --repair` consult. It is not consulted to decide
+  whether to build.
+- Reuse of prior work lives in two content-addressed layers only: the charge
+  marker (`SourceDigest` over the resolved sources) and the CAS (the plan's
+  closure fingerprint). `--no-cache` disables both.
+- If a dependency part is missing or outdated and a plan exists for it, Wright
+  builds it.
 
 This makes `install` neither purely build-first nor purely install-first. It is a
 coordinated plan-to-system command.
 
-### Separate Force Controls
+### Separate Rebuild Controls
 
-`wright install` uses a unified force mechanism:
+`wright install` exposes three independent controls, each with one job:
 
-- `-f`, `--force` forces a clean rebuild (clears the per-plan build workspace, but keeps downloaded source cache) and a re-installation of the resulting parts.
+| Flag | Workspace | Source cache | CAS store | Redeploys up-to-date plans |
+|------|-----------|--------------|-----------|-----------------------------|
+| `-c`, `--fresh` | wiped | reused | reused | no |
+| `-f`, `--force` | wiped | reused | bypassed | yes |
+| `--no-cache` | wiped | **purged (verified pinned kept)** | **purged** | yes |
 
-This consolidates the previous separate flags into a single control for situations where you want to ensure the system is completely refreshed from the plan state.
+`--no-cache` is the cold install (ADR-0057): it transactionally purges the
+unverifiable caches, rebuilds the selected plans from freshly fetched sources,
+and denies every derived reuse (charge marker, forge checkpoints, staging cache,
+layers, CAS lookup, deploy hash-skip). A pinned `http` entry whose bytes match
+its declared `sha256` is an input, not a cache, and is kept. It never deletes
+`parts_dir` archives. The purge is staged and journaled under `<db
+parent>/purge/`, so a crash restores or finalizes it before the next cache
+decision. `--force` and `--fresh` keep their existing meanings; neither is
+redefined by the new mode.
 
 ## Execution Model
 

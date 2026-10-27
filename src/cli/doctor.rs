@@ -68,8 +68,35 @@ pub struct DoctorArgs {
 }
 
 #[cfg(with_handlers)]
+impl DoctorArgs {
+    /// Whether this invocation may write (and therefore needs crash recovery).
+    /// `--repair -n` is still treated as mutating by dispatch because opening
+    /// the registry for the preview may run migrations; the preview itself
+    /// takes no command lock.
+    pub fn is_mutating(&self) -> bool {
+        self.repair || self.restore.is_some() || self.snapshot.is_some()
+    }
+}
+
+#[cfg(with_handlers)]
 pub async fn run(args: DoctorArgs, ctx: &Context<'_>) -> Result<()> {
     let root_dir = args.root.clone().unwrap_or_else(|| ctx.root_dir.clone());
+
+    // Mutating doctor paths serialize with installs and cold purges. `wright`
+    // is always acquired before the database lock (lock order: wright → db).
+    let needs_wright_lock = args.restore.is_some() || (args.repair && !args.dry_run);
+    let _wright_lock = if needs_wright_lock {
+        Some(
+            crate::util::lock::acquire_lock(
+                &crate::util::lock::lock_dir_from_db(&ctx.db_path),
+                crate::util::lock::LockIdentity::Command("wright"),
+                crate::util::lock::LockMode::Exclusive,
+            )
+            .map_err(|e| crate::error::WrightError::context("failed to start doctor", e))?,
+        )
+    } else {
+        None
+    };
 
     if let Some(backup) = args.restore {
         let file_name = ctx
@@ -99,6 +126,9 @@ pub async fn run(args: DoctorArgs, ctx: &Context<'_>) -> Result<()> {
     }
 
     if args.repair {
+        if !args.dry_run {
+            crate::operations::clean::recover_interrupted_purge(ctx.config, &ctx.db_path)?;
+        }
         let db = ctx.open_db().await?;
         return crate::operations::dbadmin::execute_reindex(
             ctx.config,

@@ -72,6 +72,16 @@ max_concurrent_downloads = 8
 | `retry_count` | `3` | download retry count |
 | `max_concurrent_downloads` | `8` | upper bound on parallel source downloads across the whole process (prevents thundering-herd on mirror servers when many plans fetch at once) |
 
+## Storage Layout Safety
+
+Wright rejects a configuration in which a cache root overlaps durable state.
+`source_dir` and `store_dir` must be disjoint from each other; they must not be
+equal to, contain, or be contained by `parts_dir`, `db_path`, `ledger_dir`,
+`logs_dir`, or `build.forge_dir`; and they must not contain `plans_dir`,
+`folios_dir`, `executors_dir`, or any `extra_plans_dirs` entry. Existing paths
+are canonicalised before comparison, so symlinks cannot hide an overlap. The
+check runs at config load and again before a cold purge (ADR-0057).
+
 ## Notes
 
 - `stable_toolchain` lists part names that are never treated as "outdated" when computing dependency rebuild cascades. The default list covers the core LFS bootstrap toolchain (`gcc`, `glibc`, `binutils`, `make`, etc.). Add or replace entries when your distribution uses different package names (e.g. `gcc-14` or `musl`).
@@ -82,9 +92,12 @@ max_concurrent_downloads = 8
 - `extra_plans_dirs` are searched after `plans_dir`.
 - `parts_dir` is the local stock of built archives.
 - `db_path` tracks the authoritative state of installed parts, files, dependencies, and build sessions.
-- Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/lock/`.
+- Lock files live under the Wright lock directory derived from `db_path`, typically `/var/lib/wright/locks/`.
 - `ledger_dir` holds append-only audit data as plain files: `<plan>/builds.jsonl` (per-build cost records) and `<plan>/snapshots/` (plan-source history). Writes are advisory and never fail a build or deploy. A database redirected via `--root`/`--db` uses `<db dir>/ledger` instead of this path. Retention is opt-in via `wright clean --ledger`; `wright storage` reports its size.
-- `source_dir` caches downloaded sources and git source snapshots. It is a pure cache: `wright clean --sources` removes it (optionally `--older-than-days N`).
+- `source_dir` caches downloaded sources and git source snapshots. It is a pure cache: `wright clean --sources` removes it (optionally `--older-than-days N`), and `--no-cache` transactionally purges it before a cold build (keeping verified pinned `http` inputs).
+- `store_dir` holds the content-addressed build cache. It is also a pure cache: `wright clean --store` reclaims orphaned entries, and `--no-cache` purges the whole directory before any cold build. Neither flag deletes `parts_dir` archives.
+- A cold purge journals its transaction under `<db parent>/purge/` and stages entries in hidden `.wright-purge-*` directories. An interrupted purge is restored or finalized by the next lock-holding cache command (`install`, `upgrade`, `build --no-cache`, `launch`, cache-cleaning `clean`, `doctor --repair`).
+- Process locks follow a fixed order: `wright` → `build` → `db`. `install`, `upgrade`, `clean` (not `-n`), `launch` (not `-n`), and mutating `doctor` paths participate; Read-class commands take none (ADR-0044, ADR-0057).
 - `forge_dir` has a default and normally does not need to be declared.
   Override it only when build workspaces must live on another filesystem or
   volume.

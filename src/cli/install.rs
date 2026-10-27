@@ -20,6 +20,7 @@ Examples:
   wright install zlib
   wright install zlib openssl
   wright install zlib --fresh
+  wright install zlib --no-cache
   wright install ./plans/bash
   wright install @core
   wright install gcc --match=all";
@@ -102,6 +103,14 @@ pub struct InstallArgs {
     #[arg(long, short = 'c')]
     pub fresh: bool,
 
+    /// Cold install: transactionally purge the source cache and the CAS store
+    /// (verified pinned http inputs are kept), then rebuild the selected plans
+    /// from freshly fetched sources, bypassing all cached artifacts. Stronger
+    /// than `--fresh`, which clears only the per-plan forge workspace. Combine
+    /// with `--dry-run` to preview what would be purged.
+    #[arg(long)]
+    pub no_cache: bool,
+
     /// Preview what would be forged and deployed without making any changes
     #[arg(long, short = 'n')]
     pub dry_run: bool,
@@ -131,6 +140,23 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
             "no targets specified (pass plan names, folio names prefixed with '@', or paths as arguments or via stdin)".into(),
         ));
     }
+
+    // Cold installs purge shared caches, so they must also exclude ordinary
+    // builds, which hold only the `build` lock. Take it only after target
+    // validation, so an interactive stdin pipe does not hold it. Lock order is
+    // `wright` then `build` (ADR-0057).
+    let _build_lock = if args.no_cache {
+        Some(
+            crate::util::lock::acquire_lock(
+                &crate::util::lock::lock_dir_from_db(&ctx.db_path),
+                crate::util::lock::LockIdentity::Command("build"),
+                crate::util::lock::LockMode::Exclusive,
+            )
+            .map_err(|e| WrightError::context("failed to acquire cold-build cache lock", e))?,
+        )
+    } else {
+        None
+    };
 
     // Forward deps and reverse dependents are independent axes: `--deps`
     // restricts which forward relationships are followed (default `all`),
@@ -162,6 +188,7 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         rdeps_depth: args.rdeps_depth,
         force: args.force,
         clean: args.fresh,
+        no_cache: args.no_cache,
         config: ctx.config,
         db_path: &ctx.db_path,
         root_dir: &ctx.root_dir,
@@ -172,7 +199,9 @@ pub async fn run(args: InstallArgs, ctx: &Context<'_>) -> Result<()> {
         run_hooks: true,
         dry_run: args.dry_run,
         resolved_build_set: None,
-        inhibit_rebuild: !args.no_inhibit_rebuild && ctx.config.build.inhibit_abi_rebuild,
+        inhibit_rebuild: !args.no_inhibit_rebuild
+            && ctx.config.build.inhibit_abi_rebuild
+            && !args.no_cache,
     })
     .await
 }

@@ -60,11 +60,11 @@ flowchart TD
 
 The plan can be interrupted at any point, and the next identical command will continue from where it stopped:
 
-- **Before resolve**: If the archive already exists in `parts_dir/`, the resolve step still determines whether to reuse it or rebuild.
-- **Before build**: If the archive already exists in `parts_dir/`, the build is skipped.
-- **During build**: `work/` reuse and stage checkpoints skip already-completed work.
-- **Before deploy**: If the part is already deployed and up to date, it is skipped.
+- **Before resolve**: Resolution reads the registry and plan tree; it does not decide reuse from part archives.
+- **During build**: `source/` reuse (charge marker), stage checkpoints, and the CAS skip already-completed work.
+- **Before deploy**: If the part is already deployed and the sealed archive hash matches, deployment is skipped.
 - **During deploy**: Database transactions ensure that a failed deploy leaves the system in its previous state.
+- **To deny all of it**: `--no-cache` transactionally purges the unverifiable source cache and the CAS (verified pinned inputs are kept), then bypasses every reuse decision for the selected build set (ADR-0057).
 
 This means a plan is never "half-deployed" in the database without its files, and never "half-built" on disk without its checkpoints. The boundaries are explicit and recoverable.
 
@@ -129,12 +129,18 @@ The build step comprises three subsystems, executed in strict order:
 
 ### 2.1 Charge — Source Materialization
 
-`Charge::prepare` decides whether the source tree in `source/` can be reused. It computes a **fingerprint** — a SHA256 hash of the plan's declared sources — and compares it against `.charge_prepared` in the build directory.
+`Charge::prepare` decides whether the source tree in `source/` can be reused. It resolves each source to a **content address** and hashes the set into a `SourceDigest` (ADR-0054); the digest is compared against `.charge_prepared` in the build directory.
 
-- If the fingerprint matches and `.charge_prepared` exists, `fetch`/`verify`/`extract` are skipped entirely.
-- If the fingerprint differs, `source/` is wiped and sources are fetched from the source cache (`source_dir/`), verified against their SHA256 checksums, and extracted into `source/`.
+- If the digest matches, `.charge_prepared` exists, `source/` is still present, and no source is *volatile*, `fetch`/`verify`/`extract` are skipped entirely.
+- Otherwise `source/` is wiped and sources are fetched from the source cache (`source_dir/`), verified against their SHA256 checksums, and extracted into `source/`.
+
+The content address is the source's own bytes wherever that is knowable without doing the work: a `local` source is addressed by the SHA-256 of its file, an `http` source by its declared `sha256` (or, for `SKIP`, by the cached artefact once fetched). Editing a `local` file therefore changes the digest, and the marker written for its predecessor can never mask it.
+
+A source whose content cannot be known before it is fetched — `git_metadata = true`, or an `http` `SKIP` source not yet in the cache — makes the plan **volatile**. A volatile plan short-circuits nothing: it always re-materializes, never honours a forge checkpoint, and neither consults nor populates the CAS. A plan whose inputs are not content-addressable gets no reuse.
 
 The source cache is persistent across builds. A tarball is only downloaded again if it is missing or its checksum fails.
+
+`--no-cache` is the explicit exception (ADR-0057). It transactionally stages and journals the purge of the shared source cache and CAS store, then refuses the marker as well, so every unverifiable source is fetched again and every stage is re-run. A written `sha256` is a proof, not a cache: a pinned `http` entry whose bytes still match is kept and reused; git named-ref snapshots and `SKIP` entries are always discarded. This is the only way to observe a named git ref that moved, since `url + ref` — and therefore the `SourceDigest` — does not change when the ref does. The deploy hash-skip is disabled too, and sealed archives in `parts_dir` are never deleted by the purge.
 
 These three charge stages are **not** a batch-level preprocessing step. Each task in a batch runs its own `fetch` → `verify` → `extract` sequence inside the `tokio::spawn` that calls `Foundry::build`. A task that finishes extract proceeds directly into `configure`; it does **not** wait for sibling tasks to finish extracting.
 
@@ -144,7 +150,7 @@ With sources ready, the **Forge** runs. `Forge::run` (`src/foundry/forge/mod.rs`
 
 `Forge::run` begins at `prepare` because `Charge::prepare` has already handled the source stages (`fetch`, `verify`, `extract`). The forge therefore proceeds through the user-defined stages only.
 
-Before each stage, the forge computes an input hash chained from the stage's script, environment variables, and the preceding stage's hash. If `.wright-pipeline.json` records a matching hash with status `COMPLETED`, the stage is skipped. On success, the hash is committed. A change anywhere upstream cascades invalidation through all downstream stages. See [Checkpoint Recovery](checkpoint-recovery.md) for the full design.
+Before each stage, the forge computes an input hash chained from the stage's script, environment variables, and the preceding stage's hash. The chain is *rooted* in the plan's `SourceDigest`, so any change to the resolved sources invalidates the first stage and cascades through all downstream stages. If `.wright-pipeline.json` records a matching hash with status `COMPLETED`, the stage is skipped. On success, the hash is committed. See [Checkpoint Recovery](checkpoint-recovery.md) for the full design.
 
 Each stage runs inside an isolation sandbox (OverlayFS) with configurable resource limits. Pre- and post-hooks (`pre_<stage>`, `post_<stage>`) run around the main stage script.
 
@@ -168,7 +174,7 @@ For each output:
 
 The archive is written to `parts_dir/` (default `/var/lib/wright/parts`). Its filename includes the part name, version, release, and architecture: `zlib-1.3.1-1-x86_64.wright.tar.zst`.
 
-If the archive already exists and `--force` was not passed, sealing is skipped entirely.
+Sealing always writes a fresh archive. `--force` only re-slices `outputs/` from `staging/`; it does not decide whether the archive is written. The previous archive remains the rollback copy until this write replaces it.
 
 **Seal's responsibility is strictly packaging.** It does not slice outputs, decide which files belong where, or interpret `[[output]]` rules. Those concerns belong to **Mold**.
 

@@ -21,7 +21,7 @@ use crate::foundry::mold::Mold;
 use crate::isolation::IsolationLevel;
 use wright_plan::manifest::PlanManifest;
 
-pub use crate::foundry::charge::ChargeResult;
+pub use crate::foundry::charge::{ChargeResult, SourceDigest};
 pub use crate::foundry::forge::{Forge, ForgeContext};
 pub use crate::foundry::mold::MoldResult;
 
@@ -45,6 +45,10 @@ pub struct BuildOptions {
     pub skip_check: bool,
     pub force: bool,
     pub clean: bool,
+    /// Cold build (ADR-0057): purge shared caches before building and forbid
+    /// every reuse decision for this invocation. Distinct from `force`, which
+    /// keeps the source cache.
+    pub no_cache: bool,
     pub extra_env: HashMap<String, String>,
     pub verbose: bool,
     pub nproc_per_isolation: Option<u32>,
@@ -122,7 +126,25 @@ impl Foundry {
         )
     }
 
-    pub fn compute_build_key(&self, manifest: &PlanManifest) -> Result<String> {
+    /// Resolve a plan's sources to their content address (ADR-0054).
+    ///
+    /// Cheap enough to call before every cache decision: reading local source
+    /// files is the only filesystem work, and nothing is fetched or extracted.
+    pub fn resolve_sources(
+        &self,
+        manifest: &PlanManifest,
+        plan_dir: &Path,
+    ) -> Result<SourceDigest> {
+        Charge::new(&self.config, self.network_pool.clone()).resolve_sources(manifest, plan_dir)
+    }
+
+    /// The plan's build key: a content address of everything that determines
+    /// the artefact.
+    ///
+    /// The sources contribute through their [`SourceDigest`], never through
+    /// their declaration in the manifest — a plan that hashes its own text
+    /// rather than its inputs is exactly the defect ADR-0054 closes.
+    pub fn compute_build_key(&self, manifest: &PlanManifest, sources: &SourceDigest) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(manifest.metadata.name.as_bytes());
@@ -135,39 +157,8 @@ impl Foundry {
                 .as_bytes(),
         );
         hasher.update(manifest.metadata.release.to_string().as_bytes());
-        for source in &manifest.sources.entries {
-            match source {
-                wright_plan::manifest::Source::Http(http) => {
-                    hasher.update(b"http");
-                    hasher.update(http.url.as_bytes());
-                    hasher.update(http.sha256.as_bytes());
-                    if let Some(ref r#as) = http.r#as {
-                        hasher.update(r#as.as_bytes());
-                    }
-                    if let Some(ref ext) = http.extract_to {
-                        hasher.update(ext.as_bytes());
-                    }
-                }
-                wright_plan::manifest::Source::Git(git) => {
-                    hasher.update(b"git");
-                    hasher.update(git.url.as_bytes());
-                    if let Some(ref r#ref) = git.r#ref {
-                        hasher.update(variables::process_uri(r#ref, manifest).as_bytes());
-                    }
-                    hasher.update([git.git_metadata as u8]);
-                    if let Some(ref ext) = git.extract_to {
-                        hasher.update(ext.as_bytes());
-                    }
-                }
-                wright_plan::manifest::Source::Local(local) => {
-                    hasher.update(b"local");
-                    hasher.update(local.path.as_bytes());
-                    if let Some(ref ext) = local.extract_to {
-                        hasher.update(ext.as_bytes());
-                    }
-                }
-            }
-        }
+        hasher.update(b"\n-- sources --\n");
+        hasher.update(sources.as_str().as_bytes());
         let mut stage_names: Vec<_> = manifest.pipeline.keys().collect();
         stage_names.sort();
         for name in stage_names {
@@ -177,7 +168,7 @@ impl Foundry {
                 hasher.update(stage.executor.as_bytes());
             }
         }
-        Ok(format!("{:x}", hasher.finalize()))
+        format!("{:x}", hasher.finalize())
     }
 
     pub fn build_root(&self, manifest: &PlanManifest) -> Result<PathBuf> {
@@ -367,7 +358,7 @@ impl Foundry {
         // ------------------------------------------------------------------
         // 1. Charge — source preparation
         // ------------------------------------------------------------------
-        let charge = Charge::new(&self.config, self.network_pool.clone());
+        let charge = Charge::with_no_cache(&self.config, self.network_pool.clone(), opts.no_cache);
         let charge_guard = timing.step("charge");
         let charge_result = charge.prepare(manifest, plan_dir, &build_root).await?;
         charge_guard.success();
@@ -440,8 +431,6 @@ impl Foundry {
         }
         vars.extend(opts.extra_env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let build_key = self.compute_build_key(manifest)?;
-
         let mut forge = crate::foundry::forge::Forge::new(ForgeContext {
             manifest,
             source_dir: charge_result.dir,
@@ -456,6 +445,7 @@ impl Foundry {
             stop_after_stage: opts.until_stage,
             skip_check: opts.skip_check,
             force: opts.force,
+            no_cache: opts.no_cache,
             executors: &self.executors,
             default_isolation,
             rlimits: rlimits.clone(),
@@ -464,7 +454,7 @@ impl Foundry {
             configure_lock: opts.configure_lock,
             compile_cpu_count: Some(total_cpus),
             compile_lock: opts.compile_lock,
-            build_key,
+            source_digest: charge_result.digest,
             timing: timing.clone(),
         })?;
 
@@ -584,4 +574,112 @@ fn dir_is_populated(dir: &Path) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_manifest(path: &str) -> PlanManifest {
+        PlanManifest::parse(&format!(
+            r#"
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "{path}"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#
+        ))
+        .expect("valid manifest")
+    }
+
+    /// ADR-0054 `[INV-SRC-01]`: the build key — the sole input to the closure
+    /// fingerprint that addresses the CAS — must follow a local source's bytes.
+    /// A key that does not move is a CAS hit that redeploys the stale part.
+    #[test]
+    fn build_key_follows_local_source_content() {
+        let root = tempfile::tempdir().unwrap();
+        let plan_dir = root.path().join("plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let unit = plan_dir.join("demo.service");
+        std::fs::write(&unit, "ExecStart=/bin/old\n").unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        let foundry = Foundry::new(config);
+        let manifest = local_manifest("demo.service");
+
+        let before = foundry.compute_build_key(
+            &manifest,
+            &foundry.resolve_sources(&manifest, &plan_dir).unwrap(),
+        );
+
+        // Same length, different bytes, and a bumped mtime: content is what counts.
+        std::fs::write(&unit, "ExecStart=/bin/new\n").unwrap();
+        let after = foundry.compute_build_key(
+            &manifest,
+            &foundry.resolve_sources(&manifest, &plan_dir).unwrap(),
+        );
+
+        assert_ne!(
+            before, after,
+            "editing a local source must change the build key"
+        );
+
+        // Re-resolving identical content (even after a re-stat) must be stable,
+        // or every build would miss the CAS.
+        let stable = foundry.compute_build_key(
+            &manifest,
+            &foundry.resolve_sources(&manifest, &plan_dir).unwrap(),
+        );
+        assert_eq!(after, stable);
+    }
+
+    /// ADR-0054 `[INV-SRC-04]`: a plan with a non-content-addressable source is
+    /// reported volatile, which is what denies it CAS and checkpoint reuse.
+    #[test]
+    fn volatile_sources_are_reported_for_abstention() {
+        let root = tempfile::tempdir().unwrap();
+        let plan_dir = root.path().join("plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        let foundry = Foundry::new(config);
+
+        let manifest = PlanManifest::parse(
+            r#"
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "git"
+url = "https://example.invalid/demo.git"
+ref = "main"
+git_metadata = true
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            foundry
+                .resolve_sources(&manifest, &plan_dir)
+                .unwrap()
+                .is_volatile()
+        );
+    }
 }

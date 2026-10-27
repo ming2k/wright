@@ -16,14 +16,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  governance:
-    name: documentation governance
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify documentation governance
-        run: ./tools/verify.sh .
-
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -69,4 +61,6 @@ jobs:
         with:
           shared-key: test
       - run: cargo build --all-targets --verbose
+      - name: Documentation governance
+        run: cargo test --test doc_governance
       - run: cargo test --verbose

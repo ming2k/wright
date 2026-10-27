@@ -35,13 +35,17 @@ scheduler before committing state.
 
 ```text
 Layer 5: CLI (wright)
-Layer 4: Scheduler (wright-scheduler)
-Layer 3: Planning & Actions (wright-resolve, wright-actions)
+Layer 4: Application Actions (wright-actions)
+Layer 3: Planning & Scheduling (wright-resolve, wright-scheduler)
 Layer 2: Infrastructure & Storage (wright-registry, wright-cache, wright-ledger,
                                   wright-lock, wright-sandbox, wright-config,
                                   wright-part, wright-plan)
 Layer 1: Shared Values (wright-model)
 ```
+
+Within Layer 3, `wright-resolve` depends on `wright-scheduler`: resolution produces the
+package graph that the scheduler lowers into an action graph. `wright-actions` sits above both
+and owns the use cases that drive them.
 
 - **`cli`**: Subcommand argument definitions and terminal rendering.
 - **`wright-scheduler`**: Action DAG representation, compiler (`ActionPlanner`), and async concurrency executor (`ActionScheduler`).

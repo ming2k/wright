@@ -54,7 +54,11 @@ impl Default for CleanRequest<'_> {
     }
 }
 
-pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> Result<()> {
+pub async fn execute_clean(
+    request: CleanRequest<'_>,
+    config: &GlobalConfig,
+    db_path: &Path,
+) -> Result<()> {
     let plans = request.plans;
     let archives = request.archives;
     let stale = request.stale;
@@ -80,6 +84,12 @@ pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> 
     } else {
         plan_names.join(", ")
     };
+
+    // Settle any interrupted purge before walking the caches, so its staging
+    // directories are not mistaken for cache entries. A preview mutates nothing.
+    if !dry_run {
+        super::cache_purge::recover(config, db_path)?;
+    }
 
     // Collect before deleting so --dry-run reports the exact same set.
     let mut workspaces = Vec::<PathBuf>::new();
@@ -123,6 +133,31 @@ pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> 
         Vec::new()
     };
 
+    // `--sources` / `--store` deletions go through the same journaled staging
+    // transaction as a cold purge. The preview only computes the plan.
+    let cache_plan = {
+        let mut selections = Vec::new();
+        if !store_files.is_empty() {
+            selections.push((
+                config.general.store_dir.clone(),
+                store_files.iter().map(|entry| entry.path.clone()).collect(),
+            ));
+        }
+        if !source_files.is_empty() {
+            selections.push((config.general.source_dir.clone(), source_files.clone()));
+        }
+        if selections.is_empty() {
+            None
+        } else {
+            Some(super::cache_purge::plan_entries(
+                config,
+                db_path,
+                &config.general.parts_dir,
+                selections,
+            )?)
+        }
+    };
+
     let ledger_plan = if request.ledger {
         plan_ledger(
             &config.general.ledger_dir,
@@ -138,14 +173,17 @@ pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> 
     let ledger_paths = ledger_plan.paths();
 
     if dry_run {
+        let cache_reclaimed = cache_plan
+            .as_ref()
+            .map(|plan| plan.reclaimed())
+            .unwrap_or(0);
         let total = freed_bytes(
             workspaces
                 .iter()
                 .chain(&archive_files)
                 .chain(&log_files)
-                .chain(&source_files)
                 .chain(ledger_paths.iter()),
-        ) + store_freed_bytes(&store_files);
+        ) + cache_reclaimed;
         crate::cli_action!(
             "Dry-run",
             "{} workspace(s), {} archive(s), {} log entry(s), {} store entry(s), {} source(s), {} ledger file(s) would be removed for {target} ({})",
@@ -202,30 +240,14 @@ pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> 
         }
     }
 
-    if !store_files.is_empty() {
+    if let Some(plan) = &cache_plan {
         crate::cli_action!(
             "Cleaning",
-            "CAS store entries in {}",
-            config.general.store_dir.display()
+            "cached sources and CAS store entries ({} reclaimed)",
+            crate::util::display::format_bytes(plan.reclaimed())
         );
-        freed += store_freed_bytes(&store_files);
-        for entry in &store_files {
-            if let Err(e) = std::fs::remove_file(&entry.path) {
-                crate::cli_warn!("failed to remove {}: {}", entry.path.display(), e);
-            }
-        }
-    }
-
-    if !source_files.is_empty() {
-        crate::cli_action!(
-            "Cleaning",
-            "cached sources in {}",
-            config.general.source_dir.display()
-        );
-        freed += freed_bytes(source_files.iter());
-        for path in &source_files {
-            remove_entry(path)?;
-        }
+        freed += plan.reclaimed();
+        super::cache_purge::execute_silent(plan).await?;
     }
 
     if !ledger_plan.is_empty() {
@@ -260,9 +282,17 @@ pub async fn execute_clean(request: CleanRequest<'_>, config: &GlobalConfig) -> 
     Ok(())
 }
 
+/// Settle an interrupted transactional cache purge.
+///
+/// Public for CLI commands that hold the `wright` lock and need the caches in a
+/// settled state before reading them (e.g. `doctor --repair`).
+pub fn recover_interrupted_purge(config: &GlobalConfig, db_path: &Path) -> Result<()> {
+    super::cache_purge::recover(config, db_path)
+}
+
 /// Sum apparent bytes of a set of existing files (hard links counted once per
 /// inode, so a set that shares inodes does not over-report).
-fn freed_bytes<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> u64 {
+pub(crate) fn freed_bytes<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> u64 {
     let mut seen: HashSet<(u64, u64)> = HashSet::new();
     let mut bytes = 0u64;
     for path in paths {
@@ -281,19 +311,9 @@ fn freed_bytes<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> u64 {
     bytes
 }
 
-/// A store entry selected for removal, with the bytes its removal frees.
+/// A store entry selected for removal.
 struct StoreEntry {
     path: PathBuf,
-    /// Bytes freed once per inode; the first entry for an inode carries the
-    /// size, its hard-linked twins carry zero.
-    freed: u64,
-}
-
-fn store_freed_bytes(entries: &[StoreEntry]) -> u64 {
-    entries
-        .iter()
-        .map(|entry| entry.freed)
-        .fold(0u64, u64::saturating_add)
 }
 
 /// Store entries whose inode is shared with no live `parts_dir` file.
@@ -301,25 +321,15 @@ fn store_freed_bytes(entries: &[StoreEntry]) -> u64 {
 /// The CAS store is a pure rebuild cache; a `parts_dir` archive is the copy
 /// that matters. An entry hard-linked to a live archive frees nothing when
 /// removed, so it is left alone. An entry whose inode survives only in the
-/// store is an orphaned cache copy, and removing it frees real space — counted
-/// once per inode, since two orphaned entries may hard-link to each other.
+/// store is an orphaned cache copy. Exact reclaimed bytes are computed by
+/// [`reclaimed_bytes`] when the selection is planned.
 fn reclaimable_store_entries(store_dir: &Path, parts_dir: &Path) -> Vec<StoreEntry> {
     if !store_dir.exists() {
         return Vec::new();
     }
 
-    let mut live: HashSet<(u64, u64)> = HashSet::new();
-    if parts_dir.exists() {
-        for entry in walkdir::WalkDir::new(parts_dir).into_iter().flatten() {
-            if entry.file_type().is_file()
-                && let Ok(meta) = entry.metadata()
-            {
-                live.insert((meta.dev(), meta.ino()));
-            }
-        }
-    }
+    let live = live_inodes(parts_dir);
 
-    let mut counted: HashSet<(u64, u64)> = HashSet::new();
     let mut selected = Vec::new();
     for entry in walkdir::WalkDir::new(store_dir).into_iter().flatten() {
         if !entry.file_type().is_file() {
@@ -328,18 +338,63 @@ fn reclaimable_store_entries(store_dir: &Path, parts_dir: &Path) -> Vec<StoreEnt
         let Ok(meta) = entry.metadata() else {
             continue;
         };
-        let key = (meta.dev(), meta.ino());
-        if live.contains(&key) {
+        if live.contains(&(meta.dev(), meta.ino())) {
             continue;
         }
-        let freed = if counted.insert(key) { meta.len() } else { 0 };
         selected.push(StoreEntry {
             path: entry.path().to_path_buf(),
-            freed,
         });
     }
     selected.sort_by(|a, b| a.path.cmp(&b.path));
     selected
+}
+
+/// Inodes of every file under `directory` (empty when the directory does not
+/// exist). Used to decide whether removing a cache entry frees real space: a
+/// CAS entry hard-linked to a live `parts_dir` archive frees nothing.
+pub(crate) fn live_inodes(directory: &Path) -> HashSet<(u64, u64)> {
+    let mut live = HashSet::new();
+    if !directory.exists() {
+        return live;
+    }
+    for entry in walkdir::WalkDir::new(directory).into_iter().flatten() {
+        if entry.file_type().is_file()
+            && let Ok(meta) = entry.metadata()
+        {
+            live.insert((meta.dev(), meta.ino()));
+        }
+    }
+    live
+}
+
+/// Bytes that removing `entries` would actually free.
+///
+/// Files are walked (directories recurse), each inode is counted once, and
+/// inodes still referenced from `parts_dir` are ignored — unlinking a hard link
+/// to a live archive frees no space. This is the honest figure for a purge
+/// preview and for `clean --store`.
+pub(crate) fn reclaimed_bytes(entries: &[PathBuf], parts_dir: &Path) -> u64 {
+    let live = live_inodes(parts_dir);
+    let mut counted: HashSet<(u64, u64)> = HashSet::new();
+    let mut bytes = 0u64;
+    for entry in entries {
+        for item in walkdir::WalkDir::new(entry).into_iter().flatten() {
+            if item.file_type().is_dir() {
+                continue;
+            }
+            let Ok(meta) = item.metadata() else {
+                continue;
+            };
+            let key = (meta.dev(), meta.ino());
+            if live.contains(&key) {
+                continue;
+            }
+            if counted.insert(key) {
+                bytes = bytes.saturating_add(meta.len());
+            }
+        }
+    }
+    bytes
 }
 
 /// Cached source files selected for removal. `older_than_days` narrows by
@@ -621,7 +676,7 @@ fn matching_entries(
     Ok(matches)
 }
 
-fn validate_cleanup_root(directory: &Path) -> Result<()> {
+pub(crate) fn validate_cleanup_root(directory: &Path) -> Result<()> {
     let metadata =
         std::fs::symlink_metadata(directory).map_err(|error| io_error(directory, error))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -633,7 +688,7 @@ fn validate_cleanup_root(directory: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_entry(path: &Path) -> Result<()> {
+pub(crate) fn remove_entry(path: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
     let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
         std::fs::remove_dir_all(path)
@@ -643,7 +698,7 @@ fn remove_entry(path: &Path) -> Result<()> {
     result.map_err(|error| io_error(path, error))
 }
 
-fn io_error(path: &Path, error: std::io::Error) -> WrightError {
+pub(crate) fn io_error(path: &Path, error: std::io::Error) -> WrightError {
     WrightError::IoError(std::io::Error::new(
         error.kind(),
         format!("{}: {error}", path.display()),
@@ -691,8 +746,18 @@ mod tests {
     }
 
     fn test_config(parts_dir: PathBuf) -> GlobalConfig {
+        let root = parts_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
         let mut config = GlobalConfig::default();
         config.general.parts_dir = parts_dir;
+        config.general.source_dir = root.join("sources");
+        config.general.store_dir = root.join("store");
+        config.general.logs_dir = root.join("logs");
+        config.general.ledger_dir = root.join("ledger");
+        config.general.db_path = root.join("wright.db");
+        config.build.forge_dir = root.join("forge");
         config
     }
 
@@ -718,9 +783,13 @@ mod tests {
         let a_new = seal_prism(&parts_dir, "a", "2.0.0");
         let b_only = seal_prism(&parts_dir, "b", "1.0.0");
 
-        execute_clean(request(&[], true, false), &test_config(parts_dir))
-            .await
-            .unwrap();
+        execute_clean(
+            request(&[], true, false),
+            &test_config(parts_dir),
+            &tmp.path().join("wright.db"),
+        )
+        .await
+        .unwrap();
 
         assert!(!a_old.exists(), "obsolete archive of plan a removed");
         assert!(a_new.exists(), "newest archive of plan a kept");
@@ -739,9 +808,13 @@ mod tests {
         let a_old = seal_prism(&parts_dir, "a", "1.0.0");
         let a_new = seal_prism(&parts_dir, "a", "2.0.0");
 
-        execute_clean(request(&[], true, true), &test_config(parts_dir))
-            .await
-            .unwrap();
+        execute_clean(
+            request(&[], true, true),
+            &test_config(parts_dir),
+            &tmp.path().join("wright.db"),
+        )
+        .await
+        .unwrap();
 
         assert!(a_old.exists(), "dry run keeps the stale archive");
         assert!(a_new.exists(), "dry run keeps the newest archive");
@@ -772,9 +845,13 @@ mod tests {
         let mut config = test_config(parts_dir);
         config.general.plans_dir = plans_dir;
         let target = plan_a.to_string_lossy().into_owned();
-        execute_clean(request(&[target], true, false), &config)
-            .await
-            .unwrap();
+        execute_clean(
+            request(&[target], true, false),
+            &config,
+            &tmp.path().join("wright.db"),
+        )
+        .await
+        .unwrap();
 
         assert!(!a_old.exists(), "stale archive of the named plan removed");
         assert!(a_new.exists(), "newest archive of the named plan kept");
@@ -804,7 +881,7 @@ mod tests {
         let entries = reclaimable_store_entries(&store, &parts);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, orphan);
-        assert_eq!(store_freed_bytes(&entries), 40);
+        assert_eq!(reclaimed_bytes(&[orphan], &parts), 40);
         assert!(linked.exists(), "linked entry is not selected");
     }
 

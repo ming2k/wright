@@ -13,10 +13,13 @@ use wright_plan::discovery::PlanIndex;
 use wright_plan::manifest::PlanManifest;
 use wright_registry::database::{InstalledDb, PlanRecord};
 
+use super::cache_purge;
+
 pub async fn execute_upgrade(
     targets: Vec<String>,
     force: bool,
     fresh: bool,
+    no_cache: bool,
     dry_run: bool,
     deps_depth: Option<usize>,
     rdeps_depth: Option<usize>,
@@ -30,12 +33,22 @@ pub async fn execute_upgrade(
 ) -> Result<()> {
     let mut targets = targets;
 
-    // Handle `all` — find every installed plan that has a newer version available.
+    // Handle `all` — find every installed plan that has a newer version
+    // available. With `--no-cache`, `all` means every installed plan: a cold
+    // build must not be filtered down to "already outdated" (ADR-0057).
     if targets.iter().any(|t| t == "all") {
-        targets = find_outdated_plans(config, db_path).await?;
+        targets = if no_cache {
+            all_installed_plans(config, db_path).await?
+        } else {
+            find_outdated_plans(config, db_path).await?
+        };
         if targets.is_empty() {
             if !quiet {
-                crate::outln!("all plans are up to date");
+                if no_cache {
+                    crate::outln!("no installed plans to rebuild");
+                } else {
+                    crate::outln!("all plans are up to date");
+                }
             }
             return Ok(());
         }
@@ -44,7 +57,7 @@ pub async fn execute_upgrade(
         }
     } else {
         // For explicit targets: validate that targets exist and are installed.
-        if force {
+        if force || no_cache {
             validate_upgrade_targets(&targets, config, db_path).await?;
         } else {
             targets = filter_outdated_targets(&targets, config, db_path).await?;
@@ -150,6 +163,11 @@ pub async fn execute_upgrade(
     }
 
     if dry_run {
+        if no_cache {
+            let keep = cache_purge::keep_entries_for_names(config, &build_set.names)?;
+            let purge = cache_purge::plan(config, db_path, &keep, &config.general.parts_dir)?;
+            crate::cli_action!("Dry-run", "would purge {}", cache_purge::summary(&purge));
+        }
         crate::outln!("[dry-run] upgrade -> {}", root_dir.display());
         crate::outln!(
             "[dry-run] would rebuild and deploy {} plan(s):",
@@ -175,7 +193,8 @@ pub async fn execute_upgrade(
         deps_depth: None,
         rdeps_depth: None,
         force,
-        clean: force || fresh,
+        clean: force || fresh || no_cache,
+        no_cache,
         config,
         db_path,
         root_dir,
@@ -186,7 +205,7 @@ pub async fn execute_upgrade(
         run_hooks: true,
         dry_run: false,
         resolved_build_set: Some(build_set),
-        inhibit_rebuild: !no_inhibit_rebuild && config.build.inhibit_abi_rebuild,
+        inhibit_rebuild: !no_inhibit_rebuild && config.build.inhibit_abi_rebuild && !no_cache,
     })
     .await
 }
@@ -225,7 +244,23 @@ async fn plan_is_outdated(
     }
 
     if let (Some(deployed), Some(current)) = (&plan.plan_checksum, &manifest.plan_checksum) {
-        return Ok(deployed != current);
+        if deployed != current {
+            return Ok(true);
+        }
+
+        // `plan.toml` is byte-identical, but a plan is more than its plan.toml:
+        // `[[sources]] type = "local"` files live beside it and are build inputs
+        // (ADR-0055). Without this check the plan reports "already up to date"
+        // while its installed parts still carry the previous file's bytes.
+        if let Some(recorded) = &plan.source_checksums
+            && let Ok(current_sources) = super::plan_drift::current_source_provenance(manifest)
+            && super::plan_drift::source_provenance_drifted(recorded, &current_sources)
+                == Some(true)
+        {
+            return Ok(true);
+        }
+
+        return Ok(false);
     }
 
     // Legacy deployments carry no plan checksum: fall back to comparing the
@@ -334,6 +369,39 @@ async fn filter_outdated_targets(
     }
 
     Ok(outdated)
+}
+
+/// Every installed plan that still has a local `plan.toml`.
+///
+/// A cold `upgrade all` is not filtered by staleness: "all" means all of them
+/// (ADR-0057). Installed plans whose local manifest has disappeared are skipped
+/// — there is nothing to rebuild them from.
+async fn all_installed_plans(config: &GlobalConfig, db_path: &Path) -> Result<Vec<String>> {
+    let db = InstalledDb::open(db_path, Some(&crate::ledger::dir(config, Some(db_path))))
+        .await
+        .map_err(|e| WrightError::context("open database", e))?;
+
+    let plans = db
+        .list_plans()
+        .await
+        .map_err(|e| WrightError::context("list plans", e))?;
+
+    let plan_dirs = plan_search_dirs(config);
+    let index = PlanIndex::discover(&plan_dirs)?;
+
+    let mut names = Vec::new();
+    for plan in plans {
+        if index.path_for(&plan.name).is_some() {
+            names.push(plan.name);
+        } else {
+            tracing::warn!(
+                event = "upgrade.no_local_plan",
+                plan_name = %plan.name,
+                "Skipping installed plan with no local plan.toml in a cold upgrade"
+            );
+        }
+    }
+    Ok(names)
 }
 
 /// Scan every installed plan, compare the deployed record with the current
@@ -613,6 +681,89 @@ arch = "x86_64"
         let mut config = GlobalConfig::default();
         config.general.plans_dir = plans_dir;
 
+        let outdated = filter_outdated_targets(&["solo".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert_eq!(outdated, ["solo"]);
+    }
+
+    /// ADR-0055: `plan.toml` is byte-identical, but a `[[sources]] type =
+    /// "local"` file bundled with the plan changed. The plan is drift and must
+    /// be selected, or `wright upgrade` would report "already up to date" and
+    /// ship the previous bytes.
+    #[tokio::test]
+    async fn edited_local_source_is_detected_as_outdated() {
+        let temp = tempfile::tempdir().unwrap();
+        let plans_dir = temp.path().join("plans");
+        let plan_dir = plans_dir.join("solo");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let plan_path = plan_dir.join("plan.toml");
+        std::fs::write(
+            &plan_path,
+            r#"
+name = "solo"
+version = "1.0.0"
+release = 1
+description = "solo plan"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "solo.service"
+"#,
+        )
+        .unwrap();
+        std::fs::write(plan_dir.join("solo.service"), "ExecStart=/bin/old\n").unwrap();
+
+        let manifest = wright_plan::manifest::PlanManifest::from_file(&plan_path).unwrap();
+        let checksum = manifest.plan_checksum.clone().unwrap();
+        // What the sealed parts recorded: the original file's content address.
+        let recorded = crate::operations::plan_drift::current_source_provenance(&manifest).unwrap();
+
+        let db_path = temp.path().join("wright.db");
+        let db = InstalledDb::open(&db_path, None).await.unwrap();
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "solo",
+                version: "1.0.0",
+                release: 1,
+                epoch: 0,
+                arch: "x86_64",
+            })
+            .await
+            .unwrap();
+        db.insert_part(NewPart {
+            name: "solo",
+            plan_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        db.set_plan_provenance(
+            plan_id,
+            wright_registry::database::NewPlanProvenance {
+                plan_checksum: Some(&checksum),
+                source_checksums: &recorded,
+                wright_version: "test",
+                isolation: "none",
+            },
+        )
+        .await
+        .unwrap();
+        drop(db);
+
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = plans_dir;
+
+        // plan.toml untouched, source untouched: up to date.
+        let outdated = filter_outdated_targets(&["solo".to_string()], &config, &db_path)
+            .await
+            .unwrap();
+        assert!(outdated.is_empty(), "expected up to date, got {outdated:?}");
+
+        // Only the bundled file's bytes move.
+        std::fs::write(plan_dir.join("solo.service"), "ExecStart=/bin/new\n").unwrap();
         let outdated = filter_outdated_targets(&["solo".to_string()], &config, &db_path)
             .await
             .unwrap();

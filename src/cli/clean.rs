@@ -79,6 +79,28 @@ pub struct CleanArgs {
 
 #[cfg(with_handlers)]
 pub async fn run(args: CleanArgs, ctx: &Context<'_>) -> Result<()> {
+    // Deletion must not race a build or a cold purge. Take the same lock pair
+    // in the same order as every other cache-touching command: `wright` then
+    // `build` (ADR-0057). A preview mutates nothing, so it stays lock-free and
+    // remains usable without write access to the lock directory.
+    let _locks = if args.dry_run {
+        None
+    } else {
+        let wright_lock = crate::util::lock::acquire_lock(
+            &crate::util::lock::lock_dir_from_db(&ctx.db_path),
+            crate::util::lock::LockIdentity::Command("wright"),
+            crate::util::lock::LockMode::Exclusive,
+        )
+        .map_err(|e| crate::error::WrightError::context("failed to start clean", e))?;
+        let build_lock = crate::util::lock::acquire_lock(
+            &crate::util::lock::lock_dir_from_db(&ctx.db_path),
+            crate::util::lock::LockIdentity::Command("build"),
+            crate::util::lock::LockMode::Exclusive,
+        )
+        .map_err(|e| crate::error::WrightError::context("failed to start clean", e))?;
+        Some((wright_lock, build_lock))
+    };
+
     crate::operations::clean::execute_clean(
         crate::operations::clean::CleanRequest {
             plans: &args.plans,
@@ -94,6 +116,7 @@ pub async fn run(args: CleanArgs, ctx: &Context<'_>) -> Result<()> {
             dry_run: args.dry_run,
         },
         ctx.config,
+        &ctx.db_path,
     )
     .await
 }

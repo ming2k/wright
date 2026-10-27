@@ -5,7 +5,7 @@ use crate::error::{Result, WrightError};
 use wright_model::isolation::IsolationLevel;
 use wright_part::archive;
 use wright_part::fhs;
-use wright_plan::manifest::{OutputConfig, PlanManifest, Source};
+use wright_plan::manifest::{OutputConfig, PlanManifest};
 
 /// Compatibility sealing entry point that derives isolation from explicit
 /// stage declarations. Runtime engine paths should pass their resolved policy
@@ -73,12 +73,9 @@ pub fn create_part_with_isolation(
         },
         provenance: archive::Provenance {
             plan_checksum: plan.plan_checksum.clone(),
-            source_checksums: plan
-                .sources
-                .entries
-                .iter()
-                .map(|source| source_provenance_line(source, plan))
-                .collect(),
+            // Content-addressed per-source audit lines (ADR-0055): what was
+            // actually built, not merely what the plan declared.
+            source_checksums: crate::foundry::charge::source_provenance_lines(plan)?,
             wright_version: env!("CARGO_PKG_VERSION").to_string(),
             isolation: isolation.to_string(),
         },
@@ -99,27 +96,6 @@ pub fn create_part_with_isolation(
     let output_dir = output_path.join(manifest.plan_name());
     std::fs::create_dir_all(&output_dir).map_err(WrightError::IoError)?;
     Ok(archive::write_part(part_dir, &spec, &output_dir)?)
-}
-
-fn source_provenance_line(source: &Source, plan: &PlanManifest) -> String {
-    use wright_plan::variables::expand_metadata;
-
-    match source {
-        Source::Http(http) => format!(
-            "http {} sha256={}",
-            expand_metadata(&http.url, plan),
-            http.sha256
-        ),
-        Source::Git(git) => format!(
-            "git {} ref={}",
-            expand_metadata(&git.url, plan),
-            git.r#ref
-                .as_deref()
-                .map(|reference| expand_metadata(reference, plan))
-                .unwrap_or_else(|| "HEAD".to_string())
-        ),
-        Source::Local(local) => format!("local {}", expand_metadata(&local.path, plan)),
-    }
 }
 
 fn weakest_declared_isolation(plan: &PlanManifest) -> IsolationLevel {
@@ -313,6 +289,56 @@ script = "true"
         assert_eq!(provenance.isolation, "none");
         assert!(!staging.path().join(".PARTINFO").exists());
         assert!(!staging.path().join(".FILELIST").exists());
+    }
+
+    /// ADR-0055: a `local` source is recorded by content address, so the ledger
+    /// can answer "did a file bundled with the plan change?" — a question
+    /// `plan_checksum` cannot answer, because it covers `plan.toml` alone.
+    #[test]
+    fn sealing_records_local_sources_by_content_address() {
+        let plan_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            plan_dir.path().join("demo.service"),
+            "ExecStart=/bin/true\n",
+        )
+        .unwrap();
+        let plan_path = plan_dir.path().join("plan.toml");
+        std::fs::write(
+            &plan_path,
+            r#"
+name = "demo"
+version = "1.2.3"
+release = 1
+description = "demo"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "demo.service"
+
+[pipeline.compile]
+executor = "shell"
+isolation = "none"
+script = "true"
+"#,
+        )
+        .unwrap();
+        let manifest = PlanManifest::from_file(&plan_path).unwrap();
+
+        let staging = tempfile::tempdir().unwrap();
+        std::fs::write(staging.path().join("payload"), "x").unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let path = create_part(staging.path(), &manifest, output.path(), None).unwrap();
+        let provenance = archive::read_partinfo(&path).unwrap().provenance.unwrap();
+
+        let expected_hash = crate::util::checksum::sha256_bytes("ExecStart=/bin/true\n".as_bytes());
+        assert_eq!(
+            provenance.source_checksums,
+            vec![format!("local demo.service sha256={expected_hash}")],
+            "a local source must be recorded by the hash of its bytes"
+        );
     }
 
     #[test]

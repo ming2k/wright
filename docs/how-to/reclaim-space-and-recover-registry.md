@@ -53,6 +53,13 @@ wright clean --logs -n
 The dry run prints the exact removal set **and the byte total**, so you can
 confirm the space is real before committing.
 
+`wright clean` is for reclaiming space. If the goal is instead "the next build
+must not trust unproven cache state", use the cold-build flag on the build
+command itself: `wright build <plan> --no-cache`, `wright install`/`upgrade
+--no-cache`, or `wright launch ... --no-cache`. It transactionally purges
+`sources` and `store` as part of the run, keeps verified pinned inputs, previews
+with `-n`, and never touches `parts` (ADR-0057).
+
 ### What each location costs you, and why it accumulates
 
 - **`--store` (CAS).** A part's cache fingerprint is

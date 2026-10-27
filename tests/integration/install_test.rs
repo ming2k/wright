@@ -322,6 +322,7 @@ async fn test_install_command_resolves_plan_name_to_all_outputs() {
         rdeps_depth: None,
         force: false,
         fresh: false,
+        no_cache: false,
         dry_run: false,
         root: None,
         no_inhibit_rebuild: false,

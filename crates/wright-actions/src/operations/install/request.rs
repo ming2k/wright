@@ -20,6 +20,11 @@ pub struct InstallRequest<'a> {
     /// `force`: `clean` forces a from-scratch forge without redeploying parts
     /// that are already converged. `force` implies clean.
     pub clean: bool,
+    /// Cold build (ADR-0057): purge the source cache and the CAS store before
+    /// building, and forbid every reuse decision for this invocation. Stronger
+    /// than `clean`, which clears only the per-plan forge workspace. Unlike
+    /// `force`, this does not redefine any existing flag.
+    pub no_cache: bool,
     pub config: &'a GlobalConfig,
     pub db_path: &'a Path,
     pub root_dir: &'a Path,

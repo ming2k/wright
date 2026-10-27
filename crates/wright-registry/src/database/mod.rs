@@ -621,6 +621,48 @@ mod tests {
         assert_eq!(stored.name, "provenance-plan");
         assert_eq!(stored.version, "1.2.3");
         assert_eq!(stored.plan_checksum.as_deref(), Some("deadbeef"));
+        assert_eq!(
+            stored.source_checksums.as_deref(),
+            Some(source_checksums.as_slice()),
+            "recorded source provenance must survive the registry round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_plan_record_tolerates_unparseable_source_provenance() {
+        // A column this code did not write is audit data of unknown shape; it
+        // must degrade to "absent" rather than failing the read.
+        let db = test_db().await;
+        let plan_id = db
+            .insert_plan(NewPlan {
+                name: "opaque-provenance",
+                version: "1.0.0",
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        db.set_plan_provenance(
+            plan_id,
+            NewPlanProvenance {
+                plan_checksum: Some("deadbeef"),
+                source_checksums: &["http https://example.org/src sha256=abc".to_string()],
+                wright_version: "5.3.12",
+                isolation: "strict",
+            },
+        )
+        .await
+        .unwrap();
+        db.write(|conn| {
+            conn.execute("UPDATE plans SET source_checksums = '{not json'", [])
+                .map_err(|e| crate::error::WrightError::DatabaseError(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let stored = db.get_plan_by_id(plan_id).await.unwrap().unwrap();
+        assert_eq!(stored.plan_checksum.as_deref(), Some("deadbeef"));
+        assert_eq!(stored.source_checksums, None);
     }
 
     #[tokio::test]

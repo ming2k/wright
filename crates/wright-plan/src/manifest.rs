@@ -215,6 +215,14 @@ pub struct PlanManifest {
     /// plan content that produced a part survives later edits to the plan
     /// source (ADR-0033). `None` for manifests not loaded from a file.
     pub plan_source: Option<String>,
+    /// Directory the plan was loaded from, when it was loaded from a file.
+    ///
+    /// A plan is more than its `plan.toml`: `[[sources]] type = "local"` files
+    /// live beside it and are build inputs (ADR-0055). Paths that are relative
+    /// to the plan are resolved against this. `None` for manifests parsed from
+    /// a string, which have no plan directory and therefore no plan-relative
+    /// inputs.
+    pub plan_dir: Option<PathBuf>,
 }
 
 /// Stability policy governing physical ABI probe extraction and rebuild inhibition.

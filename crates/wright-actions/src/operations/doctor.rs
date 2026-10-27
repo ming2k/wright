@@ -161,9 +161,14 @@ async fn check_parts_dir_closure(config: &GlobalConfig) -> Result<usize> {
     Ok(missing.len())
 }
 
-/// Compare each registered plan's recorded provenance checksum against the
-/// current plan source on disk. A mismatch means the plan changed since its
-/// parts were sealed — the installed state no longer reflects plan source.
+/// Compare each registered plan's recorded provenance against the current plan
+/// on disk. A mismatch means the plan changed since its parts were sealed — the
+/// installed state no longer reflects plan source.
+///
+/// Two independent facts are compared (ADR-0033, ADR-0055): the SHA-256 of
+/// `plan.toml`, and the content-addressed per-source lines that cover the files
+/// bundled beside it. Reporting only the former would call a plan up to date
+/// when the only thing that changed was one of its local sources.
 async fn check_plan_drift(db: &ReadOnlyDb, config: &GlobalConfig) -> Result<usize> {
     let plans = db.list_plans().await?;
     if plans.iter().all(|p| p.plan_checksum.is_none()) {
@@ -198,9 +203,29 @@ async fn check_plan_drift(db: &ReadOnlyDb, config: &GlobalConfig) -> Result<usiz
                 );
                 let diff = plan_drift_diff(&ledger_dir, &plan.name, recorded, path);
                 drifted.push((detail, diff));
+                continue;
             }
             Ok(_) => {}
-            Err(e) => crate::cli_warn!("cannot checksum {}: {}", path.display(), e),
+            Err(e) => {
+                crate::cli_warn!("cannot checksum {}: {}", path.display(), e);
+                continue;
+            }
+        }
+
+        // plan.toml is unchanged; check the plan's other inputs.
+        if let Some(recorded_sources) = &plan.source_checksums
+            && let Ok(manifest) = wright_plan::manifest::PlanManifest::from_file(path)
+            && let Ok(current_sources) = super::plan_drift::current_source_provenance(&manifest)
+            && super::plan_drift::source_provenance_drifted(recorded_sources, &current_sources)
+                == Some(true)
+        {
+            drifted.push((
+                format!(
+                    "{} (plan.toml unchanged; a source bundled with the plan changed)",
+                    plan.name
+                ),
+                None,
+            ));
         }
     }
 
@@ -336,19 +361,17 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
 
         // 1. Initially clean
-        let (issues, found) =
-            super::super::health::metadata_leak_check(&db, root.path())
-                .await
-                .unwrap();
+        let (issues, found) = super::super::health::metadata_leak_check(&db, root.path())
+            .await
+            .unwrap();
         assert_eq!(issues, 0);
         assert!(found.is_empty());
 
         // 2. Leaked file on live root
         std::fs::write(root.path().join(".ABIINFO"), "leaked").unwrap();
-        let (issues, found) =
-            super::super::health::metadata_leak_check(&db, root.path())
-                .await
-                .unwrap();
+        let (issues, found) = super::super::health::metadata_leak_check(&db, root.path())
+            .await
+            .unwrap();
         assert_eq!(issues, 1);
         assert!(matches!(
             found[0],

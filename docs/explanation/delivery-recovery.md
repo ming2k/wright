@@ -32,9 +32,14 @@ Before building a plan, a *closure fingerprint* is computed:
 sha256( build_key(plan) + dep₁.fingerprint + dep₂.fingerprint + ... )
 ```
 
-`build_key` hashes the plan's metadata, source URLs/SHAs, and forge
-scripts.  Dependency fingerprints are recursively included so that a change
-anywhere in the transitive build tree invalidates all dependents.
+`build_key` hashes the plan's metadata, its pipeline scripts, and the content
+address of its resolved sources (ADR-0054).  Dependency fingerprints are
+recursively included so that a change anywhere in the transitive build tree
+invalidates all dependents.
+
+A plan whose sources are *volatile* — `git_metadata = true`, or an `http`
+`SKIP` source not yet in the source cache — has no trustworthy build key.  The
+CAS is neither queried nor written for such a plan: it is always built.
 
 ### Store layout
 

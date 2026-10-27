@@ -114,6 +114,10 @@ for a full discussion.
 | **Isolation** | A sandboxed environment for running forge stages. Levels: `none`, `relaxed`, `strict`. |
 | **Sysroot** | A read-only copy of the host's `/usr`, `/bin`, and `/lib` trees used as the root for `strict`-isolation builds. |
 | **Merged base** | The `base/` directory under a build root: a reflink/hard-link union of the extracted source and all completed stage layers, used to populate the next stage's `target/` working tree. Rebuilt from the surviving layers whenever `.base_manifest` disagrees with the checkpoints. See [ADR-0037](../adr/0037-real-directory-stage-trees.md). |
+| **Source digest** | The content address of a plan's resolved sources: a hash over each source's own content (a `local` file's bytes, an `http` source's checksum, a `git` snapshot's pinned ref). The single source-derived input to every cache key — the charge marker, the build key, and the root of the forge stage hash chain. See [ADR-0054](../adr/0054-content-addressed-source-identity.md). |
+| **Volatile plan** | A plan with a source whose content cannot be known before it is fetched (`git_metadata = true`, or an `http` `sha256 = "SKIP"` source not yet cached). A volatile plan is granted no reuse: charge always re-materializes, no checkpoint is honoured, and the CAS is neither read nor written. See [ADR-0054](../adr/0054-content-addressed-source-identity.md). |
+| **Plan drift** | A deployed plan no longer matching the plan on disk — because `plan.toml` changed, or because a file the plan bundles (`[[sources]] type = "local"`) changed. Selection (`wright upgrade`) and reporting (`wright doctor`) both consider the whole plan, not just `plan.toml`. See [ADR-0055](../adr/0055-plan-drift-covers-bundled-sources.md). |
+| **Cold build** | An explicit `--no-cache` invocation that transactionally purges the unverifiable source cache and the CAS, keeps verified pinned `http` inputs, re-fetches every unproven source, and denies every derived reuse for the selected build set. It never deletes `parts_dir` archives. See [ADR-0057](../adr/0057-transactional-cold-purge-and-trust-boundary.md). |
 
 ## Writing Guidance
 

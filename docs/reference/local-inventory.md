@@ -59,13 +59,16 @@ Every `.wright.tar.zst` carries metadata files at the archive root:
 | Field | Content |
 |-------|---------|
 | `plan_checksum` | SHA-256 hex of the raw `plan.toml` that produced the part (`mvp.toml` overlay excluded) |
-| `source_checksums` | array of `<kind> <locator> <verification>` strings, one per `[[sources]]` entry, `${VAR}` expanded |
+| `source_checksums` | array of `<kind> <locator> <verification>` strings, one per `[[sources]]` entry, `${VAR}` expanded. A `local` entry's verification is the SHA-256 of the file's bytes (ADR-0055), so the ledger can answer whether a file bundled beside `plan.toml` changed |
 | `wright_version` | version of the `wright` binary that sealed the part |
 | `isolation` | weakest isolation level declared across the plan's pipeline stages (`none` / `relaxed` / `strict`) |
 
-Provenance is descriptive, never enforced; `wright doctor` uses
-`plan_checksum` to report drift between installed parts and current plan
-source. See [ADR-0023](../adr/0023-parts-as-maintenance-ledger.md).
+Provenance is descriptive, never enforced; `wright doctor` and `wright upgrade`
+use `plan_checksum` and `source_checksums` together to report drift between
+installed parts and the current plan on disk. Comparing the checksum alone
+cannot see a change to a `local` source, which is not part of `plan.toml`. See
+[ADR-0023](../adr/0023-parts-as-maintenance-ledger.md) and
+[ADR-0055](../adr/0055-plan-drift-covers-bundled-sources.md).
 
 The `.PLANSRC` snapshot complements `plan_checksum`: the checksum says
 *that* the plan changed, the snapshot preserves *what it was*. Deploy and

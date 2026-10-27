@@ -37,11 +37,7 @@ pub fn canonicalize_dir_mode(raw_mode: u32) -> u32 {
 #[inline]
 pub fn canonicalize_file_mode(raw_mode: u32) -> u32 {
     let special = raw_mode & 0o7000;
-    let base = if raw_mode & 0o111 != 0 {
-        0o755
-    } else {
-        0o644
-    };
+    let base = if raw_mode & 0o111 != 0 { 0o755 } else { 0o644 };
     special | base
 }
 
@@ -87,9 +83,20 @@ pub fn archive_sha256(path: &Path) -> Result<String> {
 
 /// Create a tar.zst archive from a directory.
 /// Handles symlinks by archiving them as symlinks (not following them).
+///
+/// The archive is written to a temporary sibling and renamed over
+/// `output_path`, so an existing file at that path is **replaced**, never
+/// rewritten in place. This is not a nicety: a sealed archive is hard-linked
+/// into the content-addressed store (`BuildCache::store`), and two builds of
+/// the same plan version produce the same archive name but different bytes.
+/// Reusing the inode would silently mutate the *previous* cache entry, leaving
+/// a content-addressed store that hands back the wrong archive for its own key
+/// — and, because the version triple matches, no downstream check notices.
+/// The rename also means a reader never observes a half-written archive.
 pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
-    let file = std::fs::File::create(output_path).map_err(|e| {
-        WrightError::context(format!("failed to create {}", output_path.display()), e)
+    let staged = StagedOutput::begin(output_path)?;
+    let file = std::fs::File::create(staged.path()).map_err(|e| {
+        WrightError::context(format!("failed to create {}", staged.path().display()), e)
     })?;
 
     let encoder = zstd::Encoder::new(file, 3)
@@ -272,7 +279,58 @@ pub fn create_tar_zst(source_dir: &Path, output_path: &Path) -> Result<()> {
         .finish()
         .map_err(|e| WrightError::context("zstd finish failed", e))?;
 
-    Ok(())
+    staged.commit()
+}
+
+/// A file being written next to its final destination, published by rename.
+///
+/// Abandoning the value (early return, `?`, panic) removes the temporary file
+/// rather than leaving it behind for the next seal to trip over.
+struct StagedOutput {
+    tmp: std::path::PathBuf,
+    dest: std::path::PathBuf,
+}
+
+impl StagedOutput {
+    fn begin(dest: &Path) -> Result<Self> {
+        let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|e| {
+            WrightError::context(format!("failed to create {}", parent.display()), e)
+        })?;
+        let name = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive".to_string());
+        let tmp = parent.join(format!(".{name}.staged-{}", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        Ok(Self {
+            tmp,
+            dest: dest.to_path_buf(),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.tmp
+    }
+
+    fn commit(self) -> Result<()> {
+        std::fs::rename(&self.tmp, &self.dest).map_err(|e| {
+            WrightError::context(
+                format!(
+                    "failed to publish archive {} -> {}",
+                    self.tmp.display(),
+                    self.dest.display()
+                ),
+                e,
+            )
+        })
+    }
+}
+
+impl Drop for StagedOutput {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.tmp);
+    }
 }
 
 /// Normalize a filesystem path into a safe, relative path for archive entry names.
@@ -426,7 +484,10 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
             })?;
             #[cfg(unix)]
             {
-                let mode = entry.unix_mode().map(canonicalize_dir_mode).unwrap_or(0o755);
+                let mode = entry
+                    .unix_mode()
+                    .map(canonicalize_dir_mode)
+                    .unwrap_or(0o755);
                 let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
             }
         } else {
@@ -439,7 +500,8 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
                 })?;
                 #[cfg(unix)]
                 {
-                    let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
+                    let _ =
+                        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
                 }
             }
 
@@ -455,8 +517,10 @@ pub fn extract_zip(part_path: &Path, dest_dir: &Path) -> Result<()> {
             {
                 if let Some(mode) = entry.unix_mode() {
                     let sanitized = canonicalize_file_mode(mode);
-                    let _ =
-                        std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(sanitized));
+                    let _ = std::fs::set_permissions(
+                        &out_path,
+                        std::fs::Permissions::from_mode(sanitized),
+                    );
                 }
             }
         }
@@ -522,10 +586,12 @@ fn unpack_tar_safely<R: Read>(mut archive: tar::Archive<R>, dest_dir: &Path) -> 
             if let Some(m) = mode {
                 if is_file {
                     let sanitized = canonicalize_file_mode(m);
-                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
+                    let _ =
+                        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
                 } else if is_dir {
                     let sanitized = canonicalize_dir_mode(m);
-                    let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
+                    let _ =
+                        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(sanitized));
                 }
             }
         }

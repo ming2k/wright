@@ -25,9 +25,21 @@ Each stage's fingerprint incorporates:
 2. All environment variables visible to that stage (sorted for determinism).
 3. The previous stage's fingerprint, creating a blockchain-style chain.
 
+The chain has a **root**: the first stage's `prev_hash` is the plan's
+`SourceDigest` — the content address of its resolved sources (ADR-0054). A
+chain seeded from the empty string could not express "the sources changed",
+which is how a rebuilt tree could still be reported as up-to-date. Rooting the
+chain in the source digest means editing a local source invalidates the whole
+pipeline, not just the stages whose scripts happen to be textual.
+
 Because every downstream hash depends on all upstream hashes, a single change
 to `configure`'s flags automatically invalidates `compile`, `check`, and
 `staging` — without any explicit dependency declarations.
+
+Plans whose sources are **volatile** — `git_metadata = true`, or an `http`
+`SKIP` source not yet in the source cache — have no content address to root a
+chain in. The forge does not honour checkpoints for them at all: every stage
+re-runs.
 
 ## The `.wright-pipeline.json` state machine
 
@@ -38,6 +50,7 @@ root:
 {
   "plan_name": "nginx",
   "version": "1.25.3",
+  "source_digest": "9f2c1a...",
   "stages": {
     "configure": {
       "status": "COMPLETED",
@@ -61,6 +74,11 @@ Each `stages` entry records:
 | `input_hash` | SHA-256 hex string | The hash-chain fingerprint for this stage's inputs |
 | `completed_at` | RFC-3339 timestamp | When the stage finished (only for COMPLETED) |
 | `error` | string | Human-readable failure message (only for FAILED) |
+
+`source_digest` records the content address of the sources these stages were
+built from. It lets a cheap pre-build check (`wright build`) decide whether the
+recorded staging output still belongs to the current inputs, without
+re-deriving the whole chain.
 
 The file is the **single source of truth** for the pipeline state.
 Individual file-system sentinels (like the old `.wright-stage-<name>` markers)
@@ -213,8 +231,10 @@ already contains all preserved layers.
 | Delete build sandbox | Only hard-links in `01-fetch` are removed; global cache untouched |
 | Failed `make` | Dirty `.o` files in `06-compile` are erased; clean upperdir on retry |
 | Changed `./configure` flags | Everything from `configure` forward is rewound and rebuilt; `fetch` and `extract` are preserved |
-| Changed source URL | The `fetch` input hash changes, triggering full rewind |
+| Changed source URL | The source digest changes, so charge re-materializes and the whole pipeline is rewound |
+| Edited a `local` source file | The source digest changes, so charge re-copies the file and every stage is rewound (ADR-0054) |
 | Source tarball updated (SHA256 changed) | The global cache stores both old and new versions under different CAS paths |
+| `git_metadata = true` source | Volatile: no checkpoint is honoured, every stage re-runs |
 
 ## Comparison with file-sentinel checkpoints
 

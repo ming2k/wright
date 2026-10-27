@@ -1,6 +1,7 @@
 # Wright Documentation
 
-Welcome to the Wright documentation portal. Content is organized by reader intent following the Diátaxis framework and the repository governance standard.
+Welcome to the Wright documentation portal. Public content is organized by reader intent using
+the Diátaxis framework; engineering standards live with the contributor documentation.
 
 | Section | Purpose |
 |---------|---------|
@@ -9,5 +10,5 @@ Welcome to the Wright documentation portal. Content is organized by reader inten
 | [Reference](reference/) | Lookup-oriented specs: CLI reference, configuration, manifests, and database design |
 | [Explanation](explanation/) | Architecture deep-dives, isolation model, dependency DAG, and design rationale |
 | [Architecture Decision Records](adr/) | Durable records of significant technical decisions and their context |
-| [Governance](governance/) | Repository charters, review gates, and documentation governance standard |
-| [Contributor Guides](dev/) | Contributor setup, build procedures, and internal architecture notes |
+| [Contributor Guides](dev/) | Build, test, and module-layout guides for contributors |
+| [Engineering Standards](dev/standards/README.md) | Architecture, invariants, ADR/RFC rules, documentation taxonomy, style, and review gates |

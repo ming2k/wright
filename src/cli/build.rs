@@ -9,6 +9,8 @@ pub const BUILD_AFTER_HELP: &str = "\
 Examples:
   wright build zlib
   wright build zlib --force --fresh
+  wright build zlib --no-cache
+  wright build zlib --no-cache --dry-run
   wright build freetype --mvp --stage=configure
   wright build freetype --until-stage=staging
   wright resolve openssl --rdeps | wright build
@@ -58,6 +60,21 @@ pub struct BuildArgs {
     #[arg(long, short = 'f')]
     pub force: bool,
 
+    /// Cold build: transactionally purge the source cache and the CAS store
+    /// (verified pinned http inputs are kept), then rebuild from freshly
+    /// fetched sources, bypassing every cached artifact (source cache, charge
+    /// marker, stage checkpoints, staging cache, layers). Stronger than
+    /// `--fresh`, which clears only the per-plan forge workspace. Mutually
+    /// exclusive with `--stage` and `--force-stage`, which depend on existing
+    /// checkpoints.
+    #[arg(long, conflicts_with_all = ["stage", "force_stage"])]
+    pub no_cache: bool,
+
+    /// Preview what a cold build would purge and build, then exit without
+    /// changing anything
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
     /// Forge using the MVP dependency set from mvp.toml without
     /// requiring a dependency cycle to trigger it
     #[arg(long)]
@@ -88,10 +105,12 @@ pub async fn run(args: BuildArgs, ctx: &Context<'_>) -> Result<()> {
         skip_check: args.skip_check,
         clean: args.fresh,
         force: args.force,
+        no_cache: args.no_cache,
         mvp: args.mvp,
         fetch_only: args.fetch,
         seal: args.seal,
         checksum: args.checksum,
+        dry_run: args.dry_run,
     };
     crate::operations::build::execute_build(
         request,

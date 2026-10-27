@@ -24,6 +24,7 @@ use wright_registry::database::{InstalledDb, SessionContext};
 
 use super::fingerprints::PlanFingerprints;
 use super::request::InstallRequest;
+use crate::operations::cache_purge;
 use crate::util::timing::{WorkflowTiming, format_duration};
 
 /// Extract the pre-update ABI of an installed plan from its currently deployed files.
@@ -121,6 +122,47 @@ pub(crate) async fn resolve_plan_part(
         .map_err(|e| WrightError::context(format!("resolve part {}", part_name), e))
 }
 
+/// Publish a CAS entry into `parts_dir` under the name the deploy step looks
+/// for, **replacing** whatever is already there.
+///
+/// A file that happens to sit at the destination path is not evidence that it
+/// holds this content address: the part filename carries only the version
+/// triple, so two different builds of the same version collide on one name. A
+/// redeploy that reaches a CAS hit — `wright upgrade` after editing a bundled
+/// source, or reverting an edit — finds the destination already occupied by the
+/// *previous* build's archive, and trusting it deploys the wrong bytes while
+/// the command reports success.
+///
+/// The publish is a hard link (the CAS entry is a hard link to the sealed
+/// archive, so both live on the same filesystem) laid down under a temporary
+/// name and atomically renamed over the destination. When the destination is
+/// already the same inode as the CAS entry — the steady state — nothing is
+/// copied at all.
+fn publish_cas_entry(cas_path: &Path, dest: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    if let (Ok(cas), Ok(existing)) = (std::fs::metadata(cas_path), std::fs::metadata(dest))
+        && cas.dev() == existing.dev()
+        && cas.ino() == existing.ino()
+    {
+        return Ok(());
+    }
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = dest.with_extension("cas-publish.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    match std::fs::hard_link(cas_path, &tmp) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            std::fs::copy(cas_path, &tmp)?;
+        }
+        Err(e) => return Err(e),
+    }
+    std::fs::rename(&tmp, dest)
+}
+
 /// Verify that a CAS entry actually holds the part expected from this plan
 /// build. The fingerprint namespace is shared across plans and wright eras,
 /// so a filename hit alone does not prove the content belongs to this plan.
@@ -189,6 +231,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         rdeps_depth,
         force,
         clean,
+        no_cache,
         config,
         db_path,
         root_dir,
@@ -242,17 +285,23 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         deps_depth,
         rdeps_depth,
         include_targets: true,
-        preserve_targets: force,
+        preserve_targets: force || no_cache,
     };
 
-    let build_opts = build_opts.unwrap_or_else(|| BuildPlanOptions {
-        clean: force || clean,
+    let mut build_opts = build_opts.unwrap_or_else(|| BuildPlanOptions {
+        clean: force || clean || no_cache,
         force,
+        no_cache,
         verbose: verbose > 0,
         quiet,
         nproc_per_isolation: config.build.nproc_per_isolation,
         ..Default::default()
     });
+    // A caller-supplied option set must not weaken the cold-build contract.
+    if no_cache {
+        build_opts.no_cache = true;
+        build_opts.clean = true;
+    }
 
     let resolved_set = if let Some(rbs) = resolved_build_set {
         rbs
@@ -373,7 +422,12 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
 
     if dry_run {
         // Preview only: the plan above is fully resolved, so report the exact
-        // batches and stop before any forge/seal/deploy side effects.
+        // batches and stop before any purge/forge/seal/deploy side effects.
+        if no_cache {
+            let keep = cache_purge::keep_entries(config, &plan)?;
+            let purge = cache_purge::plan(config, db_path, &keep, &config.general.parts_dir)?;
+            crate::cli_action!("Dry-run", "would purge {}", cache_purge::summary(&purge));
+        }
         crate::outln!("[dry-run] install -> {}", root_dir.display());
         crate::outln!(
             "[dry-run] would forge and deploy {} package(s) across {} batch(es):",
@@ -406,6 +460,19 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
     // ── Crash recovery ──────────────────────────────────────────────
     wright_registry::delivery::recover_if_needed(&db).await?;
     crate::transaction::recover_transactions(root_dir, &db).await?;
+
+    // ── Cold build purge (ADR-0057) ─────────────────────────────────
+    // Recover first, purge second, start the delivery third. Recovery settles
+    // any interrupted purge; the purge must precede fingerprint resolution so
+    // a `sha256 = "SKIP"` source cannot be addressed from a cached artefact.
+    cache_purge::recover(config, db_path)?;
+    if no_cache {
+        let keep = cache_purge::keep_entries(config, plan.as_ref())?;
+        let purge = cache_purge::plan(config, db_path, &keep, &config.general.parts_dir)?;
+        let purge_step = timing.step("purge");
+        cache_purge::execute(&purge).await?;
+        purge_step.success();
+    }
 
     // ── Signal handling ─────────────────────────────────────────────
     // First Ctrl-C / SIGTERM reaps the build subprocess tree and flips the
@@ -468,7 +535,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
     // ── Pre-update ABI snapshots for rebuild inhibition ─────────────
     let mut pre_update_abis: HashMap<String, Option<PartAbi>> = HashMap::new();
     let mut previous_epochs: HashMap<String, Option<u32>> = HashMap::new();
-    if inhibit_rebuild && !force {
+    if inhibit_rebuild && !force && !no_cache {
         for task in plan.build_set() {
             let base = BuildExecutionPlan::task_base_name(task);
             if !pre_update_abis.contains_key(base) {
@@ -522,14 +589,25 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         let forge_step = timing.step("forge");
 
         // Collect which bases in this batch have CAS hits.
-        // When --force is set, skip CAS lookup entirely so that forge
-        // and seal always run from scratch.
+        // When --force or --no-cache is set, skip CAS lookup entirely so that
+        // forge and seal always run from scratch.
         let mut cas_hit_bases: HashSet<String> = HashSet::new();
-        if !force {
+        if !force && !no_cache {
             let mut bases_seen = HashSet::new();
             for task in &active_tasks {
                 let base = BuildExecutionPlan::task_base_name(task).to_string();
                 if !bases_seen.insert(base.clone()) {
+                    continue;
+                }
+                // A volatile plan has no content address (ADR-0054, [INV-SRC-04]):
+                // nothing in the CAS can be proven to correspond to its current
+                // inputs.
+                if plan_fps.is_volatile(&base) {
+                    debug!(
+                        event = "cas.skipped_volatile",
+                        plan_name = %base,
+                        "Sources are not content-addressable — bypassing the build cache"
+                    );
                     continue;
                 }
                 // Check if ALL parts of this plan exist in CAS.
@@ -636,6 +714,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                                 skip_check: build_opts.skip_check,
                                 force,
                                 clean: build_opts.clean,
+                                no_cache: build_opts.no_cache,
                                 extra_env,
                                 verbose: build_opts.verbose,
                                 nproc_per_isolation: config.build.nproc_per_isolation,
@@ -757,12 +836,16 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
             let manifest = PlanManifest::from_file(plan_path)
                 .map_err(|e| WrightError::context(format!("parse plan {}", base), e))?;
 
-            crate::seal::package_manifest(&manifest, config, false, force)
+            crate::seal::package_manifest(&manifest, config, false, force || no_cache)
                 .await
                 .map_err(|e| WrightError::context(format!("seal {}", base), e))?;
 
-            // Store freshly-sealed parts in CAS.
-            if let Some(fp) = plan_fps.get(base) {
+            // Store freshly-sealed parts in CAS. Volatile plans are not stored:
+            // a key that cannot be trusted to change when the inputs change
+            // must never be written, or a later build would read it back.
+            if let Some(fp) = plan_fps.get(base)
+                && !plan_fps.is_volatile(base)
+            {
                 let part_names = manifest_part_names(&manifest);
                 for pn in &part_names {
                     match resolve_plan_part(part_store, &manifest, pn).await {
@@ -785,7 +868,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
         seal_step.success();
 
         // ── Physical ABI evaluation for reverse rebuild inhibition ────
-        if inhibit_rebuild && !force {
+        if inhibit_rebuild && !force && !no_cache {
             for base in &bases_in_batch {
                 if let Some(Some(old_abi)) = pre_update_abis.get(base) {
                     let plan_path = plan
@@ -915,10 +998,15 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                             };
                             let plan_dir = config.general.parts_dir.join(&manifest.metadata.name);
                             let dest = plan_dir.join(full_name);
-                            if !dest.exists() {
-                                let _ = std::fs::create_dir_all(&plan_dir);
-                                let _ = std::fs::copy(&cas_path, &dest);
-                            }
+                            publish_cas_entry(&cas_path, &dest).map_err(|e| {
+                                WrightError::context(
+                                    format!(
+                                        "failed to publish cached build for {pn} to {}",
+                                        dest.display()
+                                    ),
+                                    e,
+                                )
+                            })?;
                         }
                     }
                 }
@@ -1023,7 +1111,7 @@ async fn execute_install_inner(request: InstallRequest<'_>, timing: &WorkflowTim
                     &explicit,
                     root_dir,
                     part_store,
-                    force,
+                    force || no_cache,
                     false,
                     Some(&all_upcoming_outputs),
                     run_hooks,

@@ -57,6 +57,12 @@ pub struct LaunchArgs {
     #[arg(long, short = 'c')]
     pub fresh: bool,
 
+    /// Cold launch: transactionally purge the target root's source cache and
+    /// CAS store (verified pinned http inputs are kept), then rebuild from
+    /// freshly fetched sources. Host caches are untouched. Preview with `-n`.
+    #[arg(long)]
+    pub no_cache: bool,
+
     /// Target root directory to fill (required, e.g. /mnt/new; pass '/' explicitly for the live system).
     #[arg(long, required = true, value_name = "DIR")]
     pub root: Option<PathBuf>,
@@ -81,6 +87,7 @@ pub async fn run(args: LaunchArgs, ctx: &Context<'_>) -> Result<()> {
             dry_run: args.dry_run,
             force: args.force,
             fresh: args.fresh,
+            no_cache: args.no_cache,
         },
         ctx.config,
         &ctx.db_path,

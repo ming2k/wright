@@ -69,6 +69,9 @@ impl SubFabricateOutput {
             source_plan: Some(parent.metadata.name.clone()),
             plan_checksum: parent.plan_checksum.clone(),
             plan_source: parent.plan_source.clone(),
+            // A split output lives in the same plan directory as its parent, so
+            // it resolves the same plan-relative local sources.
+            plan_dir: parent.plan_dir.clone(),
         }
     }
 }

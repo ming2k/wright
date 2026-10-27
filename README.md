@@ -54,6 +54,7 @@ Wright's documentation follows the [Diátaxis](https://diataxis.fr/) framework.
 | [Explanation](docs/explanation/) | Discussions of why things work as they do |
 | [ADR](docs/adr/) | Architecture Decision Records |
 | [Developer Docs](docs/dev/) | Contributing, module layout, logging design |
+| [Engineering Standards](docs/dev/standards/README.md) | Architecture, invariants, ADR/RFC rules, and review gates |
 
 ## Terms
 

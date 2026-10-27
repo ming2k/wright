@@ -13,6 +13,12 @@ pub const STAGE_ORDER: &[&str] = &["prepare", "configure", "compile", "check", "
 pub struct ForgeState {
     pub plan_name: String,
     pub version: String,
+    /// Content address of the resolved sources this state was built against
+    /// (ADR-0054).  Persisted so a cheap pre-build check can tell whether the
+    /// recorded output still belongs to the current inputs without re-deriving
+    /// the whole stage hash chain.
+    #[serde(default)]
+    pub source_digest: String,
     pub stages: BTreeMap<String, StageRecord>,
 }
 
@@ -48,10 +54,19 @@ pub struct Checkpoint {
     state_path: PathBuf,
     state: ForgeState,
     work_dir: PathBuf,
+    /// The source content address of the *current* build.  Written to the
+    /// state file on every save so the persisted `source_digest` always
+    /// describes the inputs that produced the recorded stages.
+    source_digest: String,
 }
 
 impl Checkpoint {
-    pub fn load(work_dir: PathBuf, plan_name: &str, version: &str) -> Result<Self> {
+    pub fn load(
+        work_dir: PathBuf,
+        plan_name: &str,
+        version: &str,
+        source_digest: &str,
+    ) -> Result<Self> {
         let state_path = work_dir.join(".wright-checkpoint.json");
         let state = if state_path.exists() {
             let raw = std::fs::read_to_string(&state_path).map_err(|e| {
@@ -70,6 +85,7 @@ impl Checkpoint {
             ForgeState {
                 plan_name: plan_name.to_string(),
                 version: version.to_string(),
+                source_digest: source_digest.to_string(),
                 stages: BTreeMap::new(),
             }
         };
@@ -77,7 +93,14 @@ impl Checkpoint {
             state_path,
             state,
             work_dir,
+            source_digest: source_digest.to_string(),
         })
+    }
+
+    /// The source content address recorded in the state file — the inputs the
+    /// persisted stages were built from.  Empty for pre-ADR-0054 state files.
+    pub fn recorded_source_digest(&self) -> &str {
+        &self.state.source_digest
     }
 
     fn save(&self) -> Result<()> {
@@ -92,7 +115,9 @@ impl Checkpoint {
                 )
             })?;
         }
-        let raw = serde_json::to_string_pretty(&self.state)
+        let mut state = self.state.clone();
+        state.source_digest = self.source_digest.clone();
+        let raw = serde_json::to_string_pretty(&state)
             .map_err(|e| WrightError::context("failed to serialize checkpoint state", e))?;
 
         let tmp_path = self.state_path.with_extension("json.tmp");
@@ -328,7 +353,7 @@ mod tests {
     #[test]
     fn test_find_rewind_point_all_completed() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0").unwrap();
+        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0", "digest").unwrap();
 
         let order: Vec<String> = vec!["prepare".into(), "compile".into()];
         let mut config: HashMap<String, (String, HashMap<String, String>)> = HashMap::new();
@@ -342,7 +367,7 @@ mod tests {
         ck.mark_complete("prepare", prep_hash).unwrap();
         ck.mark_complete("compile", compile_hash).unwrap();
 
-        let ck2 = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0").unwrap();
+        let ck2 = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0", "digest").unwrap();
         let pt = ck2.find_rewind_point(&order, &expected);
         assert!(pt.is_none(), "expected no rewind point, got {:?}", pt);
     }
@@ -350,7 +375,7 @@ mod tests {
     #[test]
     fn test_find_rewind_point_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0").unwrap();
+        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0", "digest").unwrap();
 
         let order: Vec<String> = vec!["prepare".into(), "compile".into()];
         let mut config: HashMap<String, (String, HashMap<String, String>)> = HashMap::new();
@@ -382,7 +407,7 @@ mod tests {
             std::fs::create_dir_all(layers_dir.join(&name)).unwrap();
         }
 
-        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0").unwrap();
+        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0", "digest").unwrap();
         let order: Vec<String> = vec!["prepare".into(), "compile".into(), "staging".into()];
         let mut config: HashMap<String, (String, HashMap<String, String>)> = HashMap::new();
         config.insert("prepare".into(), ("s1".into(), HashMap::new()));
@@ -412,7 +437,7 @@ mod tests {
         let prepare_layer = layers_dir.join("01-prepare");
         std::fs::create_dir_all(&prepare_layer).unwrap();
 
-        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0").unwrap();
+        let mut ck = Checkpoint::load(tmp.path().to_path_buf(), "test", "1.0", "digest").unwrap();
         let state_path = tmp.path().join(".wright-checkpoint.json");
         std::fs::write(&state_path, "{}").unwrap();
 

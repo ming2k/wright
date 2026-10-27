@@ -427,14 +427,14 @@ mod tests {
         // "(hint: …)" used to need a dedicated re-join heuristic; with no
         // splitting at all it simply stays put.
         let err = WrightError::AccessDenied(
-            "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock".to_string(),
+            "permission denied for lock file /var/lib/wright/locks/cmd-wright.lock".to_string(),
         );
         let path = std::path::PathBuf::from("/log");
         let lines = format_failure_report(&err, &path);
         assert_eq!(lines.len(), 3, "lines: {lines:?}");
         assert!(
             lines[0].contains(
-                "permission denied for lock file /var/lib/wright/lock/cmd-wright.lock. (hint: try running with sudo)"
+                "permission denied for lock file /var/lib/wright/locks/cmd-wright.lock. (hint: try running with sudo)"
             ),
             "headline: {}",
             lines[0]

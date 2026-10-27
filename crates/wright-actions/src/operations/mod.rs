@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod build;
+mod cache_purge;
 pub mod check;
 pub mod clean;
 pub mod dbadmin;
@@ -22,6 +23,7 @@ pub mod resolve;
 pub mod storage;
 pub mod upgrade;
 
+mod plan_drift;
 mod targets;
 
 /// Serialize `value` as pretty JSON to stdout — the shared `--json` output

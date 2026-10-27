@@ -14,10 +14,16 @@ pub struct PlanRecord {
     /// SHA-256 of the plan source that produced the registered parts, from
     /// `.PARTINFO` `[provenance]`. NULL for parts sealed before ADR-0023.
     pub plan_checksum: Option<String>,
+    /// Per-source content-address audit lines recorded in `.PARTINFO`
+    /// `[provenance]` when the registered parts were sealed (ADR-0023,
+    /// ADR-0055). `plan_checksum` covers only `plan.toml`; these cover the
+    /// sources it references, including files bundled beside it.
+    pub source_checksums: Option<Vec<String>>,
 }
 
 impl PlanRecord {
     pub fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        let raw_source_checksums: Option<String> = row.get(8)?;
         Ok(Self {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -27,18 +33,24 @@ impl PlanRecord {
             arch: row.get(5)?,
             registered_at: row.get(6)?,
             plan_checksum: row.get(7)?,
+            // A column this code did not write is audit data of unknown shape;
+            // treat it as absent rather than failing the read (ADR-0043).
+            source_checksums: raw_source_checksums
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok()),
         })
     }
 }
+
+const PLAN_COLUMNS: &str =
+    "id, name, version, release, epoch, arch, registered_at, plan_checksum, source_checksums";
 
 impl ReadOnlyDb {
     pub async fn get_plan(&self, name: &str) -> Result<Option<PlanRecord>> {
         let name = name.to_string();
         self.read(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
-                 FROM plans WHERE name = ?1",
-            )?;
+            let mut stmt =
+                conn.prepare(&format!("SELECT {PLAN_COLUMNS} FROM plans WHERE name = ?1"))?;
             let mut rows = stmt.query(params![name])?;
             if let Some(row) = rows.next()? {
                 Ok(Some(PlanRecord::from_row(row)?))
@@ -51,10 +63,8 @@ impl ReadOnlyDb {
 
     pub async fn get_plan_by_id(&self, id: i64) -> Result<Option<PlanRecord>> {
         self.read(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
-                 FROM plans WHERE id = ?1",
-            )?;
+            let mut stmt =
+                conn.prepare(&format!("SELECT {PLAN_COLUMNS} FROM plans WHERE id = ?1"))?;
             let mut rows = stmt.query(params![id])?;
             if let Some(row) = rows.next()? {
                 Ok(Some(PlanRecord::from_row(row)?))
@@ -67,10 +77,8 @@ impl ReadOnlyDb {
 
     pub async fn list_plans(&self) -> Result<Vec<PlanRecord>> {
         self.read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, name, version, release, epoch, arch, registered_at, plan_checksum
-                 FROM plans ORDER BY name",
-            )?;
+            let mut stmt =
+                conn.prepare(&format!("SELECT {PLAN_COLUMNS} FROM plans ORDER BY name"))?;
             let rows = stmt.query_map([], PlanRecord::from_row)?;
             let mut plans = Vec::new();
             for r in rows {

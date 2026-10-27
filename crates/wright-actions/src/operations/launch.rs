@@ -26,6 +26,8 @@ pub struct LaunchRequest {
     pub force: bool,
     /// Wipe forge workspaces before building; `force` implies it.
     pub fresh: bool,
+    /// Cold build: purge the target root's caches and deny all derived reuse.
+    pub no_cache: bool,
 }
 
 /// Where the launch's plan list comes from.
@@ -71,16 +73,49 @@ pub async fn execute_launch(
     }
 
     let plan = resolve_launch_plan(&request.source, config)?;
+    let launch_config = redirect_for_target(config, root_dir);
 
     if request.dry_run {
         print_dry_run(&plan, root_dir);
+        if request.no_cache {
+            let purge = crate::operations::cache_purge::plan(
+                &launch_config,
+                db_path,
+                &[],
+                &launch_config.general.parts_dir,
+            )?;
+            crate::cli_action!(
+                "Dry-run",
+                "would purge {} (upper bound; verified pinned inputs may be retained)",
+                crate::operations::cache_purge::summary(&purge)
+            );
+        }
         return Ok(());
     }
 
     ensure_target_skeleton(root_dir)
         .map_err(|e| forge_err(format!("prepare target root {}: {}", root_dir.display(), e)))?;
 
-    let launch_config = redirect_for_target(config, root_dir);
+    // `launch` mutates a target root; serialize against installs and, when it
+    // purges caches, against ordinary builds. Lock order: wright → build.
+    let _wright_lock = wright_lock::acquire_lock(
+        &wright_lock::lock_dir_from_db(db_path),
+        wright_lock::LockIdentity::Command("wright"),
+        wright_lock::LockMode::Exclusive,
+    )
+    .map_err(|e| WrightError::context("failed to start launch", e))?;
+    let _build_lock = if request.no_cache {
+        Some(
+            wright_lock::acquire_lock(
+                &wright_lock::lock_dir_from_db(db_path),
+                wright_lock::LockIdentity::Command("build"),
+                wright_lock::LockMode::Exclusive,
+            )
+            .map_err(|e| WrightError::context("failed to acquire cold-launch cache lock", e))?,
+        )
+    } else {
+        None
+    };
 
     sync_sources(&plan, &launch_config, root_dir)?;
     write_target_wright_toml(root_dir, &launch_config)?;
@@ -98,6 +133,7 @@ pub async fn execute_launch(
         rdeps_depth: None,
         force: request.force,
         clean: request.force || request.fresh,
+        no_cache: request.no_cache,
         config: &launch_config,
         db_path,
         root_dir,
@@ -226,7 +262,7 @@ fn ensure_target_skeleton(root_dir: &Path) -> std::io::Result<()> {
         "var/lib/wright/parts",
         "var/lib/wright/store",
         "var/lib/wright/staging",
-        "var/lib/wright/lock",
+        "var/lib/wright/locks",
         "var/lib/wright/plans",
         "var/lib/wright/folios",
         "var/lib/wright/sources",

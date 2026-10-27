@@ -16,17 +16,17 @@ when work is skipped or repeated.
 
 ### How the two layers relate
 
-- `<forge_dir>/<name>-<version>/work/` (or
-  `<forge_dir>/<name>-noversion/work/` when `version` is omitted) decides
-  whether Wright can reuse the previous unpacked source tree.
+- `source/` (with the `.charge_prepared` marker beside it) holds the previously
+  materialized source tree, and decides whether Wright may reuse it.
 - `source cache` decides whether Wright must re-download or re-copy source inputs.
 
 Execution order:
 
-1. Check whether `<forge_dir>/<name>-<version>/work/` (or
-   `<forge_dir>/<name>-noversion/work/` when version is omitted) is reusable
-   (build key match)
-2. If not reusable, fetch/extract from `source cache`
+1. Resolve every source to its content address and hash the set into a
+   `SourceDigest` (ADR-0054).
+2. Reuse `source/` only when `.charge_prepared` records that same digest, the
+   tree is still present, and no source is volatile.
+3. Otherwise fetch/extract from `source cache` and rewrite the marker.
 
 ## Build Directory Layout
 
@@ -51,7 +51,7 @@ Each part gets its own working directory under `forge_dir`
 ├── outputs/   # Sliced output directories (hard-linked from staging/)
 │   └── default/  # Catch-all output
 ├── logs/      # Per-stage log files
-└── .build_key # Build key marker (for work-tree reuse detection)
+└── .charge_prepared  # Source content address this tree was materialized from
 
 ¹ When `version` is omitted from `plan.toml`, the directory uses `<name>-noversion`.
 ```
@@ -67,8 +67,8 @@ builds leave no stale mounts behind.  See
 [Stage Layers, the Merged Base, and OverlayFS](../explanation/overlayfs-layers.md).
 
 `layers/` replaces the flat `work/` directory from previous versions.  When
-the build key has not changed (same version, sources, and pipeline scripts),
-the layers from earlier stages are reused and only
+the source content address and the pipeline scripts are unchanged, the layers
+from earlier stages are reused and only
 stages whose inputs changed are re-executed.  Stage completion is tracked in
 `.wright-checkpoint.json` using a hash-chain fingerprint scheme — see
 [Checkpoint Recovery](../explanation/checkpoint-recovery.md).
@@ -159,6 +159,7 @@ path.
 | `--stage=<s>` | preserved | recreated | recreated | recreated | ignored |
 | `--force` build | reuse if key matches | recreated | recreated | recreated | **ignored** |
 | `--fresh` then build | deleted first | recreated | recreated | recreated | cleared |
+| `--no-cache` build | **purged first** | recreated | recreated | recreated | cleared |
 
 On a build-cache hit, Wright recreates the working directories first, then
 extracts the cached snapshot into `build_root`. Because `work/` is not part of
@@ -190,6 +191,16 @@ verification.
 
 The source cache is only consulted when Wright needs to materialize `work/`
 again. If `work/` is reusable, it is not used in that run.
+
+`--no-cache` transactionally purges this directory and the CAS `store_dir`
+before building. Verified pinned `http` entries — files whose bytes hash to the
+declared `sha256` for the selected build set — are kept and reused; git
+named-ref snapshots, `SKIP` entries, and local cache copies are discarded. That
+is the only way to pick up a git ref that moved under the same name: a snapshot
+is an explicit pin, so its content address does not change when the ref does
+(ADR-0054, ADR-0057). The purge is staged and journaled, so a crash leaves the
+cache either untouched or fully purged. `parts_dir` archives are never deleted;
+they are the local inventory, not a cache.
 
 ## FHS Validation
 
@@ -234,9 +245,12 @@ part filename format:
 
 ### Skip condition
 
-If the part (and all sub-part parts) already exist in `parts_dir`,
-the build is skipped entirely — the source cache is not even consulted.
-Use `--force` to override this and rebuild regardless.
+There is no skip condition keyed on a part archive already existing in
+`parts_dir`: each build re-runs charge/forge and seal writes a fresh archive.
+Reuse is decided earlier and from content, by the charge marker, the forge
+checkpoints, and the CAS fingerprint. Use `--force` or `--no-cache` to deny all
+of them; neither deletes the previous archive, which remains the rollback copy
+until seal overwrites it.
 
 ### What the part contains
 
@@ -268,16 +282,18 @@ directory is left intact for inspection after the build completes.
 
 | Flag | Source cache | Output part | `layers/` | `staging/` / `outputs/` / `logs/` | Stage checkpoints |
 |------|:---:|:---:|:---:|:---:|:---:|
-| (default) | reuse | skip if exists | reuse if key matches | recreated | **honored** |
-| `--force` | reuse | overwrite | reuse if key matches | recreated | **ignored** |
-| `--fresh` | reuse | skip if exists | **deleted** | recreated | cleared |
-| `--fresh --force` | reuse | overwrite | **deleted** | recreated | cleared |
-| `--stage=<s>` | reuse | skip | preserved | recreated | ignored |
+| (default) | reuse | rewrite | reuse if key matches | recreated | **honored** |
+| `--force` | reuse | rewrite | reuse if key matches | recreated | **ignored** |
+| `--fresh` | reuse | rewrite | **deleted** | recreated | cleared |
+| `--no-cache` | **purged (verified pinned kept)** | rewrite | **deleted** | recreated | cleared |
+| `--fresh --force` | reuse | rewrite | **deleted** | recreated | cleared |
+| `--stage=<s>` | reuse | rewrite | preserved | recreated | ignored |
 
 `--fresh` and `--force` address orthogonal concerns and compose naturally:
 - `--fresh` — force a clean `layers/` re-extraction; clears all stage checkpoints
-- `--force` — bypass the output part skip check (always produce a new part) **and** re-run all pipeline stages even when their checkpoints exist
+- `--force` — force seal to re-slice `outputs/` from `staging/` (the archive itself is always rewritten) **and** re-run all pipeline stages even when their checkpoints exist
 - `--fresh --force` — "start completely from scratch": re-extract sources, re-run all stages, and always write a new part
+- `--no-cache` — a strictly stronger, explicit mode (ADR-0057): transactionally purge the unverifiable source cache and the CAS store (verified pinned inputs are kept), refetch every unproven source, and deny every reuse decision. `--force` and `--fresh` keep their meanings; `--no-cache` does not redefine them.
 
 ### Incremental builds
 
@@ -288,9 +304,21 @@ re-executed. This means a repeated `wright build` with no changes completes
 almost instantly — the smart resume algorithm in `.wright-checkpoint.json` skips
 all up-to-date stages automatically.
 
+The build key is derived from the plan's metadata, its pipeline scripts, and the
+**content address of its resolved sources** (ADR-0054). Editing a `local` source
+file changes that address, so the source tree is re-materialized and every stage
+is re-run — there is no path by which an edited file can be reported as up to
+date. A plan whose sources cannot be content-addressed (`git_metadata = true`, or
+an `http` `SKIP` source not yet cached) is *volatile*: it gets no reuse at all,
+and every build re-materializes and re-runs from scratch.
+
 When the build key changes — because the version, sources, or pipeline scripts
 were modified — `layers/` is automatically cleaned and sources are
-re-extracted. All checkpoint records in `.wright-pipeline.json` are cleared.
+re-extracted. All checkpoint records in `.wright-checkpoint.json` are cleared.
 
 To force a clean re-extraction without changing the plan, use `--fresh`.
 To re-run all pipeline stages while keeping `layers/` intact, use `--force`.
+To also discard the unverifiable source cache and the CAS — the only way to see
+a named git ref move — use `--no-cache` (ADR-0057). It stages and journals the
+purge, keeps verified pinned inputs, and rebuilds from freshly fetched sources;
+`parts_dir` archives are left in place.

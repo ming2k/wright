@@ -77,6 +77,7 @@ runtime_deps = ["wayland"]
         rdeps_depth: None,
         force: false,
         fresh: false,
+        no_cache: false,
         dry_run: true,
         root: None,
         no_inhibit_rebuild: false,
@@ -458,5 +459,147 @@ retry_count = 3
     assert!(
         root.join("usr/share/wayland-utils-installed").exists(),
         "target 'wayland-utils' should be installed"
+    );
+}
+
+/// The whole family, end to end and through the real CLI: a plan whose only
+/// change is a file bundled beside `plan.toml`.
+///
+/// `wright upgrade` must select it (ADR-0055), the source tree must be
+/// re-materialized rather than reused from the charge marker (ADR-0054), the
+/// CAS and every stage checkpoint must miss, and the new bytes must reach the
+/// target root. The final revert is the sharpest case: the reverted content is
+/// already a warm CAS entry, and publishing it must *replace* the archive
+/// sitting in `parts_dir` under the same version-triple name rather than trust
+/// it.
+#[test]
+fn test_editing_a_bundled_source_file_is_rebuilt_and_redeployed() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("root");
+    let plans = temp.path().join("plans");
+    let parts = temp.path().join("parts");
+    let sources = temp.path().join("sources");
+    let store = temp.path().join("store");
+    let state = temp.path().join("wright");
+    let logs = temp.path().join("logs");
+    let build = temp.path().join("build");
+    for dir in [
+        &root, &plans, &parts, &sources, &store, &state, &logs, &build,
+    ] {
+        fs::create_dir_all(dir).unwrap();
+    }
+
+    let plan_dir = plans.join("unit-pkg");
+    fs::create_dir_all(&plan_dir).unwrap();
+    let unit = plan_dir.join("unit.svc");
+    fs::write(&unit, "ExecStart=/bin/old\n").unwrap();
+    // plan.toml is written once and never touched again.
+    fs::write(
+        plan_dir.join("plan.toml"),
+        r#"
+name = "unit-pkg"
+version = "1.0.0"
+release = 1
+description = "packages a bundled unit file"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "local"
+path = "unit.svc"
+
+[pipeline.staging]
+executor = "shell"
+isolation = "none"
+script = "install -Dm644 unit.svc ${STAGING_DIR}/etc/unit.svc"
+"#,
+    )
+    .unwrap();
+
+    let config_path = temp.path().join("wright.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"[general]
+arch = "x86_64"
+plans_dir = "{}"
+parts_dir = "{}"
+store_dir = "{}"
+source_dir = "{}"
+db_path = "{}"
+logs_dir = "{}"
+executors_dir = "/etc/wright/executors"
+assemblies_dir = "{}"
+
+[build]
+forge_dir = "{}"
+default_isolation = "none"
+ccache = false
+
+[network]
+download_timeout = 300
+retry_count = 3
+"#,
+            plans.display(),
+            parts.display(),
+            store.display(),
+            sources.display(),
+            state.join("wright.db").display(),
+            logs.display(),
+            temp.path().join("assemblies").display(),
+            build.display(),
+        ),
+    )
+    .unwrap();
+
+    let wright = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_wright"))
+            .arg("--config")
+            .arg(&config_path)
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let root_arg = root.display().to_string();
+    let deployed = root.join("etc/unit.svc");
+
+    // 1. Install the plan as authored.
+    let (ok, stdout, stderr) = wright(&["install", "--root", &root_arg, "unit-pkg"]);
+    assert!(ok, "install failed: stdout={stdout} stderr={stderr}");
+    assert_eq!(
+        fs::read_to_string(&deployed).unwrap(),
+        "ExecStart=/bin/old\n"
+    );
+
+    // 2. Change only the bytes of the file bundled with the plan.
+    fs::write(&unit, "ExecStart=/bin/new\n").unwrap();
+    let (ok, stdout, stderr) = wright(&["upgrade", "--root", &root_arg, "unit-pkg"]);
+    assert!(ok, "upgrade failed: stdout={stdout} stderr={stderr}");
+    assert!(
+        !stdout.contains("already up to date"),
+        "a changed bundled source must select the plan: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(&deployed).unwrap(),
+        "ExecStart=/bin/new\n",
+        "the edited file must reach the target root; stdout={stdout} stderr={stderr}"
+    );
+
+    // 3. Revert the edit. This content is already a warm CAS entry, so the
+    //    delivery takes the cached path: the archive published into parts_dir
+    //    must be the cached one, not the same-named archive from step 2.
+    fs::write(&unit, "ExecStart=/bin/old\n").unwrap();
+    let (ok, stdout, stderr) = wright(&["upgrade", "--root", &root_arg, "unit-pkg"]);
+    assert!(ok, "revert upgrade failed: stdout={stdout} stderr={stderr}");
+    assert_eq!(
+        fs::read_to_string(&deployed).unwrap(),
+        "ExecStart=/bin/old\n",
+        "a warm cache hit must publish the cached archive over the stale one; stdout={stdout} stderr={stderr}"
     );
 }

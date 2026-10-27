@@ -317,8 +317,181 @@ impl GlobalConfig {
                     config.build.default_isolation
                 ))
             })?;
+        config.validate_storage_layout(&config.general.db_path)?;
         Ok(config)
     }
+
+    /// Reject storage layouts where a cache purge could delete something that
+    /// is not a cache.
+    ///
+    /// `source_dir` and `store_dir` are the only directories a cold build may
+    /// purge. If either is equal to, contains, or is contained by the part
+    /// inventory, the database, the ledger, logs, or the forge workspace, a
+    /// purge would destroy durable state. `plans_dir`, `folios_dir`, and
+    /// `executors_dir` are protected in one direction: a cache root must not
+    /// contain them, but a cache nested inside them is harmless (the purge only
+    /// walks the cache itself).
+    ///
+    /// Paths that exist are canonicalised first, so a symlink cannot disguise
+    /// an overlap. Paths that do not exist yet are compared lexically.
+    pub fn validate_storage_layout(&self, db_path: &Path) -> Result<()> {
+        #[derive(Clone, Copy)]
+        enum Overlap {
+            /// Reject both containment directions.
+            Symmetric,
+            /// Reject only "cache contains protected".
+            ContainedOnly,
+        }
+
+        let cache_roots = [
+            ("general.source_dir", self.general.source_dir.clone()),
+            ("general.store_dir", self.general.store_dir.clone()),
+        ];
+
+        let mut protected: Vec<(String, PathBuf, Overlap)> = vec![
+            (
+                "general.parts_dir".to_string(),
+                self.general.parts_dir.clone(),
+                Overlap::Symmetric,
+            ),
+            (
+                "db_path".to_string(),
+                db_path.to_path_buf(),
+                Overlap::Symmetric,
+            ),
+            (
+                "general.ledger_dir".to_string(),
+                self.general.ledger_dir.clone(),
+                Overlap::Symmetric,
+            ),
+            (
+                "general.logs_dir".to_string(),
+                self.general.logs_dir.clone(),
+                Overlap::Symmetric,
+            ),
+            (
+                "build.forge_dir".to_string(),
+                self.build.forge_dir.clone(),
+                Overlap::Symmetric,
+            ),
+            (
+                "general.plans_dir".to_string(),
+                self.general.plans_dir.clone(),
+                Overlap::ContainedOnly,
+            ),
+            (
+                "general.folios_dir".to_string(),
+                self.general.folios_dir.clone(),
+                Overlap::ContainedOnly,
+            ),
+            (
+                "general.executors_dir".to_string(),
+                self.general.executors_dir.clone(),
+                Overlap::ContainedOnly,
+            ),
+        ];
+        for (idx, dir) in self.general.extra_plans_dirs.iter().enumerate() {
+            protected.push((
+                format!("general.extra_plans_dirs[{idx}]"),
+                dir.clone(),
+                Overlap::ContainedOnly,
+            ));
+        }
+
+        // The two cache roots must not overlap each other.
+        let (source_key, source) = &cache_roots[0];
+        let (store_key, store) = &cache_roots[1];
+        if paths_overlap(source, store) {
+            return Err(storage_conflict(source_key, store_key, source, store));
+        }
+
+        for (cache_key, cache_root) in &cache_roots {
+            let cache = normalize_path(cache_root);
+            for (protected_key, protected_path, mode) in &protected {
+                let protected = normalize_path(protected_path);
+                let overlaps = match mode {
+                    Overlap::Symmetric => paths_overlap(&cache, &protected),
+                    Overlap::ContainedOnly => is_ancestor_or_equal(&cache, &protected),
+                };
+                if overlaps {
+                    return Err(storage_conflict(
+                        cache_key,
+                        protected_key,
+                        &cache,
+                        &protected,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn storage_conflict(cache_key: &str, other_key: &str, a: &Path, b: &Path) -> ConfigError {
+    ConfigError::Message(format!(
+        "storage layout conflict: `{cache_key}` ({}) and `{other_key}` ({}) overlap; \
+         a cold cache purge would delete non-cache data. Make these paths disjoint.",
+        a.display(),
+        b.display()
+    ))
+}
+
+fn paths_overlap(a: &Path, b: &Path) -> bool {
+    let a = normalize_path(a);
+    let b = normalize_path(b);
+    is_ancestor_or_equal(&a, &b) || is_ancestor_or_equal(&b, &a)
+}
+
+fn is_ancestor_or_equal(a: &Path, b: &Path) -> bool {
+    b == a || b.starts_with(a)
+}
+
+/// Canonicalise existing paths; for paths that do not exist yet, canonicalise
+/// the nearest existing ancestor and append the remainder. This makes a
+/// symlinked parent impossible to use as a disguise for an overlap.
+fn normalize_path(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    if let Ok(canonical) = std::fs::canonicalize(&absolute) {
+        return canonical;
+    }
+
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = absolute.as_path();
+    while let Some(name) = cursor.file_name() {
+        suffix.push(name.to_os_string());
+        let Some(parent) = cursor.parent() else {
+            break;
+        };
+        if let Ok(mut canonical) = std::fs::canonicalize(parent) {
+            for component in suffix.iter().rev() {
+                canonical.push(component);
+            }
+            return lexical_normalize(&canonical);
+        }
+        cursor = parent;
+    }
+    lexical_normalize(&absolute)
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -343,5 +516,153 @@ mod tests {
 
         let error = GlobalConfig::load(Some(&path)).unwrap_err().to_string();
         assert!(error.contains("invalid build.default_isolation"));
+    }
+
+    #[test]
+    fn rejects_a_cache_root_that_contains_the_part_inventory() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("cache");
+        config.general.store_dir = root.path().join("store");
+        config.general.parts_dir = root.path().join("cache/parts");
+
+        let error = config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("storage layout conflict"));
+        assert!(error.contains("general.source_dir"));
+        assert!(error.contains("general.parts_dir"));
+    }
+
+    #[test]
+    fn rejects_equal_cache_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("cache");
+        config.general.store_dir = root.path().join("cache");
+        config.general.parts_dir = root.path().join("parts");
+
+        let error = config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("general.source_dir"));
+        assert!(error.contains("general.store_dir"));
+    }
+
+    #[test]
+    fn rejects_a_cache_root_that_contains_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        config.general.store_dir = root.path().join("store");
+        config.general.parts_dir = root.path().join("parts");
+
+        let error = config
+            .validate_storage_layout(&root.path().join("sources/wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("db_path"));
+    }
+
+    #[test]
+    fn rejects_a_cache_root_that_contains_the_plan_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("cache");
+        config.general.store_dir = root.path().join("store");
+        config.general.parts_dir = root.path().join("parts");
+        config.general.plans_dir = root.path().join("cache/plans");
+
+        let error = config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("general.plans_dir"));
+    }
+
+    #[test]
+    fn allows_sibling_paths_and_a_cache_nested_under_the_plan_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.plans_dir = root.path().join("plans");
+        config.general.folios_dir = root.path().join("folios");
+        config.general.parts_dir = root.path().join("parts");
+        config.general.store_dir = root.path().join("store");
+        config.general.source_dir = root.path().join("plans/.wright/sources");
+        config.general.logs_dir = root.path().join("logs");
+        config.general.ledger_dir = root.path().join("ledger");
+        config.general.executors_dir = root.path().join("executors");
+        config.build.forge_dir = root.path().join("forge");
+
+        config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .expect("sibling storage roots and a cache under plans_dir are safe");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_symlinks_before_comparing_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        let real_parts = root.path().join("parts");
+        std::fs::create_dir_all(&real_parts).unwrap();
+        let source_link = root.path().join("sources");
+        std::os::unix::fs::symlink(&real_parts, &source_link).unwrap();
+
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = source_link;
+        config.general.store_dir = root.path().join("store");
+        config.general.parts_dir = real_parts;
+
+        let error = config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("storage layout conflict"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_a_symlinked_ancestor_of_a_nonexistent_cache_root() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let mut config = GlobalConfig::default();
+        // Neither path exists, but the symlinked parent makes them the same
+        // tree; the purge must not be allowed to walk it.
+        config.general.source_dir = link.join("sources");
+        config.general.store_dir = root.path().join("store");
+        config.general.parts_dir = real.join("sources/parts");
+
+        let error = config
+            .validate_storage_layout(&root.path().join("wright.db"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("storage layout conflict"));
+    }
+
+    #[test]
+    fn load_rejects_an_overlapping_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("wright.toml");
+        let parts = root.path().join("parts");
+        std::fs::write(
+            &path,
+            format!(
+                "[general]\nsource_dir = \"{}\"\nparts_dir = \"{}\"\nstore_dir = \"{}\"\ndb_path = \"{}\"\n",
+                parts.display(),
+                parts.display(),
+                root.path().join("store").display(),
+                root.path().join("wright.db").display(),
+            ),
+        )
+        .unwrap();
+
+        let error = GlobalConfig::load(Some(&path)).unwrap_err().to_string();
+        assert!(error.contains("storage layout conflict"));
     }
 }

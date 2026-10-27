@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{debug, warn};
 
 use crate::error::{Result, WrightError};
@@ -8,6 +8,7 @@ use wright_plan::manifest::{PlanManifest, Source};
 
 use super::Charge;
 use super::git::git_snapshot_filename;
+use super::identity::resolve_local_path;
 
 impl Charge {
     // ------------------------------------------------------------------
@@ -52,7 +53,11 @@ impl Charge {
                 let filename =
                     git_snapshot_filename(&processed_url, &processed_ref, git.submodules);
                 let dest = self.cache_dir.join(&filename);
-                if tokio::fs::metadata(&dest).await.is_err() {
+                // A cold build re-resolves the ref even when a snapshot is
+                // present. Sibling tasks in the same cold run may race here;
+                // each fetch publishes atomically, so last-writer-wins is
+                // safe and the content is equally fresh.
+                if self.no_cache || tokio::fs::metadata(&dest).await.is_err() {
                     let _permit = self
                         .network_pool
                         .acquire()
@@ -103,10 +108,20 @@ impl Charge {
                 let skip_verify = http.sha256 == "SKIP";
                 let mut needs_download = true;
 
+                // A declared sha256 proves the bytes: a cold build reuses a
+                // matching artefact instead of re-downloading identical
+                // content. Only unverifiable sources (`SKIP`) are forced fresh.
                 if tokio::fs::metadata(&dest).await.is_ok() {
                     if skip_verify {
-                        debug!("Source {} already cached (SKIP verification)", filename);
-                        needs_download = false;
+                        if self.no_cache {
+                            debug!(
+                                "Source {} is unpinned and cold mode is active; re-downloading",
+                                filename
+                            );
+                        } else {
+                            debug!("Source {} already cached (SKIP verification)", filename);
+                            needs_download = false;
+                        }
                     } else if let Ok(actual_hash) = checksum::sha256_file(&dest) {
                         if actual_hash == http.sha256 {
                             debug!("Source {} already cached and verified", filename);
@@ -149,7 +164,7 @@ impl Charge {
             }
             Source::Local(local) => {
                 let processed_path = variables::process_uri(&local.path, manifest);
-                let local_path = validate_local_path(plan_dir, &processed_path)?;
+                let local_path = resolve_local_path(plan_dir, &processed_path)?;
                 let dest = self
                     .cache_path_for(manifest, source)
                     .expect("local sources are always cached");
@@ -168,24 +183,6 @@ impl Charge {
         }
         Ok(())
     }
-}
-
-fn validate_local_path(plan_dir: &Path, relative_path: &str) -> Result<PathBuf> {
-    let resolved = plan_dir.join(relative_path).canonicalize().map_err(|e| {
-        WrightError::ValidationError(format!("local path not found: {relative_path} ({e})"))
-    })?;
-    let plan_abs = plan_dir.canonicalize().map_err(|e| {
-        WrightError::ValidationError(format!(
-            "failed to resolve plan directory {}: {e}",
-            plan_dir.display()
-        ))
-    })?;
-    if !resolved.starts_with(&plan_abs) {
-        return Err(WrightError::ValidationError(format!(
-            "local path escapes plan directory: {relative_path}"
-        )));
-    }
-    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -212,6 +209,58 @@ ref = "main"
 "#
         );
         PlanManifest::parse(&toml_str).expect("valid manifest")
+    }
+
+    fn http_manifest(url: &str, sha256: &str) -> PlanManifest {
+        PlanManifest::parse(&format!(
+            r#"
+name = "demo"
+version = "1.0.0"
+release = 1
+description = "test http source"
+license = "MIT"
+arch = "x86_64"
+
+[[sources]]
+type = "http"
+url = "{url}"
+sha256 = "{sha256}"
+"#
+        ))
+        .expect("valid manifest")
+    }
+
+    fn sha256(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn serve(payload: Vec<u8>) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&payload);
+            }
+        });
+        (port, hits)
     }
 
     #[tokio::test]
@@ -299,5 +348,71 @@ ref = "main"
             "timed out too slowly: {:?}",
             elapsed
         );
+    }
+
+    /// A declared sha256 proves the bytes: cold mode must reuse the file rather
+    /// than re-downloading identical content. The URL is unreachable, so any
+    /// download attempt fails the test.
+    #[tokio::test]
+    async fn cold_fetch_reuses_a_verified_pinned_source() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        std::fs::create_dir_all(&config.general.source_dir).unwrap();
+
+        let payload = b"pinned bytes";
+        let cache = config.general.source_dir.join("demo-data.bin");
+        std::fs::write(&cache, payload).unwrap();
+
+        let manifest = http_manifest("http://127.0.0.1:1/data.bin", &sha256(payload));
+        let charge = Charge::with_no_cache(&config, Arc::new(Semaphore::new(1)), true);
+        charge
+            .fetch(&manifest, root.path())
+            .await
+            .expect("a verified pinned source must not be re-downloaded");
+        assert_eq!(std::fs::read(&cache).unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn cold_fetch_redownloads_a_corrupt_pinned_source() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        std::fs::create_dir_all(&config.general.source_dir).unwrap();
+
+        let cache = config.general.source_dir.join("demo-data.bin");
+        std::fs::write(&cache, b"tampered").unwrap();
+
+        let payload = b"correct bytes".to_vec();
+        let (port, hits) = serve(payload.clone());
+        let manifest = http_manifest(
+            &format!("http://127.0.0.1:{port}/data.bin"),
+            &sha256(&payload),
+        );
+        let charge = Charge::with_no_cache(&config, Arc::new(Semaphore::new(1)), true);
+        charge.fetch(&manifest, root.path()).await.unwrap();
+
+        assert_eq!(std::fs::read(&cache).unwrap(), payload);
+        assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn cold_fetch_always_downloads_an_unpinned_source() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = GlobalConfig::default();
+        config.general.source_dir = root.path().join("sources");
+        std::fs::create_dir_all(&config.general.source_dir).unwrap();
+
+        let cache = config.general.source_dir.join("demo-data.bin");
+        std::fs::write(&cache, b"stale").unwrap();
+
+        let payload = b"fresh bytes".to_vec();
+        let (port, hits) = serve(payload.clone());
+        let manifest = http_manifest(&format!("http://127.0.0.1:{port}/data.bin"), "SKIP");
+        let charge = Charge::with_no_cache(&config, Arc::new(Semaphore::new(1)), true);
+        charge.fetch(&manifest, root.path()).await.unwrap();
+
+        assert_eq!(std::fs::read(&cache).unwrap(), payload);
+        assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 1);
     }
 }

@@ -857,9 +857,14 @@ mod tests {
         let staging = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(staging.path().join("usr/bin")).unwrap();
         std::fs::write(staging.path().join("usr/bin/demo"), "x").unwrap();
-        let missing_output = staging.path().join("missing/output");
+        // The archive is published by renaming a staged sibling over the
+        // destination, and a missing destination directory is created on
+        // demand. A destination *occupied by a directory* is what cannot be
+        // replaced: the archive is written in full, then publishing fails.
+        let blocked_output = tempfile::tempdir().unwrap();
+        std::fs::create_dir(blocked_output.path().join(&spec.archive_name)).unwrap();
 
-        super::write_part(staging.path(), &spec, &missing_output).unwrap_err();
+        super::write_part(staging.path(), &spec, blocked_output.path()).unwrap_err();
 
         for name in super::ARCHIVE_METADATA_FILES {
             assert!(

@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Cold builds are now transactional and distinguish verified inputs from caches (ADR-0057).**
+  - `--no-cache` on `build`, `install`, and `upgrade` stages the purge under hidden `.wright-purge-*` directories, journals it at `<db parent>/purge/`, and commits it. A crash or I/O failure restores the cache or finalizes the purge; a half-purged cache is no longer representable (`[INV-COLD-05]`).
+  - The CAS is invalidated before the source cache, so no intermediate state can let an old artifact answer for new source bytes (`[INV-COLD-03]`).
+  - A pinned `http` source whose cached bytes still match its declared `sha256` is an input, not a cache: it is kept and reused. Git named-ref snapshots, `SKIP` entries, local cache copies, and all CAS entries are discarded (`[INV-COLD-04]`).
+  - Byte reports are inode-aware reclaimed bytes, excluding data still live in `parts_dir` (`[INV-COLD-06]`).
+  - Storage layouts where a cache root overlaps the inventory, registry, ledger, logs, forge workspace, or the other cache root are rejected at config load (`[INV-COLD-08]`).
+  - `wright launch` gains `--no-cache` for the target root; host caches are untouched.
+  - A fixed lock hierarchy (`wright` → `build` → `db`) now covers `launch` and mutating `doctor` paths; cache deletions in `clean --sources/--store` use the same purge transaction (`[INV-COLD-07]`).
+  - `wright build --no-cache --dry-run` reports the exact purge set and reclaimed bytes and resolves the real execution plan; `install`/`upgrade` preview the same set.
+  - `--force` and `--fresh` keep their existing meanings.
+
+### Breaking
+- **Overlapping storage layouts are rejected at startup (ADR-0057).** A layout where `source_dir`/`store_dir` contains or is contained by `parts_dir`, the database, the ledger, logs, the forge workspace, another cache root, the plan tree, or executors is now a configuration error instead of a latent deletion hazard.
+- **`--no-cache` keeps verified pinned `http` inputs.** A cached file whose bytes match its declared `sha256` is reused rather than re-downloaded; unverifiable sources are still discarded. The mode is a trust boundary, not "always re-download".
+- **`launch` target lock directory is `var/lib/wright/locks/`** (plural), matching the lock implementation and the generated target config.
+
+### Fixed
+- **Plan drift and plan selection now cover the whole plan, not just `plan.toml` (ADR-0055).**
+  - `[[sources]] type = "local"` files are recorded in part provenance (`.PARTINFO` `[provenance] source_checksums`) as `<path> sha256=<sum>`, using the exact source-hashing code that produces the build identity, so the audit ledger and the cache keys can never disagree about a plan's inputs.
+  - `wright upgrade` no longer reports "already up to date" when the only change is a file bundled beside `plan.toml`: selection compares the recorded source provenance against the plan on disk, and `--force` is no longer required to converge such a plan (`[INV-DRIFT-02]`).
+  - `wright doctor` reports the same drift, with a line that distinguishes it from a `plan.toml` change, so the ledger explains *what* changed rather than only *that* something did.
+  - Absent, unparseable, or pre-ADR-0055 provenance (a `local` line with no address) falls back to checksum-only behaviour instead of being guessed at in either direction (`[INV-DRIFT-03]`).
+  - `PlanManifest::plan_dir` records the directory a manifest was loaded from; plan-relative inputs resolve against it rather than the process working directory (`[INV-DRIFT-04]`).
+
+- **Local plan sources are now content-addressed, closing a silent stale-deploy defect (ADR-0054).**
+  - `[[sources]] type = "local"` files are identified by the SHA-256 of their bytes. Previously only the declared path string was hashed, so editing a local source — a systemd unit, a config, a patch — changed no cache key in the system.
+  - The defect composed across three independent layers: the `.charge_prepared` marker reused the previously extracted `source/` tree, the build key resolved the previous `.part` from the CAS, and the forge stage hash chain (rooted in a constant) reported every stage as up-to-date. `wright upgrade` therefore printed a complete `Building → Staging → Sealing → Deploying → Finished` ceremony and redeployed the stale artefact (`[INV-SRC-01]`, `[INV-SRC-02]`).
+  - The new `SourceDigest` is the single source-derived input to every cache key: charge stores it, the build key hashes it, and it seeds the forge checkpoint chain, so a change to any source invalidates the source tree, the CAS entry, and every stage (`[INV-SRC-03]`, `[INV-SRC-05]`).
+  - Sources whose content cannot be known before fetching (`git_metadata = true`, or an `http` `SKIP` source not yet cached) make a plan *volatile*: charge always re-materializes, no checkpoint is honoured, and the CAS is neither read nor written. A plan whose inputs are not content-addressable gets no reuse rather than a guessed key (`[INV-SRC-04]`).
+  - Missing, unreadable, non-regular, or plan-directory-escaping local sources now abort the build with a diagnostic naming the path instead of being silently ignored (`[INV-SRC-06]`).
+
+### Changed
+- The obsolete `ForgeContext.build_key` field — computed on every build and read by no code — is removed.
+
 ## [5.8.4] - 2026-10-01
 
 ### Added

@@ -87,6 +87,7 @@ match policy.
 wright install zlib
 wright install zlib openssl
 wright install zlib --fresh
+wright install zlib --no-cache
 wright install @core
 wright install gcc --match=all
 ```
@@ -99,6 +100,7 @@ wright install gcc --match=all
 | `--deps-depth [N]` | Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain; bare `--deps-depth` or `--deep` defaults to `0`) |
 | `--rdeps-depth [N]` | Maximum depth for reverse dependency expansion (`0` means unlimited; bare `--rdeps-depth` or `--impact` defaults to `1` for 1-hop direct consumers) |
 | `-c`, `--fresh` | Wipe the forge workspace before building plans that need an update, so they forge from scratch; does not redeploy up-to-date plans |
+| `--no-cache` | Cold install: transactionally purge `source_dir` and the CAS `store_dir` (a verified pinned `http` input is kept), then rebuild the selected plans from freshly fetched sources, bypassing the charge marker, forge checkpoints, staging cache, layers, CAS lookup, and deploy hash-skip. Stronger than `--fresh`; never deletes `parts_dir` archives. Preview with `-n` |
 | `-f`, `--force` | Cleanly reforge and redeploy, including up-to-date plans |
 | `-n`, `--dry-run` | Fully resolve the wave plan and print it (`[dry-run] install -> <root>`, then one `batch N:` line per batch) without forging or deploying |
 | `--root <PATH>` | Operate on this target root instead of `/` |
@@ -110,17 +112,29 @@ has a newer version than what is deployed, then resolves, forges, seals, and dep
 along with reverse link dependencies (for ABI consistency). Use `all` to check
 every installed plan.
 
+A plan counts as needing an upgrade when its version triple differs, when
+`plan.toml` changed, **or** when a file the plan bundles has changed — the
+`[[sources]] type = "local"` files beside `plan.toml` are compared by content
+address against what the deployed parts recorded (ADR-0055). Editing only such a
+file is enough; `--force` is not required.
+
 ```bash
 wright upgrade zlib
 wright upgrade all
 wright upgrade zlib --force
+wright upgrade all --no-cache
 ```
+
+With `--no-cache`, `all` selects **every installed plan** rather than only the
+outdated ones: the flag means "rebuild these from freshly fetched sources",
+which is not a staleness judgement.
 
 | Flag | Description |
 |------|-------------|
 | `-f`, `--force` | Force reforge and redeploy even if the plan version matches |
 | `-c`, `--fresh` | Wipe the forge workspace before building plans that need an upgrade, so they forge from scratch; does not redeploy up-to-date plans |
-| `-n`, `--dry-run` | Resolve the upgrade set (including reverse-dependency expansion) and print it without building anything |
+| `--no-cache` | Cold rebuild: transactionally purge `source_dir` and the CAS `store_dir` (verified pinned `http` inputs are kept), then rebuild every selected plan from freshly fetched sources, bypassing all derived reuse. `all` means every installed plan |
+| `-n`, `--dry-run` | Resolve the upgrade set (including reverse-dependency expansion) and print it, plus the cold-build purge set when `--no-cache` is given, without building anything |
 | `--deps-depth [N]` | Maximum depth for forward dependency expansion (`0` means unlimited, upgrading entire bottom-up chain; bare `--deps-depth` or `--deep` defaults to `0`) |
 | `--rdeps-depth [N]` | Maximum depth for reverse dependency expansion (`0` means unlimited; bare `--rdeps-depth` or `--impact` defaults to `1` for 1-hop direct consumers) |
 | `--root <PATH>` | Operate on this target root instead of `/` |
@@ -411,6 +425,8 @@ Build (forge) plans into staging and output directories under `forge_dir`.
 ```bash
 wright build zlib
 wright build zlib --force --fresh
+wright build zlib --no-cache
+wright build zlib --no-cache --dry-run
 wright build freetype --until-stage=staging
 ```
 
@@ -418,6 +434,8 @@ wright build freetype --until-stage=staging
 |------|-------------|
 | `-c`, `--fresh` | Wipe the forge workspace (sources, intermediates, stage checkpoints) before building, so the forge starts from scratch |
 | `-f`, `--force` | Reforge from scratch: bypass stage checkpoints and re-run all pipeline stages |
+| `--no-cache` | Cold build: transactionally purge the source cache and the CAS store (verified pinned `http` inputs are kept), then rebuild from freshly fetched sources, bypassing the charge marker, stage checkpoints, staging cache, and layers. Conflicts with `--stage` and `--force-stage` |
+| `-n`, `--dry-run` | Resolve and print the execution plan, plus the cold-build purge set when `--no-cache` is given, without purging, fetching, or building |
 | `--stage <NAME>` | Run only the specified pipeline stages; may be repeated |
 | `--force-stage <NAME>` | Force re-run of a specific stage even if its checkpoint is valid |
 | `--until-stage <NAME>` | Run a normal forge pipeline and stop after the specified stage |
@@ -475,6 +493,7 @@ root converges drift rather than erroring.
 wright launch --root /mnt/new --folio ./folios/core.toml
 wright launch --root /mnt/new --plans ./plans bash coreutils glibc
 wright launch --root /mnt/new --plans ./plans @core
+wright launch --root /mnt/new --plans ./plans --no-cache glibc
 ```
 
 | Flag | Description |
@@ -486,6 +505,7 @@ wright launch --root /mnt/new --plans ./plans @core
 | `-n`, `--dry-run` | Print deploy order and config actions without writing anything. |
 | `-f`, `--force` | Reforge and redeploy parts that are already present in the target. |
 | `-c`, `--fresh` | Wipe forge workspaces before building plans that need forging; does not redeploy parts already present. |
+| `--no-cache` | Cold launch: transactionally purge the **target root's** source cache and CAS store (verified pinned `http` inputs are kept), then rebuild from freshly fetched sources. Host caches are untouched. Preview with `-n`. |
 
 ## Cache & Maintenance
 
@@ -519,7 +539,13 @@ Reclaim disk space across every location Wright owns. With no flags, only
 build workspaces are removed — all of them, or those of the named plans.
 Each flag adds one location with its own predicate; combine them freely.
 Deletions execute immediately; pass `-n`/`--dry-run` to preview the exact
-removal set and its byte total first.
+removal set and its byte total first. A real `clean` takes the same process
+locks as builds and cold purges, so it waits for an in-flight build instead of
+deleting its workspace or cache underneath it; the preview is lock-free because
+it mutates nothing. Cache deletions (`--sources`, `--store`) use the same
+journaled staging transaction as `--no-cache`; a crash leaves them either
+untouched or fully purged, and the byte total is inode-aware (a CAS entry
+hard-linked to a live archive reports zero reclaimed).
 
 ```bash
 wright clean
@@ -547,6 +573,14 @@ wright clean --logs -n
 the part archive it caches, so removing a still-linked entry frees nothing and
 is therefore skipped; only entries whose inode survives nowhere else in
 `parts_dir` are selected, and hard-linked twins are counted once.
+
+A cold build (`--no-cache` on `build`, `install`, `upgrade`, or `launch`) is not
+a cleanup command: it transactionally purges `source_dir` and `store_dir` as
+part of one invocation, keeps verified pinned `http` inputs, never deletes
+`parts_dir`, and bypasses reuse for the plans it builds. An interrupted purge is
+journaled and either fully restored or fully finalized before the next cache
+decision. Use `clean` when you want space back; use `--no-cache` when the next
+build must discard unverifiable cache state (ADR-0057).
 
 ## Common Pipelines
 
