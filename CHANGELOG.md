@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [5.8.5] - 2026-10-27
 
 ### Added
 - **Cold builds are now transactional and distinguish verified inputs from caches (ADR-0057).**
